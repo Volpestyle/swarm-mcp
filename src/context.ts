@@ -1,5 +1,5 @@
+import { randomUUID } from "node:crypto";
 import { db } from "./db";
-import { randomUUIDv7 } from "bun";
 
 export type ContextType =
   | "finding"
@@ -11,64 +11,79 @@ export type ContextType =
 
 export function annotate(
   instance: string,
+  scope: string,
   file: string,
   type: ContextType,
   content: string,
 ) {
-  const id = randomUUIDv7();
+  const id = randomUUID();
   db.run(
-    "INSERT INTO context (id, instance_id, file, type, content) VALUES (?, ?, ?, ?, ?)",
-    [id, instance, file, type, content],
+    "INSERT INTO context (id, scope, instance_id, file, type, content) VALUES (?, ?, ?, ?, ?, ?)",
+    [id, scope, instance, file, type, content],
   );
   return id;
 }
 
-export function lookup(file: string) {
-  return db
-    .query(
-      "SELECT id, instance_id, file, type, content, created_at FROM context WHERE file = ? ORDER BY created_at DESC",
-    )
-    .all(file);
+export function lock(
+  instance: string,
+  scope: string,
+  file: string,
+  content: string,
+) {
+  db.run(
+    "DELETE FROM context WHERE scope = ? AND file = ? AND type = 'lock' AND instance_id = ?",
+    [scope, file, instance],
+  );
+
+  try {
+    const id = annotate(instance, scope, file, "lock", content);
+    return { ok: true as const, id };
+  } catch (err) {
+    if (
+      !(err instanceof Error) ||
+      !err.message.includes("UNIQUE constraint failed")
+    ) {
+      throw err;
+    }
+
+    const active = db
+      .query(
+        "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND file = ? AND type = 'lock'",
+      )
+      .get(scope, file);
+    return { error: "File is already locked", active };
+  }
 }
 
-export function search(pattern: string) {
+export function lookup(scope: string, file: string) {
   return db
     .query(
-      "SELECT id, instance_id, file, type, content, created_at FROM context WHERE file LIKE ? OR content LIKE ? ORDER BY created_at DESC",
+      "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND file = ? ORDER BY created_at DESC, id DESC",
     )
-    .all(`%${pattern}%`, `%${pattern}%`);
+    .all(scope, file);
+}
+
+export function search(scope: string, pattern: string) {
+  return db
+    .query(
+      "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND (file LIKE ? OR content LIKE ?) ORDER BY created_at DESC, id DESC",
+    )
+    .all(scope, `%${pattern}%`, `%${pattern}%`);
 }
 
 export function remove(id: string) {
   db.run("DELETE FROM context WHERE id = ?", [id]);
 }
 
-export function list(instance?: string) {
-  if (instance) {
-    return db
-      .query(
-        "SELECT id, instance_id, file, type, content, created_at FROM context WHERE instance_id = ? ORDER BY created_at DESC",
-      )
-      .all(instance);
-  }
-  return db
-    .query(
-      "SELECT id, instance_id, file, type, content, created_at FROM context ORDER BY created_at DESC",
-    )
-    .all();
-}
-
-export function locks() {
-  return db
-    .query(
-      "SELECT id, instance_id, file, content, created_at FROM context WHERE type = 'lock' ORDER BY created_at DESC",
-    )
-    .all();
+export function clearLocks(instance: string, scope: string, file: string) {
+  db.run(
+    "DELETE FROM context WHERE scope = ? AND file = ? AND type = 'lock' AND instance_id = ?",
+    [scope, file, instance],
+  );
 }
 
 export function cleanup() {
-  const cutoff = Math.floor(Date.now() / 1000) - 86400; // 24h
   db.run("DELETE FROM context WHERE created_at < ? AND type != 'lock'", [
-    cutoff,
+    Math.floor(Date.now() / 1000) - 86400,
   ]);
 }

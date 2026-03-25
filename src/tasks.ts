@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { db } from "./db";
 import { prune } from "./registry";
-import { randomUUIDv7 } from "bun";
+import { stamp } from "./time";
 
 export type TaskType =
   | "review"
@@ -9,6 +10,7 @@ export type TaskType =
   | "test"
   | "research"
   | "other";
+
 export type TaskStatus =
   | "open"
   | "claimed"
@@ -17,8 +19,23 @@ export type TaskStatus =
   | "failed"
   | "cancelled";
 
+type TaskRow = {
+  id: string;
+  scope: string;
+  requester: string;
+  assignee: string | null;
+  status: TaskStatus;
+  files: string | null;
+};
+
+function row(task: Record<string, unknown>) {
+  if (typeof task.files === "string") task.files = JSON.parse(task.files);
+  return task;
+}
+
 export function request(
   requester: string,
+  scope: string,
   type: TaskType,
   title: string,
   description?: string,
@@ -26,12 +43,14 @@ export function request(
   assignee?: string,
 ) {
   prune();
-  const id = randomUUIDv7();
+
+  const id = randomUUID();
   db.run(
-    `INSERT INTO tasks (id, type, title, description, requester, assignee, files, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO tasks (id, scope, type, title, description, requester, assignee, files, status, changed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
+      scope,
       type,
       title,
       description ?? null,
@@ -39,79 +58,119 @@ export function request(
       assignee ?? null,
       files ? JSON.stringify(files) : null,
       assignee ? "claimed" : "open",
+      stamp(),
     ],
   );
   return id;
 }
 
-export function claim(id: string, assignee: string) {
-  const row = db.query("SELECT status FROM tasks WHERE id = ?").get(id) as {
-    status: string;
-  } | null;
-  if (!row) return { error: "Task not found" };
-  if (row.status !== "open") return { error: `Task is already ${row.status}` };
-  db.run(
-    "UPDATE tasks SET assignee = ?, status = 'claimed', updated_at = unixepoch() WHERE id = ?",
-    [assignee, id],
+export function claim(id: string, scope: string, assignee: string) {
+  const result = db.run(
+    `UPDATE tasks
+     SET assignee = ?, status = 'claimed', updated_at = unixepoch(), changed_at = ?
+     WHERE id = ? AND scope = ? AND status = 'open' AND assignee IS NULL`,
+    [assignee, stamp(), id, scope],
   );
-  return { ok: true };
+
+  if (result.changes > 0) return { ok: true as const };
+
+  const task = db
+    .query("SELECT status FROM tasks WHERE id = ? AND scope = ?")
+    .get(id, scope) as { status: TaskStatus } | null;
+
+  if (!task) return { error: "Task not found" };
+  return { error: `Task is already ${task.status}` };
 }
 
-export function update(id: string, status: TaskStatus, result?: string) {
+export function update(
+  id: string,
+  scope: string,
+  actor: string,
+  status: Exclude<TaskStatus, "open" | "claimed">,
+  result?: string,
+) {
+  const task = db
+    .query(
+      "SELECT id, scope, requester, assignee, status, files FROM tasks WHERE id = ? AND scope = ?",
+    )
+    .get(id, scope) as TaskRow | null;
+
+  if (!task) return { error: "Task not found" };
+  if (["done", "failed", "cancelled"].includes(task.status)) {
+    return { error: `Task is already ${task.status}` };
+  }
+
+  if (status === "cancelled") {
+    if (task.requester !== actor && task.assignee !== actor) {
+      return { error: "Only the requester or assignee can cancel this task" };
+    }
+  } else {
+    if (!task.assignee)
+      return { error: "Task must be claimed before it can be updated" };
+    if (task.assignee !== actor)
+      return { error: "Only the assignee can update this task" };
+  }
+
+  if (status === "in_progress" && task.status !== "claimed") {
+    return { error: "Task must be claimed before it can move to in_progress" };
+  }
+
   db.run(
-    "UPDATE tasks SET status = ?, result = ?, updated_at = unixepoch() WHERE id = ?",
-    [status, result ?? null, id],
+    "UPDATE tasks SET status = ?, result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ? AND scope = ?",
+    [status, result ?? null, stamp(), id, scope],
   );
+
+  return { ok: true as const };
 }
 
-export function get(id: string) {
+export function get(id: string, scope: string) {
   prune();
-  const row = db.query("SELECT * FROM tasks WHERE id = ?").get(id) as Record<
-    string,
-    unknown
-  > | null;
-  if (!row) return null;
-  if (row.files && typeof row.files === "string")
-    row.files = JSON.parse(row.files);
-  return row;
+
+  const task = db
+    .query("SELECT * FROM tasks WHERE id = ? AND scope = ?")
+    .get(id, scope) as Record<string, unknown> | null;
+  if (!task) return null;
+  return row(task);
 }
 
-export function list(filter?: {
-  status?: TaskStatus;
-  assignee?: string;
-  requester?: string;
-}) {
+export function list(
+  scope: string,
+  filter?: {
+    status?: TaskStatus;
+    assignee?: string;
+    requester?: string;
+  },
+) {
   prune();
-  const clauses: string[] = [];
-  const params: unknown[] = [];
+
+  const where = ["scope = ?"];
+  const args: string[] = [scope];
 
   if (filter?.status) {
-    clauses.push("status = ?");
-    params.push(filter.status);
+    where.push("status = ?");
+    args.push(filter.status);
   }
   if (filter?.assignee) {
-    clauses.push("assignee = ?");
-    params.push(filter.assignee);
+    where.push("assignee = ?");
+    args.push(filter.assignee);
   }
   if (filter?.requester) {
-    clauses.push("requester = ?");
-    params.push(filter.requester);
+    where.push("requester = ?");
+    args.push(filter.requester);
   }
 
-  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   const rows = db
-    .query(`SELECT * FROM tasks ${where} ORDER BY created_at DESC`)
-    .all(...params);
-  return (rows as Record<string, unknown>[]).map((r) => {
-    if (r.files && typeof r.files === "string") r.files = JSON.parse(r.files);
-    return r;
-  });
+    .query(
+      `SELECT * FROM tasks WHERE ${where.join(" AND ")} ORDER BY created_at DESC, id DESC`,
+    )
+    .all(...args) as Array<Record<string, unknown>>;
+
+  return rows.map((item) => row(item));
 }
 
 export function cleanup() {
-  const cutoff = Math.floor(Date.now() / 1000) - 86400; // 24h
   db.run(
     "DELETE FROM tasks WHERE status IN ('done', 'failed', 'cancelled') AND updated_at < ?",
-    [cutoff],
+    [Math.floor(Date.now() / 1000) - 86400],
   );
 }

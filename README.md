@@ -31,7 +31,13 @@ Add to your global opencode config at `~/.config/opencode/opencode.json`:
 }
 ```
 
-Every opencode instance that launches will now have swarm tools available. Call `register` first to join the swarm.
+Every opencode instance that launches will now have swarm tools available.
+
+This server requires Bun because it runs through `bun run` and uses Bun's built-in SQLite support.
+
+In opencode, MCP tool names are prefixed by the server name, so you'll call tools like `swarm_register`, `swarm_list_instances`, and `swarm_request_task`.
+
+Call `swarm_register` first to join the swarm.
 
 ---
 
@@ -39,7 +45,9 @@ Every opencode instance that launches will now have swarm tools available. Call 
 
 All instances read and write to `~/.opencode/swarm.db` using WAL mode, auto-vacuum, and a 3s busy timeout. Bun's built-in `bun:sqlite` is used directly — no external SQLite dependencies.
 
-When you call `register`, the server starts a 10s heartbeat and a 5s notification poller. The poller pushes MCP resource updates for new messages and task changes.
+When you call `register`, the server starts a 10s heartbeat and a 5s notification poller.
+
+`register` also accepts an optional `scope`. If you omit it, the scope defaults to the detected git root, or to the provided directory when no git root exists.
 
 ---
 
@@ -52,17 +60,21 @@ When you call `register`, the server starts a 10s heartbeat and a 5s notificatio
 | Completed/failed/cancelled tasks | 24 hours   |
 | Non-lock context annotations     | 24 hours   |
 
+When an instance expires, stale claimed or in-progress tasks are released back to `open` and that instance's file locks are removed.
+
+Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are cleared when the owning instance goes stale or deregisters.
+
 ---
 
 ## Tools
 
 ### Instance registry
 
-| Tool             | Description                                                                                         |
-| ---------------- | --------------------------------------------------------------------------------------------------- |
-| `register`       | Join the swarm with a working directory and optional label. Starts heartbeat + notification poller. |
-| `list_instances` | List all live instances.                                                                            |
-| `whoami`         | Get this instance's swarm ID.                                                                       |
+| Tool             | Description                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `register`       | Join the swarm with a working directory, optional label, and optional scope. Starts heartbeat + notification poller. |
+| `list_instances` | List all live instances.                                                                                             |
+| `whoami`         | Get this instance's swarm ID.                                                                                        |
 
 ### Messaging
 
@@ -78,7 +90,7 @@ When you call `register`, the server starts a 10s heartbeat and a 5s notificatio
 | -------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `request_task` | Post a task (types: `review`, `implement`, `fix`, `test`, `research`, `other`). Optionally assign to a specific instance. |
 | `claim_task`   | Claim an open task. Prevents double-claiming.                                                                             |
-| `update_task`  | Move a task through its lifecycle: `claimed` → `in_progress` → `done`/`failed`/`cancelled`. Attach a result.              |
+| `update_task`  | Update a claimed task to `in_progress`, `done`, `failed`, or `cancelled`. Attach a result when useful.                    |
 | `get_task`     | Get full details of a task.                                                                                               |
 | `list_tasks`   | Filter tasks by status, assignee, or requester.                                                                           |
 
@@ -87,7 +99,7 @@ When you call `register`, the server starts a 10s heartbeat and a 5s notificatio
 | Tool             | Description                                                   |
 | ---------------- | ------------------------------------------------------------- |
 | `annotate`       | Share findings, warnings, bugs, notes, or todos about a file. |
-| `lock_file`      | Declare you're editing a file so others avoid it.             |
+| `lock_file`      | Acquire an exclusive file lock so others avoid editing it.    |
 | `unlock_file`    | Release a file lock.                                          |
 | `check_file`     | See annotations and locks before editing a file.              |
 | `search_context` | Search annotations by file path or content.                   |
@@ -105,14 +117,14 @@ When you call `register`, the server starts a 10s heartbeat and a 5s notificatio
 
 ## Resources
 
-The server exposes 4 MCP resources with background push notifications every 5 seconds:
+The server exposes 4 MCP resources. `swarm://inbox`, `swarm://tasks`, and `swarm://instances` are refreshed by the background poller.
 
-| URI                      | Description                           |
-| ------------------------ | ------------------------------------- |
-| `swarm://inbox`          | Unread messages for this instance.    |
-| `swarm://tasks`          | Open, claimed, and in-progress tasks. |
-| `swarm://instances`      | All active instances.                 |
-| `swarm://context/{file}` | Annotations for a specific file.      |
+| URI                        | Description                                |
+| -------------------------- | ------------------------------------------ |
+| `swarm://inbox`            | Unread messages for this instance.         |
+| `swarm://tasks`            | Open, claimed, and in-progress tasks.      |
+| `swarm://instances`        | All active instances.                      |
+| `swarm://context?file=...` | Annotations and locks for a specific file. |
 
 ---
 
@@ -123,10 +135,10 @@ For autonomous collaboration, add directives to your project's `AGENTS.md`:
 ```markdown
 ## Swarm
 
-- At the start of every session, call `register` with your working directory.
-- Before starting a task, call `poll_messages` and check `list_tasks` for requests.
-- After completing a significant task, `broadcast` a summary of what you did.
-- Before editing a file, call `check_file` to see if another instance has locked it.
+- At the start of every session, call `swarm_register` with your working directory.
+- Before starting a task, call `swarm_poll_messages` and check `swarm_list_tasks` for requests.
+- After completing a significant task, `swarm_broadcast` a summary of what you did.
+- Before editing a file, call `swarm_check_file` to see if another instance has locked it.
 - If you receive a review request, prioritize it.
 ```
 

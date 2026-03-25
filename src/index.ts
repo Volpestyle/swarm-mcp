@@ -4,27 +4,112 @@ import {
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import * as registry from "./registry";
-import * as messages from "./messages";
-import * as tasks from "./tasks";
+import { db } from "./db";
 import * as context from "./context";
 import * as kv from "./kv";
-import { db } from "./db";
+import * as messages from "./messages";
+import { file as filepath } from "./paths";
+import * as registry from "./registry";
+import * as tasks from "./tasks";
 
-let instanceId: string | null = null;
-let heartbeatTimer: Timer | null = null;
-let notifyTimer: Timer | null = null;
+let instance: registry.Instance | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let notifyTimer: ReturnType<typeof setInterval> | null = null;
 let lastMsgId = 0;
 let lastTaskUpdate = 0;
+let lastInstancesVersion = "";
 
 const server = new McpServer({
   name: "swarm",
-  version: "0.2.0",
+  version: "1.0.0",
 });
 
-// ──────────────────────────────────────
-//  Resources
-// ──────────────────────────────────────
+function missing() {
+  return {
+    content: [
+      { type: "text" as const, text: "Not registered. Call register first." },
+    ],
+  };
+}
+
+function resource<T>(text: T, uri: string) {
+  return {
+    contents: [
+      {
+        uri,
+        mimeType: "application/json",
+        text: JSON.stringify(text, null, 2),
+      },
+    ],
+  };
+}
+
+function getMaxMsgId() {
+  if (!instance) return 0;
+  const row = db
+    .query(
+      "SELECT MAX(id) as max FROM messages WHERE scope = ? AND recipient = ? AND read = 0",
+    )
+    .get(instance.scope, instance.id) as { max: number | null };
+  return row.max ?? 0;
+}
+
+function getMaxTaskUpdate() {
+  if (!instance) return 0;
+  const row = db
+    .query("SELECT MAX(changed_at) as max FROM tasks WHERE scope = ?")
+    .get(instance.scope) as {
+    max: number | null;
+  };
+  return row.max ?? 0;
+}
+
+function getInstancesVersion() {
+  if (!instance) return "";
+  const row = db
+    .query(
+      "SELECT COUNT(*) as count, COALESCE(MAX(registered_at), 0) as max FROM instances WHERE scope = ?",
+    )
+    .get(instance.scope) as { count: number; max: number };
+  return `${row.count}:${row.max}`;
+}
+
+async function poll() {
+  if (!instance) return;
+
+  try {
+    const msgId = getMaxMsgId();
+    if (msgId > lastMsgId) {
+      lastMsgId = msgId;
+      await server.server.sendResourceUpdated({ uri: "swarm://inbox" });
+    }
+
+    const taskUpdate = getMaxTaskUpdate();
+    if (taskUpdate > lastTaskUpdate) {
+      lastTaskUpdate = taskUpdate;
+      await server.server.sendResourceUpdated({ uri: "swarm://tasks" });
+    }
+
+    const instancesVersion = getInstancesVersion();
+    if (instancesVersion !== lastInstancesVersion) {
+      lastInstancesVersion = instancesVersion;
+      await server.server.sendResourceUpdated({ uri: "swarm://instances" });
+    }
+  } catch {
+    return;
+  }
+}
+
+function cleanup() {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (notifyTimer) clearInterval(notifyTimer);
+  if (instance) registry.deregister(instance.id);
+  instance = null;
+  heartbeatTimer = null;
+  notifyTimer = null;
+  tasks.cleanup();
+  context.cleanup();
+}
 
 server.resource(
   "inbox",
@@ -34,89 +119,64 @@ server.resource(
       "Unread messages for this instance. Auto-updates when new messages arrive.",
   },
   async () => {
-    if (!instanceId) {
-      return {
-        contents: [
-          { uri: "swarm://inbox", mimeType: "application/json", text: "[]" },
-        ],
-      };
-    }
-    const msgs = messages.peek(instanceId);
-    return {
-      contents: [
-        {
-          uri: "swarm://inbox",
-          mimeType: "application/json",
-          text: JSON.stringify(msgs, null, 2),
-        },
-      ],
-    };
+    if (!instance) return resource([], "swarm://inbox");
+    return resource(
+      messages.peek(instance.id, instance.scope),
+      "swarm://inbox",
+    );
   },
 );
 
 server.resource(
   "tasks",
   "swarm://tasks",
-  { description: "Open and claimed tasks in the swarm." },
+  { description: "Open and active tasks in this swarm scope." },
   async () => {
-    const open = tasks.list({ status: "open" });
-    const claimed = tasks.list({ status: "claimed" });
-    const progress = tasks.list({ status: "in_progress" });
-    return {
-      contents: [
-        {
-          uri: "swarm://tasks",
-          mimeType: "application/json",
-          text: JSON.stringify(
-            { open, claimed, in_progress: progress },
-            null,
-            2,
-          ),
-        },
-      ],
-    };
+    if (!instance)
+      return resource(
+        { open: [], claimed: [], in_progress: [] },
+        "swarm://tasks",
+      );
+
+    return resource(
+      {
+        open: tasks.list(instance.scope, { status: "open" }),
+        claimed: tasks.list(instance.scope, { status: "claimed" }),
+        in_progress: tasks.list(instance.scope, { status: "in_progress" }),
+      },
+      "swarm://tasks",
+    );
   },
 );
 
 server.resource(
   "instances",
   "swarm://instances",
-  { description: "All active instances in the swarm." },
+  { description: "All active instances in this swarm scope." },
   async () => {
-    const list = registry.list();
-    return {
-      contents: [
-        {
-          uri: "swarm://instances",
-          mimeType: "application/json",
-          text: JSON.stringify(list, null, 2),
-        },
-      ],
-    };
+    if (!instance) return resource([], "swarm://instances");
+    return resource(registry.list(instance.scope), "swarm://instances");
   },
 );
 
 server.resource(
   "context-for-file",
-  new ResourceTemplate("swarm://context/{file}", { list: undefined }),
-  { description: "Shared annotations/findings for a specific file." },
+  new ResourceTemplate("swarm://context{?file}", { list: undefined }),
+  {
+    description:
+      "Shared annotations and locks for a specific file in this swarm scope.",
+  },
   async (uri, { file }) => {
-    const entries = context.lookup(file as string);
-    return {
-      contents: [
-        {
-          uri: uri.href,
-          mimeType: "application/json",
-          text: JSON.stringify(entries, null, 2),
-        },
-      ],
-    };
+    if (!instance) return resource([], uri.href);
+    return resource(
+      context.lookup(
+        instance.scope,
+        filepath(instance.directory, file as string),
+      ),
+      uri.href,
+    );
   },
 );
-
-// ──────────────────────────────────────
-//  Tools: Instance Registry
-// ──────────────────────────────────────
 
 server.tool(
   "register",
@@ -129,49 +189,47 @@ server.tool(
       .string()
       .optional()
       .describe("Optional friendly label for this instance"),
+    scope: z
+      .string()
+      .optional()
+      .describe(
+        "Optional shared swarm scope. Defaults to the detected git root.",
+      ),
   },
-  async ({ directory, label }) => {
-    if (instanceId) {
-      return {
-        content: [
-          { type: "text", text: `Already registered as ${instanceId}` },
-        ],
-      };
+  async ({ directory, label, scope }) => {
+    if (instance) {
+      return { content: [{ type: "text", text: JSON.stringify(instance) }] };
     }
 
-    instanceId = registry.register(directory, label);
-
-    // snapshot current state so we only notify on NEW items
+    instance = registry.register(directory, label, scope);
     lastMsgId = getMaxMsgId();
     lastTaskUpdate = getMaxTaskUpdate();
+    lastInstancesVersion = getInstancesVersion();
 
-    // heartbeat every 10s
     heartbeatTimer = setInterval(() => {
-      if (instanceId) registry.heartbeat(instanceId);
+      if (instance) registry.heartbeat(instance.id);
     }, 10_000);
 
-    // notification poller every 5s
-    notifyTimer = setInterval(poll, 5_000);
+    notifyTimer = setInterval(() => {
+      void poll();
+    }, 5_000);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({ id: instanceId, directory, label }),
-        },
-      ],
-    };
+    return { content: [{ type: "text", text: JSON.stringify(instance) }] };
   },
 );
 
 server.tool(
   "list_instances",
-  "List all currently active opencode instances in the swarm.",
+  "List all currently active opencode instances in this swarm scope.",
   {},
   async () => {
+    if (!instance) return missing();
     return {
       content: [
-        { type: "text", text: JSON.stringify(registry.list(), null, 2) },
+        {
+          type: "text",
+          text: JSON.stringify(registry.list(instance.scope), null, 2),
+        },
       ],
     };
   },
@@ -182,21 +240,12 @@ server.tool(
   "Get this instance's swarm ID and registration info.",
   {},
   async () => {
-    if (!instanceId)
-      return {
-        content: [
-          { type: "text", text: "Not registered. Call register first." },
-        ],
-      };
+    if (!instance) return missing();
     return {
-      content: [{ type: "text", text: JSON.stringify({ id: instanceId }) }],
+      content: [{ type: "text", text: JSON.stringify(instance, null, 2) }],
     };
   },
 );
-
-// ──────────────────────────────────────
-//  Tools: Messaging
-// ──────────────────────────────────────
 
 server.tool(
   "send_message",
@@ -206,13 +255,27 @@ server.tool(
     content: z.string().describe("The message content"),
   },
   async ({ recipient, content }) => {
-    if (!instanceId)
+    if (!instance) return missing();
+
+    const target = registry.get(recipient);
+    if (!target || target.scope !== instance.scope) {
       return {
         content: [
-          { type: "text", text: "Not registered. Call register first." },
+          {
+            type: "text",
+            text: `Instance ${recipient} is not active in this scope`,
+          },
         ],
       };
-    messages.send(instanceId, recipient, content);
+    }
+
+    if (target.id === instance.id) {
+      return {
+        content: [{ type: "text", text: "Cannot send a message to yourself" }],
+      };
+    }
+
+    messages.send(instance.id, instance.scope, recipient, content);
     return {
       content: [{ type: "text", text: `Message sent to ${recipient}` }],
     };
@@ -221,17 +284,16 @@ server.tool(
 
 server.tool(
   "broadcast",
-  "Send a message to ALL other instances in the swarm.",
+  "Send a message to all other active instances in this swarm scope.",
   { content: z.string().describe("The message content to broadcast") },
   async ({ content }) => {
-    if (!instanceId)
-      return {
-        content: [
-          { type: "text", text: "Not registered. Call register first." },
-        ],
-      };
-    messages.broadcast(instanceId, content);
-    return { content: [{ type: "text", text: "Broadcast sent" }] };
+    if (!instance) return missing();
+    const count = messages.broadcast(instance.id, instance.scope, content);
+    return {
+      content: [
+        { type: "text", text: `Broadcast sent to ${count} instance(s)` },
+      ],
+    };
   },
 );
 
@@ -239,27 +301,25 @@ server.tool(
   "poll_messages",
   "Check for new incoming messages. Returns unread messages and marks them as read.",
   {
-    limit: z.number().optional().default(50).describe("Max messages to return"),
+    limit: z
+      .number()
+      .int()
+      .positive()
+      .max(200)
+      .optional()
+      .default(50)
+      .describe("Max messages to return"),
   },
   async ({ limit }) => {
-    if (!instanceId)
-      return {
-        content: [
-          { type: "text", text: "Not registered. Call register first." },
-        ],
-      };
-    const msgs = messages.poll(instanceId, limit);
-    return { content: [{ type: "text", text: JSON.stringify(msgs, null, 2) }] };
+    if (!instance) return missing();
+    const rows = messages.poll(instance.id, instance.scope, limit);
+    return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
   },
 );
 
-// ──────────────────────────────────────
-//  Tools: Task Delegation
-// ──────────────────────────────────────
-
 server.tool(
   "request_task",
-  "Create a task for another instance (or any available instance) to pick up.",
+  "Create a task for another instance, or leave it open for any instance in this scope.",
   {
     type: z
       .enum(["review", "implement", "fix", "test", "research", "other"])
@@ -276,26 +336,38 @@ server.tool(
       .describe("Specific instance ID to assign to, or omit for any taker"),
   },
   async ({ type, title, description, files, assignee }) => {
-    if (!instanceId)
-      return {
-        content: [
-          { type: "text", text: "Not registered. Call register first." },
-        ],
-      };
-    const id = tasks.request(
-      instanceId,
+    if (!instance) return missing();
+
+    if (assignee) {
+      const target = registry.get(assignee);
+      if (!target || target.scope !== instance.scope) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Instance ${assignee} is not active in this scope`,
+            },
+          ],
+        };
+      }
+    }
+
+    const taskId = tasks.request(
+      instance.id,
+      instance.scope,
       type,
       title,
       description,
-      files,
+      files?.map((item) => filepath(instance!.directory, item)),
       assignee,
     );
+
     return {
       content: [
         {
           type: "text",
           text: JSON.stringify({
-            task_id: id,
+            task_id: taskId,
             status: assignee ? "claimed" : "open",
           }),
         },
@@ -309,13 +381,8 @@ server.tool(
   "Claim an open task to work on it.",
   { task_id: z.string().describe("The task ID to claim") },
   async ({ task_id }) => {
-    if (!instanceId)
-      return {
-        content: [
-          { type: "text", text: "Not registered. Call register first." },
-        ],
-      };
-    const result = tasks.claim(task_id, instanceId);
+    if (!instance) return missing();
+    const result = tasks.claim(task_id, instance.scope, instance.id);
     return { content: [{ type: "text", text: JSON.stringify(result) }] };
   },
 );
@@ -331,25 +398,33 @@ server.tool(
     result: z.string().optional().describe("Result or summary of work done"),
   },
   async ({ task_id, status, result }) => {
-    tasks.update(task_id, status, result);
-    return { content: [{ type: "text", text: `Task ${task_id} → ${status}` }] };
+    if (!instance) return missing();
+    const next = tasks.update(
+      task_id,
+      instance.scope,
+      instance.id,
+      status,
+      result,
+    );
+    return { content: [{ type: "text", text: JSON.stringify(next) }] };
   },
 );
 
 server.tool(
   "get_task",
-  "Get full details of a specific task.",
+  "Get full details of a specific task in this swarm scope.",
   { task_id: z.string().describe("The task ID") },
   async ({ task_id }) => {
-    const t = tasks.get(task_id);
-    if (!t) return { content: [{ type: "text", text: "Task not found" }] };
-    return { content: [{ type: "text", text: JSON.stringify(t, null, 2) }] };
+    if (!instance) return missing();
+    const task = tasks.get(task_id, instance.scope);
+    if (!task) return { content: [{ type: "text", text: "Task not found" }] };
+    return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
   },
 );
 
 server.tool(
   "list_tasks",
-  "List tasks, optionally filtered by status, assignee, or requester.",
+  "List tasks in this swarm scope, optionally filtered by status, assignee, or requester.",
   {
     status: z
       .enum(["open", "claimed", "in_progress", "done", "failed", "cancelled"])
@@ -361,33 +436,41 @@ server.tool(
       .describe("Filter by requester instance ID"),
   },
   async ({ status, assignee, requester }) => {
-    const list = tasks.list({ status, assignee, requester });
-    return { content: [{ type: "text", text: JSON.stringify(list, null, 2) }] };
+    if (!instance) return missing();
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            tasks.list(instance.scope, { status, assignee, requester }),
+            null,
+            2,
+          ),
+        },
+      ],
+    };
   },
 );
 
-// ──────────────────────────────────────
-//  Tools: Shared Context
-// ──────────────────────────────────────
-
 server.tool(
   "annotate",
-  "Share a finding, warning, or note about a file with all instances.",
+  "Share a finding, warning, or note about a file with all instances in this scope.",
   {
     file: z.string().describe("File path this annotation is about"),
     type: z
-      .enum(["finding", "warning", "lock", "note", "bug", "todo"])
+      .enum(["finding", "warning", "note", "bug", "todo"])
       .describe("Type of annotation"),
     content: z.string().describe("The annotation content"),
   },
   async ({ file, type, content }) => {
-    if (!instanceId)
-      return {
-        content: [
-          { type: "text", text: "Not registered. Call register first." },
-        ],
-      };
-    const id = context.annotate(instanceId, file, type, content);
+    if (!instance) return missing();
+    const id = context.annotate(
+      instance.id,
+      instance.scope,
+      filepath(instance.directory, file),
+      type,
+      content,
+    );
     return {
       content: [{ type: "text", text: JSON.stringify({ annotation_id: id }) }],
     };
@@ -402,19 +485,15 @@ server.tool(
     reason: z.string().optional().describe("Why you're locking it"),
   },
   async ({ file, reason }) => {
-    if (!instanceId)
-      return {
-        content: [
-          { type: "text", text: "Not registered. Call register first." },
-        ],
-      };
-    const id = context.annotate(
-      instanceId,
-      file,
-      "lock",
+    if (!instance) return missing();
+    const path = filepath(instance.directory, file);
+    const result = context.lock(
+      instance.id,
+      instance.scope,
+      path,
       reason ?? "actively editing",
     );
-    return { content: [{ type: "text", text: `Locked ${file}` }] };
+    return { content: [{ type: "text", text: JSON.stringify(result) }] };
   },
 );
 
@@ -423,63 +502,69 @@ server.tool(
   "Release a file lock so other instances can edit it.",
   { file: z.string().describe("File path to unlock") },
   async ({ file }) => {
-    const locks = context
-      .lookup(file)
-      .filter((r: any) => r.type === "lock" && r.instance_id === instanceId);
-    for (const lock of locks) context.remove((lock as any).id);
+    if (!instance) return missing();
+    context.clearLocks(
+      instance.id,
+      instance.scope,
+      filepath(instance.directory, file),
+    );
     return { content: [{ type: "text", text: `Unlocked ${file}` }] };
   },
 );
 
 server.tool(
   "check_file",
-  "Check if a file has any annotations, locks, or warnings from other instances.",
+  "Check if a file has any annotations, locks, or warnings from other instances in this scope.",
   { file: z.string().describe("File path to check") },
   async ({ file }) => {
-    const entries = context.lookup(file);
-    if (entries.length === 0)
+    if (!instance) return missing();
+    const rows = context.lookup(
+      instance.scope,
+      filepath(instance.directory, file),
+    );
+    if (!rows.length)
       return {
         content: [{ type: "text", text: "No annotations for this file" }],
       };
-    return {
-      content: [{ type: "text", text: JSON.stringify(entries, null, 2) }],
-    };
+    return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
   },
 );
 
 server.tool(
   "search_context",
-  "Search all shared annotations by file path or content.",
+  "Search all shared annotations in this scope by file path or content.",
   {
     query: z.string().describe("Search term (matches file paths and content)"),
   },
   async ({ query }) => {
-    const results = context.search(query);
+    if (!instance) return missing();
     return {
-      content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(context.search(instance.scope, query), null, 2),
+        },
+      ],
     };
   },
 );
 
-// ──────────────────────────────────────
-//  Tools: Shared Key-Value Store
-// ──────────────────────────────────────
-
 server.tool(
   "kv_get",
-  "Get a value from the shared key-value store.",
+  "Get a value from the shared key-value store for this scope.",
   { key: z.string().describe("The key to look up") },
   async ({ key }) => {
-    const row = kv.get(key);
+    if (!instance) return missing();
+    const row = kv.get(instance.scope, key);
     if (!row)
-      return { content: [{ type: "text", text: `Key "${key}" not found` }] };
+      return { content: [{ type: "text", text: `Key \"${key}\" not found` }] };
     return { content: [{ type: "text", text: JSON.stringify(row) }] };
   },
 );
 
 server.tool(
   "kv_set",
-  "Set a value in the shared key-value store. Visible to all instances.",
+  "Set a value in the shared key-value store for this scope.",
   {
     key: z.string().describe("The key to set"),
     value: z
@@ -487,83 +572,41 @@ server.tool(
       .describe("The value to store (use JSON for complex data)"),
   },
   async ({ key, value }) => {
-    kv.set(key, value);
-    return { content: [{ type: "text", text: `Set "${key}"` }] };
+    if (!instance) return missing();
+    kv.set(instance.scope, key, value);
+    return { content: [{ type: "text", text: `Set \"${key}\"` }] };
   },
 );
 
 server.tool(
   "kv_delete",
-  "Delete a key from the shared key-value store.",
+  "Delete a key from the shared key-value store for this scope.",
   { key: z.string().describe("The key to delete") },
   async ({ key }) => {
-    kv.del(key);
-    return { content: [{ type: "text", text: `Deleted "${key}"` }] };
+    if (!instance) return missing();
+    kv.del(instance.scope, key);
+    return { content: [{ type: "text", text: `Deleted \"${key}\"` }] };
   },
 );
 
 server.tool(
   "kv_list",
-  "List keys in the shared key-value store, optionally filtered by prefix.",
+  "List keys in the shared key-value store for this scope, optionally filtered by prefix.",
   {
     prefix: z.string().optional().describe("Optional key prefix to filter by"),
   },
   async ({ prefix }) => {
-    const rows = kv.keys(prefix);
-    return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
+    if (!instance) return missing();
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(kv.keys(instance.scope, prefix), null, 2),
+        },
+      ],
+    };
   },
 );
-
-// ──────────────────────────────────────
-//  Background Notification Poller
-// ──────────────────────────────────────
-
-function getMaxMsgId(): number {
-  const row = db.query("SELECT MAX(id) as max FROM messages").get() as {
-    max: number | null;
-  };
-  return row?.max ?? 0;
-}
-
-function getMaxTaskUpdate(): number {
-  const row = db.query("SELECT MAX(updated_at) as max FROM tasks").get() as {
-    max: number | null;
-  };
-  return row?.max ?? 0;
-}
-
-async function poll() {
-  if (!instanceId) return;
-
-  try {
-    const msgId = getMaxMsgId();
-    if (msgId > lastMsgId) {
-      lastMsgId = msgId;
-      await server.server.sendResourceUpdated({ uri: "swarm://inbox" });
-    }
-
-    const taskUpdate = getMaxTaskUpdate();
-    if (taskUpdate > lastTaskUpdate) {
-      lastTaskUpdate = taskUpdate;
-      await server.server.sendResourceUpdated({ uri: "swarm://tasks" });
-    }
-  } catch {
-    // client may not support notifications — ignore
-  }
-}
-
-// ──────────────────────────────────────
-//  Lifecycle
-// ──────────────────────────────────────
-
-function cleanup() {
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
-  if (notifyTimer) clearInterval(notifyTimer);
-  if (instanceId) registry.deregister(instanceId);
-  instanceId = null;
-  tasks.cleanup();
-  context.cleanup();
-}
 
 async function main() {
   const transport = new StdioServerTransport();

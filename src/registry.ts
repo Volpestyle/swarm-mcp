@@ -1,36 +1,118 @@
-import { db } from "./db"
-import { randomUUIDv7 } from "bun"
+import { randomUUID } from "node:crypto";
+import { db } from "./db";
+import { norm, root, scope as scoped } from "./paths";
+import { now, stamp } from "./time";
 
-const STALE_SECONDS = 30
-const MESSAGE_TTL_SECONDS = 3600
+const STALE = 30;
+const MESSAGE_TTL = 3600;
 
-export function prune() {
-  const cutoff = Math.floor(Date.now() / 1000) - STALE_SECONDS
-  db.run("DELETE FROM instances WHERE heartbeat < ?", [cutoff])
-  const msgCutoff = Math.floor(Date.now() / 1000) - MESSAGE_TTL_SECONDS
-  db.run("DELETE FROM messages WHERE created_at < ?", [msgCutoff])
+export type Instance = {
+  id: string;
+  scope: string;
+  directory: string;
+  root: string;
+  pid: number;
+  label: string | null;
+};
+
+function marks(size: number) {
+  return Array.from({ length: size }, () => "?").join(",");
 }
 
-export function register(directory: string, label?: string) {
-  prune()
-  const id = randomUUIDv7()
-  const pid = process.pid
-  db.run("INSERT INTO instances (id, directory, pid, label) VALUES (?, ?, ?, ?)", [id, directory, pid, label ?? null])
-  return id
+function release(ids: string[]) {
+  if (!ids.length) return;
+
+  const slots = marks(ids.length);
+  db.run(
+    `UPDATE tasks
+     SET assignee = NULL, status = 'open', updated_at = unixepoch(), changed_at = ?
+     WHERE assignee IN (${slots}) AND status IN ('claimed', 'in_progress')`,
+    [stamp(), ...ids],
+  );
+  db.run(
+    `DELETE FROM context WHERE type = 'lock' AND instance_id IN (${slots})`,
+    ids,
+  );
+  db.run(`DELETE FROM messages WHERE recipient IN (${slots})`, ids);
+}
+
+export function prune() {
+  const cutoff = now() - STALE;
+  const stale = db
+    .query("SELECT id FROM instances WHERE heartbeat < ?")
+    .all(cutoff) as Array<{ id: string }>;
+
+  if (stale.length) {
+    const ids = stale.map((item) => item.id);
+    const slots = marks(ids.length);
+    const tx = db.transaction(() => {
+      release(ids);
+      db.run(`DELETE FROM instances WHERE id IN (${slots})`, ids);
+    });
+    tx();
+  }
+
+  db.run("DELETE FROM messages WHERE created_at < ?", [now() - MESSAGE_TTL]);
+}
+
+export function register(
+  directory: string,
+  label?: string,
+  value?: string,
+): Instance {
+  prune();
+
+  const dir = norm(directory);
+  const row = {
+    id: randomUUID(),
+    scope: scoped(dir, value),
+    directory: dir,
+    root: root(dir),
+    pid: process.pid,
+    label: label?.trim() || null,
+  };
+
+  db.run(
+    "INSERT INTO instances (id, scope, directory, root, pid, label) VALUES (?, ?, ?, ?, ?, ?)",
+    [row.id, row.scope, row.directory, row.root, row.pid, row.label],
+  );
+
+  return row;
+}
+
+export function get(id: string) {
+  prune();
+  return db
+    .query(
+      "SELECT id, scope, directory, root, pid, label FROM instances WHERE id = ?",
+    )
+    .get(id) as Instance | null;
 }
 
 export function deregister(id: string) {
-  db.run("DELETE FROM instances WHERE id = ?", [id])
-  db.run("DELETE FROM messages WHERE sender = ? OR recipient = ?", [id, id])
+  release([id]);
+  db.run("DELETE FROM instances WHERE id = ?", [id]);
 }
 
 export function heartbeat(id: string) {
-  const now = Math.floor(Date.now() / 1000)
-  db.run("UPDATE instances SET heartbeat = ? WHERE id = ?", [now, id])
-  prune()
+  db.run("UPDATE instances SET heartbeat = ? WHERE id = ?", [now(), id]);
+  prune();
 }
 
-export function list() {
-  prune()
-  return db.query("SELECT id, directory, pid, label, registered_at, heartbeat FROM instances").all()
+export function list(scope?: string) {
+  prune();
+
+  if (scope) {
+    return db
+      .query(
+        "SELECT id, scope, directory, root, pid, label, registered_at, heartbeat FROM instances WHERE scope = ? ORDER BY registered_at ASC",
+      )
+      .all(scope);
+  }
+
+  return db
+    .query(
+      "SELECT id, scope, directory, root, pid, label, registered_at, heartbeat FROM instances ORDER BY registered_at ASC",
+    )
+    .all();
 }
