@@ -101,13 +101,73 @@ Keep one shared `scope`, but add a team token to labels:
 - `provider:claude-code role:reviewer team:api`
 - `provider:codex-cli role:planner team:platform`
 
-Use this when everyone should stay in one shared swarm but still advertise specialties or sub-groups.
+Use this when everyone should stay in one shared swarm but still advertise specialties or sub-groups. Because all sessions share one scope, every tool works across teams -- messaging, tasks, locks, annotations, and KV are all visible to everyone.
 
-Because `team:` is only a convention, your instructions should say how to use it. For example:
+#### Routing heuristic
 
-- prefer collaborators with matching `team:` tokens when the task is local to that area
-- fall back to any matching `role:` if no same-team specialist is active
-- fall back to generalists if no specialist is active at all
+Because `team:` is only a convention, your instructions should say how to use it:
+
+1. Prefer a same-team specialist (matching `team:` and `role:`)
+2. Fall back to any specialist with matching `role:` on another team
+3. Fall back to a generalist (no `role:` token)
+
+#### Multi-team same-scope example
+
+Two teams (frontend and api) sharing one swarm, each with a planner + implementer pair. The planners also handle review.
+
+| Session | Label |
+|---------|-------|
+| Frontend planner | `role:planner team:frontend` |
+| Frontend implementer | `role:implementer team:frontend` |
+| API planner | `role:planner team:api` |
+| API implementer | `role:implementer team:api` |
+
+**Within-team flow** -- same as the two-session pattern:
+
+1. Frontend planner creates `implement` task -> frontend implementer claims it
+2. Frontend implementer finishes, creates `review` task assigned to frontend planner
+3. Frontend planner reviews, approves or sends `fix` task back
+
+**Cross-team handoff** -- when frontend needs an API change:
+
+1. Frontend planner creates a task for the API team:
+
+```json
+{
+  "type": "implement",
+  "title": "Add pagination to /api/users endpoint",
+  "description": "Frontend needs cursor-based pagination. Add limit/cursor params.",
+  "files": ["src/api/users.ts"]
+}
+```
+
+The frontend planner has two options:
+
+- Set `assignee` to the API planner's instance ID (found via `list_instances`) to let the API planner decompose and delegate it within their team
+- Set `assignee` to the API implementer directly if the task is small and self-contained
+- Omit `assignee` to let any available session claim it
+
+2. The API planner or implementer claims the task, does the work, and marks it `done` with a result.
+3. The frontend planner sees the completed task via `list_tasks` or `poll_messages` and can create a `review` task if needed.
+
+**Cross-team messaging** -- for lightweight coordination that doesn't need task tracking:
+
+- Use `send_message` to ask a specific session a question
+- Use `broadcast` when something affects all teams (e.g. "schema migration is running, hold off on DB changes")
+
+#### Cross-team AGENTS.md addition
+
+Add this to your `AGENTS.md` when using multiple teams in one scope:
+
+```md
+## Cross-Team Coordination
+
+- All teams share one swarm. You can see, message, and delegate to any session.
+- Use `list_instances` to find sessions by `role:` and `team:` tokens.
+- For cross-team work, prefer assigning to the other team's planner so they can decompose it.
+- For small cross-team requests, assign directly to an implementer.
+- Use `send_message` to give the other team context that doesn't fit in the task description.
+```
 
 ## Shared State Conventions
 

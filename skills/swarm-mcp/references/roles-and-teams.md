@@ -62,30 +62,52 @@ When choosing collaborators:
 2. Otherwise prefer any matching specialist by `role:`
 3. Fall back to a generalist when no specialist is active
 
-## Handoff Pattern
+## Handoff Patterns
 
-Use `request_task` for tracked work.
+Use `request_task` for tracked work. Use `assignee` only when you know the target instance is active in the same scope.
 
-Implementation handoff example:
+### Three-session: planner + implementer + reviewer
+
+Planner creates `implement` task -> implementer does the work -> planner or reviewer creates `review` task -> reviewer approves or requests fixes.
+
+### Two-session: planner also reviews
+
+The planner handles both planning and review. The implementer sends `review` tasks back to the planner by `assignee` instance ID.
+
+1. Planner creates `implement` task
+2. Implementer claims, does the work, marks `done`
+3. Implementer creates `review` task with `assignee` set to the planner's instance ID
+4. Planner reviews, approves (`done`) or rejects (`failed` + new `fix` task back to implementer)
+
+### Cross-team handoff
+
+When teams share one scope, any session can create tasks for sessions on another team.
+
+- Prefer assigning cross-team work to the other team's planner so they can decompose it
+- For small cross-team requests, assign directly to an implementer
+- Use `send_message` for context that doesn't fit in the task description
+
+### Example payloads
+
+Implementation:
 
 ```json
 {
   "type": "implement",
   "title": "Add retry logic to API client",
-  "description": "Handle transient 429 and 503 responses in src/api/client.ts and update tests.",
+  "description": "Handle transient 429 and 503 responses in src/api/client.ts.",
   "files": ["src/api/client.ts", "src/api/client.test.ts"]
 }
 ```
 
-Review handoff example:
+Review back to planner:
 
 ```json
 {
   "type": "review",
   "title": "Review retry logic change",
-  "description": "Check for retry loops, incorrect status handling, and missing coverage.",
-  "files": ["src/api/client.ts", "src/api/client.test.ts"]
+  "description": "Check for retry loops and missing coverage.",
+  "files": ["src/api/client.ts", "src/api/client.test.ts"],
+  "assignee": "<planner-instance-id>"
 }
 ```
-
-Use `assignee` only when you know the target instance is active in the same scope.

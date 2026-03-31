@@ -151,9 +151,13 @@ You can also test shared coordination tools:
 
 ## 8. Add operating instructions and start collaborating
 
-Once the MCP server is working, add a short coordination protocol to your host instructions or `AGENTS.md`. Copy [`docs/generic-AGENTS.md`](./generic-AGENTS.md) for a ready-made version.
+Once the MCP server is working, add a short coordination protocol to your host instructions or `AGENTS.md`:
 
-For specialist sessions (planner, implementer, reviewer) and team conventions, see [`docs/roles-and-teams.md`](./roles-and-teams.md).
+- [`docs/generic-AGENTS.md`](./generic-AGENTS.md) -- for generalist sessions (no role specialization)
+- [`docs/agents-planner.md`](./agents-planner.md) -- for planner sessions (plans work, reviews results)
+- [`docs/agents-implementer.md`](./agents-implementer.md) -- for implementer sessions (claims tasks, edits code)
+
+For role/team conventions and multi-team workflows, see [`docs/roles-and-teams.md`](./roles-and-teams.md).
 
 If your host supports installable skills, see [`docs/install-skill.md`](./install-skill.md) to install the bundled swarm skill for stronger per-session guidance.
 

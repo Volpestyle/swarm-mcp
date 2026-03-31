@@ -64,8 +64,10 @@ Call the swarm `register` tool first to join the swarm.
 ### Further reading
 
 - [`docs/getting-started.md`](./docs/getting-started.md) -- beginner-friendly setup and verification walkthrough
-- [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) -- copy-paste coordination rules for any agent host
-- [`docs/roles-and-teams.md`](./docs/roles-and-teams.md) -- specialist/generalist label conventions and handoff examples
+- [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) -- copy-paste coordination rules for any agent host (generalist)
+- [`docs/agents-planner.md`](./docs/agents-planner.md) -- drop-in AGENTS.md for planner sessions (plans work, reviews results)
+- [`docs/agents-implementer.md`](./docs/agents-implementer.md) -- drop-in AGENTS.md for implementer sessions (claims tasks, edits code)
+- [`docs/roles-and-teams.md`](./docs/roles-and-teams.md) -- role/team conventions, multi-team workflows, and handoff examples
 - [`docs/install-skill.md`](./docs/install-skill.md) -- host-specific install paths for the bundled skill
 - [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable skill source for hosts with skill ecosystems
 
@@ -184,22 +186,17 @@ The server exposes MCP prompts. Some hosts surface them directly, while others o
 
 For autonomous collaboration, add directives to your global or project `AGENTS.md`, or to the equivalent host instruction file.
 
-Copy [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) for a ready-made version that works with any MCP-capable host.
+Pick the version that matches your workflow:
 
-For specialist workflows with planners, implementers, reviewers, and team conventions, see [`docs/roles-and-teams.md`](./docs/roles-and-teams.md).
+| Workflow | File | Use when |
+|----------|------|----------|
+| Generalist | [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) | Every session does the same thing, no role specialization |
+| Planner | [`docs/agents-planner.md`](./docs/agents-planner.md) | This session plans work, delegates to implementers, and reviews results |
+| Implementer | [`docs/agents-implementer.md`](./docs/agents-implementer.md) | This session claims tasks, edits code, and sends work back for review |
+
+For role/team conventions and multi-team workflows, see [`docs/roles-and-teams.md`](./docs/roles-and-teams.md).
 
 If your host exposes MCP prompts, you can also use the built-in `swarm:protocol` prompt to pull the workflow into a session on demand.
-
-Minimal example:
-
-```markdown
-## Swarm
-
-- At the start of every session, call the swarm `register` tool with your working directory.
-- Before starting a task, call `poll_messages` and `list_tasks` for pending requests.
-- Before editing a file, call `check_file` to see if another session has locked it.
-- After completing a significant task, call `broadcast` with a short summary.
-```
 
 ## Installable Skill
 
