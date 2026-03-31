@@ -88,8 +88,10 @@ In your first coding-agent session, call the swarm server's `register` tool.
 Use:
 
 - `directory`: the project directory you are working in
-- `label`: a short friendly name like `codex-main` or `claude-review` if useful
+- `label`: optional, but if you use one prefer machine-readable tokens like `provider:codex-cli role:implementer` or `provider:claude-code role:reviewer`
 - `scope`: usually omit this unless you intentionally want multiple directories to share one swarm
+
+The `role:` token is optional. If a session omits it, treat that session as a generalist.
 
 The tool returns your swarm instance ID and registration details.
 
@@ -106,6 +108,12 @@ At this point you should see only your own session.
 Open another session in the same host or a different host on the same machine, as long as it is also configured to use `swarm-mcp`.
 
 Call `register` there too, ideally with a different `label`.
+
+If you want specialist sessions, a practical convention is:
+
+- `provider:codex-cli role:planner`
+- `provider:codex-cli role:implementer`
+- `provider:claude-code role:reviewer`
 
 Now call `list_instances` in either session. You should see both sessions in the same scope.
 

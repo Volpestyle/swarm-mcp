@@ -12,11 +12,15 @@ If your host namespaces tools, use the variant it exposes for the `swarm` server
 
 Use your current project directory as `directory`. Set `scope` only when you want multiple worktrees or folders to share one swarm on purpose.
 
+If you choose a `label`, prefer machine-readable tokens such as `provider:codex-cli role:planner origin:clanky`. Treat `role:` as optional. If a session has no `role:` token, treat it as a generalist.
+
 ---
 
 ## Check first
 
 Before starting work, call the swarm `poll_messages` and `list_tasks` tools to pick up requests from other sessions.
+
+When choosing collaborators, inspect `list_instances` labels for tokens like `role:planner`, `role:reviewer`, or `role:implementer`. If a session has no `role:` token, treat it as a generalist.
 
 Before editing a file, call the swarm `check_file` tool for that path. If another session has a lock or warning, avoid overlap and coordinate first.
 

@@ -15,6 +15,8 @@ Use your current project directory as \`directory\`. Set \`scope\` only when you
 
 If you are working inside a disposable worktree but want locks and annotations to map back to a canonical checkout, set \`file_root\` to the stable path that relative file references should resolve against.
 
+If you choose a \`label\`, prefer machine-readable tokens such as \`provider:codex-cli role:planner origin:clanky\`. Treat \`role:\` as optional. If a session has no \`role:\` token, treat it as a generalist.
+
 ---
 
 ## Check first
@@ -99,7 +101,7 @@ export function setup() {
 
 1. Call the swarm \`register\` tool with:
    - \`directory\`: current working directory
-   - \`label\`: a short label if useful
+   - \`label\`: optional, but when useful prefer machine-readable tokens such as \`provider:codex-cli role:planner\`; omit \`role:\` when this session should be a generalist
    - \`scope\`: omit unless I explicitly want to share across directories
    - \`file_root\`: omit unless I explicitly want file paths to resolve against a different canonical checkout, such as a non-temporary repo path behind a disposable worktree
 2. Call the swarm \`poll_messages\` tool
@@ -107,6 +109,7 @@ export function setup() {
 4. Summarize:
    - my swarm ID
    - other active sessions in this scope
+   - any useful \`role:\` labels among those sessions
    - open or assigned tasks
    - any immediate coordination risks`;
 }
@@ -119,6 +122,7 @@ export function protocol() {
 - When editing, call the swarm \`lock_file\` tool
 - When finished, call the swarm \`unlock_file\` tool
 - Check the swarm \`poll_messages\` and \`list_tasks\` tools regularly
+- When choosing collaborators, inspect \`list_instances\` labels for tokens like \`role:planner\`, \`role:reviewer\`, or \`role:implementer\`; if no \`role:\` token exists, treat that session as a generalist
 - Use the swarm \`annotate\` tool for file-specific findings
 - Use the swarm \`broadcast\` tool for important progress updates
 - Use the swarm \`update_task\` tool to move delegated work through \`in_progress\` to a final status`;

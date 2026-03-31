@@ -79,6 +79,8 @@ When you call `register`, the server starts a 10s heartbeat and a 5s notificatio
 
 `register` also accepts an optional `file_root`. When set, relative file paths in `annotate`, `lock_file`, `check_file`, and task `files` are resolved against that canonical path instead of the live working directory. This is useful when multiple disposable worktrees should share one logical file tree.
 
+`register` also accepts an optional free-form `label`. A good convention is to make labels machine-readable with space-separated tokens such as `provider:codex-cli role:planner origin:clanky`. The `role:` token is optional; if it is missing, treat that session as a generalist.
+
 ---
 
 ## Auto-cleanup
@@ -172,7 +174,9 @@ Minimal example:
 ## Swarm
 
 - At the start of every session, call the swarm `register` tool with your working directory.
+- If you set a label, prefer machine-readable tokens like `provider:codex-cli role:planner`; omit `role:` for generalists.
 - Before starting a task, call the swarm `poll_messages` tool and check the swarm `list_tasks` tool for requests.
+- When choosing collaborators, inspect `list_instances` labels for `role:` tokens such as `planner`, `reviewer`, or `implementer`.
 - After completing a significant task, call the swarm `broadcast` tool with a short summary.
 - Before editing a file, call the swarm `check_file` tool to see if another session has locked it.
 - If you receive a review request, prioritize it.

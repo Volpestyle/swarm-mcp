@@ -10,11 +10,15 @@ At the start of every session, call `swarm_register` before using any other swar
 
 Use your current project directory as `directory`. Set `scope` only when you want multiple worktrees or folders to share one swarm on purpose.
 
+If you choose a `label`, prefer machine-readable tokens such as `provider:codex-cli role:planner origin:clanky`. Treat `role:` as optional. If an instance has no `role:` token, treat it as a generalist.
+
 ---
 
 ## Check first
 
 Before starting work, call `swarm_poll_messages` and `swarm_list_tasks` to pick up requests from other instances.
+
+When choosing collaborators, inspect `swarm_list_instances` labels for tokens like `role:planner`, `role:reviewer`, or `role:implementer`. If an instance has no `role:` token, treat it as a generalist.
 
 Before editing a file, call `swarm_check_file` for that path. If another instance has a lock or warning, avoid overlap and coordinate first.
 
