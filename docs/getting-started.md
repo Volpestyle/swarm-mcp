@@ -51,8 +51,6 @@ args = ["run", "C:\\absolute\\path\\to\\swarm-mcp\\src\\index.ts"]
 cwd = "C:\\absolute\\path\\to\\swarm-mcp"
 ```
 
-You can also copy from [`docs/codex.toml`](./codex.toml).
-
 ### opencode
 
 Add this to `~/.config/opencode/opencode.json`:
@@ -69,7 +67,20 @@ Add this to `~/.config/opencode/opencode.json`:
 }
 ```
 
-You can also copy from [`docs/opencode.jsonc`](./opencode.jsonc).
+### Claude Code
+
+Add this to `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "swarm": {
+      "command": "bun",
+      "args": ["run", "/absolute/path/to/swarm-mcp/src/index.ts"]
+    }
+  }
+}
+```
 
 ### Other hosts
 
@@ -88,10 +99,9 @@ In your first coding-agent session, call the swarm server's `register` tool.
 Use:
 
 - `directory`: the project directory you are working in
-- `label`: optional, but if you use one prefer machine-readable tokens like `provider:codex-cli role:implementer` or `provider:claude-code role:reviewer`
-- `scope`: usually omit this unless you intentionally want multiple directories to share one swarm
+- `label`: optional, but if you use one prefer machine-readable tokens like `provider:codex-cli role:implementer`
 
-The `role:` token is optional. If a session omits it, treat that session as a generalist.
+See the README's [Registration fields](../README.md#registration-fields) section for the full field reference.
 
 The tool returns your swarm instance ID and registration details.
 
@@ -108,12 +118,6 @@ At this point you should see only your own session.
 Open another session in the same host or a different host on the same machine, as long as it is also configured to use `swarm-mcp`.
 
 Call `register` there too, ideally with a different `label`.
-
-If you want specialist sessions, a practical convention is:
-
-- `provider:codex-cli role:planner`
-- `provider:codex-cli role:implementer`
-- `provider:claude-code role:reviewer`
 
 Now call `list_instances` in either session. You should see both sessions in the same scope.
 
@@ -145,42 +149,19 @@ You can also test shared coordination tools:
 - `lock_file` while editing
 - `annotate` to leave shared notes on a file
 
-## 8. Add lightweight operating instructions
+## 8. Add operating instructions and start collaborating
 
-Once the MCP server is working, add a short coordination protocol to your host instructions or `AGENTS.md`.
+Once the MCP server is working, add a short coordination protocol to your host instructions or `AGENTS.md`. Copy [`docs/generic-AGENTS.md`](./generic-AGENTS.md) for a ready-made version.
 
-For a neutral version, start with [`docs/generic-AGENTS.md`](./generic-AGENTS.md).
+For specialist sessions (planner, implementer, reviewer) and team conventions, see [`docs/roles-and-teams.md`](./roles-and-teams.md).
 
-For opencode-specific wording, use [`docs/opencode-AGENTS.md`](./opencode-AGENTS.md).
+If your host supports installable skills, see [`docs/install-skill.md`](./install-skill.md) to install the bundled swarm skill for stronger per-session guidance.
 
-## 9. Understand the default storage model
-
-By default, all sessions use:
-
-```text
-~/.swarm-mcp/swarm.db
-```
-
-That is what allows separate sessions on the same machine to discover each other.
-
-If you want a different path, set `SWARM_DB_PATH` before launching the MCP server.
-
-## 10. Common mistakes
-
-- Editing the MCP config but not restarting the host
-- Using the wrong absolute path in the server command
-- Running one session against a different `SWARM_DB_PATH`
-- Registering in different scopes by using different project roots
-- Expecting prompt support when the host only exposes tools
-
-## 11. What to do next
-
-Once basic messaging works, the most useful next step is to make the behavior habitual:
+The minimum collaboration loop is:
 
 - Call `register` at session start
 - Call `poll_messages` and `list_tasks` before starting work
-- Call `check_file` before editing
-- Call `lock_file` while editing
+- Call `check_file` before editing and `lock_file` while editing
 - Call `broadcast` or `update_task` when handing work off
 
-That is the minimum loop that turns `swarm-mcp` from "installed" into actually useful.
+For troubleshooting tips, see the [Troubleshooting](../README.md#troubleshooting) section in the README.

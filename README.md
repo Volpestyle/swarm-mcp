@@ -19,7 +19,7 @@ cd /path/to/swarm-mcp
 bun install
 ```
 
-Add the server to your coding agent using that host's MCP config format.
+Add the server to your coding agent using that host's MCP config format. This server requires Bun because it runs through `bun run` and uses Bun's built-in SQLite support.
 
 ### Codex (`~/.codex/config.toml`)
 
@@ -44,42 +44,51 @@ cwd = "C:\\path\\to\\swarm-mcp"
 }
 ```
 
-Any host session that launches with this MCP server configured will now have swarm tools available.
+### Claude Code (`~/.claude.json`)
 
-This server requires Bun because it runs through `bun run` and uses Bun's built-in SQLite support.
+```json
+{
+  "mcpServers": {
+    "swarm": {
+      "command": "bun",
+      "args": ["run", "/path/to/swarm-mcp/src/index.ts"]
+    }
+  }
+}
+```
 
-Tool names are usually namespaced by the client using the server name, but the exact format varies by host. Depending on the client, you may see names like `swarm_register`, `mcp__swarm__register`, or other host-specific variants.
+Tool names are usually namespaced by the client using the server name. Depending on the host you may see `swarm_register`, `mcp__swarm__register`, or other variants. Use whichever form your host exposes.
 
 Call the swarm `register` tool first to join the swarm.
 
-For host-specific and host-neutral onboarding, this repo also ships copy-paste docs:
+### Further reading
 
-- [`docs/getting-started.md`](./docs/getting-started.md) with a beginner-friendly setup and verification walkthrough
-- [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) with host-neutral coordination guidance
-- [`docs/codex.toml`](./docs/codex.toml) with a Codex MCP config example
-- [`docs/opencode-AGENTS.md`](./docs/opencode-AGENTS.md) with a recommended global coordination protocol
-- [`docs/opencode.jsonc`](./docs/opencode.jsonc) with a local MCP config example
-
-The server also exposes MCP prompts. Some hosts surface them directly, while others only expose tools and resources:
-
-- `swarm:setup` to register and inspect the current swarm state
-- `swarm:protocol` to apply the recommended coordination workflow for the session
+- [`docs/getting-started.md`](./docs/getting-started.md) -- beginner-friendly setup and verification walkthrough
+- [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) -- copy-paste coordination rules for any agent host
+- [`docs/roles-and-teams.md`](./docs/roles-and-teams.md) -- specialist/generalist label conventions and handoff examples
+- [`docs/install-skill.md`](./docs/install-skill.md) -- host-specific install paths for the bundled skill
+- [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable skill source for hosts with skill ecosystems
 
 ---
 
 ## How it works
 
-All sessions read and write to `~/.swarm-mcp/swarm.db` by default using WAL mode, auto-vacuum, and a 3s busy timeout. Bun's built-in `bun:sqlite` is used directly — no external SQLite dependencies.
+All sessions read and write to `~/.swarm-mcp/swarm.db` by default using WAL mode, auto-vacuum, and a 3s busy timeout. Bun's built-in `bun:sqlite` is used directly -- no external SQLite dependencies.
 
 Set `SWARM_DB_PATH` before launching the server if you want a different database location.
 
 When you call `register`, the server starts a 10s heartbeat and a 5s notification poller.
 
-`register` also accepts an optional `scope`. If you omit it, the scope defaults to the detected git root, or to the provided directory when no git root exists.
+### Registration fields
 
-`register` also accepts an optional `file_root`. When set, relative file paths in `annotate`, `lock_file`, `check_file`, and task `files` are resolved against that canonical path instead of the live working directory. This is useful when multiple disposable worktrees should share one logical file tree.
+The `register` tool accepts these parameters. Only `directory` is required.
 
-`register` also accepts an optional free-form `label`. A good convention is to make labels machine-readable with space-separated tokens such as `provider:codex-cli role:planner origin:clanky`. The `role:` token is optional; if it is missing, treat that session as a generalist.
+| Field | Required | Description |
+|-------|----------|-------------|
+| `directory` | Yes | The live working directory for the current session. |
+| `scope` | No | Shared swarm boundary. Sessions in the same scope can see each other; different scopes are different swarms. Defaults to the detected git root, or to `directory` when no git root exists. |
+| `file_root` | No | Canonical base path for resolving relative file paths in `annotate`, `lock_file`, `check_file`, and task `files`. Useful when disposable worktrees should share one logical file tree. |
+| `label` | No | Free-form identity text. Recommended convention: machine-readable space-separated tokens like `provider:codex-cli role:planner`. The `role:` token is optional; if missing, the session is treated as a generalist. |
 
 ---
 
@@ -104,7 +113,7 @@ Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are c
 
 | Tool             | Description                                                                                                          |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `register`       | Join the swarm with a working directory, optional label, optional scope, and optional canonical `file_root`. Starts heartbeat + notification poller. |
+| `register`       | Join the swarm. Starts heartbeat + notification poller. See [Registration fields](#registration-fields). |
 | `list_instances` | List all live instances.                                                                                             |
 | `whoami`         | Get this instance's swarm ID.                                                                                        |
 
@@ -160,11 +169,24 @@ The server exposes 4 MCP resources. `swarm://inbox`, `swarm://tasks`, and `swarm
 
 ---
 
+## Prompts
+
+The server exposes MCP prompts. Some hosts surface them directly, while others only expose tools and resources.
+
+| Prompt | Purpose |
+| ------ | ------- |
+| `swarm:setup` | Guides the agent through registration: call `register`, `poll_messages`, `list_tasks`, then summarize swarm ID, active sessions, role labels, open tasks, and coordination risks. |
+| `swarm:protocol` | Applies the recommended coordination workflow for the session: check before editing, lock while editing, use `annotate` for findings, `broadcast` for updates, inspect `role:` labels when choosing collaborators. |
+
+---
+
 ## Set up AGENTS.md
 
 For autonomous collaboration, add directives to your global or project `AGENTS.md`, or to the equivalent host instruction file.
 
-If you want a ready-made version, copy [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) for host-neutral guidance or [`docs/opencode-AGENTS.md`](./docs/opencode-AGENTS.md) for opencode-specific wording.
+Copy [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) for a ready-made version that works with any MCP-capable host.
+
+For specialist workflows with planners, implementers, reviewers, and team conventions, see [`docs/roles-and-teams.md`](./docs/roles-and-teams.md).
 
 If your host exposes MCP prompts, you can also use the built-in `swarm:protocol` prompt to pull the workflow into a session on demand.
 
@@ -174,12 +196,45 @@ Minimal example:
 ## Swarm
 
 - At the start of every session, call the swarm `register` tool with your working directory.
-- If you set a label, prefer machine-readable tokens like `provider:codex-cli role:planner`; omit `role:` for generalists.
-- Before starting a task, call the swarm `poll_messages` tool and check the swarm `list_tasks` tool for requests.
-- When choosing collaborators, inspect `list_instances` labels for `role:` tokens such as `planner`, `reviewer`, or `implementer`.
-- After completing a significant task, call the swarm `broadcast` tool with a short summary.
-- Before editing a file, call the swarm `check_file` tool to see if another session has locked it.
-- If you receive a review request, prioritize it.
+- Before starting a task, call `poll_messages` and `list_tasks` for pending requests.
+- Before editing a file, call `check_file` to see if another session has locked it.
+- After completing a significant task, call `broadcast` with a short summary.
 ```
 
-This gives each agent a consistent collaboration protocol without any host-specific wiring.
+## Installable Skill
+
+This repo ships a reusable skill at [`skills/swarm-mcp`](./skills/swarm-mcp).
+
+Use it when your host supports installable `SKILL.md` workflows and you want agents to learn the swarm protocol more reliably. For install locations, see [`docs/install-skill.md`](./docs/install-skill.md).
+
+Use it in addition to minimal always-on instructions, not instead of them. The skill is a playbook; `AGENTS.md` is still the best place for ambient rules like "register early" and "check locks before editing."
+
+The skill does not mount the MCP server for you. It assumes the `swarm` MCP tools are already available in the session and teaches the agent how to use them well.
+
+---
+
+## Troubleshooting
+
+**Sessions can't see each other.** Check that both sessions registered with the same `scope` (or both defaulted to the same git root). Verify they are using the same database path (`~/.swarm-mcp/swarm.db` by default). Run `list_instances` in both sessions.
+
+**Tools aren't available after config change.** Most hosts only load MCP server changes at startup. Restart the application or start a fresh session after editing the MCP config.
+
+**File locks are stuck.** Stale locks are cleared automatically when the owning instance's heartbeat expires (30s). If you need to clear them manually, delete the row from the `context` table in the SQLite database, or restart the stuck session.
+
+**Inspecting the database directly.** The database is a standard SQLite file at `~/.swarm-mcp/swarm.db`. You can open it with any SQLite client (`bun` itself, `sqlite3`, DB Browser for SQLite, etc.) to inspect instances, tasks, messages, and context.
+
+**Wrong absolute path in server command.** The `bun run` command needs an absolute path to `src/index.ts`. Relative paths may resolve differently depending on how the host launches the process.
+
+---
+
+## Security
+
+All sessions on the same machine share one SQLite file. Any process running as the same OS user can read and write to it. There is no authentication or authorization between sessions.
+
+This is intentional for a local development tool. Do not use swarm-mcp across trust boundaries or expose the database to untrusted users.
+
+---
+
+## License
+
+[MIT](./LICENSE)

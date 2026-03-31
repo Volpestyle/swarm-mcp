@@ -2,17 +2,17 @@
 
 Portable coordination rules for any MCP-capable coding agent.
 
+Tool names are namespaced by the host. Depending on the client you may see `swarm_register`, `mcp__swarm__register`, or similar variants. Use whichever form your host exposes.
+
 ---
 
 ## Register early
 
-At the start of every session, call the swarm `register` tool before using any other swarm tool.
+At the start of every session, call `register` before using any other swarm tool.
 
-If your host namespaces tools, use the variant it exposes for the `swarm` server.
+Use your current project directory as `directory`. Set `scope` only when you want multiple directories to share one swarm on purpose. See the README "How it works" section for full field reference.
 
-Use your current project directory as `directory`. Set `scope` only when you want multiple worktrees or folders to share one swarm on purpose.
-
-If you choose a `label`, prefer machine-readable tokens such as `provider:codex-cli role:planner origin:clanky`. Treat `role:` as optional. If a session has no `role:` token, treat it as a generalist.
+If you choose a `label`, prefer machine-readable tokens such as `provider:codex-cli role:planner`. Treat `role:` as optional; no `role:` token means the session is a generalist.
 
 ---
 

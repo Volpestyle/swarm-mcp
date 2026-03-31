@@ -1,4 +1,0 @@
-[mcp_servers.swarm]
-command = "bun"
-args = ["run", "C:\\absolute\\path\\to\\swarm-mcp\\src\\index.ts"]
-cwd = "C:\\absolute\\path\\to\\swarm-mcp"
