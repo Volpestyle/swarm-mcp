@@ -10,6 +10,8 @@ Each session spawns its own swarm-mcp server process via stdio. They all share o
 
 ## Quick start
 
+If you want a first-run walkthrough, start with [`docs/getting-started.md`](./docs/getting-started.md).
+
 Install dependencies:
 
 ```sh
@@ -52,6 +54,7 @@ Call the swarm `register` tool first to join the swarm.
 
 For host-specific and host-neutral onboarding, this repo also ships copy-paste docs:
 
+- [`docs/getting-started.md`](./docs/getting-started.md) with a beginner-friendly setup and verification walkthrough
 - [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) with host-neutral coordination guidance
 - [`docs/codex.toml`](./docs/codex.toml) with a Codex MCP config example
 - [`docs/opencode-AGENTS.md`](./docs/opencode-AGENTS.md) with a recommended global coordination protocol
