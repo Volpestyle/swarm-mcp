@@ -1,0 +1,11 @@
+{
+  // Add this to your global opencode config
+  // Usually: ~/.config/opencode/opencode.json
+  "mcp": {
+    "swarm": {
+      "type": "local",
+      "enabled": true,
+      "command": ["bun", "run", "/absolute/path/to/swarm-mcp/src/index.ts"],
+    },
+  },
+}

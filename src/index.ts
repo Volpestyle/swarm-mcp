@@ -9,6 +9,7 @@ import * as context from "./context";
 import * as kv from "./kv";
 import * as messages from "./messages";
 import { file as filepath } from "./paths";
+import * as prompts from "./prompts";
 import * as registry from "./registry";
 import * as tasks from "./tasks";
 
@@ -39,6 +40,20 @@ function resource<T>(text: T, uri: string) {
         uri,
         mimeType: "application/json",
         text: JSON.stringify(text, null, 2),
+      },
+    ],
+  };
+}
+
+function prompt(text: string) {
+  return {
+    messages: [
+      {
+        role: "user" as const,
+        content: {
+          type: "text" as const,
+          text,
+        },
       },
     ],
   };
@@ -178,9 +193,29 @@ server.resource(
   },
 );
 
+server.registerPrompt(
+  "setup",
+  {
+    title: "Swarm Setup",
+    description:
+      "Register this agent session and inspect current swarm state.",
+  },
+  async () => prompt(prompts.setup()),
+);
+
+server.registerPrompt(
+  "protocol",
+  {
+    title: "Swarm Protocol",
+    description:
+      "Apply the recommended cross-agent coordination workflow for this session.",
+  },
+  async () => prompt(prompts.protocol()),
+);
+
 server.tool(
   "register",
-  "Register this opencode instance with the swarm. Call this first before using other tools.",
+  "Register this agent session with the swarm. Call this first before using other tools.",
   {
     directory: z
       .string()
@@ -220,7 +255,7 @@ server.tool(
 
 server.tool(
   "list_instances",
-  "List all currently active opencode instances in this swarm scope.",
+  "List all currently active agent sessions in this swarm scope.",
   {},
   async () => {
     if (!instance) return missing();

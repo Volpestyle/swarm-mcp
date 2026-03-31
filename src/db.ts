@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
 const path =
-  process.env.SWARM_DB_PATH ?? join(homedir(), ".opencode", "swarm.db");
+  process.env.SWARM_DB_PATH ?? join(homedir(), ".swarm-mcp", "swarm.db");
 mkdirSync(dirname(path), { recursive: true });
 
 export const db = new Database(path);
