@@ -77,6 +77,8 @@ When you call `register`, the server starts a 10s heartbeat and a 5s notificatio
 
 `register` also accepts an optional `scope`. If you omit it, the scope defaults to the detected git root, or to the provided directory when no git root exists.
 
+`register` also accepts an optional `file_root`. When set, relative file paths in `annotate`, `lock_file`, `check_file`, and task `files` are resolved against that canonical path instead of the live working directory. This is useful when multiple disposable worktrees should share one logical file tree.
+
 ---
 
 ## Auto-cleanup
@@ -100,7 +102,7 @@ Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are c
 
 | Tool             | Description                                                                                                          |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `register`       | Join the swarm with a working directory, optional label, and optional scope. Starts heartbeat + notification poller. |
+| `register`       | Join the swarm with a working directory, optional label, optional scope, and optional canonical `file_root`. Starts heartbeat + notification poller. |
 | `list_instances` | List all live instances.                                                                                             |
 | `whoami`         | Get this instance's swarm ID.                                                                                        |
 

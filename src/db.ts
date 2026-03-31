@@ -19,6 +19,7 @@ db.exec(`
     scope TEXT NOT NULL,
     directory TEXT NOT NULL,
     root TEXT NOT NULL,
+    file_root TEXT NOT NULL DEFAULT '',
     pid INTEGER NOT NULL,
     label TEXT,
     registered_at INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -127,6 +128,7 @@ function rebuildKv() {
 
 add("instances", "scope TEXT NOT NULL DEFAULT ''");
 add("instances", "root TEXT NOT NULL DEFAULT ''");
+add("instances", "file_root TEXT NOT NULL DEFAULT ''");
 add("messages", "scope TEXT NOT NULL DEFAULT ''");
 add("tasks", "scope TEXT NOT NULL DEFAULT ''");
 add("tasks", "changed_at INTEGER NOT NULL DEFAULT 0");
@@ -136,6 +138,7 @@ rebuildKv();
 
 db.run("UPDATE instances SET scope = directory WHERE scope = ''");
 db.run("UPDATE instances SET root = directory WHERE root = ''");
+db.run("UPDATE instances SET file_root = directory WHERE file_root = ''");
 db.run("UPDATE tasks SET changed_at = updated_at * 1000 WHERE changed_at = 0");
 
 db.exec(

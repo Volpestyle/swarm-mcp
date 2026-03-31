@@ -13,6 +13,8 @@ If your host namespaces tools, use the variant it exposes for the \`swarm\` serv
 
 Use your current project directory as \`directory\`. Set \`scope\` only when you want multiple worktrees or folders to share one swarm on purpose.
 
+If you are working inside a disposable worktree but want locks and annotations to map back to a canonical checkout, set \`file_root\` to the stable path that relative file references should resolve against.
+
 ---
 
 ## Check first
@@ -99,6 +101,7 @@ export function setup() {
    - \`directory\`: current working directory
    - \`label\`: a short label if useful
    - \`scope\`: omit unless I explicitly want to share across directories
+   - \`file_root\`: omit unless I explicitly want file paths to resolve against a different canonical checkout, such as a non-temporary repo path behind a disposable worktree
 2. Call the swarm \`poll_messages\` tool
 3. Call the swarm \`list_tasks\` tool
 4. Summarize:

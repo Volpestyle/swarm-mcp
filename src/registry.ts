@@ -11,6 +11,7 @@ export type Instance = {
   scope: string;
   directory: string;
   root: string;
+  file_root: string;
   pid: number;
   label: string | null;
 };
@@ -59,6 +60,7 @@ export function register(
   directory: string,
   label?: string,
   value?: string,
+  fileRoot?: string,
 ): Instance {
   prune();
 
@@ -68,13 +70,14 @@ export function register(
     scope: scoped(dir, value),
     directory: dir,
     root: root(dir),
+    file_root: norm(fileRoot || dir),
     pid: process.pid,
     label: label?.trim() || null,
   };
 
   db.run(
-    "INSERT INTO instances (id, scope, directory, root, pid, label) VALUES (?, ?, ?, ?, ?, ?)",
-    [row.id, row.scope, row.directory, row.root, row.pid, row.label],
+    "INSERT INTO instances (id, scope, directory, root, file_root, pid, label) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [row.id, row.scope, row.directory, row.root, row.file_root, row.pid, row.label],
   );
 
   return row;
@@ -84,7 +87,7 @@ export function get(id: string) {
   prune();
   return db
     .query(
-      "SELECT id, scope, directory, root, pid, label FROM instances WHERE id = ?",
+      "SELECT id, scope, directory, root, file_root, pid, label FROM instances WHERE id = ?",
     )
     .get(id) as Instance | null;
 }
@@ -105,14 +108,14 @@ export function list(scope?: string) {
   if (scope) {
     return db
       .query(
-        "SELECT id, scope, directory, root, pid, label, registered_at, heartbeat FROM instances WHERE scope = ? ORDER BY registered_at ASC",
+        "SELECT id, scope, directory, root, file_root, pid, label, registered_at, heartbeat FROM instances WHERE scope = ? ORDER BY registered_at ASC",
       )
       .all(scope);
   }
 
   return db
     .query(
-      "SELECT id, scope, directory, root, pid, label, registered_at, heartbeat FROM instances ORDER BY registered_at ASC",
+      "SELECT id, scope, directory, root, file_root, pid, label, registered_at, heartbeat FROM instances ORDER BY registered_at ASC",
     )
     .all();
 }

@@ -59,6 +59,14 @@ function prompt(text: string) {
   };
 }
 
+function resolveFileInput(file: string) {
+  if (!instance) return filepath("", file);
+  return filepath(instance.directory, file, {
+    fileRoot: instance.file_root,
+    root: instance.root,
+  });
+}
+
 function getMaxMsgId() {
   if (!instance) return 0;
   const row = db
@@ -184,10 +192,7 @@ server.resource(
   async (uri, { file }) => {
     if (!instance) return resource([], uri.href);
     return resource(
-      context.lookup(
-        instance.scope,
-        filepath(instance.directory, file as string),
-      ),
+      context.lookup(instance.scope, resolveFileInput(file as string)),
       uri.href,
     );
   },
@@ -230,13 +235,19 @@ server.tool(
       .describe(
         "Optional shared swarm scope. Defaults to the detected git root.",
       ),
+    file_root: z
+      .string()
+      .optional()
+      .describe(
+        "Optional canonical base directory for resolving relative file paths. Useful when multiple worktrees should share one logical file tree.",
+      ),
   },
-  async ({ directory, label, scope }) => {
+  async ({ directory, label, scope, file_root }) => {
     if (instance) {
       return { content: [{ type: "text", text: JSON.stringify(instance) }] };
     }
 
-    instance = registry.register(directory, label, scope);
+    instance = registry.register(directory, label, scope, file_root);
     lastMsgId = getMaxMsgId();
     lastTaskUpdate = getMaxTaskUpdate();
     lastInstancesVersion = getInstancesVersion();
@@ -393,7 +404,7 @@ server.tool(
       type,
       title,
       description,
-      files?.map((item) => filepath(instance!.directory, item)),
+      files?.map((item) => resolveFileInput(item)),
       assignee,
     );
 
@@ -502,7 +513,7 @@ server.tool(
     const id = context.annotate(
       instance.id,
       instance.scope,
-      filepath(instance.directory, file),
+      resolveFileInput(file),
       type,
       content,
     );
@@ -521,7 +532,7 @@ server.tool(
   },
   async ({ file, reason }) => {
     if (!instance) return missing();
-    const path = filepath(instance.directory, file);
+    const path = resolveFileInput(file);
     const result = context.lock(
       instance.id,
       instance.scope,
@@ -538,11 +549,7 @@ server.tool(
   { file: z.string().describe("File path to unlock") },
   async ({ file }) => {
     if (!instance) return missing();
-    context.clearLocks(
-      instance.id,
-      instance.scope,
-      filepath(instance.directory, file),
-    );
+    context.clearLocks(instance.id, instance.scope, resolveFileInput(file));
     return { content: [{ type: "text", text: `Unlocked ${file}` }] };
   },
 );
@@ -553,10 +560,7 @@ server.tool(
   { file: z.string().describe("File path to check") },
   async ({ file }) => {
     if (!instance) return missing();
-    const rows = context.lookup(
-      instance.scope,
-      filepath(instance.directory, file),
-    );
+    const rows = context.lookup(instance.scope, resolveFileInput(file));
     if (!rows.length)
       return {
         content: [{ type: "text", text: "No annotations for this file" }],
