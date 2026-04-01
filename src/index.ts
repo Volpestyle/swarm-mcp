@@ -294,6 +294,80 @@ server.tool(
 );
 
 server.tool(
+  "remove_instance",
+  "Forcefully remove another instance from the swarm. Releases its tasks and locks.",
+  {
+    instance_id: z.string().describe("The instance ID to remove"),
+  },
+  async ({ instance_id }) => {
+    if (!instance) return missing();
+
+    if (instance_id === instance.id) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "Cannot remove yourself. Use deregister instead.",
+          },
+        ],
+      };
+    }
+
+    const target = registry.get(instance_id);
+    if (!target || target.scope !== instance.scope) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Instance ${instance_id} not found in this scope`,
+          },
+        ],
+      };
+    }
+
+    const label = target.label ?? target.id;
+    registry.deregister(instance_id);
+
+    // Notify remaining instances
+    messages.broadcast(
+      instance.id,
+      instance.scope,
+      `[auto] Instance ${label} (${instance_id}) was removed by ${instance.label ?? instance.id}. Its tasks and locks have been released.`,
+    );
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Removed instance ${label} (${instance_id}). Tasks released, locks cleared.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "deregister",
+  "Remove this instance from the swarm and clean up its tasks and locks.",
+  {},
+  async () => {
+    if (!instance) return missing();
+
+    const id = instance.id;
+    cleanup();
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Deregistered instance ${id}. Tasks released, locks cleared.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
   "send_message",
   "Send a message to a specific instance by ID.",
   {

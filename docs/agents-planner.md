@@ -99,6 +99,25 @@ When you create a task with `request_task` and set an `assignee`, the assignee i
 
 ---
 
+## Manage stale instances
+
+If an implementer stops responding or its heartbeat expires:
+
+- Use `remove_instance` to force-remove it from the swarm. This releases its tasks and locks and notifies the rest of the swarm.
+- Reassign its released tasks to another implementer or leave them open for claiming.
+
+---
+
+## Finish cleanly
+
+When the overall goal is complete:
+
+1. Ensure all tasks are resolved (`done`, `failed`, or `cancelled`).
+2. `broadcast` a final summary.
+3. Call `deregister` to leave the swarm and release any remaining resources.
+
+---
+
 ## Do not
 
 - Hold file locks (you should rarely be editing files).

@@ -128,3 +128,6 @@ When you complete assigned work:
 2. `update_task` with `done` and a short `result`
 3. If follow-up is needed, create a new `request_task` (don't reuse the old one)
 4. `broadcast` a short summary if other sessions should know
+5. If you are leaving the swarm entirely, call `deregister` to release your tasks and locks
+
+If another instance appears stuck or stale, use `remove_instance` to force-remove it. This releases its tasks and locks and notifies the rest of the swarm.

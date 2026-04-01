@@ -108,6 +108,15 @@ When you complete a task with `update_task`, the requester (planner) is automati
 
 ---
 
+## Finish cleanly
+
+When there are no more tasks and the planner signals completion:
+
+1. `unlock_file` any remaining locks.
+2. Call `deregister` to leave the swarm and release any remaining resources.
+
+---
+
 ## Do not
 
 - Start editing without calling `check_file` and `lock_file` first.

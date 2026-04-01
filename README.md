@@ -113,19 +113,22 @@ Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are c
 
 ### Instance registry
 
-| Tool             | Description                                                                                                          |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `register`       | Join the swarm. Starts heartbeat + notification poller. See [Registration fields](#registration-fields). |
-| `list_instances` | List all live instances.                                                                                             |
-| `whoami`         | Get this instance's swarm ID.                                                                                        |
+| Tool              | Description                                                                                                          |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `register`        | Join the swarm. Starts heartbeat + notification poller. See [Registration fields](#registration-fields). |
+| `deregister`      | Leave the swarm gracefully. Releases tasks and locks.                                                                |
+| `list_instances`  | List all live instances.                                                                                             |
+| `remove_instance` | Forcefully remove another instance. Releases its tasks and locks.                                                    |
+| `whoami`          | Get this instance's swarm ID.                                                                                        |
 
 ### Messaging
 
-| Tool            | Description                                         |
-| --------------- | --------------------------------------------------- |
-| `send_message`  | Send a direct message to a specific instance by ID. |
-| `broadcast`     | Message all other instances in the swarm.           |
-| `poll_messages` | Read unread messages and mark them as read.         |
+| Tool                | Description                                                                                                    |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `send_message`      | Send a direct message to a specific instance by ID.                                                            |
+| `broadcast`         | Message all other instances in the swarm.                                                                      |
+| `poll_messages`     | Read unread messages and mark them as read.                                                            |
+| `wait_for_activity` | Block until new messages, task changes, or instance changes arrive. Use as an idle loop for autonomous agents. |
 
 ### Task delegation
 
