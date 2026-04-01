@@ -1,22 +1,43 @@
 # Install The Skill
 
-This repo ships an installable skill at [`../skills/swarm-mcp`](../skills/swarm-mcp).
+This repo ships three installable skills:
+
+| Skill | Purpose |
+|-------|---------|
+| [`skills/swarm-mcp`](../skills/swarm-mcp) | General swarm coordination (any role) |
+| [`skills/swarm-planner`](../skills/swarm-planner) | Bootstrap as a planner with autonomous monitoring loop |
+| [`skills/swarm-implementer`](../skills/swarm-implementer) | Bootstrap as an implementer with autonomous work loop |
+
+Use `swarm-mcp` when the session's role is flexible. Use `swarm-planner` or `swarm-implementer` when you want a session to immediately adopt a specific role and enter an autonomous loop.
 
 Important boundary:
 
-- the skill teaches an agent how to use `swarm-mcp` well
-- the skill does not install or mount the MCP server for you
-- configure the `swarm` MCP server first, then install the skill
+- the skills teach an agent how to use `swarm-mcp` well
+- the skills do not install or mount the MCP server for you
+- configure the `swarm` MCP server first, then install the skill(s)
 
 ## Skill Source
 
-Copy this folder as a unit:
+Copy the desired skill folder(s) as a unit:
 
 ```text
 skills/swarm-mcp
+skills/swarm-planner
+skills/swarm-implementer
 ```
 
-The destination folder must still be named `swarm-mcp` and must contain `SKILL.md`.
+Each destination folder must keep its original name and contain `SKILL.md`.
+
+## Claude Code Slash Commands
+
+For Claude Code users, this repo also ships slash commands in [`commands/`](../commands/):
+
+```text
+commands/swarm-planner.md
+commands/swarm-implementer.md
+```
+
+Copy these into your project's `.claude/commands/` directory to enable `/swarm-planner` and `/swarm-implementer` as slash commands.
 
 ## Codex
 
