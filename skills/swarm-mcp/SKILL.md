@@ -61,6 +61,8 @@ When the skill triggers, prefer this sequence unless the task clearly requires s
 5. `poll_messages`
 6. `list_tasks`
 7. Summarize active specialists, open work, and collision risks before taking action
+8. Act on any pending work (claim tasks, respond to messages)
+9. Enter an autonomous loop using `wait_for_activity` — react to messages, task changes, and instance changes as they arrive. Do not wait for user prompting between tasks.
 
 ## Collaboration Heuristics
 
@@ -71,3 +73,6 @@ When the skill triggers, prefer this sequence unless the task clearly requires s
 - Prefer a matching `role:` token when choosing a specialist
 - Prefer a matching `team:` token when the swarm uses soft teams
 - Fall back to any matching specialist, then to a generalist, when the ideal collaborator is unavailable
+- Use `wait_for_activity` as your idle loop — it blocks until new messages, task changes, or instance changes arrive, then returns the updates so you can act immediately
+- Update your progress with `kv_set("progress/<your-instance-id>", ...)` while working on tasks so others can check on you without interrupting
+- Messages prefixed with `[auto]` are system notifications (task assignments, completions, stale-agent recovery) — treat them like any other actionable message

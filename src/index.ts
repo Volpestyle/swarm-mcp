@@ -408,6 +408,16 @@ server.tool(
       assignee,
     );
 
+    // Auto-notify the assignee so they don't need to poll manually
+    if (assignee) {
+      messages.send(
+        instance.id,
+        instance.scope,
+        assignee,
+        `[auto] New ${type} task assigned to you: "${title}" (task_id: ${taskId}). Claim it with claim_task if not auto-claimed.`,
+      );
+    }
+
     return {
       content: [
         {
@@ -452,6 +462,20 @@ server.tool(
       status,
       result,
     );
+
+    // Auto-notify the requester when a task reaches a terminal state
+    if ("ok" in next && (status === "done" || status === "failed")) {
+      const task = tasks.get(task_id, instance.scope);
+      if (task && typeof task.requester === "string" && task.requester !== instance.id) {
+        messages.send(
+          instance.id,
+          instance.scope,
+          task.requester,
+          `[auto] Task "${task.title}" (${task_id}) is now ${status}.${result ? ` Result: ${result}` : ""}`,
+        );
+      }
+    }
+
     return { content: [{ type: "text", text: JSON.stringify(next) }] };
   },
 );
@@ -641,6 +665,111 @@ server.tool(
         {
           type: "text",
           text: JSON.stringify(kv.keys(instance.scope, prefix), null, 2),
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "wait_for_activity",
+  "Block until new swarm activity arrives (messages, task changes, or instance changes), then return what changed. Use this as your idle loop to stay autonomous without user prompting. Returns immediately if there is already unread activity.",
+  {
+    timeout_seconds: z
+      .number()
+      .int()
+      .positive()
+      .max(60)
+      .optional()
+      .default(30)
+      .describe(
+        "Max seconds to wait before returning (even if nothing changed). Default 30.",
+      ),
+  },
+  async ({ timeout_seconds }) => {
+    if (!instance) return missing();
+
+    // Check for already-unread messages before snapshotting — return
+    // immediately so auto-notifications that arrived before this call
+    // are not missed.
+    const existing = messages.peek(instance.id, instance.scope, 50);
+    if (existing.length > 0) {
+      const result: Record<string, unknown> = {
+        changes: ["new_messages"],
+        messages: messages.poll(instance!.id, instance!.scope, 50),
+        tasks: {
+          open: tasks.list(instance!.scope, { status: "open" }),
+          claimed: tasks.list(instance!.scope, { status: "claimed" }),
+          in_progress: tasks.list(instance!.scope, { status: "in_progress" }),
+          done: tasks.list(instance!.scope, { status: "done" }),
+        },
+      };
+      return {
+        content: [
+          { type: "text", text: JSON.stringify(result, null, 2) },
+        ],
+      };
+    }
+
+    const startMsgId = getMaxMsgId();
+    const startTaskUpdate = getMaxTaskUpdate();
+    const startInstancesVersion = getInstancesVersion();
+
+    const deadline = Date.now() + timeout_seconds * 1000;
+    const pollInterval = 2000; // check every 2 seconds
+
+    while (Date.now() < deadline) {
+      const currentMsgId = getMaxMsgId();
+      const currentTaskUpdate = getMaxTaskUpdate();
+      const currentInstancesVersion = getInstancesVersion();
+
+      const changes: string[] = [];
+      if (currentMsgId > startMsgId) changes.push("new_messages");
+      if (currentTaskUpdate > startTaskUpdate) changes.push("task_updates");
+      if (currentInstancesVersion !== startInstancesVersion)
+        changes.push("instance_changes");
+
+      if (changes.length > 0) {
+        // Collect the actual updates to return
+        const result: Record<string, unknown> = { changes };
+
+        if (changes.includes("new_messages")) {
+          result.messages = messages.poll(instance!.id, instance!.scope, 50);
+        }
+        if (changes.includes("task_updates")) {
+          result.tasks = {
+            open: tasks.list(instance!.scope, { status: "open" }),
+            claimed: tasks.list(instance!.scope, { status: "claimed" }),
+            in_progress: tasks.list(instance!.scope, { status: "in_progress" }),
+            done: tasks.list(instance!.scope, { status: "done" }),
+          };
+        }
+        if (changes.includes("instance_changes")) {
+          result.instances = registry.list(instance!.scope);
+        }
+
+        return {
+          content: [
+            { type: "text", text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      }
+
+      // Sleep before next check
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+
+    // Timeout with no changes
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            changes: [],
+            timeout: true,
+            message:
+              "No new activity within timeout. Call wait_for_activity again to keep waiting.",
+          }),
         },
       ],
     };
