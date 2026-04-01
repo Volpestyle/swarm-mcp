@@ -25,7 +25,7 @@ export function root(dir: string) {
 
 export function scope(dir: string, value?: string) {
   const next = value?.trim();
-  if (next) return next;
+  if (next) return clean(next);
   return root(dir);
 }
 
