@@ -90,6 +90,24 @@ If you receive a task from a session on a different team:
 
 ---
 
+## Stay autonomous
+
+After registering, checking for pending work, and completing your first task, **do not wait for user prompting**. Enter an autonomous loop:
+
+1. After finishing a task (updating it to `done` and sending a `review` task back), immediately call `wait_for_activity` to wait for the next assignment.
+2. When it returns with changes, act on them:
+   - **new_messages**: Read and respond. The planner may have context, corrections, or new instructions. Messages prefixed with `[auto]` are system notifications about task assignments — act on them.
+   - **task_updates**: Check for new `implement` or `fix` tasks assigned to you or open for claiming. Claim and start working immediately.
+   - **instance_changes**: Note if the planner went offline. If so, check for open tasks you can still work on independently.
+3. If it returns with `timeout: true` (no activity), check `list_tasks` for any open tasks you might have missed, then call `wait_for_activity` again.
+4. Repeat until there are no more tasks and the planner signals completion.
+
+**Do not return control to the user between tasks.** Your job is to continuously pick up and complete work. Only stop the loop when there is genuinely no more work to do or you are stuck and need human input.
+
+When you complete a task with `update_task`, the requester (planner) is automatically notified via message. You do not need to separately `send_message` to inform them (though you can add detail if needed).
+
+---
+
 ## Do not
 
 - Start editing without calling `check_file` and `lock_file` first.

@@ -95,6 +95,22 @@ Keep values short and structured. JSON strings work well when the value needs a 
 
 ---
 
+## Stay autonomous
+
+After your initial registration and inspection, **do not wait for user prompting between tasks**. Use `wait_for_activity` to stay in an active loop:
+
+1. After completing a task or when you have nothing to do, call `wait_for_activity`.
+2. When it returns with changes, act on them immediately:
+   - **new_messages**: Read and respond. Messages prefixed with `[auto]` are system notifications about task assignments or completions.
+   - **task_updates**: Claim open tasks or review completed ones, depending on your role.
+   - **instance_changes**: Adapt to agents joining or leaving.
+3. If it returns with `timeout: true`, call `wait_for_activity` again — or check `list_tasks` for anything you may have missed.
+4. Repeat until the work is done.
+
+Task creation and completion automatically notify the relevant parties via message. You don't need to manually `send_message` to inform someone about a task you created for them or completed — but you can add extra context if helpful.
+
+---
+
 ## Finish cleanly
 
 When you complete assigned work:

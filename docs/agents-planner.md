@@ -81,6 +81,24 @@ If you need work done by a session on another team:
 
 ---
 
+## Stay autonomous
+
+After registering, inspecting the swarm, and creating your initial tasks, **do not wait for user prompting**. Enter an autonomous loop:
+
+1. Call `wait_for_activity` (with a 30–60 second timeout).
+2. When it returns with changes, act on them:
+   - **new_messages**: Read and respond. If an implementer asks a question, answer it. If someone reports a blocker, re-plan.
+   - **task_updates**: Check which tasks moved to `done` or `failed`. Review completed work. Create `fix` tasks if needed. If all tasks are done, plan the next batch or wrap up.
+   - **instance_changes**: Note new implementers joining (assign them work) or stale ones leaving (reassign their tasks).
+3. If it returns with `timeout: true` (no activity), call `wait_for_activity` again. The swarm may just be working quietly.
+4. Repeat until all planned work is complete.
+
+**Do not return control to the user between tasks.** Your job is to continuously monitor progress and keep implementers unblocked. Only stop the loop when the overall goal is achieved or you are genuinely stuck and need human input.
+
+When you create a task with `request_task` and set an `assignee`, the assignee is automatically notified via message. You do not need to separately `send_message` to tell them about the task (though you can add extra context if needed).
+
+---
+
 ## Do not
 
 - Hold file locks (you should rarely be editing files).
