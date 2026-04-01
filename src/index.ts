@@ -689,6 +689,28 @@ server.tool(
   async ({ timeout_seconds }) => {
     if (!instance) return missing();
 
+    // Check for already-unread messages before snapshotting — return
+    // immediately so auto-notifications that arrived before this call
+    // are not missed.
+    const existing = messages.peek(instance.id, instance.scope, 50);
+    if (existing.length > 0) {
+      const result: Record<string, unknown> = {
+        changes: ["new_messages"],
+        messages: messages.poll(instance!.id, instance!.scope, 50),
+        tasks: {
+          open: tasks.list(instance!.scope, { status: "open" }),
+          claimed: tasks.list(instance!.scope, { status: "claimed" }),
+          in_progress: tasks.list(instance!.scope, { status: "in_progress" }),
+          done: tasks.list(instance!.scope, { status: "done" }),
+        },
+      };
+      return {
+        content: [
+          { type: "text", text: JSON.stringify(result, null, 2) },
+        ],
+      };
+    }
+
     const startMsgId = getMaxMsgId();
     const startTaskUpdate = getMaxTaskUpdate();
     const startInstancesVersion = getInstancesVersion();
