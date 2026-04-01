@@ -93,6 +93,15 @@ Use `kv_set` and `kv_get` for small shared state like plans, owners, or handoff 
 
 Keep values short and structured. JSON strings work well when the value needs a little shape.
 
+### Progress heartbeats
+
+While working on a task, periodically update your status:
+
+- Key: `progress/<your-instance-id>`
+- Value: short summary of current activity and progress (e.g. `"implementing auth middleware, ~50% done"`)
+
+This lets planners and other agents check on you with `kv_list("progress/")` without interrupting your work. Clear your progress key when you finish a task or go idle.
+
 ---
 
 ## Stay autonomous

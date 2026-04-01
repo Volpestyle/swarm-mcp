@@ -40,15 +40,64 @@ function release(ids: string[]) {
 export function prune() {
   const cutoff = now() - STALE;
   const stale = db
-    .query("SELECT id FROM instances WHERE heartbeat < ?")
-    .all(cutoff) as Array<{ id: string }>;
+    .query("SELECT id, scope, label FROM instances WHERE heartbeat < ?")
+    .all(cutoff) as Array<{ id: string; scope: string; label: string | null }>;
 
   if (stale.length) {
     const ids = stale.map((item) => item.id);
     const slots = marks(ids.length);
+
+    // Collect released tasks before modifying them
+    const releasedTasks = db
+      .query(
+        `SELECT id, title, type, assignee, scope FROM tasks
+         WHERE assignee IN (${slots}) AND status IN ('claimed', 'in_progress')`,
+      )
+      .all(...ids) as Array<{
+      id: string;
+      title: string;
+      type: string;
+      assignee: string;
+      scope: string;
+    }>;
+
     const tx = db.transaction(() => {
       release(ids);
       db.run(`DELETE FROM instances WHERE id IN (${slots})`, ids);
+
+      // Broadcast recovery notifications for released tasks
+      if (releasedTasks.length) {
+        // Group released tasks by scope for targeted broadcasts
+        const byScope = new Map<string, typeof releasedTasks>();
+        for (const task of releasedTasks) {
+          const list = byScope.get(task.scope) ?? [];
+          list.push(task);
+          byScope.set(task.scope, list);
+        }
+
+        for (const [scope, scopeTasks] of byScope) {
+          const staleAgent = stale.find((s) =>
+            scopeTasks.some((t) => t.assignee === s.id),
+          );
+          const agentLabel = staleAgent?.label ?? staleAgent?.id ?? "unknown";
+          const taskSummary = scopeTasks
+            .map((t) => `"${t.title}" (${t.type}, task_id: ${t.id})`)
+            .join(", ");
+          const content = `[auto] Agent ${agentLabel} went stale. ${scopeTasks.length} task(s) released back to open: ${taskSummary}. Claim them if they match your role.`;
+
+          // Insert broadcast messages to all remaining instances in this scope
+          const recipients = db
+            .query("SELECT id FROM instances WHERE scope = ?")
+            .all(scope) as Array<{ id: string }>;
+
+          for (const recipient of recipients) {
+            db.run(
+              "INSERT INTO messages (scope, sender, recipient, content) VALUES (?, ?, ?, ?)",
+              [scope, "system", recipient.id, content],
+            );
+          }
+        }
+      }
     });
     tx();
   }
