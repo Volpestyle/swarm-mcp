@@ -36,20 +36,25 @@ These are social contracts, not server rules.
 
 Use `role:planner` for sessions that should:
 
-- break work into steps
-- create or assign tasks
-- keep shared plans in `kv_set`
+- decompose work into task DAGs using `depends_on` and `priority`
+- create tasks with `idempotency_key` for crash-safe retries
 - coordinate implementers and reviewers
+- keep shared plans in `kv_set` and checkpoint periodically for crash recovery
+- handle dependency failure cascades (downstream tasks are auto-cancelled)
+- escalate to the user after 3 consecutive failures on the same work
+- broadcast `[signal:complete]` when all work is done
 - avoid editing code unless the task clearly requires it
 
 ### Implementer
 
 Use `role:implementer` for sessions that should:
 
-- claim implementation or fix tasks
+- claim the highest-priority open implementation or fix tasks
+- skip `blocked` tasks (they auto-unblock when dependencies complete)
 - lock files before editing
 - annotate important findings on touched files
-- update tasks with concrete results when finished
+- report structured results: `{ files_changed, test_status, summary }`
+- recognize `[signal:complete]` as the cue to finish and deregister
 
 ### Reviewer
 
@@ -219,15 +224,16 @@ Each session calls `whoami`, `list_instances`, `poll_messages`, and `list_tasks`
   "type": "implement",
   "title": "Add retry logic to API client",
   "description": "Handle transient 429 and 503 responses in src/api/client.ts.",
-  "files": ["src/api/client.ts", "src/api/client.test.ts"]
+  "files": ["src/api/client.ts", "src/api/client.test.ts"],
+  "priority": 10
 }
 ```
 
-Set `assignee` to a known instance ID for direct assignment, or omit it for any implementer to claim.
+Set `assignee` to a known instance ID for direct assignment, or omit it for any implementer to claim. Set `priority` to control execution order (higher = claimed first). Use `depends_on` with task IDs to express ordering constraints.
 
 #### 4. Implementer picks up the task
 
-`claim_task` -> `update_task` to `in_progress` -> `check_file` -> `lock_file` -> do the work -> `annotate` findings -> `unlock_file` -> `update_task` with `done` and a short result.
+`claim_task` (highest priority first) -> `update_task` to `in_progress` -> `check_file` -> `lock_file` -> do the work -> `annotate` findings -> `unlock_file` -> `update_task` with `done` and a structured result (`{ files_changed, test_status, summary }`).
 
 #### 5. Planner requests review
 
@@ -243,6 +249,27 @@ Set `assignee` to a known instance ID for direct assignment, or omit it for any 
 #### 6. Reviewer completes review
 
 Inspect the task, `check_file` for annotations, add `annotate` notes for risks or follow-ups, then `update_task` with `done`, `failed`, or `cancelled`. Use `send_message` or `request_task` for fix requests.
+
+### DAG workflow: planner emits a dependency graph
+
+The planner creates an entire task graph upfront using `depends_on` and `priority`:
+
+1. **Planner creates tasks with dependencies**: Tasks with `depends_on` start as `blocked`. Tasks without dependencies start as `open`.
+2. **Implementers claim open tasks**: They pick the highest-priority `open` task, skipping `blocked` ones.
+3. **Auto-unblock**: When a task completes, the server checks if any `blocked` tasks had it as a dependency. If all deps are now `done`, the task transitions to `open`.
+4. **Auto-cancel on failure**: If a task fails, all tasks that transitively depend on it are auto-cancelled.
+5. **Planner handles cascades**: After a failure, the planner checks for cancelled tasks and decides: retry the failed task, skip the chain, or restructure.
+
+This eliminates the need for the planner to manually sequence batches via polling.
+
+### Termination protocol
+
+When all planned work is complete:
+
+1. Planner verifies no tasks are `open`, `claimed`, `in_progress`, `blocked`, or `approval_required`.
+2. Planner broadcasts `[signal:complete]` with a summary.
+3. Implementers recognize `[signal:complete]`, finish current work, and call `deregister`.
+4. Planner summarizes results to the user and calls `deregister`.
 
 ### Two-session: planner reviews, implementer builds
 

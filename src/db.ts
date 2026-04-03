@@ -132,9 +132,28 @@ add("instances", "file_root TEXT NOT NULL DEFAULT ''");
 add("messages", "scope TEXT NOT NULL DEFAULT ''");
 add("tasks", "scope TEXT NOT NULL DEFAULT ''");
 add("tasks", "changed_at INTEGER NOT NULL DEFAULT 0");
+add("tasks", "priority INTEGER NOT NULL DEFAULT 0");
+add("tasks", "depends_on TEXT");
+add("tasks", "idempotency_key TEXT");
+add("tasks", "parent_task_id TEXT");
 add("context", "scope TEXT NOT NULL DEFAULT ''");
 
 rebuildKv();
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS kv_scope_updates (
+    scope TEXT PRIMARY KEY,
+    changed_at INTEGER NOT NULL DEFAULT 0
+  )
+`);
+
+db.exec(`
+  INSERT INTO kv_scope_updates (scope, changed_at)
+  SELECT scope, MAX(updated_at) * 1000
+  FROM kv
+  GROUP BY scope
+  ON CONFLICT(scope) DO NOTHING
+`);
 
 db.run("UPDATE instances SET scope = directory WHERE scope = ''");
 db.run("UPDATE instances SET root = directory WHERE root = ''");
@@ -165,4 +184,7 @@ db.exec(
 );
 db.exec(
   "CREATE UNIQUE INDEX IF NOT EXISTS context_lock_idx ON context(scope, file) WHERE type = 'lock'",
+);
+db.exec(
+  "CREATE UNIQUE INDEX IF NOT EXISTS tasks_idempotency_key_idx ON tasks(scope, idempotency_key) WHERE idempotency_key IS NOT NULL",
 );

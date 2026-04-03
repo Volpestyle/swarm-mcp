@@ -19,6 +19,7 @@ let notifyTimer: ReturnType<typeof setInterval> | null = null;
 let lastMsgId = 0;
 let lastTaskUpdate = 0;
 let lastInstancesVersion = "";
+let lastKvUpdate = 0;
 
 const server = new McpServer({
   name: "swarm",
@@ -97,6 +98,11 @@ function getInstancesVersion() {
   return `${row.count}:${row.max}`;
 }
 
+function getMaxKvUpdate() {
+  if (!instance) return 0;
+  return kv.version(instance.scope);
+}
+
 async function poll() {
   if (!instance) return;
 
@@ -157,18 +163,20 @@ server.resource(
   async () => {
     if (!instance)
       return resource(
-        { open: [], claimed: [], in_progress: [] },
+        {
+          open: [],
+          claimed: [],
+          in_progress: [],
+          blocked: [],
+          approval_required: [],
+          done: [],
+          failed: [],
+          cancelled: [],
+        },
         "swarm://tasks",
       );
 
-    return resource(
-      {
-        open: tasks.list(instance.scope, { status: "open" }),
-        claimed: tasks.list(instance.scope, { status: "claimed" }),
-        in_progress: tasks.list(instance.scope, { status: "in_progress" }),
-      },
-      "swarm://tasks",
-    );
+    return resource(tasks.snapshot(instance.scope), "swarm://tasks");
   },
 );
 
@@ -251,6 +259,7 @@ server.tool(
     lastMsgId = getMaxMsgId();
     lastTaskUpdate = getMaxTaskUpdate();
     lastInstancesVersion = getInstancesVersion();
+    lastKvUpdate = getMaxKvUpdate();
 
     heartbeatTimer = setInterval(() => {
       if (instance) registry.heartbeat(instance.id);
@@ -267,14 +276,25 @@ server.tool(
 server.tool(
   "list_instances",
   "List all currently active agent sessions in this swarm scope.",
-  {},
-  async () => {
+  {
+    label_contains: z
+      .string()
+      .optional()
+      .describe(
+        "Filter instances whose label contains this substring (e.g. 'role:implementer')",
+      ),
+  },
+  async ({ label_contains }) => {
     if (!instance) return missing();
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify(registry.list(instance.scope), null, 2),
+          text: JSON.stringify(
+            registry.list(instance.scope, label_contains),
+            null,
+            2,
+          ),
         },
       ],
     };
@@ -454,8 +474,50 @@ server.tool(
       .string()
       .optional()
       .describe("Specific instance ID to assign to, or omit for any taker"),
+    priority: z
+      .number()
+      .int()
+      .optional()
+      .default(0)
+      .describe(
+        "Priority level. Higher = more urgent. Default 0. Agents claim highest-priority open tasks first.",
+      ),
+    depends_on: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Task IDs this task depends on. Task stays blocked until all dependencies reach done.",
+      ),
+    idempotency_key: z
+      .string()
+      .optional()
+      .describe(
+        "Unique key to prevent duplicate task creation. If a task with this key exists, returns the existing task.",
+      ),
+    parent_task_id: z
+      .string()
+      .optional()
+      .describe("Optional parent task ID for tree-structured work tracking."),
+    approval_required: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        "If true, task starts in approval_required status and must be approved before work begins.",
+      ),
   },
-  async ({ type, title, description, files, assignee }) => {
+  async ({
+    type,
+    title,
+    description,
+    files,
+    assignee,
+    priority,
+    depends_on,
+    idempotency_key,
+    parent_task_id,
+    approval_required,
+  }) => {
     if (!instance) return missing();
 
     if (assignee) {
@@ -472,23 +534,32 @@ server.tool(
       }
     }
 
-    const taskId = tasks.request(
-      instance.id,
-      instance.scope,
-      type,
-      title,
+    const result = tasks.request(instance.id, instance.scope, type, title, {
       description,
-      files?.map((item) => resolveFileInput(item)),
+      files: files?.map((item) => resolveFileInput(item)),
       assignee,
-    );
+      priority,
+      depends_on,
+      idempotency_key,
+      parent_task_id,
+      approval_required,
+    });
 
-    // Auto-notify the assignee so they don't need to poll manually
-    if (assignee) {
+    if ("error" in result) {
+      return { content: [{ type: "text", text: result.error }] };
+    }
+
+    // Auto-notify only for newly-created tasks assigned to another session.
+    if (assignee && !result.existing && assignee !== instance.id) {
+      const statusNote =
+        result.status !== "claimed"
+          ? ` (currently ${result.status} — will be claimable when ready)`
+          : "";
       messages.send(
         instance.id,
         instance.scope,
         assignee,
-        `[auto] New ${type} task assigned to you: "${title}" (task_id: ${taskId}). Claim it with claim_task if not auto-claimed.`,
+        `[auto] New ${type} task assigned to you: "${title}" (task_id: ${result.id})${statusNote}. Claim it with claim_task if not auto-claimed.`,
       );
     }
 
@@ -497,11 +568,112 @@ server.tool(
         {
           type: "text",
           text: JSON.stringify({
-            task_id: taskId,
-            status: assignee ? "claimed" : "open",
+            task_id: result.id,
+            status: result.status,
+            ...(result.existing ? { existing: true } : {}),
           }),
         },
       ],
+    };
+  },
+);
+
+server.tool(
+  "request_task_batch",
+  "Create multiple tasks atomically in a single transaction. Supports $N references (1-indexed) for dependencies between tasks in the batch. Rolls back entirely on validation failure.",
+  {
+    tasks: z
+      .array(
+        z.object({
+          type: z
+            .enum(["review", "implement", "fix", "test", "research", "other"])
+            .describe("Type of task"),
+          title: z.string().describe("Short title for the task"),
+          description: z
+            .string()
+            .optional()
+            .describe("Detailed description"),
+          files: z.array(z.string()).optional().describe("Relevant file paths"),
+          assignee: z.string().optional().describe("Instance ID to assign to"),
+          priority: z.number().int().optional().default(0).describe("Priority level"),
+          depends_on: z
+            .array(z.string())
+            .optional()
+            .describe(
+              "Task IDs or $N refs (1-indexed, no forward refs). Example: [\"$1\", \"$2\"] depends on the 1st and 2nd tasks in this batch.",
+            ),
+          idempotency_key: z
+            .string()
+            .optional()
+            .describe("Prevents duplicate creation on retry"),
+          parent_task_id: z
+            .string()
+            .optional()
+            .describe("Parent task ID or $N ref"),
+          approval_required: z
+            .boolean()
+            .optional()
+            .default(false)
+            .describe("If true, task requires approval before work begins"),
+        }),
+      )
+      .min(1)
+      .max(50)
+      .describe("Array of task specifications. $N references are 1-indexed positional refs within this array."),
+  },
+  async ({ tasks: taskSpecs }) => {
+    if (!instance) return missing();
+
+    // Resolve file paths
+    const resolved = taskSpecs.map((spec) => ({
+      ...spec,
+      files: spec.files?.map((f) => resolveFileInput(f)),
+    }));
+
+    const result = tasks.requestBatch(
+      instance.id,
+      instance.scope,
+      resolved,
+      (assigneeId) => {
+        const target = registry.get(assigneeId);
+        return !!target && target.scope === instance!.scope;
+      },
+    );
+
+    if ("error" in result) {
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+      };
+    }
+
+    // Send auto-notifications grouped by assignee
+    const notifs = new Map<string, string[]>();
+    for (let i = 0; i < taskSpecs.length; i++) {
+      const spec = taskSpecs[i];
+      const taskResult = result.tasks[i];
+      if (spec.assignee && taskResult.new) {
+        const list = notifs.get(spec.assignee) ?? [];
+        const statusNote =
+          taskResult.status !== "claimed"
+            ? ` (${taskResult.status})`
+            : "";
+        list.push(`"${spec.title}" (${spec.type}, task_id: ${taskResult.id})${statusNote}`);
+        notifs.set(spec.assignee, list);
+      }
+    }
+    for (const [assignee, taskList] of notifs) {
+      if (assignee !== instance.id) {
+        messages.send(
+          instance.id,
+          instance.scope,
+          assignee,
+          `[auto] ${taskList.length} task(s) assigned to you: ${taskList.join(", ")}. Claim open tasks with claim_task.`,
+        );
+      }
+    }
+
+    return {
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };
   },
 );
@@ -555,6 +727,35 @@ server.tool(
 );
 
 server.tool(
+  "approve_task",
+  "Approve a task in approval_required status. Transitions to open/claimed (or blocked if deps unmet).",
+  { task_id: z.string().describe("The task ID to approve") },
+  async ({ task_id }) => {
+    if (!instance) return missing();
+    const result = tasks.approve(task_id, instance.scope);
+
+    // Auto-notify the assignee if task became claimed
+    if ("ok" in result && result.status === "claimed") {
+      const task = tasks.get(task_id, instance.scope);
+      if (
+        task &&
+        typeof task.assignee === "string" &&
+        task.assignee !== instance.id
+      ) {
+        messages.send(
+          instance.id,
+          instance.scope,
+          task.assignee,
+          `[auto] Task "${task.title}" (${task_id}) has been approved and is now claimed by you.`,
+        );
+      }
+    }
+
+    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+  },
+);
+
+server.tool(
   "get_task",
   "Get full details of a specific task in this swarm scope.",
   { task_id: z.string().describe("The task ID") },
@@ -571,7 +772,7 @@ server.tool(
   "List tasks in this swarm scope, optionally filtered by status, assignee, or requester.",
   {
     status: z
-      .enum(["open", "claimed", "in_progress", "done", "failed", "cancelled"])
+      .enum(["open", "claimed", "in_progress", "done", "failed", "cancelled", "blocked", "approval_required"])
       .optional(),
     assignee: z.string().optional().describe("Filter by assignee instance ID"),
     requester: z
@@ -716,6 +917,33 @@ server.tool(
 );
 
 server.tool(
+  "kv_append",
+  "Atomically append a value to a JSON array in the KV store. Creates the key with [value] if it doesn't exist. If the existing value is not an array, wraps it in one first.",
+  {
+    key: z.string().describe("The key to append to"),
+    value: z
+      .string()
+      .describe("The value to append (must be valid JSON)"),
+  },
+  async ({ key, value }) => {
+    if (!instance) return missing();
+    try {
+      JSON.parse(value);
+    } catch {
+      return {
+        content: [{ type: "text", text: "Value must be valid JSON" }],
+      };
+    }
+    const length = kv.append(instance.scope, key, value);
+    return {
+      content: [
+        { type: "text", text: `Appended to \"${key}\" (${length} items)` },
+      ],
+    };
+  },
+);
+
+server.tool(
   "kv_delete",
   "Delete a key from the shared key-value store for this scope.",
   { key: z.string().describe("The key to delete") },
@@ -747,7 +975,7 @@ server.tool(
 
 server.tool(
   "wait_for_activity",
-  "Block until new swarm activity arrives (messages, task changes, or instance changes), then return what changed. Use this as your idle loop to stay autonomous without user prompting. Returns immediately if there is already unread activity.",
+  "Block until new swarm activity arrives (messages, task changes, KV changes, or instance changes), then return what changed. Use this as your idle loop to stay autonomous without user prompting. Returns immediately if there is already unread activity.",
   {
     timeout_seconds: z
       .number()
@@ -771,12 +999,7 @@ server.tool(
       const result: Record<string, unknown> = {
         changes: ["new_messages"],
         messages: messages.poll(instance!.id, instance!.scope, 50),
-        tasks: {
-          open: tasks.list(instance!.scope, { status: "open" }),
-          claimed: tasks.list(instance!.scope, { status: "claimed" }),
-          in_progress: tasks.list(instance!.scope, { status: "in_progress" }),
-          done: tasks.list(instance!.scope, { status: "done" }),
-        },
+        tasks: tasks.snapshot(instance!.scope),
       };
       return {
         content: [
@@ -788,6 +1011,7 @@ server.tool(
     const startMsgId = getMaxMsgId();
     const startTaskUpdate = getMaxTaskUpdate();
     const startInstancesVersion = getInstancesVersion();
+    const startKvUpdate = getMaxKvUpdate();
 
     const deadline = Date.now() + timeout_seconds * 1000;
     const pollInterval = 2000; // check every 2 seconds
@@ -796,12 +1020,14 @@ server.tool(
       const currentMsgId = getMaxMsgId();
       const currentTaskUpdate = getMaxTaskUpdate();
       const currentInstancesVersion = getInstancesVersion();
+      const currentKvUpdate = getMaxKvUpdate();
 
       const changes: string[] = [];
       if (currentMsgId > startMsgId) changes.push("new_messages");
       if (currentTaskUpdate > startTaskUpdate) changes.push("task_updates");
       if (currentInstancesVersion !== startInstancesVersion)
         changes.push("instance_changes");
+      if (currentKvUpdate > startKvUpdate) changes.push("kv_updates");
 
       if (changes.length > 0) {
         // Collect the actual updates to return
@@ -811,12 +1037,7 @@ server.tool(
           result.messages = messages.poll(instance!.id, instance!.scope, 50);
         }
         if (changes.includes("task_updates")) {
-          result.tasks = {
-            open: tasks.list(instance!.scope, { status: "open" }),
-            claimed: tasks.list(instance!.scope, { status: "claimed" }),
-            in_progress: tasks.list(instance!.scope, { status: "in_progress" }),
-            done: tasks.list(instance!.scope, { status: "done" }),
-          };
+          result.tasks = tasks.snapshot(instance!.scope);
         }
         if (changes.includes("instance_changes")) {
           result.instances = registry.list(instance!.scope);

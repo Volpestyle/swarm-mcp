@@ -24,7 +24,8 @@ No `role:` token means the session is a generalist.
 Immediately after registering, call `poll_messages`, `list_tasks`, and `list_instances`.
 
 - If you have unread messages, read and act on them before starting new work.
-- If there are tasks assigned to you (by instance ID or matching your `role:`), claim and prioritize them.
+- If there are tasks assigned to you (by instance ID or matching your `role:`), claim and prioritize them. **Prefer the highest-priority task**.
+- Skip tasks with `blocked` status — they are waiting on dependencies and will become `open` automatically.
 - If you see open `review` tasks and you handle reviews, claim them before starting implementation work.
 - If nothing is waiting, proceed with your own task.
 
@@ -38,7 +39,7 @@ When you receive a task via `request_task`:
 
 - `claim_task` immediately so no other session takes it
 - Call `update_task` to `in_progress` when you start
-- Call `update_task` to `done` with a short `result` when finished, or `failed` with what went wrong
+- Call `update_task` to `done` with a structured result when finished (see below), or `failed` with what went wrong
 - If the task requires follow-up, create a new `request_task` (e.g. the implementer sends a `review` task back to the planner)
 
 When you receive a direct message via `send_message`:
@@ -48,6 +49,28 @@ When you receive a direct message via `send_message`:
 When you see a `broadcast`:
 
 - Use it for awareness. No response is required unless the content affects your current work.
+- If the broadcast contains `[signal:complete]`, the planner is signaling all work is done — finish current work and deregister.
+
+---
+
+## Structured results
+
+When completing a task, prefer a JSON `result`:
+
+```json
+{
+  "files_changed": ["src/foo.ts"],
+  "test_status": "pass",
+  "summary": "What was done and why."
+}
+```
+
+Fields:
+- `files_changed`: array of file paths you modified
+- `test_status`: `"pass"`, `"fail"`, or `"skipped"`
+- `summary`: short description of what you did
+
+Fall back to a plain string if you cannot produce structured output.
 
 ---
 
@@ -69,13 +92,17 @@ Unlock it with `unlock_file` as soon as you are done. Keep locks short and speci
 
 Use `request_task` for review, implementation, fix, test, or research handoffs.
 
-Include a short title, a useful description, and relevant `files` when possible. Set `assignee` only when you want a specific active session to take it.
+Include a short title, a useful description, and relevant `files` when possible. Set `assignee` only when you want a specific active session to take it. Set `priority` to control execution order (higher = more urgent).
+
+Use `depends_on` to express task ordering — a dependent task stays `blocked` until all its dependencies reach `done`. If a dependency fails, downstream tasks are auto-cancelled.
 
 When choosing who to delegate to, inspect `list_instances` labels:
 
 - Prefer a session with a matching `role:` token (e.g. `role:reviewer` for review work)
 - If the swarm uses `team:` labels, prefer a same-team specialist
 - Fall back to any matching specialist, then to a generalist
+- If multiple planners are active, coordinate ownership before creating tasks in shared areas — use `send_message` and `kv_set` to divide domains
+- For planner sessions, check `kv_get("owner/planner")` to see which planner currently owns the swarm-wide planner role
 
 ---
 
@@ -111,7 +138,8 @@ After your initial registration and inspection, **do not wait for user prompting
 1. After completing a task or when you have nothing to do, call `wait_for_activity`.
 2. When it returns with changes, act on them immediately:
    - **new_messages**: Read and respond. Messages prefixed with `[auto]` are system notifications about task assignments or completions.
-   - **task_updates**: Claim open tasks or review completed ones, depending on your role.
+   - **task_updates**: Claim open tasks (highest priority first) or review completed ones, depending on your role. Skip `blocked` tasks.
+   - **kv_updates**: Check for plan changes or progress updates from other agents.
    - **instance_changes**: Adapt to agents joining or leaving.
 3. If it returns with `timeout: true`, call `wait_for_activity` again — or check `list_tasks` for anything you may have missed.
 4. Repeat until the work is done.
@@ -125,7 +153,7 @@ Task creation and completion automatically notify the relevant parties via messa
 When you complete assigned work:
 
 1. `unlock_file` any files you locked
-2. `update_task` with `done` and a short `result`
+2. `update_task` with `done` and a structured result
 3. If follow-up is needed, create a new `request_task` (don't reuse the old one)
 4. `broadcast` a short summary if other sessions should know
 5. If you are leaving the swarm entirely, call `deregister` to release your tasks and locks
