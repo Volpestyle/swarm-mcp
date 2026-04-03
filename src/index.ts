@@ -980,12 +980,11 @@ server.tool(
     timeout_seconds: z
       .number()
       .int()
-      .positive()
-      .max(60)
+      .min(0)
       .optional()
-      .default(30)
+      .default(0)
       .describe(
-        "Max seconds to wait before returning (even if nothing changed). Default 30.",
+        "Max seconds to wait before returning (even if nothing changed). Default 0 means wait indefinitely.",
       ),
   },
   async ({ timeout_seconds }) => {
@@ -1013,10 +1012,10 @@ server.tool(
     const startInstancesVersion = getInstancesVersion();
     const startKvUpdate = getMaxKvUpdate();
 
-    const deadline = Date.now() + timeout_seconds * 1000;
+    const deadline = timeout_seconds > 0 ? Date.now() + timeout_seconds * 1000 : 0;
     const pollInterval = 2000; // check every 2 seconds
 
-    while (Date.now() < deadline) {
+    while (deadline === 0 || Date.now() < deadline) {
       const currentMsgId = getMaxMsgId();
       const currentTaskUpdate = getMaxTaskUpdate();
       const currentInstancesVersion = getInstancesVersion();

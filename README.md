@@ -92,6 +92,20 @@ The `register` tool accepts these parameters. Only `directory` is required.
 | `file_root` | No | Canonical base path for resolving relative file paths in `annotate`, `lock_file`, `check_file`, and task `files`. Useful when disposable worktrees should share one logical file tree. |
 | `label` | No | Free-form identity text. Recommended convention: machine-readable space-separated tokens like `provider:codex-cli role:planner`. The `role:` token is optional; if missing, the session is treated as a generalist. |
 
+### Task features
+
+Tasks support several features for building autonomous DAG-based workflows:
+
+| Feature | Description |
+|---------|-------------|
+| `priority` | Integer (default 0). Higher = more urgent. `list_tasks` returns tasks sorted by priority descending. Implementers claim the highest-priority open task first. |
+| `depends_on` | Array of task IDs. A task with unmet dependencies starts as `blocked` and auto-transitions to `open` when all deps reach `done`. If any dependency fails, downstream tasks are auto-cancelled. |
+| `idempotency_key` | Unique string. If a task with this key already exists, `request_task` returns the existing task instead of creating a duplicate. Essential for crash-safe plan retries. |
+| `parent_task_id` | Optional parent task ID for tree-structured work tracking. |
+| `approval_required` | If true, task starts in `approval_required` status and must be approved via `approve_task` before work begins. |
+
+Task statuses: `open`, `claimed`, `in_progress`, `done`, `failed`, `cancelled`, `blocked`, `approval_required`.
+
 ---
 
 ## Auto-cleanup
@@ -128,17 +142,19 @@ Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are c
 | `send_message`      | Send a direct message to a specific instance by ID.                                                            |
 | `broadcast`         | Message all other instances in the swarm.                                                                      |
 | `poll_messages`     | Read unread messages and mark them as read.                                                            |
-| `wait_for_activity` | Block until new messages, task changes, or instance changes arrive. Use as an idle loop for autonomous agents. |
+| `wait_for_activity` | Block until new messages, task changes, KV changes, or instance changes arrive. Use as an idle loop for autonomous agents. |
 
 ### Task delegation
 
-| Tool           | Description                                                                                                               |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `request_task` | Post a task (types: `review`, `implement`, `fix`, `test`, `research`, `other`). Optionally assign to a specific instance. |
-| `claim_task`   | Claim an open task. Prevents double-claiming.                                                                             |
-| `update_task`  | Update a claimed task to `in_progress`, `done`, `failed`, or `cancelled`. Attach a result when useful.                    |
-| `get_task`     | Get full details of a task.                                                                                               |
-| `list_tasks`   | Filter tasks by status, assignee, or requester.                                                                           |
+| Tool                 | Description                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `request_task`       | Post a task (types: `review`, `implement`, `fix`, `test`, `research`, `other`). Supports `priority`, `depends_on`, `idempotency_key`, `parent_task_id`, and `approval_required`. |
+| `request_task_batch` | Create multiple tasks atomically in a single transaction. Supports `$N` references (1-indexed) for intra-batch dependencies. |
+| `claim_task`         | Claim an open task. Prevents double-claiming.                                                                             |
+| `update_task`        | Update a claimed task to `in_progress`, `done`, `failed`, or `cancelled`. Attach a result when useful.                    |
+| `approve_task`       | Approve a task in `approval_required` status. Transitions to `open`/`claimed` (or `blocked` if deps unmet).               |
+| `get_task`           | Get full details of a task.                                                                                               |
+| `list_tasks`         | Filter tasks by status, assignee, or requester. Sorted by priority (highest first).                                       |
 
 ### Shared context and file locking
 
@@ -168,7 +184,7 @@ The server exposes 4 MCP resources. `swarm://inbox`, `swarm://tasks`, and `swarm
 | URI                        | Description                                |
 | -------------------------- | ------------------------------------------ |
 | `swarm://inbox`            | Unread messages for this instance.         |
-| `swarm://tasks`            | Open, claimed, and in-progress tasks.      |
+| `swarm://tasks`            | Tasks grouped by status, including open, claimed, in-progress, blocked, approval-required, done, failed, and cancelled. |
 | `swarm://instances`        | All active instances.                      |
 | `swarm://context?file=...` | Annotations and locks for a specific file. |
 

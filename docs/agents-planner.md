@@ -167,7 +167,7 @@ When `list_instances` shows other sessions with `role:planner`, you must coordin
 
 ### Resolve disagreements
 
-- Prefer the planner who registered first (lower instance ID) as tiebreaker when consensus fails
+- Prefer the planner who registered first (earliest `list_instances` entry / `registered_at`) as tiebreaker when consensus fails
 - If both planners have active tasks in a contested area, the one with more in-progress work keeps ownership
 - Escalate to the user only if both planners are stuck and cannot converge
 

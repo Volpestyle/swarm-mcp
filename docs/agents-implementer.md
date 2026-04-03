@@ -21,7 +21,8 @@ At the start of every session, call `register` before using any other swarm tool
 
 Immediately after registering, call `poll_messages`, `list_tasks`, and `list_instances`.
 
-- If there are `implement` or `fix` tasks assigned to you or open for claiming, prioritize them.
+- If there are `implement` or `fix` tasks assigned to you or open for claiming, prioritize them. **Prefer the highest-priority task**.
+- Skip tasks with `blocked` status — they are waiting on dependencies and will become `open` automatically.
 - If you have unread messages, read and act on them before starting new work.
 - Note which planners and reviewers are active by checking `role:` tokens in `list_instances`.
 - Check `poll_messages` and `list_tasks` periodically, not just at startup.
@@ -39,7 +40,26 @@ When you find a task to work on:
 5. Do the work.
 6. `annotate` important findings on files you touched -- things a reviewer or future session needs to know.
 7. `unlock_file` as soon as you are done editing.
-8. `update_task` to `done` with a short `result` describing what you changed and why.
+8. `update_task` to `done` with a structured result (see below).
+
+### Structured results
+
+When completing a task, include a JSON `result` so the reviewer can assess your work:
+
+```json
+{
+  "files_changed": ["src/auth/middleware.ts", "src/auth/middleware.test.ts"],
+  "test_status": "pass",
+  "summary": "Added JWT validation middleware with 401 response for invalid tokens."
+}
+```
+
+Fields:
+- `files_changed`: array of file paths you modified
+- `test_status`: `"pass"`, `"fail"`, or `"skipped"`
+- `summary`: short description of what you did and why
+
+If you cannot produce structured output (e.g. cannot run tests), fall back to a plain string result.
 
 ---
 
@@ -96,8 +116,9 @@ After registering, checking for pending work, and completing your first task, **
 
 1. After finishing a task (updating it to `done` and sending a `review` task back), immediately call `wait_for_activity` to wait for the next assignment.
 2. When it returns with changes, act on them:
-   - **new_messages**: Read and respond. The planner may have context, corrections, or new instructions. Messages prefixed with `[auto]` are system notifications about task assignments — act on them.
-   - **task_updates**: Check for new `implement` or `fix` tasks assigned to you or open for claiming. Claim and start working immediately.
+   - **new_messages**: Read and respond. The planner may have context, corrections, or new instructions. Messages prefixed with `[auto]` are system notifications about task assignments — act on them. If you receive a broadcast containing `[signal:complete]`, proceed to shutdown (see below).
+   - **task_updates**: Check for new `implement` or `fix` tasks assigned to you or open for claiming. Prefer highest priority. Skip `blocked` tasks. Claim and start working immediately.
+   - **kv_updates**: Check if the planner updated a plan or progress key relevant to your work.
    - **instance_changes**: Note if the planner went offline. If so, check for open tasks you can still work on independently.
 3. If it returns with `timeout: true` (no activity), check `list_tasks` for any open tasks you might have missed, then call `wait_for_activity` again.
 4. Repeat until there are no more tasks and the planner signals completion.
@@ -105,6 +126,17 @@ After registering, checking for pending work, and completing your first task, **
 **Do not return control to the user between tasks.** Your job is to continuously pick up and complete work. Only stop the loop when there is genuinely no more work to do or you are stuck and need human input.
 
 When you complete a task with `update_task`, the requester (planner) is automatically notified via message. You do not need to separately `send_message` to inform them (though you can add detail if needed).
+
+---
+
+## Recognize termination
+
+When you receive a broadcast containing `[signal:complete]`:
+
+1. Finish any task currently in progress — do not abandon mid-edit.
+2. `unlock_file` any remaining locks.
+3. `update_task` to `done` for any in-progress work.
+4. Call `deregister` to leave the swarm.
 
 ---
 
@@ -123,3 +155,4 @@ When there are no more tasks and the planner signals completion:
 - Hold locks longer than needed -- lock one file, edit it, unlock it.
 - Forget to `update_task` when you finish -- the planner is waiting on it.
 - Create planning or decomposition tasks -- that is the planner's job.
+- Try to claim `blocked` tasks -- they will become `open` automatically when their dependencies complete.
