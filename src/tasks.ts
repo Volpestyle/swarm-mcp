@@ -276,107 +276,113 @@ export function update(
   status: "in_progress" | "done" | "failed" | "cancelled",
   result?: string,
 ) {
-  const task = db
-    .query(
-      "SELECT id, scope, requester, assignee, status, files, depends_on FROM tasks WHERE id = ? AND scope = ?",
-    )
-    .get(id, scope) as TaskRow | null;
+  const tx = db.transaction(() => {
+    const task = db
+      .query(
+        "SELECT id, scope, requester, assignee, status, files, depends_on FROM tasks WHERE id = ? AND scope = ?",
+      )
+      .get(id, scope) as TaskRow | null;
 
-  if (!task) return { error: "Task not found" };
+    if (!task) return { error: "Task not found" };
 
-  // Terminal states are final
-  if (["done", "failed", "cancelled"].includes(task.status)) {
-    return { error: `Task is already ${task.status}` };
-  }
-
-  // Blocked/approval_required can only be cancelled
-  if (
-    (task.status === "blocked" || task.status === "approval_required") &&
-    status !== "cancelled"
-  ) {
-    const hint =
-      task.status === "blocked"
-        ? "It will auto-unblock when dependencies complete."
-        : "Use approve_task to approve it first.";
-    return { error: `Task is ${task.status}. ${hint}` };
-  }
-
-  // Permission checks
-  if (status === "cancelled") {
-    if (task.requester !== actor && task.assignee !== actor) {
-      return { error: "Only the requester or assignee can cancel this task" };
+    // Terminal states are final
+    if (["done", "failed", "cancelled"].includes(task.status)) {
+      return { error: `Task is already ${task.status}` };
     }
-  } else {
-    if (!task.assignee)
-      return { error: "Task must be claimed before it can be updated" };
-    if (task.assignee !== actor)
-      return { error: "Only the assignee can update this task" };
-  }
 
-  if (status === "in_progress" && task.status !== "claimed") {
-    return { error: "Task must be claimed before it can move to in_progress" };
-  }
+    // Blocked/approval_required can only be cancelled
+    if (
+      (task.status === "blocked" || task.status === "approval_required") &&
+      status !== "cancelled"
+    ) {
+      const hint =
+        task.status === "blocked"
+          ? "It will auto-unblock when dependencies complete."
+          : "Use approve_task to approve it first.";
+      return { error: `Task is ${task.status}. ${hint}` };
+    }
 
-  db.run(
-    "UPDATE tasks SET status = ?, result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ? AND scope = ?",
-    [status, result ?? null, stamp(), id, scope],
-  );
+    // Permission checks
+    if (status === "cancelled") {
+      if (task.requester !== actor && task.assignee !== actor) {
+        return { error: "Only the requester or assignee can cancel this task" };
+      }
+    } else {
+      if (!task.assignee)
+        return { error: "Task must be claimed before it can be updated" };
+      if (task.assignee !== actor)
+        return { error: "Only the assignee can update this task" };
+    }
 
-  // Dependency cascades
-  if (status === "done") {
-    processCompletion(id, scope);
-  } else if (status === "failed" || status === "cancelled") {
-    processFailure(id, scope);
-  }
+    if (status === "in_progress" && task.status !== "claimed") {
+      return { error: "Task must be claimed before it can move to in_progress" };
+    }
 
-  return { ok: true as const };
+    db.run(
+      "UPDATE tasks SET status = ?, result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ? AND scope = ?",
+      [status, result ?? null, stamp(), id, scope],
+    );
+
+    // Dependency cascades
+    if (status === "done") {
+      processCompletion(id, scope);
+    } else if (status === "failed" || status === "cancelled") {
+      processFailure(id, scope);
+    }
+
+    return { ok: true as const };
+  });
+  return tx();
 }
 
 export function approve(id: string, scope: string) {
-  const task = db
-    .query(
-      "SELECT id, scope, depends_on, assignee, status FROM tasks WHERE id = ? AND scope = ?",
-    )
-    .get(id, scope) as TaskRow | null;
+  const tx = db.transaction(() => {
+    const task = db
+      .query(
+        "SELECT id, scope, depends_on, assignee, status FROM tasks WHERE id = ? AND scope = ?",
+      )
+      .get(id, scope) as TaskRow | null;
 
-  if (!task) return { error: "Task not found" };
-  if (task.status !== "approval_required") {
-    return { error: `Task is ${task.status}, not approval_required` };
-  }
+    if (!task) return { error: "Task not found" };
+    if (task.status !== "approval_required") {
+      return { error: `Task is ${task.status}, not approval_required` };
+    }
 
-  // Check if any dependency has failed/cancelled
-  if (task.depends_on) {
-    const deps = JSON.parse(task.depends_on as string) as string[];
-    const state = dependencyState(scope, deps);
+    // Check if any dependency has failed/cancelled
+    if (task.depends_on) {
+      const deps = JSON.parse(task.depends_on as string) as string[];
+      const state = dependencyState(scope, deps);
 
-    if (state.kind === "failed") {
-      db.run(
-        "UPDATE tasks SET status = 'cancelled', result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?",
-        [autoCancelledResult(state.depId, state.depStatus), stamp(), id],
-      );
-      processFailure(id, scope);
-      return {
-        ok: true as const,
-        status: "cancelled" as TaskStatus,
+      if (state.kind === "failed") {
+        db.run(
+          "UPDATE tasks SET status = 'cancelled', result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?",
+          [autoCancelledResult(state.depId, state.depStatus), stamp(), id],
+        );
+        processFailure(id, scope);
+        return {
+          ok: true as const,
+          status: "cancelled" as TaskStatus,
           reason: "dependency_failed",
-      };
+        };
+      }
+
+      if (state.kind === "blocked") {
+        db.run(
+          "UPDATE tasks SET status = 'blocked', updated_at = unixepoch(), changed_at = ? WHERE id = ?",
+          [stamp(), id],
+        );
+        return { ok: true as const, status: "blocked" as TaskStatus };
+      }
     }
 
-    if (state.kind === "blocked") {
-      db.run(
-        "UPDATE tasks SET status = 'blocked', updated_at = unixepoch(), changed_at = ? WHERE id = ?",
-        [stamp(), id],
-      );
-      return { ok: true as const, status: "blocked" as TaskStatus };
-    }
-  }
-
-  const newStatus: TaskStatus = task.assignee ? "claimed" : "open";
-  db.run(
-    "UPDATE tasks SET status = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?",
-    [newStatus, stamp(), id],
-  );
-  return { ok: true as const, status: newStatus };
+    const newStatus: TaskStatus = task.assignee ? "claimed" : "open";
+    db.run(
+      "UPDATE tasks SET status = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?",
+      [newStatus, stamp(), id],
+    );
+    return { ok: true as const, status: newStatus };
+  });
+  return tx();
 }
 
 // ---------------------------------------------------------------------------
