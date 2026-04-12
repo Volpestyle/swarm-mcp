@@ -1,5 +1,7 @@
 node_modules/
 dist/
+apps/swarm-ui/src-tauri/target/
+nvim.log
 *.db
 *.db-wal
 *.db-shm
