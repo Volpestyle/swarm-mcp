@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "swarm-ui",
+  "version": "0.1.0",
+  "identifier": "com.swarm.ui",
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "bundle": {
+    "active": false,
+    "icon": []
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "swarm-ui",
+        "width": 1440,
+        "height": 960,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "transparent": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'",
+      "freezePrototype": false
+    }
+  }
+}

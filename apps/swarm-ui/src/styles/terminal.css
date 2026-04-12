@@ -1,0 +1,390 @@
+/* =============================================================================
+ * terminal.css — Terminal container and node styling
+ *
+ * Styles for terminal node cards, status indicators, and the ghostty-web /
+ * xterm.js mount point. Uses CSS custom properties for theming.
+ *
+ * Agent 4's Svelte components import this file for terminal-specific styles.
+ * Tailwind handles layout; this file handles terminal-domain styles.
+ * ============================================================================= */
+
+/* ---------------------------------------------------------------------------
+ * Theme variables
+ * --------------------------------------------------------------------------- */
+
+:root {
+  --canvas-bg: rgba(17, 17, 27, 0.15);
+  --panel-bg: rgba(30, 30, 46, 0.68);
+
+  /* Terminal colors */
+  --terminal-bg: rgba(26, 27, 38, 0.58);
+  --terminal-fg: #c0caf5;
+  --terminal-cursor: #c0caf5;
+  --terminal-selection: #33467c;
+
+  /* Node chrome colors */
+  --node-bg: rgba(30, 30, 46, 0.76);
+  --node-border: rgba(108, 112, 134, 0.44);
+  --node-border-selected: #89b4fa;
+  --node-header-bg: rgba(24, 24, 37, 0.82);
+  --surface-blur: 20px;
+
+  /* Status dot colors */
+  --status-online: #a6e3a1;
+  --status-stale: #f9e2af;
+  --status-offline: #6c7086;
+  --status-pending: #89b4fa;
+
+  /* Task edge colors */
+  --edge-task-open: #cdd6f4;
+  --edge-task-in-progress: #f9e2af;
+  --edge-task-done: #a6e3a1;
+  --edge-task-failed: #f38ba8;
+  --edge-task-cancelled: #6c7086;
+
+  /* Message edge */
+  --edge-message: #89b4fa;
+
+  /* Dependency edge */
+  --edge-dep-blocked: #6c7086;
+  --edge-dep-satisfied: #a6e3a1;
+
+  /* Badge colors */
+  --badge-planner: #cba6f7;
+  --badge-implementer: #89b4fa;
+  --badge-reviewer: #a6e3a1;
+  --badge-researcher: #f9e2af;
+  --badge-shell: #6c7086;
+  --badge-custom: #f5c2e7;
+
+  /* Dimensions */
+  --node-width: 380px;
+  --node-min-height: 280px;
+  --node-header-height: 48px;
+  --node-border-radius: 10px;
+  --terminal-border-radius: 6px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Terminal node card
+ * --------------------------------------------------------------------------- */
+
+.terminal-node {
+  width: var(--node-width);
+  min-height: var(--node-min-height);
+  background: var(--node-bg);
+  border: 1px solid var(--node-border);
+  border-radius: var(--node-border-radius);
+  backdrop-filter: blur(var(--surface-blur)) saturate(1.15);
+  -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.15);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.terminal-node:hover {
+  border-color: color-mix(in srgb, var(--node-border-selected) 50%, transparent);
+}
+
+.terminal-node.selected {
+  border-color: var(--node-border-selected);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-border-selected) 25%, transparent),
+              0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* ---------------------------------------------------------------------------
+ * Node header chrome
+ * --------------------------------------------------------------------------- */
+
+.node-header {
+  height: var(--node-header-height);
+  padding: 0 12px;
+  background: var(--node-header-bg);
+  border-bottom: 1px solid var(--node-border);
+  backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
+  -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  user-select: none;
+  cursor: grab;
+}
+
+.node-header:active {
+  cursor: grabbing;
+}
+
+/* Status indicator dot */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.online {
+  background: var(--status-online);
+  box-shadow: 0 0 6px var(--status-online);
+}
+
+.status-dot.stale {
+  background: var(--status-stale);
+  box-shadow: 0 0 6px var(--status-stale);
+}
+
+.status-dot.offline {
+  background: var(--status-offline);
+}
+
+.status-dot.pending {
+  background: var(--status-pending);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px var(--status-pending); }
+  50% { opacity: 0.4; box-shadow: 0 0 8px var(--status-pending); }
+}
+
+/* Role badge (colored pill) */
+.role-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.role-badge.planner { background: color-mix(in srgb, var(--badge-planner) 20%, transparent); color: var(--badge-planner); }
+.role-badge.implementer { background: color-mix(in srgb, var(--badge-implementer) 20%, transparent); color: var(--badge-implementer); }
+.role-badge.reviewer { background: color-mix(in srgb, var(--badge-reviewer) 20%, transparent); color: var(--badge-reviewer); }
+.role-badge.researcher { background: color-mix(in srgb, var(--badge-researcher) 20%, transparent); color: var(--badge-researcher); }
+.role-badge.shell { background: color-mix(in srgb, var(--badge-shell) 20%, transparent); color: var(--badge-shell); }
+.role-badge.custom { background: color-mix(in srgb, var(--badge-custom) 20%, transparent); color: var(--badge-custom); }
+
+/* Instance ID / label */
+.node-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--terminal-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+/* CWD path */
+.node-cwd {
+  font-size: 11px;
+  color: #6c7086;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+/* Active task count badge */
+.task-count-badge {
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--edge-task-in-progress) 20%, transparent);
+  color: var(--edge-task-in-progress);
+  flex-shrink: 0;
+}
+
+/* Header control buttons */
+.node-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.node-controls button {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #6c7086;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.node-controls button:hover {
+  background: color-mix(in srgb, var(--terminal-fg) 10%, transparent);
+  color: var(--terminal-fg);
+}
+
+.node-controls button.stop:hover {
+  background: color-mix(in srgb, var(--edge-task-failed) 15%, transparent);
+  color: var(--edge-task-failed);
+}
+
+/* ---------------------------------------------------------------------------
+ * Terminal container (ghostty-web / xterm.js mount point)
+ * --------------------------------------------------------------------------- */
+
+.terminal-container {
+  flex: 1;
+  overflow: hidden;
+  background: var(--terminal-bg);
+  border-radius: 0 0 var(--terminal-border-radius) var(--terminal-border-radius);
+  backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
+  -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
+  position: relative;
+  min-height: 200px;
+}
+
+/* Ensure the terminal fills its container */
+.terminal-container > * {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* xterm.js specific overrides */
+.terminal-container .xterm {
+  padding: 4px 8px;
+}
+
+.terminal-container .xterm-viewport {
+  overflow-y: auto;
+}
+
+.terminal-container .xterm-screen {
+  width: 100% !important;
+}
+
+/* ---------------------------------------------------------------------------
+ * Instance metadata card (shown when no PTY is present)
+ * --------------------------------------------------------------------------- */
+
+.instance-meta-card {
+  flex: 1;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: #a6adc8;
+}
+
+.instance-meta-card .meta-row {
+  display: flex;
+  gap: 8px;
+}
+
+.instance-meta-card .meta-label {
+  color: #6c7086;
+  font-weight: 500;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.instance-meta-card .meta-value {
+  color: var(--terminal-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+ * Edge label tooltips
+ * --------------------------------------------------------------------------- */
+
+.edge-tooltip {
+  position: absolute;
+  padding: 4px 8px;
+  background: var(--node-bg);
+  border: 1px solid var(--node-border);
+  border-radius: 6px;
+  backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
+  -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
+  font-size: 11px;
+  color: var(--terminal-fg);
+  pointer-events: none;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+}
+
+/* ---------------------------------------------------------------------------
+ * Animated message edge dashes
+ * --------------------------------------------------------------------------- */
+
+@keyframes dash-flow {
+  to { stroke-dashoffset: -20; }
+}
+
+.message-edge-path {
+  stroke: var(--edge-message);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  fill: none;
+  animation: dash-flow 1s linear infinite;
+}
+
+/* Recent activity = faster animation */
+.message-edge-path.active {
+  animation-duration: 0.4s;
+  stroke-width: 2.5;
+}
+
+/* ---------------------------------------------------------------------------
+ * Task edge styles
+ * --------------------------------------------------------------------------- */
+
+.task-edge-path {
+  stroke-width: 2;
+  fill: none;
+}
+
+.task-edge-path.open { stroke: var(--edge-task-open); }
+.task-edge-path.claimed { stroke: var(--edge-task-in-progress); }
+.task-edge-path.in_progress { stroke: var(--edge-task-in-progress); }
+.task-edge-path.done { stroke: var(--edge-task-done); }
+.task-edge-path.failed { stroke: var(--edge-task-failed); }
+.task-edge-path.cancelled { stroke: var(--edge-task-cancelled); }
+.task-edge-path.blocked { stroke: var(--edge-task-cancelled); }
+.task-edge-path.approval_required { stroke: var(--edge-task-in-progress); }
+
+.task-edge-label {
+  font-size: 10px;
+  fill: #a6adc8;
+  dominant-baseline: middle;
+  text-anchor: middle;
+}
+
+/* ---------------------------------------------------------------------------
+ * Dependency edge styles
+ * --------------------------------------------------------------------------- */
+
+.dependency-edge-path {
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  fill: none;
+}
+
+.dependency-edge-path.blocked {
+  stroke: var(--edge-dep-blocked);
+}
+
+.dependency-edge-path.satisfied {
+  stroke: var(--edge-dep-satisfied);
+}
