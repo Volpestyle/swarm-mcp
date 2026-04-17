@@ -156,7 +156,7 @@ function makeNode(
 ): XYFlowNode {
   const position = resolvePosition(nodeId, opts.savedLayout, opts.autoIndex);
   const label = deriveLabel(nodeType, instance, pty);
-  const status = deriveStatus(nodeType, instance);
+  const status = deriveStatus(nodeType, instance, pty);
 
   const data: SwarmNodeData = {
     nodeType,
@@ -200,9 +200,14 @@ function deriveLabel(
 function deriveStatus(
   nodeType: 'instance' | 'pty' | 'bound',
   instance: Instance | null,
+  pty: PtySession | null,
 ): 'online' | 'stale' | 'offline' | 'pending' {
   if (instance) return instance.status;
-  if (nodeType === 'pty') return 'pending';
+  if (nodeType === 'pty') {
+    // PTYs carrying a launch token are waiting to bind to a swarm instance.
+    // Shells have no token and are just live local processes.
+    return pty?.launch_token ? 'pending' : 'online';
+  }
   return 'offline';
 }
 

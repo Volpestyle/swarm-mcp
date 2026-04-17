@@ -200,6 +200,7 @@
       minZoom={0.2}
       maxZoom={2}
       defaultEdgeOptions={{ animated: false }}
+      deleteKey={null}
     >
       <Background />
       <Controls />

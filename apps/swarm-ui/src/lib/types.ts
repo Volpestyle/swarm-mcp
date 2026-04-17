@@ -221,18 +221,35 @@ export interface TerminalTheme {
   background?: string;
   foreground?: string;
   cursor?: string;
+  cursorAccent?: string;
   selectionBackground?: string;
+  selectionForeground?: string;
+  black?: string;
+  red?: string;
+  green?: string;
+  yellow?: string;
+  blue?: string;
+  magenta?: string;
+  cyan?: string;
+  white?: string;
+  brightBlack?: string;
+  brightRed?: string;
+  brightGreen?: string;
+  brightYellow?: string;
+  brightBlue?: string;
+  brightMagenta?: string;
+  brightCyan?: string;
+  brightWhite?: string;
 }
 
 export interface TerminalHandle {
-  /** Opaque handle ID for lifecycle management */
   id: string;
-  /** Write raw bytes to the terminal display */
-  write: (data: Uint8Array) => void;
-  /** Resize the terminal grid */
+  write: (data: Uint8Array | string) => void;
   resize: (cols: number, rows: number) => void;
-  /** Clean up resources */
+  focus: () => void;
   dispose: () => void;
+  onData: (cb: (data: string) => void) => () => void;
+  onResize: (cb: (size: { cols: number; rows: number }) => void) => () => void;
 }
 
 // ---------------------------------------------------------------------------

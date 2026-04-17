@@ -457,7 +457,7 @@
   }
 
   .mono {
-    font-family: Menlo, Monaco, 'Cascadia Code', monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
   }
 

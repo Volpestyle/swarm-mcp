@@ -19,7 +19,6 @@
   import {
     createTerminal,
     destroyTerminal,
-    isExtendedHandle,
     writeToTerminal,
   } from '../lib/terminal';
   import type { TerminalHandle } from '../lib/types';
@@ -43,10 +42,12 @@
   let nodeElement: HTMLDivElement | null = null;
   let terminalContainer: HTMLElement;
   let terminalHandle: TerminalHandle | null = null;
+  let terminalInputUnlisten: (() => void) | null = null;
   let dataUnlisten: (() => void) | null = null;
   let exitUnlisten: (() => void) | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let exitCode: number | null = null;
+  let disposed = false;
 
   // Derived from data
   $: hasPty = data.ptySession !== null;
@@ -69,70 +70,71 @@
   async function initTerminal() {
     if (!terminalContainer || !ptyId) return;
 
-    // Create the terminal display
-    terminalHandle = createTerminal(terminalContainer, {
+    const handle = await createTerminal(terminalContainer, {
       fontSize: 13,
-      fontFamily: 'Menlo, Monaco, "Cascadia Code", monospace',
     });
 
-    // Wire up user input -> PTY stdin
-    if (isExtendedHandle(terminalHandle)) {
-      terminalHandle.onData((input: string) => {
-        if (ptyId) {
-          const encoder = new TextEncoder();
-          void writeToPty(ptyId, encoder.encode(input));
-        }
-      });
+    if (disposed) {
+      handle.dispose();
+      return;
     }
 
-    // Replay existing buffer contents (for reconnect/remount)
+    terminalHandle = handle;
+    const boundPtyId = ptyId;
+
+    // Wire user keyboard input -> PTY stdin
+    const encoder = new TextEncoder();
+    terminalInputUnlisten = handle.onData((input: string) => {
+      void writeToPty(boundPtyId, encoder.encode(input));
+    });
+
+    // Replay ring-buffered output so reconnects/remounts keep scrollback
     try {
-      const buffer = await getPtyBuffer(ptyId);
-      if (buffer.length > 0 && terminalHandle) {
-        writeToTerminal(terminalHandle, buffer);
+      const buffer = await getPtyBuffer(boundPtyId);
+      if (!disposed && buffer.length > 0) {
+        writeToTerminal(handle, buffer);
       }
     } catch (err) {
-      // Non-fatal: buffer may not be available
       console.debug('[TerminalNode] buffer replay skipped:', err);
     }
 
-    // Subscribe to live PTY output data
+    // Subscribe to live PTY output
     try {
-      const unlisten = await subscribeToPty(ptyId, (bytes: Uint8Array) => {
-        if (terminalHandle) {
-          writeToTerminal(terminalHandle, bytes);
-        }
+      dataUnlisten = await subscribeToPty(boundPtyId, (bytes) => {
+        if (terminalHandle) writeToTerminal(terminalHandle, bytes);
       });
-      dataUnlisten = unlisten;
     } catch (err) {
       console.error('[TerminalNode] failed to subscribe to PTY data:', err);
     }
 
-    // Subscribe to PTY exit events
     try {
-      const unlisten = await subscribeToPtyExit(ptyId, (code: number | null) => {
+      exitUnlisten = await subscribeToPtyExit(boundPtyId, (code) => {
         exitCode = code;
       });
-      exitUnlisten = unlisten;
     } catch (err) {
       console.error('[TerminalNode] failed to subscribe to PTY exit:', err);
     }
 
-    // ResizeObserver to track container dimensions -> pty_resize
+    // Container resize -> resize grid + tell PTY
     resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        if (!terminalHandle || !ptyId) continue;
-        // Estimate cols/rows from container dimensions
+        if (!terminalHandle) continue;
         const { width, height } = entry.contentRect;
-        const charWidth = 7.8; // approximate for 13px Menlo
-        const lineHeight = 17; // approximate
+        // Approximate cell size for 13px JetBrains Mono; ghostty-web reports the real
+        // grid back via onResize below, which is the source of truth.
+        const charWidth = 7.8;
+        const lineHeight = 17;
         const cols = Math.max(1, Math.floor(width / charWidth));
         const rows = Math.max(1, Math.floor(height / lineHeight));
         terminalHandle.resize(cols, rows);
-        void resizePty(ptyId, cols, rows);
       }
     });
     resizeObserver.observe(terminalContainer);
+
+    // Forward the terminal's authoritative grid size to the PTY
+    handle.onResize(({ cols, rows }) => {
+      void resizePty(boundPtyId, cols, rows);
+    });
   }
 
   function handleInspect() {
@@ -149,9 +151,14 @@
   }
 
   function cleanupTerminal() {
+    disposed = true;
     if (resizeObserver) {
       resizeObserver.disconnect();
       resizeObserver = null;
+    }
+    if (terminalInputUnlisten) {
+      terminalInputUnlisten();
+      terminalInputUnlisten = null;
     }
     if (dataUnlisten) {
       dataUnlisten();
@@ -180,13 +187,18 @@
     nodeType={data.nodeType}
     assignedTasks={data.assignedTasks}
     ptyId={ptyId}
+    launchToken={data.ptySession?.launch_token ?? null}
     on:inspect={handleInspect}
     on:focus={handleFocus}
   />
 
   {#if hasPty}
-    <!-- Terminal view -->
-    <div class="terminal-container" bind:this={terminalContainer}>
+    <!-- Terminal view: nodrag/nopan/nowheel tell XYFlow to leave mouse/scroll
+         events alone so ghostty can handle clicks, selection, and scrollback -->
+    <div
+      class="terminal-container nodrag nopan nowheel"
+      bind:this={terminalContainer}
+    >
       {#if exitCode !== null}
         <div class="exit-overlay">
           Process exited with code {exitCode}

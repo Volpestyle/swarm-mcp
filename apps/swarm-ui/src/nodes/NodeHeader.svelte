@@ -16,6 +16,7 @@
   export let nodeType: NodeType = 'instance';
   export let assignedTasks: Task[] = [];
   export let ptyId: string | null = null;
+  export let launchToken: string | null = null;
 
   const dispatch = createEventDispatcher<{
     inspect: void;
@@ -24,12 +25,23 @@
 
   // Determine the role class for badge styling
   $: roleClass = getRoleClass(role);
-  $: displayLabel = instanceId ? instanceId.slice(0, 12) : 'Pending...';
+  $: displayLabel = deriveDisplayLabel(instanceId, launchToken, ptyId);
   $: truncatedCwd = truncatePath(cwd, 24);
   $: activeTaskCount = assignedTasks.filter(
     (t) => t.status === 'in_progress' || t.status === 'claimed' || t.status === 'open'
   ).length;
   $: isAppOwned = nodeType === 'pty' || nodeType === 'bound';
+
+  function deriveDisplayLabel(
+    instId: string | null,
+    token: string | null,
+    pty: string | null,
+  ): string {
+    if (instId) return instId.slice(0, 12);
+    if (token) return 'Pending...';
+    if (pty) return pty.slice(0, 8);
+    return '—';
+  }
 
   function getRoleClass(r: string): string {
     const lower = r.toLowerCase();

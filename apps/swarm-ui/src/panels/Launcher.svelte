@@ -405,7 +405,7 @@
   }
 
   .pending-token {
-    font-family: Menlo, Monaco, monospace;
+    font-family: var(--font-mono);
     font-size: 10px;
     color: #6c7086;
     background: var(--node-header-bg, #181825);

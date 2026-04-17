@@ -13,11 +13,14 @@
  * --------------------------------------------------------------------------- */
 
 :root {
+  --font-mono: 'JetBrains Mono', Menlo, Monaco, 'Cascadia Code', monospace;
+
   --canvas-bg: rgba(17, 17, 27, 0.15);
   --panel-bg: rgba(30, 30, 46, 0.68);
 
-  /* Terminal colors */
-  --terminal-bg: rgba(26, 27, 38, 0.58);
+  /* Terminal colors — must stay opaque; ghostty-web's canvas compositor
+     accumulates alpha paints, which ghosts prior frames on clear/selection. */
+  --terminal-bg: #181825;
   --terminal-fg: #c0caf5;
   --terminal-cursor: #c0caf5;
   --terminal-selection: #33467c;
@@ -58,8 +61,8 @@
   --badge-custom: #f5c2e7;
 
   /* Dimensions */
-  --node-width: 380px;
-  --node-min-height: 280px;
+  --node-width: 640px;
+  --node-min-height: 420px;
   --node-header-height: 48px;
   --node-border-radius: 10px;
   --terminal-border-radius: 6px;
@@ -246,6 +249,12 @@
   -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
   position: relative;
   min-height: 200px;
+  cursor: text;
+}
+
+.terminal-container,
+.terminal-container * {
+  pointer-events: auto;
 }
 
 /* Ensure the terminal fills its container */
