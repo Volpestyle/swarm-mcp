@@ -17,6 +17,9 @@ const BUFFER_CAPACITY: usize = 2 * 1024 * 1024;
 const COALESCE_WINDOW: Duration = Duration::from_millis(16);
 const DEFAULT_COLS: u16 = 120;
 const DEFAULT_ROWS: u16 = 36;
+const EXIT_SESSION_RETENTION: Duration = Duration::from_secs(10);
+
+type SessionMap = Arc<RwLock<HashMap<String, Arc<PtyHandle>>>>;
 
 fn validate_cwd(cwd: &str) -> Result<(), AppError> {
     if cwd.is_empty() {
@@ -146,7 +149,7 @@ impl PtyHandle {
             .map_err(|_| "PTY session lock poisoned".to_owned())
     }
 
-    /// Records the exit code and marks the session as closed.
+    /// Records the exit code.
     ///
     /// Silently ignores a poisoned session lock since this is called from a
     /// background thread after the child process has already exited.
@@ -154,7 +157,10 @@ impl PtyHandle {
         if let Ok(mut session) = self.session.lock() {
             session.exit_code = exit_code;
         }
-        self.closed.store(true, Ordering::Release);
+    }
+
+    fn begin_cleanup(&self) -> bool {
+        !self.closed.swap(true, Ordering::AcqRel)
     }
 
     fn set_launch_token(&self, token: &str) -> Result<(), String> {
@@ -172,17 +178,25 @@ impl PtyHandle {
             .bound_instance_id = Some(instance_id.to_owned());
         Ok(())
     }
+
+    fn take_bound_instance(&self) -> Option<(String, String)> {
+        let Ok(mut session) = self.session.lock() else {
+            return None;
+        };
+        let instance_id = session.bound_instance_id.take()?;
+        Some((session.id.clone(), instance_id))
+    }
 }
 
 pub struct PtyManager {
-    sessions: RwLock<HashMap<String, Arc<PtyHandle>>>,
+    sessions: SessionMap,
 }
 
 impl PtyManager {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            sessions: RwLock::new(HashMap::new()),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -249,7 +263,13 @@ impl PtyManager {
             .map_err(|_| AppError::Internal("PTY manager lock poisoned".into()))?
             .insert(id.clone(), handle.clone());
 
-        spawn_output_threads(app_handle.clone(), id.clone(), handle.clone(), reader);
+        spawn_output_threads(
+            app_handle.clone(),
+            id.clone(),
+            handle.clone(),
+            reader,
+            self.sessions.clone(),
+        );
 
         let payload = handle.session_snapshot().map_err(AppError::Internal)?;
         let _ = app_handle.emit(PTY_CREATED, payload);
@@ -306,6 +326,7 @@ fn spawn_output_threads(
     id: String,
     handle: Arc<PtyHandle>,
     mut reader: Box<dyn Read + Send>,
+    sessions: SessionMap,
 ) {
     let (tx, rx) = mpsc::channel::<ReaderEvent>();
 
@@ -321,7 +342,7 @@ fn spawn_output_threads(
                         return;
                     }
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(_) => break,
             }
         }
@@ -359,6 +380,8 @@ fn spawn_output_threads(
                     handle.set_exit_code(exit_code);
                     let _ = app_handle.emit(&exit_event, exit_code);
                     emit_bound_exit_if_any(&app_handle, &handle);
+                    thread::sleep(EXIT_SESSION_RETENTION);
+                    cleanup_session(&app_handle, &sessions, &id, &handle);
                     break;
                 }
             }
@@ -375,15 +398,38 @@ fn spawn_output_threads(
 /// main.rs listens for this to tear down the binder mapping and delete any
 /// UI-owned placeholder row that was never adopted by the child process.
 fn emit_bound_exit_if_any(app_handle: &AppHandle, handle: &Arc<PtyHandle>) {
-    let Ok(session) = handle.session_snapshot() else {
-        return;
-    };
-    if let Some(instance_id) = session.bound_instance_id {
+    if let Some((pty_id, instance_id)) = handle.take_bound_instance() {
         let _ = app_handle.emit(
             PTY_BOUND_EXIT,
-            serde_json::json!({ "pty_id": session.id, "instance_id": instance_id }),
+            serde_json::json!({ "pty_id": pty_id, "instance_id": instance_id }),
         );
     }
+}
+
+fn cleanup_session(
+    app_handle: &AppHandle,
+    sessions: &SessionMap,
+    id: &str,
+    handle: &Arc<PtyHandle>,
+) {
+    if !handle.begin_cleanup() {
+        return;
+    }
+
+    if let Ok(mut writer) = handle.writer.lock() {
+        writer.take();
+    }
+    if let Ok(mut master) = handle.master.lock() {
+        master.take();
+    }
+    if let Ok(mut child) = handle.child.lock() {
+        child.take();
+    }
+    if let Ok(mut active_sessions) = sessions.write() {
+        active_sessions.remove(id);
+    }
+
+    let _ = app_handle.emit(PTY_CLOSED, id.to_owned());
 }
 
 fn flush_pending(
@@ -525,7 +571,7 @@ pub async fn pty_close(
 ) -> Result<(), AppError> {
     let handle = manager.session(&id)?;
 
-    if handle.closed.swap(true, Ordering::AcqRel) {
+    if !handle.begin_cleanup() {
         return Ok(());
     }
 
@@ -547,15 +593,21 @@ pub async fn pty_close(
             .map_err(|_| AppError::Internal("PTY child lock poisoned".into()))?;
         match child_slot.take() {
             Some(mut child) => {
-                child.kill().map_err(|error| {
-                    AppError::Operation(format!(
-                        "failed to terminate PTY process: {error}"
-                    ))
-                })?;
-                child
-                    .wait()
-                    .ok()
-                    .and_then(|status| normalize_exit_code(status.exit_code()))
+                match child.try_wait() {
+                    Ok(Some(status)) => normalize_exit_code(status.exit_code()),
+                    Ok(None) => {
+                        child.kill().map_err(|error| {
+                            AppError::Operation(format!(
+                                "failed to terminate PTY process: {error}"
+                            ))
+                        })?;
+                        child
+                            .wait()
+                            .ok()
+                            .and_then(|status| normalize_exit_code(status.exit_code()))
+                    }
+                    Err(_) => None,
+                }
             }
             None => None,
         }

@@ -15,7 +15,15 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use uuid::Uuid;
 
-use crate::swarm::swarm_db_path;
+use crate::{model::INSTANCE_STALE_AFTER_SECS, swarm::swarm_db_path};
+
+fn now_secs() -> i64 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    i64::try_from(secs).unwrap_or(i64::MAX)
+}
 
 /// Open a read-write connection to the shared swarm.db.
 ///
@@ -222,20 +230,20 @@ pub fn deregister_instance(conn: &Connection, instance_id: &str) -> Result<(), S
     Ok(())
 }
 
-/// Delete every unadopted instance row. Called once at UI startup to
-/// clear ghost placeholders left behind by a prior UI session that died
-/// before its PTY children finished adopting.
+/// Delete stale unadopted instance rows left behind by prior UI sessions.
 ///
-/// This runs BEFORE any new PTY is spawned in the new UI session, so no
-/// in-flight pre-created rows are at risk. Returns the number of rows
-/// removed for logging.
+/// Fresh placeholders may still belong to another live `swarm-ui` window or a
+/// slow-starting child process, so we only sweep rows whose heartbeat has
+/// already fallen past the normal stale window.
 pub fn sweep_unadopted_orphans(conn: &Connection) -> Result<usize, String> {
+    let stale_before = now_secs().saturating_sub(INSTANCE_STALE_AFTER_SECS);
+
     // Collect ids first so we can cascade tasks/locks/messages per id.
     let mut stmt = conn
-        .prepare("SELECT id FROM instances WHERE adopted = 0")
+        .prepare("SELECT id FROM instances WHERE adopted = 0 AND heartbeat < ?")
         .map_err(|err| format!("failed to prepare orphan sweep query: {err}"))?;
     let ids: Vec<String> = stmt
-        .query_map([], |row| row.get(0))
+        .query_map(params![stale_before], |row| row.get(0))
         .map_err(|err| format!("failed to query orphans: {err}"))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|err| format!("failed to read orphan ids: {err}"))?;
@@ -246,6 +254,41 @@ pub fn sweep_unadopted_orphans(conn: &Connection) -> Result<usize, String> {
     }
 
     Ok(ids.len())
+}
+
+pub struct InstanceInfo {
+    pub id: String,
+    pub scope: String,
+    pub directory: String,
+    pub label: Option<String>,
+    pub heartbeat: i64,
+    pub adopted: bool,
+}
+
+/// Read the subset of an instance row needed to respawn a PTY against it.
+/// Returns `None` if the row no longer exists.
+pub fn load_instance_info(
+    conn: &Connection,
+    instance_id: &str,
+) -> Result<Option<InstanceInfo>, String> {
+    conn.query_row(
+        "SELECT id, scope, directory, label, heartbeat, COALESCE(adopted, 1)
+         FROM instances
+         WHERE id = ?",
+        params![instance_id],
+        |row| {
+            Ok(InstanceInfo {
+                id: row.get(0)?,
+                scope: row.get(1)?,
+                directory: row.get(2)?,
+                label: row.get(3)?,
+                heartbeat: row.get(4)?,
+                adopted: row.get::<_, i64>(5)? != 0,
+            })
+        },
+    )
+    .optional()
+    .map_err(|err| format!("failed to load instance info: {err}"))
 }
 
 /// Returns whether the instance row has been adopted by the child process.
@@ -611,9 +654,15 @@ mod tests {
         init_schema(&conn);
         ensure_adopted_column(&conn).unwrap();
 
-        // Two orphans + one adopted instance.
+        // Two stale orphans + one adopted instance.
         let orphan_a = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
         let orphan_b = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
+        let stale_heartbeat = now_secs() - INSTANCE_STALE_AFTER_SECS - 1;
+        conn.execute(
+            "UPDATE instances SET heartbeat = ? WHERE id IN (?, ?)",
+            params![stale_heartbeat, orphan_a.id, orphan_b.id],
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted)
              VALUES ('live', 's', '/tmp', '/tmp', '/tmp', 1, NULL, 1)",
@@ -636,6 +685,27 @@ mod tests {
         // Just for paranoia: both orphans are actually gone.
         assert!(!remaining.contains(&orphan_a.id));
         assert!(!remaining.contains(&orphan_b.id));
+    }
+
+    #[test]
+    fn sweep_unadopted_orphans_keeps_recent_placeholders() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn);
+        ensure_adopted_column(&conn).unwrap();
+
+        let recent = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
+
+        let swept = sweep_unadopted_orphans(&conn).unwrap();
+        assert_eq!(swept, 0);
+
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM instances WHERE id = ?",
+                params![recent.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 1);
     }
 
     #[test]

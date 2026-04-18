@@ -45,7 +45,6 @@
   let workingDir: string = loadStored(STORAGE_KEY_AGENT_CWD);
   let scope: string = loadStored(STORAGE_KEY_SCOPE);
   let label: string = '';
-  let customCommand: string = '';
   let shellCwd: string = loadStored(STORAGE_KEY_SHELL_CWD);
   // Default harness to whatever the user last picked, falling back to
   // `claude` so first-run users get a swarm-aware shell (which goes through
@@ -63,14 +62,9 @@
   let loading = false;
   let error: string | null = null;
 
-  $: isCustomRole = role === 'custom';
   $: effectiveShellCwd = shellCwd.trim() || workingDir.trim();
   $: shellRunDisabled = loading || !effectiveShellCwd;
-  $: agentLaunchDisabled =
-    loading ||
-    !workingDir.trim() ||
-    (!role && !customCommand.trim()) ||
-    (isCustomRole && !customCommand.trim());
+  $: agentLaunchDisabled = loading || !workingDir.trim() || !role;
 
   function validateCwd(value: string, context: string): string | null {
     const trimmed = value.trim();
@@ -107,28 +101,21 @@
       error = cwdError;
       return;
     }
-    if (isCustomRole && !customCommand.trim()) {
-      error = 'Custom command is required';
-      return;
-    }
-
     loading = true;
     error = null;
     try {
       await spawnAgent(
-        isCustomRole ? null : role || null,
+        role,
         workingDir.trim(),
         scope.trim() || undefined,
         label.trim() || undefined,
-        isCustomRole ? customCommand.trim() || undefined : undefined,
       );
       // Persist the cwd/role/scope so the next launch doesn't require
       // re-entering them. Label is intentionally one-shot.
       saveStored(STORAGE_KEY_AGENT_CWD, workingDir.trim());
-      saveStored(STORAGE_KEY_ROLE, isCustomRole ? '' : role);
+      saveStored(STORAGE_KEY_ROLE, role);
       saveStored(STORAGE_KEY_SCOPE, scope.trim());
       label = '';
-      customCommand = '';
     } catch (err) {
       error = `Failed to spawn agent: ${err}`;
       console.error('[Launcher] spawn error:', err);
@@ -219,22 +206,8 @@
           {#each rolePresets as preset (preset.role)}
             <option value={preset.role}>{preset.role}</option>
           {/each}
-          <option value="custom">Custom command…</option>
         </select>
       </div>
-
-      {#if isCustomRole}
-        <div class="form-group">
-          <label for="custom-cmd">Command</label>
-          <input
-            id="custom-cmd"
-            type="text"
-            class="input mono"
-            placeholder="claude --model opus"
-            bind:value={customCommand}
-          />
-        </div>
-      {/if}
 
       <div class="form-group">
         <label for="working-dir">Working dir</label>

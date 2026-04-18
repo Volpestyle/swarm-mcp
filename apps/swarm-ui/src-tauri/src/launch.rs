@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::bind::Binder;
 use crate::events::BIND_RESOLVED;
-use crate::model::AppError;
+use crate::model::{AppError, InstanceStatus};
 use crate::pty::{PtyCreateRequest, PtyManager};
 use crate::writes;
 
@@ -46,6 +46,18 @@ pub struct ShellSpawnResult {
     /// Present only when the shell was launched with a swarm-aware harness
     /// (claude/codex/opencode). Plain shells have no swarm identity.
     pub instance_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RespawnResult {
+    pub pty_id: String,
+    pub token: String,
+    pub instance_id: String,
+    /// Set when the respawn booted a swarm-aware harness shell. The frontend
+    /// auto-types this command into the shell's stdin after spawn so the
+    /// `spawn_shell` ergonomics carry over (ctrl-c returns to a shell prompt
+    /// instead of terminating the PTY node).
+    pub harness: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -119,24 +131,7 @@ impl LaunchConfig {
         Self { presets }
     }
 
-    fn resolve(
-        &self,
-        role: Option<&str>,
-        command: Option<&str>,
-    ) -> Result<ResolvedCommand, String> {
-        if let Some(command) = command {
-            let shell = shell_path();
-            return Ok(ResolvedCommand {
-                command: shell.clone(),
-                args: vec!["-lc".to_owned(), command.to_owned()],
-                env: HashMap::new(),
-                display_command: command.to_owned(),
-                default_label_tokens: String::new(),
-            });
-        }
-
-        let role =
-            role.ok_or_else(|| "agent_spawn requires either a role or command".to_owned())?;
+    fn resolve(&self, role: &str) -> Result<ResolvedCommand, String> {
         let preset = self
             .presets
             .get(role)
@@ -206,6 +201,36 @@ fn binary_basename(command: &str) -> String {
 
 fn shell_path() -> String {
     env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_owned())
+}
+
+fn validate_harness_name(harness: Option<&str>) -> Result<Option<&str>, AppError> {
+    let Some(harness) = harness.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+
+    if is_harness_shell_role(harness) {
+        Ok(Some(harness))
+    } else {
+        Err(AppError::Validation(format!(
+            "unsupported shell harness: {harness}"
+        )))
+    }
+}
+
+fn instance_status_from_heartbeat(heartbeat: i64) -> InstanceStatus {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or_default();
+    InstanceStatus::from_heartbeat(now, heartbeat)
+}
+
+fn instance_status_label(status: InstanceStatus) -> &'static str {
+    match status {
+        InstanceStatus::Online => "online",
+        InstanceStatus::Stale => "stale",
+        InstanceStatus::Offline => "offline",
+    }
 }
 
 fn render_command(command: &str, args: &[String]) -> String {
@@ -280,16 +305,20 @@ pub async fn agent_spawn(
     working_dir: String,
     scope: Option<String>,
     label: Option<String>,
-    command: Option<String>,
 ) -> Result<LaunchResult, AppError> {
     validate_working_dir(&working_dir)?;
 
+    let role = role
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AppError::Validation("agent_spawn requires a role preset".into()))?;
     let token = launch_token();
     let resolved = launch_config
-        .resolve(role.as_deref(), command.as_deref())
+        .resolve(role)
         .map_err(AppError::Validation)?;
     let label_string = build_label(
-        role.as_deref(),
+        Some(role),
         &token,
         &resolved.default_label_tokens,
         label.as_deref(),
@@ -316,14 +345,8 @@ pub async fn agent_spawn(
     env.insert("SWARM_UI_LAUNCH_TOKEN".to_owned(), token.clone());
     env.insert("SWARM_MCP_INSTANCE_ID".to_owned(), pending.id.clone());
     env.insert("SWARM_MCP_SCOPE".to_owned(), pending.scope.clone());
-    if let Some(role) = role.as_ref() {
-        env.insert("SWARM_UI_ROLE".to_owned(), role.clone());
-    }
+    env.insert("SWARM_UI_ROLE".to_owned(), role.to_owned());
 
-    // Note: when `command` is Some, `resolve()` wraps it in `sh -lc` for
-    // execution. This is intentional — the app is a developer tool that
-    // spawns agent processes. CSP + freezePrototype are the primary defence
-    // against injection from a compromised webview.
     let pty_id = match pty_manager.create_session(
         &app_handle,
         PtyCreateRequest {
@@ -394,10 +417,7 @@ pub async fn spawn_shell(
     // stdin after creation — that way ctrl-c drops back to the shell prompt
     // instead of killing the node.
     let shell = shell_path();
-    let harness_cmd = harness
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
+    let harness_cmd = validate_harness_name(harness.as_deref())?;
     let display_command = harness_cmd.map_or_else(|| shell.clone(), str::to_owned);
 
     // Swarm-aware harness launches force adoption: pre-create an instance
@@ -479,6 +499,138 @@ pub async fn spawn_shell(
     })
 }
 
+/// Extract `role:X` from a label token list. Used by the respawn path to
+/// determine which preset/harness to relaunch the instance with.
+fn parse_role_from_label(label: Option<&str>) -> Option<String> {
+    label?
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("role:"))
+        .map(str::to_owned)
+}
+
+fn is_harness_shell_role(role: &str) -> bool {
+    matches!(role, "claude" | "codex" | "opencode")
+}
+
+/// Relaunch a PTY against an existing (offline/stale) swarm instance row so
+/// the user can pick up where a previous swarm-ui session left off.
+///
+/// The child process inherits `SWARM_MCP_INSTANCE_ID`, so its `swarm.register`
+/// call re-adopts the existing row — updating pid + heartbeat without
+/// creating a duplicate. Tasks, locks, and message history keyed to the
+/// instance id stay intact.
+#[tauri::command]
+#[allow(clippy::unused_async)]
+pub async fn respawn_instance(
+    app_handle: AppHandle,
+    pty_manager: State<'_, PtyManager>,
+    binder: State<'_, Binder>,
+    launch_config: State<'_, LaunchConfig>,
+    instance_id: String,
+) -> Result<RespawnResult, AppError> {
+    let trimmed = instance_id.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Validation("instance_id is required".into()));
+    }
+
+    // Refuse double-respawn. If another PTY in this UI is already bound to
+    // this instance, relaunching would race two processes for the same row.
+    if binder.resolved_pty_for(trimmed).is_some() {
+        return Err(AppError::Validation(format!(
+            "instance {trimmed} already has a live PTY in this session"
+        )));
+    }
+
+    // Load the row we're reviving. A respawn needs the cwd + label so the new
+    // PTY lands in the same directory with the same role.
+    let conn = writes::open_rw().map_err(AppError::Operation)?;
+    writes::ensure_adopted_column(&conn).map_err(AppError::Operation)?;
+    let existing = writes::load_instance_info(&conn, trimmed)
+        .map_err(AppError::Operation)?
+        .ok_or_else(|| AppError::NotFound(format!("instance {trimmed} not found")))?;
+    drop(conn);
+
+    let status = instance_status_from_heartbeat(existing.heartbeat);
+    if status == InstanceStatus::Online {
+        return Err(AppError::Validation(format!(
+            "instance {trimmed} is still {} and cannot be respawned",
+            instance_status_label(status)
+        )));
+    }
+
+    validate_working_dir(&existing.directory)?;
+
+    let role = parse_role_from_label(existing.label.as_deref());
+    let harness_role = role
+        .as_deref()
+        .filter(|candidate| is_harness_shell_role(candidate))
+        .map(str::to_owned);
+
+    let token = launch_token();
+    let mut env: HashMap<String, String> = HashMap::new();
+    env.insert("SWARM_MCP_INSTANCE_ID".to_owned(), existing.id.clone());
+    env.insert("SWARM_MCP_SCOPE".to_owned(), existing.scope.clone());
+    if let Some(label) = existing.label.clone() {
+        env.insert("SWARM_MCP_LABEL".to_owned(), label);
+    }
+    env.insert("SWARM_UI_LAUNCH_TOKEN".to_owned(), token.clone());
+    if let Some(role_name) = role.as_deref() {
+        env.insert("SWARM_UI_ROLE".to_owned(), role_name.to_owned());
+    }
+
+    let (command, args, display_command) = if let Some(harness_name) = harness_role.as_deref() {
+        // Harness-shell respawn mirrors `spawn_shell`: boot an interactive
+        // shell and let the frontend auto-type the harness command so
+        // ctrl-c lands on a shell prompt.
+        (shell_path(), Vec::new(), harness_name.to_owned())
+    } else if let Some(role_name) = role.as_deref() {
+        let resolved = launch_config
+            .resolve(role_name)
+            .map_err(AppError::Validation)?;
+        for (key, value) in &resolved.env {
+            env.entry(key.clone()).or_insert_with(|| value.clone());
+        }
+        (resolved.command, resolved.args, resolved.display_command)
+    } else {
+        return Err(AppError::Validation(format!(
+            "instance {trimmed} has no role in its label — cannot determine respawn command"
+        )));
+    };
+
+    let pty_id = pty_manager.create_session(
+        &app_handle,
+        PtyCreateRequest {
+            command,
+            args,
+            cwd: existing.directory.clone(),
+            env,
+            display_command: Some(display_command),
+        },
+    )?;
+
+    pty_manager.set_launch_token(&pty_id, &token)?;
+    pty_manager.set_bound_instance(&pty_id, &existing.id)?;
+    binder
+        .bind_immediate(&existing.id, &pty_id)
+        .map_err(AppError::Internal)?;
+
+    let _ = app_handle.emit(
+        BIND_RESOLVED,
+        serde_json::json!({
+            "token": token,
+            "instance_id": existing.id,
+            "pty_id": pty_id,
+        }),
+    );
+
+    Ok(RespawnResult {
+        pty_id,
+        token,
+        instance_id: existing.id,
+        harness: harness_role,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,5 +703,43 @@ mod tests {
             render_command("git", &["status".into(), "-s".into()]),
             "git status -s"
         );
+    }
+
+    #[test]
+    fn parse_role_from_label_happy_path() {
+        assert_eq!(
+            parse_role_from_label(Some("role:planner launch:abc provider:opencode")),
+            Some("planner".to_owned())
+        );
+    }
+
+    #[test]
+    fn parse_role_from_label_returns_none_without_role_token() {
+        assert_eq!(
+            parse_role_from_label(Some("launch:abc provider:opencode")),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_role_from_label_none_when_empty() {
+        assert_eq!(parse_role_from_label(None), None);
+        assert_eq!(parse_role_from_label(Some("")), None);
+    }
+
+    #[test]
+    fn is_harness_shell_role_recognizes_harnesses() {
+        assert!(is_harness_shell_role("claude"));
+        assert!(is_harness_shell_role("codex"));
+        assert!(is_harness_shell_role("opencode"));
+        assert!(!is_harness_shell_role("planner"));
+        assert!(!is_harness_shell_role("implementer"));
+    }
+
+    #[test]
+    fn validate_harness_name_rejects_unknown_harnesses() {
+        assert!(validate_harness_name(Some("claude")).is_ok());
+        assert!(validate_harness_name(Some("unknown")).is_err());
+        assert_eq!(validate_harness_name(Some("  ")).unwrap(), None);
     }
 }

@@ -29,7 +29,6 @@ fn main() {
         .manage(LaunchConfig::load())
         .invoke_handler(tauri::generate_handler![
             swarm_ui::swarm::get_swarm_state,
-            swarm_ui::pty::pty_create,
             swarm_ui::pty::pty_write,
             swarm_ui::pty::pty_resize,
             swarm_ui::pty::pty_close,
@@ -37,6 +36,7 @@ fn main() {
             swarm_ui::pty::get_pty_sessions,
             swarm_ui::launch::agent_spawn,
             swarm_ui::launch::spawn_shell,
+            swarm_ui::launch::respawn_instance,
             swarm_ui::launch::get_role_presets,
             swarm_ui::bind::get_binding_state,
             swarm_ui::ui_commands::ui_clear_messages,
@@ -55,11 +55,10 @@ fn main() {
                 );
             }
 
-            // Sweep orphaned UI-owned rows from a previous session. Anything
-            // still marked `adopted=0` here is a ghost: its PTY is gone (the
-            // UI that created it has exited), so there's no process left to
-            // adopt it. Bun's 30s prune would eventually clear it, but the
-            // user sees it as an un-closeable offline node in the meantime.
+            // Sweep stale orphaned UI-owned rows from prior sessions. Fresh
+            // `adopted=0` placeholders may still belong to another live UI
+            // window or a slow-starting child, so `sweep_unadopted_orphans`
+            // only removes rows whose heartbeat has already gone stale.
             match swarm_ui::writes::open_rw()
                 .and_then(|conn| swarm_ui::writes::ensure_adopted_column(&conn).map(|()| conn))
                 .and_then(|conn| swarm_ui::writes::sweep_unadopted_orphans(&conn))

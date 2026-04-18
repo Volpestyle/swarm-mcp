@@ -7,8 +7,28 @@
 // between MCP tool handlers and bare DB helpers.
 // =============================================================================
 
-use crate::{bind::Binder, model::AppError, writes};
+use crate::{
+    bind::Binder,
+    model::{AppError, InstanceStatus},
+    writes,
+};
 use tauri::State;
+
+fn instance_status_from_heartbeat(heartbeat: i64) -> InstanceStatus {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or_default();
+    InstanceStatus::from_heartbeat(now, heartbeat)
+}
+
+fn instance_status_label(status: InstanceStatus) -> &'static str {
+    match status {
+        InstanceStatus::Online => "online",
+        InstanceStatus::Stale => "stale",
+        InstanceStatus::Offline => "offline",
+    }
+}
 
 /// Clear all message history between two instances in either direction.
 /// Triggered by the Inspector's "Clear messages" button on a selected
@@ -95,6 +115,24 @@ pub fn ui_deregister_instance(
     }
 
     let conn = writes::open_rw().map_err(AppError::Operation)?;
+    let instance = writes::load_instance_info(&conn, trimmed)
+        .map_err(AppError::Operation)?
+        .ok_or_else(|| AppError::NotFound(format!("instance {trimmed} not found")))?;
+
+    if binder.resolved_pty_for(trimmed).is_some() {
+        return Err(AppError::Validation(format!(
+            "instance {trimmed} still has a live PTY in this session"
+        )));
+    }
+
+    let status = instance_status_from_heartbeat(instance.heartbeat);
+    if status != InstanceStatus::Offline {
+        return Err(AppError::Validation(format!(
+            "instance {trimmed} is {} and cannot be removed yet",
+            instance_status_label(status)
+        )));
+    }
+
     writes::deregister_instance(&conn, trimmed).map_err(AppError::Operation)?;
 
     binder.unbind(trimmed);

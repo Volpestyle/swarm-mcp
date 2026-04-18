@@ -6,7 +6,7 @@
 -->
 <script lang="ts">
   import type { NodeType, InstanceStatus, Task } from '../lib/types';
-  import { closePty, deregisterInstance } from '../stores/pty';
+  import { closePty, deregisterInstance, respawnInstance } from '../stores/pty';
   import { createEventDispatcher } from 'svelte';
 
   export let role: string = '';
@@ -39,10 +39,18 @@
   ).length;
   $: isAppOwned = nodeType === 'pty' || nodeType === 'bound';
   $: showAdopting = instanceId !== null && !adopted;
-  // Show the remove button on any node that has an instance row we could
-  // delete. For live PTYs we close the PTY (existing stop semantics); for
-  // instance-only or dead-bound nodes we drop the swarm.db row directly.
-  $: canRemoveInstance = instanceId !== null;
+  // Only offline instance rows can be deleted safely. Live PTYs still use the
+  // stop button; stale/online instance-only rows must age out or be respawned.
+  $: canRemoveInstance = instanceId !== null && status === 'offline';
+  // Show the respawn button only on instance-only nodes whose heartbeat has
+  // aged out — meaning the owning process is gone and reviving the swarm
+  // row with a fresh PTY is useful. Online externals are excluded so we
+  // don't spawn a duplicate PTY competing with a live process.
+  $: canRespawnInstance =
+    nodeType === 'instance' &&
+    instanceId !== null &&
+    (status === 'offline' || status === 'stale');
+  let respawning = false;
 
   function deriveDisplayLabel(
     instId: string | null,
@@ -93,6 +101,18 @@
       await deregisterInstance(instanceId);
     } catch (err) {
       console.error('[NodeHeader] failed to deregister instance:', err);
+    }
+  }
+
+  async function handleRespawnInstance() {
+    if (!instanceId || respawning) return;
+    respawning = true;
+    try {
+      await respawnInstance(instanceId);
+    } catch (err) {
+      console.error('[NodeHeader] failed to respawn instance:', err);
+    } finally {
+      respawning = false;
     }
   }
 </script>
@@ -163,21 +183,37 @@
           <rect x="6" y="6" width="12" height="12" rx="1"/>
         </svg>
       </button>
-    {:else if canRemoveInstance}
-      <button
-        class="stop"
-        title="Remove instance from swarm"
-        on:click|stopPropagation={handleRemoveInstance}
-      >
-        <!-- Trash icon -->
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="3 6 5 6 21 6"/>
-          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-          <path d="M10 11v6"/>
-          <path d="M14 11v6"/>
-          <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-        </svg>
-      </button>
+    {:else}
+      {#if canRespawnInstance}
+        <button
+          class="respawn"
+          title="Relaunch this agent so it comes back online"
+          disabled={respawning}
+          on:click|stopPropagation={handleRespawnInstance}
+        >
+          <!-- Refresh / respawn icon -->
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+        </button>
+      {/if}
+      {#if canRemoveInstance}
+        <button
+          class="stop"
+          title="Remove instance from swarm"
+          on:click|stopPropagation={handleRemoveInstance}
+        >
+          <!-- Trash icon -->
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            <path d="M10 11v6"/>
+            <path d="M14 11v6"/>
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+          </svg>
+        </button>
+      {/if}
     {/if}
   </div>
 </div>

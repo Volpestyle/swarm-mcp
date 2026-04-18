@@ -19,6 +19,7 @@ import type {
   BindingState,
   LaunchResult,
   ShellSpawnResult,
+  RespawnResult,
   PtyExitPayload,
   RolePresetSummary,
 } from '../lib/types';
@@ -305,39 +306,6 @@ export function destroyPtyStore(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a new PTY session.
- * Returns the PTY ID.
- */
-export async function createPty(
-  command: string,
-  args: string[],
-  cwd: string,
-  env?: Record<string, string>,
-): Promise<string> {
-  const ptyId = await invoke<string>('pty_create', {
-    command,
-    args,
-    cwd,
-    env: env ?? {},
-  });
-
-  // Optimistically add to local store (backend will also emit pty:created)
-  const session: PtySession = {
-    id: ptyId,
-    command,
-    cwd,
-    started_at: Date.now(),
-    exit_code: null,
-    bound_instance_id: null,
-    launch_token: null,
-  };
-
-  upsertSession(session);
-
-  return ptyId;
-}
-
-/**
  * Write data to a PTY session's stdin.
  */
 export async function writeToPty(id: string, data: Uint8Array): Promise<void> {
@@ -383,18 +351,16 @@ export async function getPtyBuffer(id: string): Promise<Uint8Array> {
  * Returns the PTY ID and launch token.
  */
 export async function spawnAgent(
-  role: string | null,
+  role: string,
   workingDir: string,
   scope?: string,
   label?: string,
-  command?: string,
 ): Promise<LaunchResult> {
   const result = await invoke<LaunchResult>('agent_spawn', {
     role,
     working_dir: workingDir,
     scope: scope ?? null,
     label: label ?? null,
-    command: command ?? null,
   });
 
   // Add PTY session to local store. The backend pre-creates the swarm
@@ -402,7 +368,7 @@ export async function spawnAgent(
   // is resolved from the moment the PTY exists — no pending phase.
   const session: PtySession = {
     id: result.pty_id,
-    command: command ?? role ?? 'agent',
+    command: role,
     cwd: workingDir,
     started_at: Date.now(),
     exit_code: null,
@@ -479,6 +445,43 @@ export async function spawnShell(
  */
 export async function getRolePresets(): Promise<RolePresetSummary[]> {
   return invoke<RolePresetSummary[]>('get_role_presets');
+}
+
+/**
+ * Relaunch a PTY against an existing instance row that went offline when the
+ * previous swarm-ui session exited. The new child process adopts the same
+ * instance id, keeping task assignments and message history intact.
+ *
+ * For harness-shell instances (claude/codex/opencode) the result carries the
+ * harness name and we auto-type it into the new PTY's stdin, matching the
+ * ergonomics of `spawnShell` above.
+ */
+export async function respawnInstance(instanceId: string): Promise<RespawnResult> {
+  const result = await invoke<RespawnResult>('respawn_instance', { instanceId });
+
+  const session: PtySession = {
+    id: result.pty_id,
+    command: result.harness ?? 'agent',
+    cwd: '',
+    started_at: Date.now(),
+    exit_code: null,
+    bound_instance_id: result.instance_id,
+    launch_token: result.token,
+  };
+
+  upsertSession(session);
+  resolveBinding(result.instance_id, result.pty_id);
+
+  if (result.harness) {
+    const encoded = new TextEncoder().encode(`${result.harness}\n`);
+    setTimeout(() => {
+      writeToPty(result.pty_id, encoded).catch((err) => {
+        console.warn('[pty] failed to auto-type harness on respawn:', err);
+      });
+    }, 200);
+  }
+
+  return result;
 }
 
 /**

@@ -147,6 +147,19 @@ export interface ShellSpawnResult {
   instance_id: string | null;
 }
 
+/**
+ * Returned by `respawn_instance`. Mirrors `LaunchResult` but also carries the
+ * harness name (claude/codex/opencode) when the respawned instance was a
+ * swarm-aware shell — the frontend auto-types this command into the new PTY
+ * so ctrl-c drops back to a shell prompt instead of killing the node.
+ */
+export interface RespawnResult {
+  pty_id: string;
+  token: string;
+  instance_id: string;
+  harness: string | null;
+}
+
 /** Returned by `get_role_presets` */
 export interface RolePresetSummary {
   role: string;
