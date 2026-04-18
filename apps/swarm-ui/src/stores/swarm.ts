@@ -176,10 +176,41 @@ export interface SwarmSummary {
 }
 
 // ---------------------------------------------------------------------------
+// Message append feed — side channel off the reactive store path
+//
+// Every new `messages` row emitted on `swarm:messages:new` is fanned out to
+// listeners here. MessageEdge components use this to spawn per-message packet
+// animations without triggering a full graph rebuild (which would reflow all
+// edges and tank perf for bursty swarms).
+// ---------------------------------------------------------------------------
+
+type MessageAppendedListener = (msg: Message) => void;
+
+const messageAppendedListeners = new Set<MessageAppendedListener>();
+
+export function onMessageAppended(cb: MessageAppendedListener): () => void {
+  messageAppendedListeners.add(cb);
+  return () => {
+    messageAppendedListeners.delete(cb);
+  };
+}
+
+function fanoutAppendedMessage(msg: Message): void {
+  for (const cb of messageAppendedListeners) {
+    try {
+      cb(msg);
+    } catch (err) {
+      console.error('[swarm] onMessageAppended listener threw:', err);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Initialization and event handling
 // ---------------------------------------------------------------------------
 
 let swarmUnlisten: UnlistenFn | null = null;
+let messagesAppendedUnlisten: UnlistenFn | null = null;
 let initialized = false;
 
 /**
@@ -206,6 +237,17 @@ export async function initSwarmStore(): Promise<void> {
   swarmUnlisten = await listen<SwarmUpdate>('swarm:update', (event) => {
     applyUpdate(event.payload);
   });
+
+  // Listen for the message delta feed and fan out to per-edge subscribers
+  messagesAppendedUnlisten = await listen<Message[]>(
+    'swarm:messages:new',
+    (event) => {
+      console.log('[swarm] messages:new delta:', event.payload.length, 'msg(s), listeners:', messageAppendedListeners.size);
+      for (const msg of event.payload) {
+        fanoutAppendedMessage(msg);
+      }
+    },
+  );
 }
 
 /**
@@ -217,6 +259,11 @@ export function destroySwarmStore(): void {
     swarmUnlisten();
     swarmUnlisten = null;
   }
+  if (messagesAppendedUnlisten) {
+    messagesAppendedUnlisten();
+    messagesAppendedUnlisten = null;
+  }
+  messageAppendedListeners.clear();
   initialized = false;
 }
 

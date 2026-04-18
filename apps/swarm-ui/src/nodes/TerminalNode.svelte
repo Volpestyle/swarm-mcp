@@ -14,7 +14,7 @@
 -->
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { Handle, Position } from '@xyflow/svelte';
+  import { Handle, Position, NodeResizer } from '@xyflow/svelte';
   import type { SwarmNodeData } from '../lib/types';
   import {
     createTerminal,
@@ -45,7 +45,6 @@
   let terminalInputUnlisten: (() => void) | null = null;
   let dataUnlisten: (() => void) | null = null;
   let exitUnlisten: (() => void) | null = null;
-  let resizeObserver: ResizeObserver | null = null;
   let exitCode: number | null = null;
   let disposed = false;
 
@@ -115,23 +114,9 @@
       console.error('[TerminalNode] failed to subscribe to PTY exit:', err);
     }
 
-    // Container resize -> resize grid + tell PTY
-    resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        if (!terminalHandle) continue;
-        const { width, height } = entry.contentRect;
-        // Approximate cell size for 13px JetBrains Mono; ghostty-web reports the real
-        // grid back via onResize below, which is the source of truth.
-        const charWidth = 7.8;
-        const lineHeight = 17;
-        const cols = Math.max(1, Math.floor(width / charWidth));
-        const rows = Math.max(1, Math.floor(height / lineHeight));
-        terminalHandle.resize(cols, rows);
-      }
-    });
-    resizeObserver.observe(terminalContainer);
-
-    // Forward the terminal's authoritative grid size to the PTY
+    // ghostty-web's FitAddon (loaded inside createTerminal) observes the
+    // container and resizes the grid using the renderer's real charWidth /
+    // charHeight. We just forward the resulting size to the PTY.
     handle.onResize(({ cols, rows }) => {
       void resizePty(boundPtyId, cols, rows);
     });
@@ -150,12 +135,18 @@
     focusTarget?.focus();
   }
 
+  function sideToPosition(side: string): Position {
+    switch (side) {
+      case 'top': return Position.Top;
+      case 'right': return Position.Right;
+      case 'bottom': return Position.Bottom;
+      case 'left': return Position.Left;
+      default: return Position.Right;
+    }
+  }
+
   function cleanupTerminal() {
     disposed = true;
-    if (resizeObserver) {
-      resizeObserver.disconnect();
-      resizeObserver = null;
-    }
     if (terminalInputUnlisten) {
       terminalInputUnlisten();
       terminalInputUnlisten = null;
@@ -176,8 +167,36 @@
 </script>
 
 <div bind:this={nodeElement} class="terminal-node" class:selected data-node-id={id}>
-  <!-- Source handle (left) for incoming edges -->
-  <Handle type="target" position={Position.Left} />
+  <!-- Resize handles on all four corners + edges. Only visible when the node
+       is selected so they don't clutter the canvas. -->
+  <NodeResizer
+    minWidth={360}
+    minHeight={260}
+    isVisible={selected}
+    lineClass="resize-line"
+    handleClass="resize-handle"
+  />
+
+  <!-- Port handles on all four sides. The adaptive edge router picks
+       whichever pair (source-side on this node, target-side on the other)
+       produces the shortest distance, and the edge anchors on those exact
+       dots. Having both source and target variants per side lets the
+       drag-to-message gesture start/land anywhere. Disabled on `pty:`
+       nodes (plain shells with no swarm identity). -->
+  {#each ['top', 'right', 'bottom', 'left'] as side (side)}
+    <Handle
+      id="t-{side}"
+      type="target"
+      position={sideToPosition(side)}
+      isConnectable={data.nodeType !== 'pty'}
+    />
+    <Handle
+      id="s-{side}"
+      type="source"
+      position={sideToPosition(side)}
+      isConnectable={data.nodeType !== 'pty'}
+    />
+  {/each}
 
   <NodeHeader
     {role}
@@ -188,6 +207,7 @@
     assignedTasks={data.assignedTasks}
     ptyId={ptyId}
     launchToken={data.ptySession?.launch_token ?? null}
+    adopted={instance?.adopted ?? true}
     on:inspect={handleInspect}
     on:focus={handleFocus}
   />
@@ -267,8 +287,6 @@
     </div>
   {/if}
 
-  <!-- Target handle (right) for outgoing edges -->
-  <Handle type="source" position={Position.Right} />
 </div>
 
 <style>

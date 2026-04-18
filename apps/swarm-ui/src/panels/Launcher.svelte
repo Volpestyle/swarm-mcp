@@ -1,13 +1,11 @@
 <!--
   Launcher.svelte — Agent/shell spawn controls
 
-  - "Spawn Shell" button with cwd input
-  - "Spawn Agent" section with role preset dropdown, working directory,
-    scope, custom label, and launch button
-  - Shows list of pending (unbound) PTY sessions with their tokens
+  - Quick shell launch (cwd + harness) at the top
+  - Agent spawn form (role, cwd, scope, label)
+  - Pending PTY sessions list appears when unbound sessions exist
 -->
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
   import { onMount } from 'svelte';
   import type { RolePresetSummary } from '../lib/types';
   import {
@@ -17,30 +15,77 @@
     unboundPtySessions,
   } from '../stores/pty';
 
-  // Form state
-  let role: string = '';
-  let workingDir: string = '';
-  let scope: string = '';
+  // Persisted last-used values. A fresh swarm-ui window has no useful
+  // default for cwd — best we can do is remember what the user launched
+  // with last time. Keys are namespaced so future settings can live next
+  // to them.
+  const STORAGE_KEY_SHELL_CWD = 'swarm-ui.launcher.shellCwd';
+  const STORAGE_KEY_AGENT_CWD = 'swarm-ui.launcher.workingDir';
+  const STORAGE_KEY_HARNESS = 'swarm-ui.launcher.harness';
+  const STORAGE_KEY_ROLE = 'swarm-ui.launcher.role';
+  const STORAGE_KEY_SCOPE = 'swarm-ui.launcher.scope';
+
+  function loadStored(key: string): string {
+    if (typeof localStorage === 'undefined') return '';
+    return localStorage.getItem(key) ?? '';
+  }
+
+  function saveStored(key: string, value: string): void {
+    if (typeof localStorage === 'undefined') return;
+    if (value) {
+      localStorage.setItem(key, value);
+    } else {
+      localStorage.removeItem(key);
+    }
+  }
+
+  // Form state — hydrated from localStorage on mount so users don't retype
+  // the same cwd every launch.
+  let role: string = loadStored(STORAGE_KEY_ROLE);
+  let workingDir: string = loadStored(STORAGE_KEY_AGENT_CWD);
+  let scope: string = loadStored(STORAGE_KEY_SCOPE);
   let label: string = '';
   let customCommand: string = '';
-  let shellCwd: string = '';
+  let shellCwd: string = loadStored(STORAGE_KEY_SHELL_CWD);
+  // Default harness to whatever the user last picked, falling back to
+  // `claude` so first-run users get a swarm-aware shell (which goes through
+  // the adoption flow and comes up bound + draggable).
+  let shellHarness: string = loadStored(STORAGE_KEY_HARNESS) || 'claude';
 
-  // Available presets
+  const shellHarnessOptions: { value: string; label: string }[] = [
+    { value: '', label: 'Shell' },
+    { value: 'claude', label: 'claude' },
+    { value: 'codex', label: 'codex' },
+    { value: 'opencode', label: 'opencode' },
+  ];
+
   let rolePresets: RolePresetSummary[] = [];
   let loading = false;
   let error: string | null = null;
 
-  const dispatch = createEventDispatcher<{ settings: void }>();
-
-  // Determine if we're using a custom command vs a preset
   $: isCustomRole = role === 'custom';
+  $: effectiveShellCwd = shellCwd.trim() || workingDir.trim();
+  $: shellRunDisabled = loading || !effectiveShellCwd;
+  $: agentLaunchDisabled =
+    loading ||
+    !workingDir.trim() ||
+    (!role && !customCommand.trim()) ||
+    (isCustomRole && !customCommand.trim());
+
+  function validateCwd(value: string, context: string): string | null {
+    const trimmed = value.trim();
+    if (!trimmed) return `${context} is required`;
+    if (!trimmed.startsWith('/') && !trimmed.startsWith('~')) {
+      return `${context} must be an absolute path`;
+    }
+    return null;
+  }
 
   onMount(async () => {
     try {
       rolePresets = await getRolePresets();
     } catch (err) {
       console.warn('[Launcher] failed to load role presets:', err);
-      // Fall back to hardcoded defaults
       rolePresets = [
         { role: 'planner', command: 'opencode', args: [], default_label_tokens: 'provider:opencode' },
         { role: 'implementer', command: 'opencode', args: [], default_label_tokens: 'provider:opencode' },
@@ -48,28 +93,40 @@
         { role: 'researcher', command: 'opencode', args: [], default_label_tokens: 'provider:opencode' },
       ];
     }
+
+    // If no role was persisted, default to the first preset so the Launch
+    // button isn't disabled on first render.
+    if (!role && rolePresets.length > 0) {
+      role = rolePresets[0].role;
+    }
   });
 
   async function handleSpawnAgent() {
-    if (!workingDir) {
-      error = 'Working directory is required';
+    const cwdError = validateCwd(workingDir, 'Working directory');
+    if (cwdError) {
+      error = cwdError;
+      return;
+    }
+    if (isCustomRole && !customCommand.trim()) {
+      error = 'Custom command is required';
       return;
     }
 
     loading = true;
     error = null;
-
     try {
       await spawnAgent(
         isCustomRole ? null : role || null,
-        workingDir,
-        scope || undefined,
-        label || undefined,
-        isCustomRole ? customCommand || undefined : undefined,
+        workingDir.trim(),
+        scope.trim() || undefined,
+        label.trim() || undefined,
+        isCustomRole ? customCommand.trim() || undefined : undefined,
       );
-      // Reset form on success
-      role = '';
-      scope = '';
+      // Persist the cwd/role/scope so the next launch doesn't require
+      // re-entering them. Label is intentionally one-shot.
+      saveStored(STORAGE_KEY_AGENT_CWD, workingDir.trim());
+      saveStored(STORAGE_KEY_ROLE, isCustomRole ? '' : role);
+      saveStored(STORAGE_KEY_SCOPE, scope.trim());
       label = '';
       customCommand = '';
     } catch (err) {
@@ -81,18 +138,19 @@
   }
 
   async function handleSpawnShell() {
-    const cwd = shellCwd || workingDir;
-    if (!cwd) {
-      error = 'Working directory is required for shell launch';
+    const cwd = effectiveShellCwd;
+    const cwdError = validateCwd(cwd, 'Working directory');
+    if (cwdError) {
+      error = cwdError;
       return;
     }
 
     loading = true;
     error = null;
-
     try {
-      await spawnShell(cwd);
-      shellCwd = '';
+      await spawnShell(cwd, shellHarness || undefined);
+      saveStored(STORAGE_KEY_SHELL_CWD, shellCwd.trim());
+      saveStored(STORAGE_KEY_HARNESS, shellHarness);
     } catch (err) {
       error = `Failed to spawn shell: ${err}`;
       console.error('[Launcher] shell error:', err);
@@ -101,51 +159,67 @@
     }
   }
 
-  function openSettings() {
-    dispatch('settings');
-  }
 </script>
 
 <div class="launcher">
-  <div class="launcher-header">
-    <span class="launcher-title">Launch</span>
-    <button type="button" class="launcher-settings-btn" on:click={openSettings}>
-      Settings
-    </button>
-  </div>
-
-  <div class="launcher-body">
-    <!-- Shell spawn section -->
-    <section>
+  <div class="body">
+    <!-- Quick shell launch -->
+    <section class="block">
       <div class="shell-row">
         <input
           type="text"
           class="input"
-          placeholder="CWD for shell (defaults to working dir)"
+          class:invalid={shellCwd.length > 0 && !effectiveShellCwd}
+          placeholder={workingDir ? `defaults to ${workingDir}` : 'cwd (/abs/path)'}
           bind:value={shellCwd}
         />
-        <button
-          class="btn btn-secondary"
-          on:click={handleSpawnShell}
-          disabled={loading}
+        <select
+          class="input harness"
+          bind:value={shellHarness}
+          aria-label="Shell harness"
         >
-          Shell
+          {#each shellHarnessOptions as option (option.value)}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+        <button
+          class="btn"
+          on:click={handleSpawnShell}
+          disabled={shellRunDisabled}
+          title={shellRunDisabled && !effectiveShellCwd
+            ? 'Enter a working directory first'
+            : ''}
+        >
+          {shellHarness ? 'Run' : 'Sh'}
         </button>
       </div>
+      {#if shellHarness}
+        <p class="hint">
+          Pre-creates a swarm instance and binds it to the shell — the
+          harness adopts it on register and the node comes up draggable.
+        </p>
+      {:else}
+        <p class="hint">
+          Plain shell has no swarm identity. Pick a harness to launch with
+          adoption.
+        </p>
+      {/if}
     </section>
 
-    <!-- Agent spawn section -->
-    <section>
-      <h4>Spawn Agent</h4>
+    <div class="divider"></div>
+
+    <!-- Agent spawn -->
+    <section class="block">
+      <h4>Spawn agent</h4>
 
       <div class="form-group">
         <label for="role-select">Role</label>
         <select id="role-select" class="input" bind:value={role}>
-          <option value="">-- Select role --</option>
+          <option value="">Select a role</option>
           {#each rolePresets as preset (preset.role)}
             <option value={preset.role}>{preset.role}</option>
           {/each}
-          <option value="custom">Custom command...</option>
+          <option value="custom">Custom command…</option>
         </select>
       </div>
 
@@ -155,70 +229,78 @@
           <input
             id="custom-cmd"
             type="text"
-            class="input"
-            placeholder="e.g., claude --model opus"
+            class="input mono"
+            placeholder="claude --model opus"
             bind:value={customCommand}
           />
         </div>
       {/if}
 
       <div class="form-group">
-        <label for="working-dir">Working Directory</label>
+        <label for="working-dir">Working dir</label>
         <input
           id="working-dir"
           type="text"
-          class="input"
+          class="input mono"
           placeholder="/path/to/project"
           bind:value={workingDir}
         />
       </div>
 
-      <div class="form-group">
-        <label for="scope-input">Scope <span class="optional">(optional)</span></label>
-        <input
-          id="scope-input"
-          type="text"
-          class="input"
-          placeholder="Auto-detected if empty"
-          bind:value={scope}
-        />
-      </div>
-
-      <div class="form-group">
-        <label for="label-input">Label Tokens <span class="optional">(optional)</span></label>
-        <input
-          id="label-input"
-          type="text"
-          class="input"
-          placeholder="e.g., frontend:auth"
-          bind:value={label}
-        />
+      <div class="form-grid-2">
+        <div class="form-group">
+          <label for="scope-input">Scope</label>
+          <input
+            id="scope-input"
+            type="text"
+            class="input"
+            placeholder="auto"
+            bind:value={scope}
+          />
+        </div>
+        <div class="form-group">
+          <label for="label-input">Label</label>
+          <input
+            id="label-input"
+            type="text"
+            class="input"
+            placeholder="frontend:auth"
+            bind:value={label}
+          />
+        </div>
       </div>
 
       <button
         class="btn btn-primary"
         on:click={handleSpawnAgent}
-        disabled={loading || (!role && !customCommand)}
+        disabled={agentLaunchDisabled}
+        title={agentLaunchDisabled && !workingDir.trim()
+          ? 'Enter a working directory first'
+          : ''}
       >
-        {loading ? 'Launching...' : 'Launch Agent'}
+        {loading ? 'Launching…' : 'Launch agent'}
       </button>
 
       {#if error}
-        <div class="error-msg">{error}</div>
+        <div class="error">{error}</div>
       {/if}
     </section>
 
-    <!-- Pending PTY sessions -->
     {#if $unboundPtySessions.length > 0}
-      <section>
-        <h4>Pending ({$unboundPtySessions.length})</h4>
+      <div class="divider"></div>
+
+      <section class="block">
+        <h4>
+          <span>Pending</span>
+          <span class="count">{$unboundPtySessions.length}</span>
+        </h4>
         <div class="pending-list">
           {#each $unboundPtySessions as pty (pty.id)}
             <div class="pending-item">
-              <span class="status-dot pending"></span>
-              <span class="pending-cmd">{pty.command}</span>
+              <span class="pending-dot"></span>
+              <span class="pending-cmd mono">{pty.command}</span>
               {#if pty.launch_token}
-                <span class="pending-token">{pty.launch_token}</span>
+                <span class="pending-token mono">{pty.launch_token}</span>
               {/if}
             </div>
           {/each}
@@ -232,76 +314,68 @@
   .launcher {
     display: flex;
     flex-direction: column;
-    border-bottom: 1px solid var(--node-border, #313244);
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
 
-  .launcher-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--node-border, #313244);
-  }
+  /* --- Body ---------------------------------------------------- */
 
-  .launcher-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--terminal-fg, #c0caf5);
-  }
-
-  .launcher-body {
-    padding: 10px 14px;
+  .body {
+    padding: 14px 16px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
   }
 
-  section {
+  .block {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
   }
 
   h4 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
     font-size: 11px;
     font-weight: 600;
     color: #a6adc8;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin: 0;
+    letter-spacing: 0.02em;
   }
+
+  .count {
+    font-size: 10px;
+    font-weight: 500;
+    color: #6c7086;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .divider {
+    height: 1px;
+    background: rgba(108, 112, 134, 0.18);
+    margin: 2px 0;
+  }
+
+  /* --- Form ---------------------------------------------------- */
 
   .shell-row {
     display: flex;
     gap: 6px;
   }
 
-  .launcher-settings-btn {
-    border: 1px solid var(--node-border, #313244);
-    border-radius: 6px;
-    padding: 5px 10px;
-    background: var(--node-header-bg, #181825);
-    color: #a6adc8;
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease;
-  }
-
-  .launcher-settings-btn:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--terminal-fg, #c0caf5);
-  }
-
-  .shell-row .input {
-    flex: 1;
-  }
+  .shell-row .input { flex: 1; min-width: 0; }
+  .shell-row .harness { flex: 0 0 80px; }
 
   .form-group {
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
+    min-width: 0;
   }
 
   .form-group label {
@@ -310,76 +384,103 @@
     color: #6c7086;
   }
 
-  .optional {
-    font-weight: 400;
-    opacity: 0.6;
+  .form-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
   }
 
   .input {
     width: 100%;
-    padding: 5px 8px;
-    background: var(--node-header-bg, #181825);
-    border: 1px solid var(--node-border, #313244);
+    padding: 6px 8px;
+    background: rgba(17, 17, 27, 0.55);
+    border: 1px solid rgba(108, 112, 134, 0.25);
     border-radius: 4px;
     color: var(--terminal-fg, #c0caf5);
     font-size: 12px;
     font-family: inherit;
     outline: none;
-    transition: border-color 0.15s ease;
+    transition: border-color 0.12s ease, background 0.12s ease;
     box-sizing: border-box;
+    line-height: 1.4;
+  }
+
+  .input.mono {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+  }
+
+  .input::placeholder {
+    color: #585b70;
   }
 
   .input:focus {
-    border-color: var(--status-pending, #89b4fa);
+    border-color: rgba(137, 180, 250, 0.6);
+    background: rgba(17, 17, 27, 0.8);
+  }
+
+  .input.invalid {
+    border-color: rgba(243, 139, 168, 0.45);
+  }
+
+  .hint {
+    margin: 0;
+    font-size: 10.5px;
+    line-height: 1.45;
+    color: #6c7086;
   }
 
   select.input {
     cursor: pointer;
     appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236c7086'/%3E%3C/svg%3E");
+    padding-right: 22px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%236c7086'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 8px center;
-    padding-right: 24px;
   }
+
+  /* --- Buttons ------------------------------------------------- */
 
   .btn {
     padding: 6px 12px;
-    border: none;
+    border: 1px solid rgba(108, 112, 134, 0.3);
+    background: rgba(17, 17, 27, 0.55);
+    color: var(--terminal-fg, #c0caf5);
     border-radius: 4px;
     font-size: 12px;
-    font-weight: 600;
+    font-weight: 500;
+    font-family: inherit;
     cursor: pointer;
-    transition: background 0.15s ease, opacity 0.15s ease;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+  }
+
+  .btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(108, 112, 134, 0.55);
   }
 
   .btn:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
     cursor: not-allowed;
   }
 
   .btn-primary {
-    background: var(--status-pending, #89b4fa);
-    color: #1e1e2e;
+    background: rgba(137, 180, 250, 0.12);
+    border-color: rgba(137, 180, 250, 0.4);
+    color: #89b4fa;
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--status-pending, #89b4fa) 85%, white);
+    background: rgba(137, 180, 250, 0.2);
+    border-color: rgba(137, 180, 250, 0.7);
   }
 
-  .btn-secondary {
-    background: var(--node-border, #313244);
-    color: var(--terminal-fg, #c0caf5);
-    flex-shrink: 0;
-  }
+  /* --- Errors / pending --------------------------------------- */
 
-  .btn-secondary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--node-border, #313244) 80%, white);
-  }
-
-  .error-msg {
+  .error {
     font-size: 11px;
     color: var(--edge-task-failed, #f38ba8);
-    padding: 4px 0;
+    padding: 2px 0;
   }
 
   .pending-list {
@@ -391,9 +492,18 @@
   .pending-item {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12px;
+    gap: 8px;
     padding: 4px 0;
+    font-size: 12px;
+  }
+
+  .pending-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--status-pending, #89b4fa);
+    animation: pulse 1.5s ease-in-out infinite;
+    flex-shrink: 0;
   }
 
   .pending-cmd {
@@ -405,29 +515,17 @@
   }
 
   .pending-token {
-    font-family: var(--font-mono);
     font-size: 10px;
     color: #6c7086;
-    background: var(--node-header-bg, #181825);
-    padding: 1px 4px;
+    background: rgba(17, 17, 27, 0.6);
+    padding: 1px 5px;
     border-radius: 3px;
   }
 
-  /* Reuse the status dot from terminal.css */
-  .status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .status-dot.pending {
-    background: var(--status-pending, #89b4fa);
-    animation: pulse-dot 1.5s ease-in-out infinite;
-  }
-
-  @keyframes pulse-dot {
+  @keyframes pulse {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+    50%      { opacity: 0.4; }
   }
+
+  .mono { font-family: var(--font-mono); }
 </style>

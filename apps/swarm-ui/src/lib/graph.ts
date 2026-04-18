@@ -16,9 +16,8 @@ import type {
   XYFlowNode,
   XYFlowEdge,
   SwarmNodeData,
-  MessageEdgeData,
-  TaskEdgeData,
-  DependencyEdgeData,
+  ConnectionEdgeData,
+  ConnectionDep,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -34,9 +33,11 @@ import type {
  *   3. Each resolved binding -> bound node (merged card)
  *
  * Edge derivation:
- *   1. Messages grouped by (sender, recipient) pair -> one edge per pair
- *   2. Tasks with assignee -> edge from requester to assignee
- *   3. Dependencies -> edge from dependency task's assignee to dependent task's assignee
+ *   One `connection` edge per unordered instance pair, aggregating all
+ *   messages, shared tasks, and task dependencies between the two
+ *   endpoints. Overlapping edge types that used to stack on top of each
+ *   other are collapsed into a single edge carrying a "key" of what's
+ *   present and routed to the combined inspector.
  */
 export function buildGraph(
   instances: Map<string, Instance>,
@@ -123,14 +124,7 @@ export function buildGraph(
     }
   }
 
-  // 1. Message edges: group by (sender, recipient) pair
-  edges.push(...buildMessageEdges(messages, instanceToNodeId));
-
-  // 2. Task edges: requester -> assignee
-  edges.push(...buildTaskEdges(tasks, instanceToNodeId));
-
-  // 3. Dependency edges: dependency task assignee -> dependent task assignee
-  edges.push(...buildDependencyEdges(tasks, instanceToNodeId));
+  edges.push(...buildConnectionEdges(messages, tasks, instanceToNodeId));
 
   return { nodes, edges };
 }
@@ -174,6 +168,10 @@ function makeNode(
     type: 'terminal', // All nodes use the TerminalNode component (Agent 4)
     position,
     data,
+    // Default size; NodeResizer lets the user drag corners/edges to resize.
+    // Using `style` (instead of node.width/height) keeps xyflow from treating
+    // the size as measured-and-fixed, so the resize handles stay authoritative.
+    style: 'width: 760px; height: 620px;',
   };
 }
 
@@ -244,139 +242,106 @@ function resolvePosition(
 // ---------------------------------------------------------------------------
 
 /**
- * Group recent messages by (sender, recipient) pair. Create one edge per pair
- * with the most recent message in metadata.
+ * Build one connection edge per unordered pair of participating instances.
+ * Every relationship between A and B (messages in either direction, shared
+ * tasks, task dependencies that cross between their assignees) collapses
+ * into a single edge so nothing stacks visually.
+ *
+ * Canonical direction: `min(a, b)` lexically is the edge `source`, `max`
+ * is the `target`. This keeps the bezier stable across snapshots and lets
+ * the packet renderer route individual messages forward or reverse along
+ * the same curve.
  */
-function buildMessageEdges(
+function buildConnectionEdges(
   messages: Message[],
+  tasks: Map<string, Task>,
   instanceToNodeId: Map<string, string>,
 ): XYFlowEdge[] {
-  // Group by directed sender -> recipient pair.
-  const pairMap = new Map<string, Message[]>();
+  interface PairBucket {
+    sourceInstanceId: string;
+    targetInstanceId: string;
+    messages: Message[];
+    tasks: Task[];
+    deps: ConnectionDep[];
+  }
 
-  for (const msg of messages) {
-    if (!msg.recipient) continue; // skip broadcast messages
-    const sourceNode = instanceToNodeId.get(msg.sender);
-    const targetNode = instanceToNodeId.get(msg.recipient);
-    if (!sourceNode || !targetNode) continue;
+  const pairs = new Map<string, PairBucket>();
 
-    const pairKey = `${msg.sender}::${msg.recipient}`;
-    const group = pairMap.get(pairKey);
-    if (group) {
-      group.push(msg);
-    } else {
-      pairMap.set(pairKey, [msg]);
+  const bucketFor = (a: string, b: string): PairBucket | null => {
+    if (a === b) return null;
+    if (!instanceToNodeId.has(a) || !instanceToNodeId.has(b)) return null;
+    const [lo, hi] = a < b ? [a, b] : [b, a];
+    const key = `${lo}::${hi}`;
+    let bucket = pairs.get(key);
+    if (!bucket) {
+      bucket = {
+        sourceInstanceId: lo,
+        targetInstanceId: hi,
+        messages: [],
+        tasks: [],
+        deps: [],
+      };
+      pairs.set(key, bucket);
     }
+    return bucket;
+  };
+
+  // Messages between two instances (skip broadcasts)
+  for (const msg of messages) {
+    if (!msg.recipient) continue;
+    const bucket = bucketFor(msg.sender, msg.recipient);
+    if (bucket) bucket.messages.push(msg);
   }
 
-  const edges: XYFlowEdge[] = [];
-
-  for (const [pairKey, msgs] of pairMap) {
-    // Sort by created_at descending to get most recent first
-    msgs.sort((a, b) => b.created_at - a.created_at);
-    const latest = msgs[0];
-    const recipient = latest.recipient;
-    if (!recipient) continue;
-
-    const sourceNode = instanceToNodeId.get(latest.sender);
-    const targetNode = instanceToNodeId.get(recipient);
-    if (!sourceNode || !targetNode) continue;
-
-    const data: MessageEdgeData = {
-      edgeType: 'message',
-      messageCount: msgs.length,
-      lastMessage: latest,
-    };
-
-    edges.push({
-      id: `msg:${pairKey}`,
-      type: 'message',
-      source: sourceNode,
-      target: targetNode,
-      data,
-    });
-  }
-
-  return edges;
-}
-
-/**
- * For each task with an assignee, create an edge from requester node to
- * assignee node, colored by status.
- */
-function buildTaskEdges(
-  tasks: Map<string, Task>,
-  instanceToNodeId: Map<string, string>,
-): XYFlowEdge[] {
-  const edges: XYFlowEdge[] = [];
-
-  for (const [id, task] of tasks) {
+  // Tasks where requester and assignee are both known instances
+  for (const task of tasks.values()) {
     if (!task.assignee) continue;
-
-    const sourceNode = instanceToNodeId.get(task.requester);
-    const targetNode = instanceToNodeId.get(task.assignee);
-    if (!sourceNode || !targetNode) continue;
-
-    const data: TaskEdgeData = {
-      edgeType: 'task',
-      task,
-    };
-
-    edges.push({
-      id: `task:${id}`,
-      type: 'task',
-      source: sourceNode,
-      target: targetNode,
-      data,
-    });
+    const bucket = bucketFor(task.requester, task.assignee);
+    if (bucket) bucket.tasks.push(task);
   }
 
-  return edges;
-}
-
-/**
- * For each task with depends_on, create edges from the dependency task's
- * assignee to the dependent task's assignee.
- */
-function buildDependencyEdges(
-  tasks: Map<string, Task>,
-  instanceToNodeId: Map<string, string>,
-): XYFlowEdge[] {
-  const edges: XYFlowEdge[] = [];
-
-  for (const [dependentId, dependent] of tasks) {
+  // Dependencies: edge between the dep-task's assignee and the dependent-task's assignee
+  for (const dependent of tasks.values()) {
     if (dependent.depends_on.length === 0 || !dependent.assignee) continue;
-
-    const dependentNode = instanceToNodeId.get(dependent.assignee);
-    if (!dependentNode) continue;
-
     for (const depId of dependent.depends_on) {
       const depTask = tasks.get(depId);
       if (!depTask || !depTask.assignee) continue;
-
-      const depNode = instanceToNodeId.get(depTask.assignee);
-      if (!depNode) continue;
-
-      // Avoid self-edges
-      if (depNode === dependentNode) continue;
-
-      const satisfied = depTask.status === 'done';
-
-      const data: DependencyEdgeData = {
-        edgeType: 'dependency',
+      const bucket = bucketFor(depTask.assignee, dependent.assignee);
+      if (!bucket) continue;
+      bucket.deps.push({
         dependencyTaskId: depId,
-        dependentTaskId: dependentId,
-        satisfied,
-      };
-
-      edges.push({
-        id: `dep:${depId}->${dependentId}`,
-        type: 'dependency',
-        source: depNode,
-        target: dependentNode,
-        data,
+        dependentTaskId: dependent.id,
+        satisfied: depTask.status === 'done',
       });
     }
+  }
+
+  const edges: XYFlowEdge[] = [];
+  for (const [key, bucket] of pairs) {
+    // Sort messages most-recent-first for the inspector; packet animation
+    // reads per-message sender/recipient to pick direction.
+    bucket.messages.sort((x, y) => y.created_at - x.created_at);
+
+    const sourceNode = instanceToNodeId.get(bucket.sourceInstanceId);
+    const targetNode = instanceToNodeId.get(bucket.targetInstanceId);
+    if (!sourceNode || !targetNode) continue;
+
+    const data: ConnectionEdgeData = {
+      edgeType: 'connection',
+      sourceInstanceId: bucket.sourceInstanceId,
+      targetInstanceId: bucket.targetInstanceId,
+      messages: bucket.messages,
+      tasks: bucket.tasks,
+      deps: bucket.deps,
+    };
+
+    edges.push({
+      id: `conn:${key}`,
+      type: 'connection',
+      source: sourceNode,
+      target: targetNode,
+      data,
+    });
   }
 
   return edges;

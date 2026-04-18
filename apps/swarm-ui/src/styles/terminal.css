@@ -60,12 +60,29 @@
   --badge-shell: #6c7086;
   --badge-custom: #f5c2e7;
 
-  /* Dimensions */
-  --node-width: 640px;
-  --node-min-height: 420px;
+  /* Dimensions — defaults; actual size is driven by xyflow's NodeResizer */
+  --node-width: 800px;
+  --node-min-height: 520px;
   --node-header-height: 48px;
   --node-border-radius: 10px;
   --terminal-border-radius: 6px;
+}
+
+/* ---------------------------------------------------------------------------
+ * NodeResizer handles — corners + edges for drag-to-resize
+ * --------------------------------------------------------------------------- */
+
+:global(.resize-line) {
+  border-color: color-mix(in srgb, var(--node-border-selected) 55%, transparent);
+  border-width: 1.5px;
+}
+
+:global(.resize-handle) {
+  width: 10px;
+  height: 10px;
+  background: var(--node-border-selected);
+  border: 2px solid var(--node-header-bg);
+  border-radius: 2px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -73,14 +90,18 @@
  * --------------------------------------------------------------------------- */
 
 .terminal-node {
-  width: var(--node-width);
-  min-height: var(--node-min-height);
+  width: 100%;
+  height: 100%;
+  min-width: 320px;
+  min-height: 240px;
   background: var(--node-bg);
   border: 1px solid var(--node-border);
   border-radius: var(--node-border-radius);
   backdrop-filter: blur(var(--surface-blur)) saturate(1.15);
   -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.15);
-  overflow: hidden;
+  /* overflow: hidden on the children (header + terminal-container) handles the
+     rounded-corner clipping; the node itself must stay visible so NodeResizer's
+     edge/corner handles don't get clipped. */
   display: flex;
   flex-direction: column;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
@@ -106,6 +127,7 @@
   padding: 0 12px;
   background: var(--node-header-bg);
   border-bottom: 1px solid var(--node-border);
+  border-radius: var(--node-border-radius) var(--node-border-radius) 0 0;
   backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
   -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
   display: flex;
@@ -203,6 +225,23 @@
   flex-shrink: 0;
 }
 
+/* Pending-adoption indicator: instance row pre-created by swarm-ui but the
+   child process inside the PTY hasn't called swarm.register yet. Messages
+   sent to this node are queued in swarm.db but won't be consumed until the
+   child adopts. */
+.adopting-badge {
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  background: color-mix(in srgb, var(--status-pending) 18%, transparent);
+  color: var(--status-pending);
+  border: 1px solid color-mix(in srgb, var(--status-pending) 35%, transparent);
+  flex-shrink: 0;
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
 /* Header control buttons */
 .node-controls {
   display: flex;
@@ -248,7 +287,7 @@
   backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
   -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
   position: relative;
-  min-height: 200px;
+  min-height: 0;
   cursor: text;
 }
 
@@ -257,11 +296,11 @@
   pointer-events: auto;
 }
 
-/* Ensure the terminal fills its container */
-.terminal-container > * {
-  width: 100% !important;
-  height: 100% !important;
-}
+/* ghostty-web sizes its own canvas based on the (cols, rows) it's told to
+   render. We deliberately do NOT force width/height on its root — forcing
+   100% stretches the canvas bitmap and distorts glyphs when the container
+   size and the grid size get out of sync. The ResizeObserver in
+   TerminalNode.svelte keeps the grid in step with the container. */
 
 /* xterm.js specific overrides */
 .terminal-container .xterm {
@@ -346,13 +385,30 @@
   stroke-width: 2;
   stroke-dasharray: 6 4;
   fill: none;
+  /* animation-duration is set inline per-edge from MessageEdge.svelte based
+     on how recently the two nodes exchanged messages. */
   animation: dash-flow 1s linear infinite;
 }
 
-/* Recent activity = faster animation */
+/* Most recent traffic (< 10s) — thicker line */
 .message-edge-path.active {
-  animation-duration: 0.4s;
   stroke-width: 2.5;
+}
+
+/* No activity in the last 10 min — drop the animation and desaturate */
+.message-edge-path.stale {
+  animation: none;
+  opacity: 0.4;
+}
+
+/* Packet: one SVG <circle> per new message, animated along the edge path
+   via <animateMotion>. The flow comes from spawning/removing them in
+   MessageEdge.svelte, not from a looping CSS animation. */
+.message-packet {
+  fill: var(--edge-message);
+  filter: drop-shadow(0 0 4px var(--edge-message));
+  opacity: 0.95;
+  pointer-events: none;
 }
 
 /* ---------------------------------------------------------------------------

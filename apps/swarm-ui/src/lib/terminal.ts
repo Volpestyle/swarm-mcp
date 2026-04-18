@@ -10,7 +10,7 @@
 // - Lifecycle is tied to Svelte onMount/onDestroy in TerminalNode.svelte.
 // =============================================================================
 
-import { init, Terminal } from 'ghostty-web';
+import { init, Terminal, FitAddon } from 'ghostty-web';
 import type { TerminalHandle, TerminalOptions, TerminalTheme } from './types';
 
 const DEFAULT_FONT_SIZE = 13;
@@ -76,14 +76,26 @@ export async function createTerminal(
     theme: resolved.theme,
   });
 
+  // FitAddon reads the renderer's real charWidth/charHeight (set after open())
+  // and computes the largest (cols, rows) that fit the container, then resizes
+  // the terminal. Without this we'd guess metrics, undercount rows, and leave
+  // a strip of empty container background below the canvas.
+  const fit = new FitAddon();
+  term.loadAddon(fit);
+
   term.open(container);
+  fit.fit();
+  fit.observeResize();
 
   return {
     id,
     write: (data) => term.write(data),
-    resize: (cols, rows) => term.resize(cols, rows),
+    resize: () => fit.fit(),
     focus: () => term.focus(),
-    dispose: () => term.dispose(),
+    dispose: () => {
+      fit.dispose();
+      term.dispose();
+    },
     onData: (cb) => {
       const disp = term.onData(cb);
       return () => disp.dispose();
