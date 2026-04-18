@@ -26,10 +26,22 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
+const NEXT_HINT =
+  "next: call wait_for_activity to receive the next swarm event (messages, task changes, KV updates, instance changes). This is your idle loop — skip only if the user explicitly told you to stop or the overall goal is complete.";
+
 function missing() {
   return {
     content: [
       { type: "text" as const, text: "Not registered. Call register first." },
+    ],
+  };
+}
+
+function respond(text: string) {
+  return {
+    content: [
+      { type: "text" as const, text },
+      { type: "text" as const, text: NEXT_HINT },
     ],
   };
 }
@@ -355,14 +367,9 @@ server.tool(
       `[auto] Instance ${label} (${instance_id}) was removed by ${instance.label ?? instance.id}. Its tasks and locks have been released.`,
     );
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Removed instance ${label} (${instance_id}). Tasks released, locks cleared.`,
-        },
-      ],
-    };
+    return respond(
+      `Removed instance ${label} (${instance_id}). Tasks released, locks cleared.`,
+    );
   },
 );
 
@@ -416,9 +423,7 @@ server.tool(
     }
 
     messages.send(instance.id, instance.scope, recipient, content);
-    return {
-      content: [{ type: "text", text: `Message sent to ${recipient}` }],
-    };
+    return respond(`Message sent to ${recipient}`);
   },
 );
 
@@ -429,11 +434,7 @@ server.tool(
   async ({ content }) => {
     if (!instance) return missing();
     const count = messages.broadcast(instance.id, instance.scope, content);
-    return {
-      content: [
-        { type: "text", text: `Broadcast sent to ${count} instance(s)` },
-      ],
-    };
+    return respond(`Broadcast sent to ${count} instance(s)`);
   },
 );
 
@@ -453,7 +454,7 @@ server.tool(
   async ({ limit }) => {
     if (!instance) return missing();
     const rows = messages.poll(instance.id, instance.scope, limit);
-    return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
+    return respond(JSON.stringify(rows, null, 2));
   },
 );
 
@@ -563,18 +564,13 @@ server.tool(
       );
     }
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            task_id: result.id,
-            status: result.status,
-            ...(result.existing ? { existing: true } : {}),
-          }),
-        },
-      ],
-    };
+    return respond(
+      JSON.stringify({
+        task_id: result.id,
+        status: result.status,
+        ...(result.existing ? { existing: true } : {}),
+      }),
+    );
   },
 );
 
@@ -672,9 +668,7 @@ server.tool(
       }
     }
 
-    return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    };
+    return respond(JSON.stringify(result, null, 2));
   },
 );
 
@@ -685,7 +679,7 @@ server.tool(
   async ({ task_id }) => {
     if (!instance) return missing();
     const result = tasks.claim(task_id, instance.scope, instance.id);
-    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    return respond(JSON.stringify(result));
   },
 );
 
@@ -722,7 +716,7 @@ server.tool(
       }
     }
 
-    return { content: [{ type: "text", text: JSON.stringify(next) }] };
+    return respond(JSON.stringify(next));
   },
 );
 
@@ -751,7 +745,7 @@ server.tool(
       }
     }
 
-    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    return respond(JSON.stringify(result));
   },
 );
 
@@ -816,9 +810,7 @@ server.tool(
       type,
       content,
     );
-    return {
-      content: [{ type: "text", text: JSON.stringify({ annotation_id: id }) }],
-    };
+    return respond(JSON.stringify({ annotation_id: id }));
   },
 );
 
@@ -838,7 +830,7 @@ server.tool(
       path,
       reason ?? "actively editing",
     );
-    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    return respond(JSON.stringify(result));
   },
 );
 
@@ -849,7 +841,7 @@ server.tool(
   async ({ file }) => {
     if (!instance) return missing();
     context.clearLocks(instance.id, instance.scope, resolveFileInput(file));
-    return { content: [{ type: "text", text: `Unlocked ${file}` }] };
+    return respond(`Unlocked ${file}`);
   },
 );
 
@@ -912,7 +904,7 @@ server.tool(
   async ({ key, value }) => {
     if (!instance) return missing();
     kv.set(instance.scope, key, value);
-    return { content: [{ type: "text", text: `Set \"${key}\"` }] };
+    return respond(`Set \"${key}\"`);
   },
 );
 
@@ -935,11 +927,7 @@ server.tool(
       };
     }
     const length = kv.append(instance.scope, key, value);
-    return {
-      content: [
-        { type: "text", text: `Appended to \"${key}\" (${length} items)` },
-      ],
-    };
+    return respond(`Appended to \"${key}\" (${length} items)`);
   },
 );
 
@@ -950,7 +938,7 @@ server.tool(
   async ({ key }) => {
     if (!instance) return missing();
     kv.del(instance.scope, key);
-    return { content: [{ type: "text", text: `Deleted \"${key}\"` }] };
+    return respond(`Deleted \"${key}\"`);
   },
 );
 
@@ -1000,11 +988,7 @@ server.tool(
         messages: messages.poll(instance!.id, instance!.scope, 50),
         tasks: tasks.snapshot(instance!.scope),
       };
-      return {
-        content: [
-          { type: "text", text: JSON.stringify(result, null, 2) },
-        ],
-      };
+      return respond(JSON.stringify(result, null, 2));
     }
 
     const startMsgId = getMaxMsgId();
@@ -1042,11 +1026,7 @@ server.tool(
           result.instances = registry.list(instance!.scope);
         }
 
-        return {
-          content: [
-            { type: "text", text: JSON.stringify(result, null, 2) },
-          ],
-        };
+        return respond(JSON.stringify(result, null, 2));
       }
 
       // Sleep before next check
@@ -1054,19 +1034,13 @@ server.tool(
     }
 
     // Timeout with no changes
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            changes: [],
-            timeout: true,
-            message:
-              "No new activity within timeout. Call wait_for_activity again to keep waiting.",
-          }),
-        },
-      ],
-    };
+    return respond(
+      JSON.stringify({
+        changes: [],
+        timeout: true,
+        message: "No new activity within timeout.",
+      }),
+    );
   },
 );
 
