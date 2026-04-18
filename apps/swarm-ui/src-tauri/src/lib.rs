@@ -4,3 +4,5 @@ pub mod launch;
 pub mod model;
 pub mod pty;
 pub mod swarm;
+pub mod ui_commands;
+pub mod writes;

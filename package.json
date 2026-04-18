@@ -2,24 +2,37 @@
   "name": "swarm-mcp",
   "version": "1.0.0",
   "type": "module",
-  "private": true,
+  "bin": {
+    "swarm-mcp": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "commands",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "start": "bun run src/index.ts",
-    "build": "bun build src/index.ts --outdir dist --target bun",
-    "typecheck": "bun x tsc --noEmit",
+    "start": "node dist/cli.js",
+    "build": "esbuild src/cli.ts src/index.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --packages=external --banner:js='#!/usr/bin/env node'",
+    "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "check": "bun run typecheck && bun run test && bun run build"
+    "check": "bun run typecheck && bun run test && bun run build",
+    "prepack": "bun run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.2",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
+    "better-sqlite3": "^11.7.0",
     "zod": "^3.25.76",
     "zod-to-json-schema": "^3.25.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.12.0",
     "bun-types": "^1.3.11",
+    "esbuild": "^0.24.2",
     "typescript": "^5.9.3"
   }
 }

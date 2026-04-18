@@ -1,4 +1,3 @@
-import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -7,7 +6,48 @@ const path =
   process.env.SWARM_DB_PATH ?? join(homedir(), ".swarm-mcp", "swarm.db");
 mkdirSync(dirname(path), { recursive: true });
 
-export const db = new Database(path);
+// Runtime-pick the SQLite driver. Bun uses its built-in `bun:sqlite` (fast, no
+// native build). Node uses `better-sqlite3` (N-API native module). Both expose
+// a near-identical API which we thinly wrap below.
+const isBun = typeof (globalThis as unknown as { Bun?: unknown }).Bun !== "undefined";
+
+type Statement = {
+  all: (...args: unknown[]) => unknown[];
+  get: (...args: unknown[]) => unknown;
+  run: (...args: unknown[]) => { changes: number; lastInsertRowid: number | bigint };
+};
+
+type RawDb = {
+  exec: (sql: string) => void;
+  prepare: (sql: string) => Statement;
+  transaction: <T>(fn: () => T) => () => T;
+};
+
+const raw: RawDb = await (async () => {
+  if (isBun) {
+    // bun:sqlite only resolves under the Bun runtime; esbuild leaves it alone
+    // via --packages=external, and Node never reaches this branch.
+    const { Database } = await import("bun:sqlite");
+    return new Database(path) as unknown as RawDb;
+  }
+  const BetterSqlite3 = (await import("better-sqlite3")).default;
+  return new BetterSqlite3(path) as unknown as RawDb;
+})();
+
+export const db = {
+  exec(sql: string) {
+    raw.exec(sql);
+  },
+  query(sql: string) {
+    return raw.prepare(sql);
+  },
+  run(sql: string, params: unknown[] = []) {
+    return raw.prepare(sql).run(...params);
+  },
+  transaction<T>(fn: () => T) {
+    return raw.transaction(fn);
+  },
+};
 
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA busy_timeout = 3000");
@@ -23,7 +63,8 @@ db.exec(`
     pid INTEGER NOT NULL,
     label TEXT,
     registered_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    heartbeat INTEGER NOT NULL DEFAULT (unixepoch())
+    heartbeat INTEGER NOT NULL DEFAULT (unixepoch()),
+    adopted INTEGER NOT NULL DEFAULT 1
   )
 `);
 
@@ -129,6 +170,7 @@ function rebuildKv() {
 add("instances", "scope TEXT NOT NULL DEFAULT ''");
 add("instances", "root TEXT NOT NULL DEFAULT ''");
 add("instances", "file_root TEXT NOT NULL DEFAULT ''");
+add("instances", "adopted INTEGER NOT NULL DEFAULT 1");
 add("messages", "scope TEXT NOT NULL DEFAULT ''");
 add("tasks", "scope TEXT NOT NULL DEFAULT ''");
 add("tasks", "changed_at INTEGER NOT NULL DEFAULT 0");

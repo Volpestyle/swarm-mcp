@@ -7,71 +7,89 @@
   - Scrollable content area with close button to deselect
 -->
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
   import type {
     SwarmNodeData,
-    MessageEdgeData,
-    TaskEdgeData,
-    DependencyEdgeData,
+    ConnectionEdgeData,
     XYFlowNode,
     XYFlowEdge,
-    Task,
-    Message,
   } from '../lib/types';
   import { formatTimestamp } from '../lib/time';
-  import { getMessagesBetween, getTask } from '../stores/swarm';
+  import Markdown from '../lib/Markdown.svelte';
 
   export let selectedNode: XYFlowNode | null = null;
   export let selectedEdge: XYFlowEdge | null = null;
-
-  const dispatch = createEventDispatcher<{ close: void }>();
 
   // Determine what we're inspecting
   $: inspectingNode = selectedNode !== null;
   $: inspectingEdge = selectedEdge !== null && selectedNode === null;
   $: nodeData = selectedNode?.data as SwarmNodeData | null;
 
-  // Edge data typed by edge type
-  $: edgeData = selectedEdge?.data as
-    | MessageEdgeData
-    | TaskEdgeData
-    | DependencyEdgeData
-    | null;
-  $: dependencyEdgeData = edgeData?.edgeType === 'dependency' ? edgeData : null;
+  // Every edge is now a unified `connection` bundling messages, tasks, and
+  // dependencies between the same unordered instance pair.
+  $: edgeData = selectedEdge?.data as ConnectionEdgeData | null;
 
-  // Resolve message history for message edges
-  $: messageHistory = resolveMessageHistory();
+  // Reference edgeData.messages directly so Svelte's reactive dep tracker
+  // picks up the update. A wrapper function call would hide the read and
+  // freeze messageHistory at its mount-time value.
+  $: messageHistory = (inspectingEdge && edgeData?.messages) || [];
 
-  function resolveMessageHistory(): Message[] {
-    if (!inspectingEdge || !selectedEdge) return [];
-    const d = edgeData;
-    if (!d || d.edgeType !== 'message') return [];
-    // Extract instance IDs from edge source/target node IDs
-    const sourceId = extractInstanceId(selectedEdge.source);
-    const targetId = extractInstanceId(selectedEdge.target);
-    if (!sourceId || !targetId) return [];
-    return getMessagesBetween(sourceId, targetId);
+  $: tasks = edgeData?.tasks ?? [];
+  $: deps = edgeData?.deps ?? [];
+
+  // -------------------------------------------------------------------
+  // Per-section delete actions. Each writes to swarm.db via a dedicated
+  // Tauri command; the 500ms poll then re-emits the snapshot and the
+  // Inspector re-renders with the updated edgeData. No optimistic UI.
+  // -------------------------------------------------------------------
+
+  let pendingAction: string | null = null;
+  let actionError: string | null = null;
+
+  async function handleClearMessages(): Promise<void> {
+    if (!edgeData) return;
+    pendingAction = 'messages';
+    actionError = null;
+    try {
+      await invoke<number>('ui_clear_messages', {
+        instanceA: edgeData.sourceInstanceId,
+        instanceB: edgeData.targetInstanceId,
+      });
+    } catch (err) {
+      actionError = `Failed to clear messages: ${err}`;
+    } finally {
+      pendingAction = null;
+    }
   }
 
-  // Resolve full task detail for task edges
-  $: taskDetail = resolveTaskDetail();
-
-  function resolveTaskDetail(): Task | null {
-    if (!inspectingEdge || !edgeData) return null;
-    if (edgeData.edgeType === 'task') {
-      return (edgeData as TaskEdgeData).task;
+  async function handleUnassignTask(taskId: string): Promise<void> {
+    pendingAction = `task:${taskId}`;
+    actionError = null;
+    try {
+      await invoke<boolean>('ui_unassign_task', { taskId });
+    } catch (err) {
+      actionError = `Failed to unassign task: ${err}`;
+    } finally {
+      pendingAction = null;
     }
-    if (edgeData.edgeType === 'dependency') {
-      const depData = edgeData as DependencyEdgeData;
-      return getTask(depData.dependencyTaskId) ?? null;
-    }
-    return null;
   }
 
-  function extractInstanceId(nodeId: string): string | null {
-    // Node IDs are formatted as "bound:{id}", "instance:{id}", or "pty:{id}"
-    const parts = nodeId.split(':');
-    return parts.length > 1 ? parts.slice(1).join(':') : null;
+  async function handleRemoveDependency(
+    dependentTaskId: string,
+    dependencyTaskId: string,
+  ): Promise<void> {
+    pendingAction = `dep:${dependencyTaskId}->${dependentTaskId}`;
+    actionError = null;
+    try {
+      await invoke<boolean>('ui_remove_dependency', {
+        dependentTaskId,
+        dependencyTaskId,
+      });
+    } catch (err) {
+      actionError = `Failed to remove dependency: ${err}`;
+    } finally {
+      pendingAction = null;
+    }
   }
 
   function statusBadgeColor(status: string): string {
@@ -91,24 +109,6 @@
 </script>
 
 <div class="inspector">
-  <div class="inspector-header">
-    <span class="inspector-title">
-      {#if inspectingNode}
-        Node Details
-      {:else if inspectingEdge}
-        Edge Details
-      {:else}
-        Inspector
-      {/if}
-    </span>
-    <button class="close-btn" on:click={() => dispatch('close')} title="Close inspector">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <line x1="18" y1="6" x2="6" y2="18"/>
-        <line x1="6" y1="6" x2="18" y2="18"/>
-      </svg>
-    </button>
-  </div>
-
   <div class="inspector-body">
     {#if inspectingNode && nodeData}
       <!-- ===== Node Inspection ===== -->
@@ -233,128 +233,108 @@
       {/if}
 
     {:else if inspectingEdge && edgeData}
-      <!-- ===== Edge Inspection ===== -->
+      <!-- ===== Edge Inspection =====
+           Every selected edge is now a unified connection bundling every
+           relationship between the two endpoints: messages either way,
+           shared tasks, and task-level dependencies. -->
 
-      {#if edgeData.edgeType === 'message'}
-        <!-- Message edge: full message history -->
+      <section class="endpoints">
+        <div class="detail-grid">
+          <span class="detail-label">A</span>
+          <span class="detail-value mono">{edgeData.sourceInstanceId.slice(0, 12)}</span>
+          <span class="detail-label">B</span>
+          <span class="detail-value mono">{edgeData.targetInstanceId.slice(0, 12)}</span>
+        </div>
+      </section>
+
+      {#if actionError}
+        <div class="error-banner">{actionError}</div>
+      {/if}
+
+      {#if messageHistory.length > 0}
         <section>
-          <h4>Messages ({messageHistory.length})</h4>
+          <div class="section-head">
+            <h4>Messages ({messageHistory.length})</h4>
+            <button
+              class="delete-btn"
+              disabled={pendingAction === 'messages'}
+              on:click={handleClearMessages}
+            >
+              {pendingAction === 'messages' ? 'Clearing…' : 'Clear history'}
+            </button>
+          </div>
           <div class="message-list">
             {#each messageHistory as msg (msg.id)}
               <div class="message-item">
                 <div class="message-meta">
                   <span class="message-sender mono">{msg.sender.slice(0, 8)}</span>
-                  <span class="message-arrow">-></span>
+                  <span class="message-arrow">-&gt;</span>
                   <span class="message-recipient mono">{msg.recipient?.slice(0, 8) ?? 'broadcast'}</span>
                   <span class="message-time">{formatTimestamp(msg.created_at)}</span>
                 </div>
-                <div class="message-content">{msg.content}</div>
+                <div class="message-content">
+                  <Markdown content={msg.content} />
+                </div>
               </div>
             {/each}
-            {#if messageHistory.length === 0}
-              <div class="empty-state">No messages found</div>
-            {/if}
           </div>
         </section>
+      {/if}
 
-      {:else if edgeData.edgeType === 'task' && taskDetail}
-        <!-- Task edge: full task detail -->
+      {#if tasks.length > 0}
         <section>
-          <h4>Task Detail</h4>
-          <div class="detail-grid">
-            <span class="detail-label">ID</span>
-            <span class="detail-value mono">{taskDetail.id}</span>
-
-            <span class="detail-label">Title</span>
-            <span class="detail-value">{taskDetail.title}</span>
-
-            <span class="detail-label">Status</span>
-            <span class="detail-value">
-              <span class="inline-badge" style="color: {statusBadgeColor(taskDetail.status)}">
-                {taskDetail.status}
-              </span>
-            </span>
-
-            <span class="detail-label">Type</span>
-            <span class="detail-value">{taskDetail.type}</span>
-
-            <span class="detail-label">Requester</span>
-            <span class="detail-value mono">{taskDetail.requester}</span>
-
-            <span class="detail-label">Assignee</span>
-            <span class="detail-value mono">{taskDetail.assignee ?? '--'}</span>
-
-            {#if taskDetail.priority !== 0}
-              <span class="detail-label">Priority</span>
-              <span class="detail-value">{taskDetail.priority}</span>
-            {/if}
-
-            <span class="detail-label">Created</span>
-            <span class="detail-value">{formatTimestamp(taskDetail.created_at)}</span>
-
-            <span class="detail-label">Updated</span>
-            <span class="detail-value">{formatTimestamp(taskDetail.updated_at)}</span>
+          <h4>Tasks ({tasks.length})</h4>
+          <div class="task-list">
+            {#each tasks as task (task.id)}
+              <div class="task-row">
+                <span class="inline-badge" style="color: {statusBadgeColor(task.status)}">
+                  {task.status}
+                </span>
+                <span class="task-title" title={task.description ?? ''}>{task.title}</span>
+                <span class="task-type">{task.type}</span>
+                <button
+                  class="delete-btn small"
+                  disabled={pendingAction === `task:${task.id}`}
+                  on:click={() => handleUnassignTask(task.id)}
+                  title="Unassign this task (clears the assignee)"
+                >
+                  {pendingAction === `task:${task.id}` ? '…' : 'Unassign'}
+                </button>
+              </div>
+            {/each}
           </div>
-
-          {#if taskDetail.description}
-            <div class="task-description">
-              <h5>Description</h5>
-              <p>{taskDetail.description}</p>
-            </div>
-          {/if}
-
-          {#if taskDetail.result}
-            <div class="task-description">
-              <h5>Result</h5>
-              <p>{taskDetail.result}</p>
-            </div>
-          {/if}
-
-          {#if taskDetail.files.length > 0}
-            <div class="task-files">
-              <h5>Files ({taskDetail.files.length})</h5>
-              {#each taskDetail.files as file}
-                <div class="lock-item mono">{file}</div>
-              {/each}
-            </div>
-          {/if}
-
-          {#if taskDetail.depends_on.length > 0}
-            <div class="task-deps">
-              <h5>Dependencies</h5>
-              {#each taskDetail.depends_on as depId}
-                <div class="lock-item mono">{depId}</div>
-              {/each}
-            </div>
-          {/if}
         </section>
+      {/if}
 
-      {:else if edgeData.edgeType === 'dependency'}
-        <!-- Dependency edge detail -->
+      {#if deps.length > 0}
         <section>
-          <h4>Dependency</h4>
-          <div class="detail-grid">
-            <span class="detail-label">Status</span>
-            <span class="detail-value">
-              <span class="inline-badge" style:color={dependencyEdgeData?.satisfied ? 'var(--edge-dep-satisfied)' : 'var(--edge-dep-blocked)'}>
-                {dependencyEdgeData?.satisfied ? 'Satisfied' : 'Blocked'}
-              </span>
-            </span>
-
-            <span class="detail-label">Dep Task</span>
-            <span class="detail-value mono">{dependencyEdgeData?.dependencyTaskId}</span>
-
-            <span class="detail-label">Dependent</span>
-            <span class="detail-value mono">{dependencyEdgeData?.dependentTaskId}</span>
+          <h4>Dependencies ({deps.length})</h4>
+          <div class="task-list">
+            {#each deps as dep (dep.dependencyTaskId + dep.dependentTaskId)}
+              <div class="task-row">
+                <span
+                  class="inline-badge"
+                  style:color={dep.satisfied ? 'var(--edge-dep-satisfied)' : 'var(--edge-dep-blocked)'}
+                >
+                  {dep.satisfied ? 'satisfied' : 'blocked'}
+                </span>
+                <span class="task-title mono">{dep.dependencyTaskId.slice(0, 8)} → {dep.dependentTaskId.slice(0, 8)}</span>
+                <button
+                  class="delete-btn small"
+                  disabled={pendingAction === `dep:${dep.dependencyTaskId}->${dep.dependentTaskId}`}
+                  on:click={() => handleRemoveDependency(dep.dependentTaskId, dep.dependencyTaskId)}
+                  title="Remove this dependency from the dependent task"
+                >
+                  {pendingAction === `dep:${dep.dependencyTaskId}->${dep.dependentTaskId}` ? '…' : 'Remove'}
+                </button>
+              </div>
+            {/each}
           </div>
-
-          {#if taskDetail}
-            <div class="task-description" style="margin-top: 8px;">
-              <h5>{taskDetail.title}</h5>
-              <p>{taskDetail.description || 'No description'}</p>
-            </div>
-          {/if}
         </section>
+      {/if}
+
+      {#if messageHistory.length === 0 && tasks.length === 0 && deps.length === 0}
+        <div class="empty-state">No activity on this connection</div>
       {/if}
 
     {:else}
@@ -369,51 +349,16 @@
   .inspector {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     overflow: hidden;
-    background: var(--node-bg, #1e1e2e);
-    backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.1);
-    -webkit-backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.1);
-    color: var(--terminal-fg, #c0caf5);
-  }
-
-  .inspector-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--node-border, #313244);
-    flex-shrink: 0;
-  }
-
-  .inspector-title {
-    font-size: 13px;
-    font-weight: 600;
-  }
-
-  .close-btn {
-    width: 24px;
-    height: 24px;
-    border: none;
-    background: transparent;
-    color: #6c7086;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: background 0.1s ease, color 0.1s ease;
-  }
-
-  .close-btn:hover {
-    background: rgba(255, 255, 255, 0.06);
     color: var(--terminal-fg, #c0caf5);
   }
 
   .inspector-body {
     flex: 1;
     overflow-y: auto;
-    padding: 10px 14px;
+    padding: 14px 16px;
   }
 
   section {
@@ -421,21 +366,83 @@
   }
 
   h4 {
-    font-size: 12px;
-    font-weight: 600;
-    color: #a6adc8;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin: 0 0 8px 0;
-    padding-bottom: 4px;
-    border-bottom: 1px solid var(--node-border, #313244);
-  }
-
-  h5 {
     font-size: 11px;
     font-weight: 600;
     color: #a6adc8;
-    margin: 8px 0 4px 0;
+    margin: 0 0 8px 0;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(108, 112, 134, 0.18);
+  }
+
+  section.endpoints {
+    margin-bottom: 12px;
+  }
+
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .section-head h4 {
+    flex: 1;
+    margin: 0;
+    padding-bottom: 0;
+    border: none;
+  }
+
+  .delete-btn {
+    background: transparent;
+    border: 1px solid rgba(243, 139, 168, 0.35);
+    color: var(--edge-task-failed, #f38ba8);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+
+  .delete-btn.small {
+    padding: 2px 6px;
+    font-size: 9.5px;
+  }
+
+  .delete-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--edge-task-failed) 15%, transparent);
+    border-color: var(--edge-task-failed);
+  }
+
+  .delete-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .error-banner {
+    margin-bottom: 10px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--edge-task-failed) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--edge-task-failed) 35%, transparent);
+    color: var(--edge-task-failed);
+    font-size: 11px;
+  }
+
+  .task-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(108, 112, 134, 0.12);
+  }
+
+  .task-row:last-child {
+    border-bottom: none;
   }
 
   .detail-grid {
@@ -457,7 +464,7 @@
   }
 
   .mono {
-    font-family: Menlo, Monaco, 'Cascadia Code', monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
   }
 
@@ -494,19 +501,7 @@
     text-transform: uppercase;
   }
 
-  .task-description {
-    font-size: 12px;
-    line-height: 1.5;
-  }
-
-  .task-description p {
-    margin: 4px 0;
-    color: #a6adc8;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .lock-list, .task-files, .task-deps {
+  .lock-list {
     display: flex;
     flex-direction: column;
     gap: 2px;

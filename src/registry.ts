@@ -15,6 +15,7 @@ export type Instance = {
   file_root: string;
   pid: number;
   label: string | null;
+  adopted: boolean;
 };
 
 function marks(size: number) {
@@ -121,22 +122,80 @@ export function register(
   label?: string,
   value?: string,
   fileRoot?: string,
+  preassignedId?: string,
 ): Instance {
   prune();
 
   const dir = norm(directory);
+  const trimmedLabel = label?.trim() || null;
+
+  // Adoption path: a UI-owned instance row was pre-created with `adopted = 0`
+  // and its id injected via SWARM_MCP_INSTANCE_ID. Update the existing row
+  // with the live pid + label and flip `adopted = 1`. We leave
+  // scope/directory/root/file_root alone since the UI already computed them
+  // for the same directory.
+  if (preassignedId) {
+    const existing = db
+      .query(
+        "SELECT id, scope, directory, root, file_root, pid, label, adopted FROM instances WHERE id = ?",
+      )
+      .get(preassignedId) as
+      | {
+          id: string;
+          scope: string;
+          directory: string;
+          root: string;
+          file_root: string;
+          pid: number;
+          label: string | null;
+          adopted: number;
+        }
+      | null;
+
+    if (existing) {
+      const nextLabel = trimmedLabel ?? existing.label;
+      db.run(
+        `UPDATE instances
+         SET pid = ?, label = ?, adopted = 1, heartbeat = unixepoch()
+         WHERE id = ?`,
+        [process.pid, nextLabel, preassignedId],
+      );
+
+      const adopted: Instance = {
+        id: existing.id,
+        scope: existing.scope,
+        directory: existing.directory,
+        root: existing.root,
+        file_root: existing.file_root,
+        pid: process.pid,
+        label: nextLabel,
+        adopted: true,
+      };
+      planner.ensureOwner({
+        id: adopted.id,
+        scope: adopted.scope,
+        label: adopted.label,
+      });
+      return adopted;
+    }
+    // If the pre-created row was pruned before adoption (stale heartbeat,
+    // manual deregister), fall through to a fresh INSERT with that same id
+    // so the UI's PTY binding stays valid.
+  }
+
   const row = {
-    id: randomUUID(),
+    id: preassignedId ?? randomUUID(),
     scope: scoped(dir, value),
     directory: dir,
     root: root(dir),
     file_root: norm(fileRoot || dir),
     pid: process.pid,
-    label: label?.trim() || null,
+    label: trimmedLabel,
+    adopted: true,
   };
 
   db.run(
-    "INSERT INTO instances (id, scope, directory, root, file_root, pid, label) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
     [row.id, row.scope, row.directory, row.root, row.file_root, row.pid, row.label],
   );
 
@@ -147,11 +206,13 @@ export function register(
 
 export function get(id: string) {
   prune();
-  return db
+  const row = db
     .query(
-      "SELECT id, scope, directory, root, file_root, pid, label FROM instances WHERE id = ?",
+      "SELECT id, scope, directory, root, file_root, pid, label, adopted FROM instances WHERE id = ?",
     )
-    .get(id) as Instance | null;
+    .get(id) as (Omit<Instance, "adopted"> & { adopted: number }) | null;
+  if (!row) return null;
+  return { ...row, adopted: row.adopted !== 0 } as Instance;
 }
 
 export function deregister(id: string) {
@@ -194,7 +255,7 @@ export function list(scope?: string, labelContains?: string) {
   const clause = where.length ? ` WHERE ${where.join(" AND ")}` : "";
   return db
     .query(
-      `SELECT id, scope, directory, root, file_root, pid, label, registered_at, heartbeat FROM instances${clause} ORDER BY registered_at ASC`,
+      `SELECT id, scope, directory, root, file_root, pid, label, registered_at, heartbeat, adopted FROM instances${clause} ORDER BY registered_at ASC`,
     )
     .all(...args);
 }

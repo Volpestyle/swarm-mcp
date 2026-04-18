@@ -26,10 +26,31 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
+const NEXT_HINT =
+  "next: call wait_for_activity to receive the next swarm event (messages, task changes, KV updates, instance changes). This is your idle loop — skip only if the user explicitly told you to stop or the overall goal is complete.";
+
+const REGISTER_PROMPT = `You are now registered with the swarm and should operate in autonomous mode.
+
+Workflow:
+1. After every action you take, before ending your turn, call wait_for_activity. It blocks server-side until something arrives, so it is token-cheap.
+2. When it returns, act on the changes immediately — claim newly-open tasks, respond to messages, react to KV/instance changes — then call wait_for_activity again.
+3. Only break out of this loop when the user explicitly tells you to stop or the overall goal is complete.
+
+Other agents are working concurrently. Your responsiveness on this loop is what makes the swarm work — a silent agent is a stalled swarm.`;
+
 function missing() {
   return {
     content: [
       { type: "text" as const, text: "Not registered. Call register first." },
+    ],
+  };
+}
+
+function respond(text: string) {
+  return {
+    content: [
+      { type: "text" as const, text },
+      { type: "text" as const, text: NEXT_HINT },
     ],
   };
 }
@@ -252,26 +273,87 @@ server.tool(
   },
   async ({ directory, label, scope, file_root }) => {
     if (instance) {
-      return { content: [{ type: "text", text: JSON.stringify(instance) }] };
+      return {
+        content: [
+          { type: "text", text: JSON.stringify(instance) },
+          { type: "text", text: REGISTER_PROMPT },
+        ],
+      };
     }
 
-    instance = registry.register(directory, label, scope, file_root);
-    lastMsgId = getMaxMsgId();
-    lastTaskUpdate = getMaxTaskUpdate();
-    lastInstancesVersion = getInstancesVersion();
-    lastKvUpdate = getMaxKvUpdate();
+    // When launched from swarm-ui, the UI pre-creates an instance row in
+    // `~/.swarm-mcp/swarm.db` (with adopted=0) and injects its id via
+    // SWARM_MCP_INSTANCE_ID. `registry.register` will adopt the existing row
+    // and flip `adopted=1` instead of creating a duplicate.
+    const preassignedId = process.env.SWARM_MCP_INSTANCE_ID?.trim() || undefined;
+    instance = registry.register(directory, label, scope, file_root, preassignedId);
+    startInstanceTimers();
 
-    heartbeatTimer = setInterval(() => {
-      if (instance) registry.heartbeat(instance.id);
-    }, 10_000);
-
-    notifyTimer = setInterval(() => {
-      void poll();
-    }, 5_000);
-
-    return { content: [{ type: "text", text: JSON.stringify(instance) }] };
+    return {
+      content: [
+        { type: "text", text: JSON.stringify(instance) },
+        { type: "text", text: REGISTER_PROMPT },
+      ],
+    };
   },
 );
+
+function startInstanceTimers() {
+  if (!instance) return;
+  lastMsgId = getMaxMsgId();
+  lastTaskUpdate = getMaxTaskUpdate();
+  lastInstancesVersion = getInstancesVersion();
+  lastKvUpdate = getMaxKvUpdate();
+
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (notifyTimer) clearInterval(notifyTimer);
+
+  heartbeatTimer = setInterval(() => {
+    if (instance) registry.heartbeat(instance.id);
+  }, 10_000);
+
+  notifyTimer = setInterval(() => {
+    void poll();
+  }, 5_000);
+}
+
+/**
+ * When swarm-ui spawns the host process (claude/codex/opencode), it
+ * pre-creates an instance row with adopted=0 and injects its id via
+ * SWARM_MCP_INSTANCE_ID. The row stays as "ADOPTING" in the UI until this
+ * server adopts it — but MCP clients only call the `register` tool on
+ * demand, not at startup, so we auto-adopt here so the pill flips to
+ * adopted as soon as the MCP server boots, not whenever the user first
+ * prompts the agent to use swarm tools.
+ *
+ * Directory/scope/label come from env vars also injected by swarm-ui, with
+ * a fallback to `process.cwd()` (the PTY cwd) so manual invocations with
+ * only SWARM_MCP_INSTANCE_ID still work.
+ */
+function tryAutoAdopt() {
+  const preassignedId = process.env.SWARM_MCP_INSTANCE_ID?.trim();
+  if (!preassignedId || instance) return;
+
+  const directory = process.env.SWARM_MCP_DIRECTORY?.trim() || process.cwd();
+  const envScope = process.env.SWARM_MCP_SCOPE?.trim() || undefined;
+  const envLabel = process.env.SWARM_MCP_LABEL?.trim() || undefined;
+  const envFileRoot = process.env.SWARM_MCP_FILE_ROOT?.trim() || undefined;
+
+  try {
+    instance = registry.register(
+      directory,
+      envLabel,
+      envScope,
+      envFileRoot,
+      preassignedId,
+    );
+    startInstanceTimers();
+  } catch (err) {
+    console.error("[swarm-mcp] auto-adopt failed:", err);
+  }
+}
+
+tryAutoAdopt();
 
 server.tool(
   "list_instances",
@@ -355,14 +437,9 @@ server.tool(
       `[auto] Instance ${label} (${instance_id}) was removed by ${instance.label ?? instance.id}. Its tasks and locks have been released.`,
     );
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Removed instance ${label} (${instance_id}). Tasks released, locks cleared.`,
-        },
-      ],
-    };
+    return respond(
+      `Removed instance ${label} (${instance_id}). Tasks released, locks cleared.`,
+    );
   },
 );
 
@@ -416,9 +493,7 @@ server.tool(
     }
 
     messages.send(instance.id, instance.scope, recipient, content);
-    return {
-      content: [{ type: "text", text: `Message sent to ${recipient}` }],
-    };
+    return respond(`Message sent to ${recipient}`);
   },
 );
 
@@ -429,11 +504,7 @@ server.tool(
   async ({ content }) => {
     if (!instance) return missing();
     const count = messages.broadcast(instance.id, instance.scope, content);
-    return {
-      content: [
-        { type: "text", text: `Broadcast sent to ${count} instance(s)` },
-      ],
-    };
+    return respond(`Broadcast sent to ${count} instance(s)`);
   },
 );
 
@@ -453,7 +524,7 @@ server.tool(
   async ({ limit }) => {
     if (!instance) return missing();
     const rows = messages.poll(instance.id, instance.scope, limit);
-    return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
+    return respond(JSON.stringify(rows, null, 2));
   },
 );
 
@@ -563,18 +634,13 @@ server.tool(
       );
     }
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            task_id: result.id,
-            status: result.status,
-            ...(result.existing ? { existing: true } : {}),
-          }),
-        },
-      ],
-    };
+    return respond(
+      JSON.stringify({
+        task_id: result.id,
+        status: result.status,
+        ...(result.existing ? { existing: true } : {}),
+      }),
+    );
   },
 );
 
@@ -672,9 +738,7 @@ server.tool(
       }
     }
 
-    return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    };
+    return respond(JSON.stringify(result, null, 2));
   },
 );
 
@@ -685,7 +749,7 @@ server.tool(
   async ({ task_id }) => {
     if (!instance) return missing();
     const result = tasks.claim(task_id, instance.scope, instance.id);
-    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    return respond(JSON.stringify(result));
   },
 );
 
@@ -722,7 +786,7 @@ server.tool(
       }
     }
 
-    return { content: [{ type: "text", text: JSON.stringify(next) }] };
+    return respond(JSON.stringify(next));
   },
 );
 
@@ -751,7 +815,7 @@ server.tool(
       }
     }
 
-    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    return respond(JSON.stringify(result));
   },
 );
 
@@ -816,9 +880,7 @@ server.tool(
       type,
       content,
     );
-    return {
-      content: [{ type: "text", text: JSON.stringify({ annotation_id: id }) }],
-    };
+    return respond(JSON.stringify({ annotation_id: id }));
   },
 );
 
@@ -838,7 +900,7 @@ server.tool(
       path,
       reason ?? "actively editing",
     );
-    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    return respond(JSON.stringify(result));
   },
 );
 
@@ -849,7 +911,7 @@ server.tool(
   async ({ file }) => {
     if (!instance) return missing();
     context.clearLocks(instance.id, instance.scope, resolveFileInput(file));
-    return { content: [{ type: "text", text: `Unlocked ${file}` }] };
+    return respond(`Unlocked ${file}`);
   },
 );
 
@@ -912,7 +974,7 @@ server.tool(
   async ({ key, value }) => {
     if (!instance) return missing();
     kv.set(instance.scope, key, value);
-    return { content: [{ type: "text", text: `Set \"${key}\"` }] };
+    return respond(`Set \"${key}\"`);
   },
 );
 
@@ -935,11 +997,7 @@ server.tool(
       };
     }
     const length = kv.append(instance.scope, key, value);
-    return {
-      content: [
-        { type: "text", text: `Appended to \"${key}\" (${length} items)` },
-      ],
-    };
+    return respond(`Appended to \"${key}\" (${length} items)`);
   },
 );
 
@@ -950,7 +1008,7 @@ server.tool(
   async ({ key }) => {
     if (!instance) return missing();
     kv.del(instance.scope, key);
-    return { content: [{ type: "text", text: `Deleted \"${key}\"` }] };
+    return respond(`Deleted \"${key}\"`);
   },
 );
 
@@ -1000,11 +1058,7 @@ server.tool(
         messages: messages.poll(instance!.id, instance!.scope, 50),
         tasks: tasks.snapshot(instance!.scope),
       };
-      return {
-        content: [
-          { type: "text", text: JSON.stringify(result, null, 2) },
-        ],
-      };
+      return respond(JSON.stringify(result, null, 2));
     }
 
     const startMsgId = getMaxMsgId();
@@ -1042,11 +1096,7 @@ server.tool(
           result.instances = registry.list(instance!.scope);
         }
 
-        return {
-          content: [
-            { type: "text", text: JSON.stringify(result, null, 2) },
-          ],
-        };
+        return respond(JSON.stringify(result, null, 2));
       }
 
       // Sleep before next check
@@ -1054,19 +1104,13 @@ server.tool(
     }
 
     // Timeout with no changes
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            changes: [],
-            timeout: true,
-            message:
-              "No new activity within timeout. Call wait_for_activity again to keep waiting.",
-          }),
-        },
-      ],
-    };
+    return respond(
+      JSON.stringify({
+        changes: [],
+        timeout: true,
+        message: "No new activity within timeout.",
+      }),
+    );
   },
 );
 

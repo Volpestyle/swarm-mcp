@@ -10,7 +10,7 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize}
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
-use crate::events::{pty_data_event, pty_exit_event, PTY_CLOSED, PTY_CREATED};
+use crate::events::{pty_data_event, pty_exit_event, PTY_BOUND_EXIT, PTY_CLOSED, PTY_CREATED};
 use crate::model::{AppError, PtySession};
 
 const BUFFER_CAPACITY: usize = 2 * 1024 * 1024;
@@ -358,6 +358,7 @@ fn spawn_output_threads(
                     flush_pending(&app_handle, &data_event, &handle, &mut pending);
                     handle.set_exit_code(exit_code);
                     let _ = app_handle.emit(&exit_event, exit_code);
+                    emit_bound_exit_if_any(&app_handle, &handle);
                     break;
                 }
             }
@@ -367,6 +368,22 @@ fn spawn_output_threads(
             flush_pending(&app_handle, &data_event, &handle, &mut pending);
         }
     });
+}
+
+/// Emit `pty:bound_exit` if this session had been bound to a swarm instance.
+///
+/// main.rs listens for this to tear down the binder mapping and delete any
+/// UI-owned placeholder row that was never adopted by the child process.
+fn emit_bound_exit_if_any(app_handle: &AppHandle, handle: &Arc<PtyHandle>) {
+    let Ok(session) = handle.session_snapshot() else {
+        return;
+    };
+    if let Some(instance_id) = session.bound_instance_id {
+        let _ = app_handle.emit(
+            PTY_BOUND_EXIT,
+            serde_json::json!({ "pty_id": session.id, "instance_id": instance_id }),
+        );
+    }
 }
 
 fn flush_pending(
@@ -545,6 +562,7 @@ pub async fn pty_close(
     };
 
     handle.set_exit_code(exit_code);
+    emit_bound_exit_if_any(&app_handle, &handle);
     manager.remove_session(&id);
     let _ = app_handle.emit(PTY_CLOSED, id);
 

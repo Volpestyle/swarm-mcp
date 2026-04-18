@@ -34,7 +34,7 @@ export type TaskType =
 
 export type NodeType = 'instance' | 'pty' | 'bound';
 
-export type EdgeType = 'message' | 'task' | 'dependency';
+export type EdgeType = 'connection';
 
 // ---------------------------------------------------------------------------
 // Data models  (match Rust Serialize output 1:1)
@@ -51,6 +51,12 @@ export interface Instance {
   registered_at: number;
   heartbeat: number;
   status: InstanceStatus;
+  /**
+   * `true` once the child process inside the PTY has called `swarm.register`
+   * and taken over the instance row. `false` while the row is still a
+   * UI-owned placeholder waiting for adoption.
+   */
+  adopted: boolean;
 }
 
 export interface Task {
@@ -123,6 +129,22 @@ export interface BindingState {
 export interface LaunchResult {
   pty_id: string;
   token: string;
+  /**
+   * Pre-created swarm instance id bound to the spawned PTY. The child
+   * adopts this row via `SWARM_MCP_INSTANCE_ID` on `swarm.register`.
+   */
+  instance_id: string;
+}
+
+/** Returned by `spawn_shell` */
+export interface ShellSpawnResult {
+  pty_id: string;
+  /**
+   * Present only for swarm-aware harness launches (claude/codex/opencode),
+   * which go through the same pre-create + adopt flow as `agent_spawn`.
+   * Plain shells have no swarm identity.
+   */
+  instance_id: string | null;
 }
 
 /** Returned by `get_role_presets` */
@@ -183,29 +205,33 @@ export type SwarmNodeData = Record<string, unknown> & {
   requestedTasks: Task[];
 };
 
-export type MessageEdgeData = Record<string, unknown> & {
-  edgeType: 'message';
-  messageCount: number;
-  lastMessage: Message;
+/**
+ * Unified connection edge — one visual edge per unordered instance pair
+ * carrying everything we know about that relationship: message history,
+ * shared tasks, and task-level dependencies.
+ *
+ * `sourceInstanceId` / `targetInstanceId` are the canonical endpoints for
+ * this unordered pair (lexical min = source, max = target) so the bezier
+ * is stable across renders and the packet renderer can route individual
+ * messages in the correct direction along the same curve.
+ */
+export type ConnectionEdgeData = Record<string, unknown> & {
+  edgeType: 'connection';
+  sourceInstanceId: string;
+  targetInstanceId: string;
+  messages: Message[];
+  tasks: Task[];
+  deps: ConnectionDep[];
 };
 
-export type TaskEdgeData = Record<string, unknown> & {
-  edgeType: 'task';
-  task: Task;
-};
-
-export type DependencyEdgeData = Record<string, unknown> & {
-  edgeType: 'dependency';
+export interface ConnectionDep {
   dependencyTaskId: string;
   dependentTaskId: string;
   satisfied: boolean;
-};
+}
 
 /** Edge shape expected by @xyflow/svelte */
-export type XYFlowEdge = FlowEdge<
-  MessageEdgeData | TaskEdgeData | DependencyEdgeData,
-  EdgeType
->;
+export type XYFlowEdge = FlowEdge<ConnectionEdgeData, EdgeType>;
 
 // ---------------------------------------------------------------------------
 // Terminal types — used by terminal.ts
@@ -221,18 +247,35 @@ export interface TerminalTheme {
   background?: string;
   foreground?: string;
   cursor?: string;
+  cursorAccent?: string;
   selectionBackground?: string;
+  selectionForeground?: string;
+  black?: string;
+  red?: string;
+  green?: string;
+  yellow?: string;
+  blue?: string;
+  magenta?: string;
+  cyan?: string;
+  white?: string;
+  brightBlack?: string;
+  brightRed?: string;
+  brightGreen?: string;
+  brightYellow?: string;
+  brightBlue?: string;
+  brightMagenta?: string;
+  brightCyan?: string;
+  brightWhite?: string;
 }
 
 export interface TerminalHandle {
-  /** Opaque handle ID for lifecycle management */
   id: string;
-  /** Write raw bytes to the terminal display */
-  write: (data: Uint8Array) => void;
-  /** Resize the terminal grid */
+  write: (data: Uint8Array | string) => void;
   resize: (cols: number, rows: number) => void;
-  /** Clean up resources */
+  focus: () => void;
   dispose: () => void;
+  onData: (cb: (data: string) => void) => () => void;
+  onResize: (cb: (size: { cols: number; rows: number }) => void) => () => void;
 }
 
 // ---------------------------------------------------------------------------

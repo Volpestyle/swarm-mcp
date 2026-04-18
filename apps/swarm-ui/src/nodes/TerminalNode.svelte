@@ -14,12 +14,11 @@
 -->
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { Handle, Position } from '@xyflow/svelte';
+  import { Handle, Position, NodeResizer } from '@xyflow/svelte';
   import type { SwarmNodeData } from '../lib/types';
   import {
     createTerminal,
     destroyTerminal,
-    isExtendedHandle,
     writeToTerminal,
   } from '../lib/terminal';
   import type { TerminalHandle } from '../lib/types';
@@ -43,10 +42,11 @@
   let nodeElement: HTMLDivElement | null = null;
   let terminalContainer: HTMLElement;
   let terminalHandle: TerminalHandle | null = null;
+  let terminalInputUnlisten: (() => void) | null = null;
   let dataUnlisten: (() => void) | null = null;
   let exitUnlisten: (() => void) | null = null;
-  let resizeObserver: ResizeObserver | null = null;
   let exitCode: number | null = null;
+  let disposed = false;
 
   // Derived from data
   $: hasPty = data.ptySession !== null;
@@ -69,70 +69,57 @@
   async function initTerminal() {
     if (!terminalContainer || !ptyId) return;
 
-    // Create the terminal display
-    terminalHandle = createTerminal(terminalContainer, {
+    const handle = await createTerminal(terminalContainer, {
       fontSize: 13,
-      fontFamily: 'Menlo, Monaco, "Cascadia Code", monospace',
     });
 
-    // Wire up user input -> PTY stdin
-    if (isExtendedHandle(terminalHandle)) {
-      terminalHandle.onData((input: string) => {
-        if (ptyId) {
-          const encoder = new TextEncoder();
-          void writeToPty(ptyId, encoder.encode(input));
-        }
-      });
+    if (disposed) {
+      handle.dispose();
+      return;
     }
 
-    // Replay existing buffer contents (for reconnect/remount)
+    terminalHandle = handle;
+    const boundPtyId = ptyId;
+
+    // Wire user keyboard input -> PTY stdin
+    const encoder = new TextEncoder();
+    terminalInputUnlisten = handle.onData((input: string) => {
+      void writeToPty(boundPtyId, encoder.encode(input));
+    });
+
+    // Replay ring-buffered output so reconnects/remounts keep scrollback
     try {
-      const buffer = await getPtyBuffer(ptyId);
-      if (buffer.length > 0 && terminalHandle) {
-        writeToTerminal(terminalHandle, buffer);
+      const buffer = await getPtyBuffer(boundPtyId);
+      if (!disposed && buffer.length > 0) {
+        writeToTerminal(handle, buffer);
       }
     } catch (err) {
-      // Non-fatal: buffer may not be available
       console.debug('[TerminalNode] buffer replay skipped:', err);
     }
 
-    // Subscribe to live PTY output data
+    // Subscribe to live PTY output
     try {
-      const unlisten = await subscribeToPty(ptyId, (bytes: Uint8Array) => {
-        if (terminalHandle) {
-          writeToTerminal(terminalHandle, bytes);
-        }
+      dataUnlisten = await subscribeToPty(boundPtyId, (bytes) => {
+        if (terminalHandle) writeToTerminal(terminalHandle, bytes);
       });
-      dataUnlisten = unlisten;
     } catch (err) {
       console.error('[TerminalNode] failed to subscribe to PTY data:', err);
     }
 
-    // Subscribe to PTY exit events
     try {
-      const unlisten = await subscribeToPtyExit(ptyId, (code: number | null) => {
+      exitUnlisten = await subscribeToPtyExit(boundPtyId, (code) => {
         exitCode = code;
       });
-      exitUnlisten = unlisten;
     } catch (err) {
       console.error('[TerminalNode] failed to subscribe to PTY exit:', err);
     }
 
-    // ResizeObserver to track container dimensions -> pty_resize
-    resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        if (!terminalHandle || !ptyId) continue;
-        // Estimate cols/rows from container dimensions
-        const { width, height } = entry.contentRect;
-        const charWidth = 7.8; // approximate for 13px Menlo
-        const lineHeight = 17; // approximate
-        const cols = Math.max(1, Math.floor(width / charWidth));
-        const rows = Math.max(1, Math.floor(height / lineHeight));
-        terminalHandle.resize(cols, rows);
-        void resizePty(ptyId, cols, rows);
-      }
+    // ghostty-web's FitAddon (loaded inside createTerminal) observes the
+    // container and resizes the grid using the renderer's real charWidth /
+    // charHeight. We just forward the resulting size to the PTY.
+    handle.onResize(({ cols, rows }) => {
+      void resizePty(boundPtyId, cols, rows);
     });
-    resizeObserver.observe(terminalContainer);
   }
 
   function handleInspect() {
@@ -148,10 +135,21 @@
     focusTarget?.focus();
   }
 
+  function sideToPosition(side: string): Position {
+    switch (side) {
+      case 'top': return Position.Top;
+      case 'right': return Position.Right;
+      case 'bottom': return Position.Bottom;
+      case 'left': return Position.Left;
+      default: return Position.Right;
+    }
+  }
+
   function cleanupTerminal() {
-    if (resizeObserver) {
-      resizeObserver.disconnect();
-      resizeObserver = null;
+    disposed = true;
+    if (terminalInputUnlisten) {
+      terminalInputUnlisten();
+      terminalInputUnlisten = null;
     }
     if (dataUnlisten) {
       dataUnlisten();
@@ -169,8 +167,36 @@
 </script>
 
 <div bind:this={nodeElement} class="terminal-node" class:selected data-node-id={id}>
-  <!-- Source handle (left) for incoming edges -->
-  <Handle type="target" position={Position.Left} />
+  <!-- Resize handles on all four corners + edges. Only visible when the node
+       is selected so they don't clutter the canvas. -->
+  <NodeResizer
+    minWidth={360}
+    minHeight={260}
+    isVisible={selected}
+    lineClass="resize-line"
+    handleClass="resize-handle"
+  />
+
+  <!-- Port handles on all four sides. The adaptive edge router picks
+       whichever pair (source-side on this node, target-side on the other)
+       produces the shortest distance, and the edge anchors on those exact
+       dots. Having both source and target variants per side lets the
+       drag-to-message gesture start/land anywhere. Disabled on `pty:`
+       nodes (plain shells with no swarm identity). -->
+  {#each ['top', 'right', 'bottom', 'left'] as side (side)}
+    <Handle
+      id="t-{side}"
+      type="target"
+      position={sideToPosition(side)}
+      isConnectable={data.nodeType !== 'pty'}
+    />
+    <Handle
+      id="s-{side}"
+      type="source"
+      position={sideToPosition(side)}
+      isConnectable={data.nodeType !== 'pty'}
+    />
+  {/each}
 
   <NodeHeader
     {role}
@@ -180,13 +206,19 @@
     nodeType={data.nodeType}
     assignedTasks={data.assignedTasks}
     ptyId={ptyId}
+    launchToken={data.ptySession?.launch_token ?? null}
+    adopted={instance?.adopted ?? true}
     on:inspect={handleInspect}
     on:focus={handleFocus}
   />
 
   {#if hasPty}
-    <!-- Terminal view -->
-    <div class="terminal-container" bind:this={terminalContainer}>
+    <!-- Terminal view: nodrag/nopan/nowheel tell XYFlow to leave mouse/scroll
+         events alone so ghostty can handle clicks, selection, and scrollback -->
+    <div
+      class="terminal-container nodrag nopan nowheel"
+      bind:this={terminalContainer}
+    >
       {#if exitCode !== null}
         <div class="exit-overlay">
           Process exited with code {exitCode}
@@ -255,8 +287,6 @@
     </div>
   {/if}
 
-  <!-- Target handle (right) for outgoing edges -->
-  <Handle type="source" position={Position.Right} />
 </div>
 
 <style>

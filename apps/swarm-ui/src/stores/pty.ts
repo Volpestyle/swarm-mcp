@@ -18,6 +18,7 @@ import type {
   PtySession,
   BindingState,
   LaunchResult,
+  ShellSpawnResult,
   PtyExitPayload,
   RolePresetSummary,
 } from '../lib/types';
@@ -182,6 +183,7 @@ let ptyCreatedUnlisten: UnlistenFn | null = null;
 let ptyClosedUnlisten: UnlistenFn | null = null;
 let bindResolvedUnlisten: UnlistenFn | null = null;
 let bindUnresolvedUnlisten: UnlistenFn | null = null;
+let ptyBoundExitUnlisten: UnlistenFn | null = null;
 let initialized = false;
 
 /**
@@ -266,6 +268,19 @@ export async function initPtyStore(): Promise<void> {
       );
     },
   );
+
+  // A bound PTY's child exited. Drop the binding mapping and clear
+  // bound_instance_id on the session — the backend has already deleted any
+  // unadopted placeholder row from swarm.db. The session itself stays in
+  // the map until pty:closed so the exit overlay can render.
+  ptyBoundExitUnlisten = await listen<{
+    pty_id: string;
+    instance_id: string;
+  }>('pty:bound_exit', (event) => {
+    const { pty_id } = event.payload;
+    removeBindingForPty(pty_id);
+    patchSession(pty_id, { bound_instance_id: null });
+  });
 }
 
 /**
@@ -276,10 +291,12 @@ export function destroyPtyStore(): void {
   ptyClosedUnlisten?.();
   bindResolvedUnlisten?.();
   bindUnresolvedUnlisten?.();
+  ptyBoundExitUnlisten?.();
   ptyCreatedUnlisten = null;
   ptyClosedUnlisten = null;
   bindResolvedUnlisten = null;
   bindUnresolvedUnlisten = null;
+  ptyBoundExitUnlisten = null;
   initialized = false;
 }
 
@@ -380,45 +397,81 @@ export async function spawnAgent(
     command: command ?? null,
   });
 
-  // Add PTY session to local store
+  // Add PTY session to local store. The backend pre-creates the swarm
+  // instance row and emits `bind:resolved` before returning, so the binding
+  // is resolved from the moment the PTY exists — no pending phase.
   const session: PtySession = {
     id: result.pty_id,
     command: command ?? role ?? 'agent',
     cwd: workingDir,
     started_at: Date.now(),
     exit_code: null,
-    bound_instance_id: null,
+    bound_instance_id: result.instance_id,
     launch_token: result.token,
   };
 
   upsertSession(session);
-
-  // Add to pending bindings
-  addPendingBinding(result.token, result.pty_id);
+  resolveBinding(result.instance_id, result.pty_id);
 
   return result;
 }
 
 /**
  * Spawn a plain shell session (no agent registration).
+ *
+ * When a harness (e.g. "claude", "codex", "opencode") is provided, the backend
+ * still spawns an interactive shell — the harness command is auto-typed into
+ * the shell's stdin so ctrl-c drops back to a shell prompt instead of
+ * terminating the PTY node.
+ *
  * Returns the PTY ID.
  */
-export async function spawnShell(cwd: string): Promise<string> {
-  const ptyId = await invoke<string>('spawn_shell', { cwd });
+export async function spawnShell(
+  cwd: string,
+  harness?: string,
+): Promise<ShellSpawnResult> {
+  const trimmedHarness = harness?.trim();
+  const hasHarness = !!trimmedHarness && trimmedHarness.length > 0;
+
+  const result = await invoke<ShellSpawnResult>('spawn_shell', {
+    cwd,
+    harness: hasHarness ? trimmedHarness : null,
+  });
 
   const session: PtySession = {
-    id: ptyId,
-    command: '$SHELL',
+    id: result.pty_id,
+    command: hasHarness ? trimmedHarness! : '$SHELL',
     cwd,
     started_at: Date.now(),
     exit_code: null,
-    bound_instance_id: null,
+    bound_instance_id: result.instance_id,
     launch_token: null,
   };
 
   upsertSession(session);
 
-  return ptyId;
+  // When a harness was picked, the backend pre-created + bound a swarm
+  // instance. Mirror that binding into the frontend store so the node
+  // renders as `bound:` (draggable) from the first paint.
+  if (result.instance_id) {
+    resolveBinding(result.instance_id, result.pty_id);
+  }
+
+  if (hasHarness) {
+    // Give the shell a moment to paint its prompt, then type the harness
+    // command for the user. The shell inherits SWARM_MCP_INSTANCE_ID from
+    // the PTY env, so the harness's swarm-mcp subprocess will adopt the
+    // pre-created row on register. Any failure is non-fatal — the shell
+    // itself is still usable.
+    const encoded = new TextEncoder().encode(`${trimmedHarness}\n`);
+    setTimeout(() => {
+      writeToPty(result.pty_id, encoded).catch((err) => {
+        console.warn('[pty] failed to auto-type harness into shell:', err);
+      });
+    }, 200);
+  }
+
+  return result;
 }
 
 /**
@@ -426,4 +479,20 @@ export async function spawnShell(cwd: string): Promise<string> {
  */
 export async function getRolePresets(): Promise<RolePresetSummary[]> {
   return invoke<RolePresetSummary[]>('get_role_presets');
+}
+
+/**
+ * Remove an instance row from swarm.db. Used when the user clicks the
+ * remove button on a node whose PTY is already gone — e.g., an orphan
+ * placeholder left over from a previous UI session, or a child process
+ * killed outside the UI.
+ */
+export async function deregisterInstance(instanceId: string): Promise<void> {
+  await invoke('ui_deregister_instance', { instanceId });
+  // Drop the binder mapping on our side immediately so the bound: node
+  // disappears from the graph without waiting for the swarm:update tick.
+  bindings.update((state) => ({
+    pending: state.pending,
+    resolved: state.resolved.filter(([id]) => id !== instanceId),
+  }));
 }

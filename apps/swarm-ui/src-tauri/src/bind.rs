@@ -46,6 +46,27 @@ impl Binder {
         Ok(())
     }
 
+    /// Record a resolved instance↔PTY binding without waiting for the
+    /// launch-token label matching dance. Used by the UI-owned pre-creation
+    /// path in `launch.rs::agent_spawn` where the UI already knows the
+    /// instance id at spawn time.
+    pub fn bind_immediate(&self, instance_id: &str, pty_id: &str) -> Result<(), String> {
+        self.inner
+            .write()
+            .map_err(|_| "binder lock poisoned".to_owned())?
+            .resolved
+            .insert(instance_id.to_owned(), pty_id.to_owned());
+        Ok(())
+    }
+
+    /// Remove a resolved binding. Called on PTY exit so stale entries don't
+    /// linger in the snapshot after the session is gone.
+    pub fn unbind(&self, instance_id: &str) {
+        if let Ok(mut inner) = self.inner.write() {
+            inner.resolved.remove(instance_id);
+        }
+    }
+
     /// Attempts to match pending launch tokens against instance labels.
     ///
     /// Returns an empty list if the lock is poisoned. This is called from an
@@ -138,6 +159,7 @@ mod tests {
             registered_at: 0,
             heartbeat: 0,
             status: InstanceStatus::Online,
+            adopted: true,
         }
     }
 

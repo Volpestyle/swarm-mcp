@@ -15,7 +15,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::{
-    events::SWARM_UPDATE,
+    events::{MESSAGES_APPENDED, SWARM_UPDATE},
     model::{
         AppError, Instance, InstanceStatus, Lock, Message, SwarmUpdate, Task, TaskStatus, TaskType,
     },
@@ -43,6 +43,10 @@ struct WatcherState {
     snapshot: SwarmUpdate,
     serialized: String,
     watermarks: Option<Watermarks>,
+    /// Highest `messages.id` that has already been emitted on
+    /// `MESSAGES_APPENDED`. Advanced only after a successful emit so a
+    /// transient error replays the delta next tick.
+    last_emitted_message_id: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,7 +153,10 @@ fn seed_initial_snapshot(db_path: &PathBuf) -> Result<(), String> {
 
     let snapshot = load_snapshot(&conn)?;
     let watermarks = load_watermarks(&conn)?;
-    publish_initial_snapshot(snapshot, Some(watermarks))
+    // Seed last_emitted to the current max so startup doesn't flood the UI
+    // with historical messages replayed as packets.
+    let initial_last_emitted = watermarks.last_message_id;
+    publish_initial_snapshot(snapshot, Some(watermarks), initial_last_emitted)
 }
 
 fn poll_database<R: Runtime>(
@@ -160,10 +167,24 @@ fn poll_database<R: Runtime>(
     let watermarks = load_watermarks(conn)?;
     let previous = read_state()?;
     let unchanged = previous.watermarks.as_ref() == Some(&watermarks);
+    let last_emitted = previous.last_emitted_message_id;
     drop(previous);
 
     if unchanged {
         return Ok(());
+    }
+
+    // Emit the message delta before swapping the snapshot so consumers see
+    // the arrival event even if the snapshot hasn't changed shape (e.g. a
+    // single new message pushes an older one off the 100-row window).
+    if watermarks.last_message_id > last_emitted {
+        let new_messages = load_messages_since(conn, last_emitted)?;
+        if !new_messages.is_empty() {
+            app_handle
+                .emit(MESSAGES_APPENDED, &new_messages)
+                .map_err(|err| format!("failed to emit message delta: {err}"))?;
+            set_last_emitted_message_id(watermarks.last_message_id)?;
+        }
     }
 
     let snapshot = load_snapshot(conn)?;
@@ -209,12 +230,20 @@ fn refresh_cached_statuses<R: Runtime>(
 fn publish_initial_snapshot(
     snapshot: SwarmUpdate,
     watermarks: Option<Watermarks>,
+    last_emitted_message_id: i64,
 ) -> Result<(), String> {
     let serialized = serialize_snapshot(&snapshot)?;
     let mut state = write_state()?;
     state.snapshot = snapshot;
     state.serialized = serialized;
     state.watermarks = watermarks;
+    state.last_emitted_message_id = last_emitted_message_id;
+    Ok(())
+}
+
+fn set_last_emitted_message_id(new_value: i64) -> Result<(), String> {
+    let mut state = write_state()?;
+    state.last_emitted_message_id = new_value;
     Ok(())
 }
 
@@ -269,7 +298,8 @@ fn load_instances(conn: &Connection) -> Result<Vec<Instance>, String> {
     let now = now_secs();
     let mut stmt = conn
         .prepare(
-            "SELECT id, scope, directory, root, file_root, pid, label, registered_at, heartbeat
+            "SELECT id, scope, directory, root, file_root, pid, label, registered_at, heartbeat,
+                    COALESCE(adopted, 1)
              FROM instances
              ORDER BY registered_at ASC, id ASC",
         )
@@ -278,6 +308,7 @@ fn load_instances(conn: &Connection) -> Result<Vec<Instance>, String> {
     let rows = stmt
         .query_map([], |row| {
             let heartbeat = row.get::<_, i64>(8)?;
+            let adopted: i64 = row.get(9)?;
             Ok(Instance {
                 id: row.get(0)?,
                 scope: row.get(1)?,
@@ -289,6 +320,7 @@ fn load_instances(conn: &Connection) -> Result<Vec<Instance>, String> {
                 registered_at: row.get(7)?,
                 heartbeat,
                 status: InstanceStatus::from_heartbeat(now, heartbeat),
+                adopted: adopted != 0,
             })
         })
         .map_err(|err| format!("failed to query instances: {err}"))?;
@@ -365,6 +397,34 @@ fn load_messages(conn: &Connection) -> Result<Vec<Message>, String> {
 
     messages.reverse();
     Ok(messages)
+}
+
+/// Load messages with `id > after_id` in ascending order. Used by the delta
+/// path to emit only newly-appended rows since the previous emit.
+fn load_messages_since(conn: &Connection, after_id: i64) -> Result<Vec<Message>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, scope, sender, recipient, content, created_at, read
+             FROM messages
+             WHERE id > ?
+             ORDER BY id ASC",
+        )
+        .map_err(|err| format!("failed to prepare delta message query: {err}"))?;
+
+    stmt.query_map([after_id], |row| {
+        Ok(Message {
+            id: row.get(0)?,
+            scope: row.get(1)?,
+            sender: row.get(2)?,
+            recipient: row.get(3)?,
+            content: row.get(4)?,
+            created_at: row.get(5)?,
+            read: row.get::<_, i64>(6)? != 0,
+        })
+    })
+    .map_err(|err| format!("failed to query delta messages: {err}"))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|err| format!("failed to read delta messages: {err}"))
 }
 
 fn load_locks(conn: &Connection) -> Result<Vec<Lock>, String> {
@@ -551,7 +611,7 @@ fn serialize_snapshot(snapshot: &SwarmUpdate) -> Result<String, String> {
         .map_err(|err| format!("failed to serialize swarm snapshot: {err}"))
 }
 
-fn swarm_db_path() -> Result<PathBuf, String> {
+pub(crate) fn swarm_db_path() -> Result<PathBuf, String> {
     if let Ok(path) = env::var(SWARM_DB_ENV) {
         return Ok(PathBuf::from(path));
     }

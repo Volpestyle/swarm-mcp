@@ -128,6 +128,18 @@ pub struct Instance {
     pub registered_at: i64,
     pub heartbeat: i64,
     pub status: InstanceStatus,
+    /// `true` once the child process inside the PTY has called
+    /// `swarm.register` and taken over the instance row. `false` while the row
+    /// is still a UI-owned placeholder waiting for adoption.
+    #[serde(default = "default_adopted")]
+    pub adopted: bool,
+}
+
+#[allow(clippy::missing_const_for_fn)]
+fn default_adopted() -> bool {
+    // Rows created by the MCP register path before adoption existed are
+    // treated as adopted; only UI pre-created rows have adopted=0.
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

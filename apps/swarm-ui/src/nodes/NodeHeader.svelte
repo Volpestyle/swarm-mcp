@@ -6,7 +6,7 @@
 -->
 <script lang="ts">
   import type { NodeType, InstanceStatus, Task } from '../lib/types';
-  import { closePty } from '../stores/pty';
+  import { closePty, deregisterInstance } from '../stores/pty';
   import { createEventDispatcher } from 'svelte';
 
   export let role: string = '';
@@ -16,6 +16,14 @@
   export let nodeType: NodeType = 'instance';
   export let assignedTasks: Task[] = [];
   export let ptyId: string | null = null;
+  export let launchToken: string | null = null;
+  /**
+   * `false` while this node's instance row was UI-pre-created and the
+   * child process inside the PTY hasn't yet called `swarm.register`. The
+   * node is connectable (messages route via the known instance id) but
+   * the child isn't guaranteed to consume them until adoption lands.
+   */
+  export let adopted: boolean = true;
 
   const dispatch = createEventDispatcher<{
     inspect: void;
@@ -24,12 +32,28 @@
 
   // Determine the role class for badge styling
   $: roleClass = getRoleClass(role);
-  $: displayLabel = instanceId ? instanceId.slice(0, 12) : 'Pending...';
+  $: displayLabel = deriveDisplayLabel(instanceId, launchToken, ptyId);
   $: truncatedCwd = truncatePath(cwd, 24);
   $: activeTaskCount = assignedTasks.filter(
     (t) => t.status === 'in_progress' || t.status === 'claimed' || t.status === 'open'
   ).length;
   $: isAppOwned = nodeType === 'pty' || nodeType === 'bound';
+  $: showAdopting = instanceId !== null && !adopted;
+  // Show the remove button on any node that has an instance row we could
+  // delete. For live PTYs we close the PTY (existing stop semantics); for
+  // instance-only or dead-bound nodes we drop the swarm.db row directly.
+  $: canRemoveInstance = instanceId !== null;
+
+  function deriveDisplayLabel(
+    instId: string | null,
+    token: string | null,
+    pty: string | null,
+  ): string {
+    if (instId) return instId.slice(0, 12);
+    if (token) return 'Pending...';
+    if (pty) return pty.slice(0, 8);
+    return '—';
+  }
 
   function getRoleClass(r: string): string {
     const lower = r.toLowerCase();
@@ -62,6 +86,15 @@
       }
     }
   }
+
+  async function handleRemoveInstance() {
+    if (!instanceId) return;
+    try {
+      await deregisterInstance(instanceId);
+    } catch (err) {
+      console.error('[NodeHeader] failed to deregister instance:', err);
+    }
+  }
 </script>
 
 <div class="node-header">
@@ -77,6 +110,15 @@
 
   {#if truncatedCwd}
     <span class="node-cwd" title={cwd}>{truncatedCwd}</span>
+  {/if}
+
+  {#if showAdopting}
+    <span
+      class="adopting-badge"
+      title="Instance row pre-created by swarm-ui. Waiting for the child process to call swarm.register and adopt it."
+    >
+      ADOPTING
+    </span>
   {/if}
 
   {#if activeTaskCount > 0}
@@ -119,6 +161,21 @@
         <!-- Stop icon (square) -->
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="6" y="6" width="12" height="12" rx="1"/>
+        </svg>
+      </button>
+    {:else if canRemoveInstance}
+      <button
+        class="stop"
+        title="Remove instance from swarm"
+        on:click|stopPropagation={handleRemoveInstance}
+      >
+        <!-- Trash icon -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+          <path d="M10 11v6"/>
+          <path d="M14 11v6"/>
+          <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
         </svg>
       </button>
     {/if}
