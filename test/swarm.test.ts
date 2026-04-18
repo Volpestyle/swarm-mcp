@@ -71,6 +71,75 @@ describe("messages", () => {
   });
 });
 
+describe("registry adoption", () => {
+  test("adopts an existing unadopted row via preassignedId", () => {
+    // Simulate swarm-ui's pre-create step: insert a row with pid=0,
+    // adopted=0. When the child calls register() with SWARM_MCP_INSTANCE_ID
+    // set (passed through here as preassignedId), it should flip the row
+    // to adopted=1 and take over the pid/label rather than creating a
+    // duplicate.
+    const preassignedId = "ui-preassigned-id";
+    db.run(
+      "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, heartbeat, adopted) VALUES (?, ?, ?, ?, ?, 0, NULL, unixepoch(), 0)",
+      [preassignedId, "scope-a", "/tmp/repo", "/tmp/repo", "/tmp/repo"],
+    );
+
+    const adopted = registry.register(
+      "/tmp/repo",
+      "role:planner",
+      "scope-a",
+      undefined,
+      preassignedId,
+    );
+
+    expect(adopted.id).toBe(preassignedId);
+    expect(adopted.adopted).toBe(true);
+    expect(adopted.pid).toBe(process.pid);
+    expect(adopted.label).toBe("role:planner");
+
+    // Only one row in the DB — no duplicate INSERT.
+    const rows = db
+      .query("SELECT COUNT(*) as n FROM instances WHERE id = ?")
+      .all(preassignedId) as Array<{ n: number }>;
+    expect(rows[0].n).toBe(1);
+
+    const [row] = db
+      .query(
+        "SELECT pid, label, adopted FROM instances WHERE id = ?",
+      )
+      .all(preassignedId) as Array<{ pid: number; label: string; adopted: number }>;
+    expect(row.pid).toBe(process.pid);
+    expect(row.label).toBe("role:planner");
+    expect(row.adopted).toBe(1);
+  });
+
+  test("falls through to fresh insert with same id when pre-created row was pruned", () => {
+    const preassignedId = "stale-preassigned-id";
+    // No pre-created row — simulates the UI's row being pruned (stale
+    // heartbeat) before the child got to call register().
+    const instance = registry.register(
+      "/tmp/repo",
+      "role:researcher",
+      "/tmp/scope-b",
+      undefined,
+      preassignedId,
+    );
+
+    expect(instance.id).toBe(preassignedId);
+    expect(instance.adopted).toBe(true);
+    expect(instance.scope).toBe(paths.norm("/tmp/scope-b"));
+  });
+
+  test("register without preassignedId still creates adopted row", () => {
+    const instance = registry.register("/tmp/repo", "role:reviewer", "scope-c");
+    expect(instance.adopted).toBe(true);
+    const [row] = db
+      .query("SELECT adopted FROM instances WHERE id = ?")
+      .all(instance.id) as Array<{ adopted: number }>;
+    expect(row.adopted).toBe(1);
+  });
+});
+
 describe("scope", () => {
   test("non-git directories fall back to their own path as scope", () => {
     const dir = join("C:/plain", "workspace");

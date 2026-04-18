@@ -63,7 +63,8 @@ db.exec(`
     pid INTEGER NOT NULL,
     label TEXT,
     registered_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    heartbeat INTEGER NOT NULL DEFAULT (unixepoch())
+    heartbeat INTEGER NOT NULL DEFAULT (unixepoch()),
+    adopted INTEGER NOT NULL DEFAULT 1
   )
 `);
 
@@ -169,6 +170,7 @@ function rebuildKv() {
 add("instances", "scope TEXT NOT NULL DEFAULT ''");
 add("instances", "root TEXT NOT NULL DEFAULT ''");
 add("instances", "file_root TEXT NOT NULL DEFAULT ''");
+add("instances", "adopted INTEGER NOT NULL DEFAULT 1");
 add("messages", "scope TEXT NOT NULL DEFAULT ''");
 add("tasks", "scope TEXT NOT NULL DEFAULT ''");
 add("tasks", "changed_at INTEGER NOT NULL DEFAULT 0");
