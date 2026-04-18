@@ -9,9 +9,10 @@ use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 use crate::bind::Binder;
-use crate::events::BIND_UNRESOLVED;
+use crate::events::BIND_RESOLVED;
 use crate::model::AppError;
 use crate::pty::{PtyCreateRequest, PtyManager};
+use crate::writes;
 
 #[derive(Debug, Clone)]
 struct RolePreset {
@@ -33,6 +34,18 @@ pub struct RolePresetSummary {
 pub struct LaunchResult {
     pub pty_id: String,
     pub token: String,
+    /// Pre-created swarm instance id bound to this PTY. The child process
+    /// adopts this row when it calls `swarm.register` with
+    /// `SWARM_MCP_INSTANCE_ID` set.
+    pub instance_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ShellSpawnResult {
+    pub pty_id: String,
+    /// Present only when the shell was launched with a swarm-aware harness
+    /// (claude/codex/opencode). Plain shells have no swarm identity.
+    pub instance_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -282,21 +295,36 @@ pub async fn agent_spawn(
         label.as_deref(),
     );
 
+    // Pre-create the swarm instance row (adopted=0). The child's call to
+    // `swarm.register` with SWARM_MCP_INSTANCE_ID will adopt this row
+    // instead of creating a duplicate, so drag-to-send-message works the
+    // moment the PTY appears instead of waiting for the MCP handshake.
+    let conn = writes::open_rw().map_err(AppError::Operation)?;
+    writes::ensure_adopted_column(&conn).map_err(AppError::Operation)?;
+    let pending = writes::create_pending_instance(
+        &conn,
+        &working_dir,
+        scope.as_deref(),
+        Some(&label_string),
+        None,
+    )
+    .map_err(AppError::Operation)?;
+    drop(conn);
+
     let mut env = resolved.env;
     env.insert("SWARM_MCP_LABEL".to_owned(), label_string);
     env.insert("SWARM_UI_LAUNCH_TOKEN".to_owned(), token.clone());
+    env.insert("SWARM_MCP_INSTANCE_ID".to_owned(), pending.id.clone());
+    env.insert("SWARM_MCP_SCOPE".to_owned(), pending.scope.clone());
     if let Some(role) = role.as_ref() {
         env.insert("SWARM_UI_ROLE".to_owned(), role.clone());
-    }
-    if let Some(scope) = scope {
-        env.insert("SWARM_MCP_SCOPE".to_owned(), scope);
     }
 
     // Note: when `command` is Some, `resolve()` wraps it in `sh -lc` for
     // execution. This is intentional — the app is a developer tool that
     // spawns agent processes. CSP + freezePrototype are the primary defence
     // against injection from a compromised webview.
-    let pty_id = pty_manager.create_session(
+    let pty_id = match pty_manager.create_session(
         &app_handle,
         PtyCreateRequest {
             command: resolved.command,
@@ -305,18 +333,43 @@ pub async fn agent_spawn(
             env,
             display_command: Some(resolved.display_command),
         },
-    )?;
+    ) {
+        Ok(id) => id,
+        Err(err) => {
+            // Roll back the pre-created row so we don't leave a zombie.
+            let _ = writes::open_rw()
+                .and_then(|rollback_conn| {
+                    writes::delete_unadopted_instance(&rollback_conn, &pending.id)
+                        .map(|_| ())
+                });
+            return Err(err);
+        }
+    };
 
-    binder
-        .register_pending(&token, &pty_id)
-        .map_err(AppError::Internal)?;
     pty_manager.set_launch_token(&pty_id, &token)?;
+    pty_manager.set_bound_instance(&pty_id, &pending.id)?;
+    binder
+        .bind_immediate(&pending.id, &pty_id)
+        .map_err(AppError::Internal)?;
+
+    // Emit the resolved binding so the frontend graph immediately shows a
+    // `bound:` node. The child is still expected to call `swarm.register`
+    // with SWARM_MCP_INSTANCE_ID to flip `adopted = 1`; until then the
+    // NodeHeader will render an "adopting" indicator.
     let _ = app_handle.emit(
-        BIND_UNRESOLVED,
-        serde_json::json!({ "token": token, "pty_id": pty_id }),
+        BIND_RESOLVED,
+        serde_json::json!({
+            "token": token,
+            "instance_id": pending.id,
+            "pty_id": pty_id,
+        }),
     );
 
-    Ok(LaunchResult { pty_id, token })
+    Ok(LaunchResult {
+        pty_id,
+        token,
+        instance_id: pending.id,
+    })
 }
 
 #[tauri::command]
@@ -330,20 +383,100 @@ pub fn get_role_presets(launch_config: State<'_, LaunchConfig>) -> Vec<RolePrese
 pub async fn spawn_shell(
     app_handle: AppHandle,
     pty_manager: State<'_, PtyManager>,
+    binder: State<'_, Binder>,
     cwd: String,
-) -> Result<String, AppError> {
+    harness: Option<String>,
+) -> Result<ShellSpawnResult, AppError> {
     validate_working_dir(&cwd)?;
+
+    // Always spawn a plain interactive login shell. When a harness is
+    // requested, the frontend auto-types the harness command into the shell's
+    // stdin after creation — that way ctrl-c drops back to the shell prompt
+    // instead of killing the node.
     let shell = shell_path();
-    pty_manager.create_session(
+    let harness_cmd = harness
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let display_command = harness_cmd.map_or_else(|| shell.clone(), str::to_owned);
+
+    // Swarm-aware harness launches force adoption: pre-create an instance
+    // row, inject `SWARM_MCP_INSTANCE_ID` into the shell env, and bind the
+    // PTY immediately. The auto-typed harness command inherits the env from
+    // the shell, so the swarm-mcp subprocess it spawns will adopt the row
+    // on `register` instead of creating a duplicate. Plain shells (no
+    // harness) stay identity-less.
+    let mut env = HashMap::new();
+    let instance_id = if let Some(harness_name) = harness_cmd {
+        let token = launch_token();
+        let label = build_label(
+            Some(harness_name),
+            &token,
+            &format!("provider:{harness_name}"),
+            None,
+        );
+
+        let conn = writes::open_rw().map_err(AppError::Operation)?;
+        writes::ensure_adopted_column(&conn).map_err(AppError::Operation)?;
+        let pending = writes::create_pending_instance(
+            &conn,
+            &cwd,
+            None,
+            Some(&label),
+            None,
+        )
+        .map_err(AppError::Operation)?;
+        drop(conn);
+
+        env.insert("SWARM_MCP_INSTANCE_ID".to_owned(), pending.id.clone());
+        env.insert("SWARM_MCP_SCOPE".to_owned(), pending.scope.clone());
+        env.insert("SWARM_MCP_LABEL".to_owned(), label);
+        env.insert("SWARM_UI_LAUNCH_TOKEN".to_owned(), token);
+        env.insert("SWARM_UI_ROLE".to_owned(), harness_name.to_owned());
+        Some(pending.id)
+    } else {
+        None
+    };
+
+    let pty_id = match pty_manager.create_session(
         &app_handle,
         PtyCreateRequest {
-            command: shell.clone(),
+            command: shell,
             args: Vec::new(),
             cwd,
-            env: HashMap::new(),
-            display_command: Some(shell),
+            env,
+            display_command: Some(display_command),
         },
-    )
+    ) {
+        Ok(id) => id,
+        Err(err) => {
+            if let Some(id) = instance_id.as_deref() {
+                let _ = writes::open_rw().and_then(|rollback_conn| {
+                    writes::delete_unadopted_instance(&rollback_conn, id).map(|_| ())
+                });
+            }
+            return Err(err);
+        }
+    };
+
+    if let Some(id) = instance_id.as_deref() {
+        pty_manager.set_bound_instance(&pty_id, id)?;
+        binder
+            .bind_immediate(id, &pty_id)
+            .map_err(AppError::Internal)?;
+        let _ = app_handle.emit(
+            BIND_RESOLVED,
+            serde_json::json!({
+                "instance_id": id,
+                "pty_id": pty_id,
+            }),
+        );
+    }
+
+    Ok(ShellSpawnResult {
+        pty_id,
+        instance_id,
+    })
 }
 
 #[cfg(test)]
