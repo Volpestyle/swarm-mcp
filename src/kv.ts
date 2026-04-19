@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { emit } from "./events";
 import { stamp } from "./time";
 
 function touch(scope: string) {
@@ -23,21 +24,42 @@ export function get(scope: string, key: string) {
   } | null;
 }
 
-export function set(scope: string, key: string, value: string) {
+/**
+ * `actor` is the instance id behind the write (resolved by the MCP tool
+ * handler or the CLI's `resolveIdentity`). The kv primitive itself is
+ * scope-scoped, so attribution lives in the audit log only — the kv row
+ * intentionally has no per-instance column.
+ */
+export function set(scope: string, key: string, value: string, actor?: string | null) {
   db.run(
     `INSERT INTO kv (scope, key, value, updated_at) VALUES (?, ?, ?, unixepoch())
      ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     [scope, key, value],
   );
   touch(scope);
+  emit({
+    scope,
+    type: "kv.set",
+    actor: actor ?? null,
+    subject: key,
+    payload: { length: value.length },
+  });
 }
 
-export function del(scope: string, key: string) {
+export function del(scope: string, key: string, actor?: string | null) {
   const result = db.run("DELETE FROM kv WHERE scope = ? AND key = ?", [scope, key]);
-  if (result.changes > 0) touch(scope);
+  if (result.changes > 0) {
+    touch(scope);
+    emit({
+      scope,
+      type: "kv.deleted",
+      actor: actor ?? null,
+      subject: key,
+    });
+  }
 }
 
-export function append(scope: string, key: string, value: string) {
+export function append(scope: string, key: string, value: string, actor?: string | null) {
   const tx = db.transaction(() => {
     const existing = db
       .query("SELECT value FROM kv WHERE scope = ? AND key = ?")
@@ -64,6 +86,13 @@ export function append(scope: string, key: string, value: string) {
       [scope, key, merged],
     );
     touch(scope);
+    emit({
+      scope,
+      type: "kv.appended",
+      actor: actor ?? null,
+      subject: key,
+      payload: { length: arr.length },
+    });
 
     return arr.length;
   });

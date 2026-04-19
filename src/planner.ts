@@ -21,6 +21,17 @@ export function hasRole(label: string | null | undefined, role: string) {
   return label.split(/\s+/).includes(`role:${role}`);
 }
 
+export function extractRole(label: string | null | undefined) {
+  if (!label) return null;
+  for (const token of label.split(/\s+/)) {
+    if (token.startsWith("role:")) {
+      const value = token.slice("role:".length).trim();
+      if (value) return value;
+    }
+  }
+  return null;
+}
+
 function ownerEntry(scope: string) {
   const entry = kv.get(scope, PLANNER_OWNER_KEY);
   if (!entry) return { raw: null, owner: null as PlannerOwner | null };

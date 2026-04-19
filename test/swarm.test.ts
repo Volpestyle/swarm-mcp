@@ -142,7 +142,10 @@ describe("registry adoption", () => {
 
 describe("scope", () => {
   test("non-git directories fall back to their own path as scope", () => {
-    const dir = join("C:/plain", "workspace");
+    const dir =
+      process.platform === "win32"
+        ? join("C:/plain", "workspace")
+        : "/tmp/plain/workspace";
 
     expect(paths.scope(dir)).toBe(paths.norm(dir));
   });

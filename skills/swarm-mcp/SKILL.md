@@ -30,7 +30,7 @@ For planner sessions, the server maintains `owner/planner` automatically. Check 
 
 - **Priority**: Tasks have an integer `priority` field (higher = more urgent). `list_tasks` returns tasks sorted by priority. Claim the highest-priority open task first.
 - **Dependencies**: Tasks can have a `depends_on` field (array of task IDs). A task with unmet dependencies starts as `blocked` and auto-transitions to `open` when all deps complete. If a dependency fails, downstream tasks are auto-cancelled.
-- **Approval gates**: Tasks can be set to `approval_required` status. They remain gated until approved (transitions to `open`) or rejected (transitions to `cancelled`).
+- **Approval gates**: Tasks can be set to `approval_required` status. They remain gated until approved (transitions to `open`) or explicitly cancelled. Use this for true approval checkpoints, not routine code review.
 - **Idempotency**: Tasks can have an `idempotency_key` field that prevents duplicate creation on retry.
 
 ## Load References As Needed
@@ -39,6 +39,7 @@ For planner sessions, the server maintains `owner/planner` automatically. Check 
 |-------|-----------|-----------|
 | Bootstrap and registration fields | `references/bootstrap.md` | You need to decide `directory`, `scope`, `file_root`, or `label` |
 | Specialists, generalists, and team conventions | `references/roles-and-teams.md` | You need to route work by `role:` or `team:` labels |
+| `swarm-mcp` CLI for helper scripts | `references/cli.md` | You are about to write or invoke a helper script (shell / node / etc.) that needs to read or write swarm state from outside an MCP session |
 
 ## Constraints
 
@@ -48,6 +49,7 @@ For planner sessions, the server maintains `owner/planner` automatically. Check 
 - Use `whoami`, `list_instances`, `poll_messages`, and `list_tasks` early in the session
 - Call `check_file` before editing and `lock_file` while editing
 - Use `update_task` when you start and finish claimed work
+- Use explicit `review` tasks for normal review handoff
 - Treat `role:` labels as conventions, not hard schema
 - Treat sessions without a `role:` label token as generalists
 - Prefer the highest-priority open task when claiming work
@@ -61,6 +63,7 @@ For planner sessions, the server maintains `owner/planner` automatically. Check 
 - Use `assignee` for a stale or unknown instance
 - Confuse direct messages with task handoff; use `request_task` for structured delegated work
 - Try to claim `blocked` tasks — they will become `open` automatically
+- Shell out to the `swarm-mcp` CLI from inside your agent loop — use the MCP tools. The CLI exists for **helper scripts** that cannot speak MCP. See `references/cli.md` when writing such a script.
 
 ## Default Behavior
 
@@ -79,6 +82,7 @@ When the skill triggers, prefer this sequence unless the task clearly requires s
 ## Collaboration Heuristics
 
 - Prefer `request_task` when the work should be tracked and completed
+- Prefer explicit `review` tasks over passive review scans
 - Prefer `send_message` for targeted coordination that does not need task state
 - Prefer `broadcast` for short status updates that help everyone
 - Prefer `annotate` for file-specific findings another agent may need later

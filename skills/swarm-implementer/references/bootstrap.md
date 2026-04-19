@@ -37,6 +37,8 @@ The shared swarm boundary.
 
 - Sessions in the same scope can see each other, message each other, and share tasks, locks, annotations, and KV.
 - Sessions in different scopes are different swarms.
+- Use a different scope only for a separate swarm.
+- Do not use scope to split frontend/backend inside one repo; keep one shared scope and use label tokens like `team:frontend` and `team:backend`.
 
 If omitted, the server defaults to the detected git root, or the provided directory when no git root exists.
 

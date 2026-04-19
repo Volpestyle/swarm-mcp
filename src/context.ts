@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { db } from "./db";
+import { emit } from "./events";
 
 export type ContextType =
   | "finding"
@@ -21,6 +22,17 @@ export function annotate(
     "INSERT INTO context (id, scope, instance_id, file, type, content) VALUES (?, ?, ?, ?, ?, ?)",
     [id, scope, instance, file, type, content],
   );
+  // `lock` writes go through `annotate` too — emit the more specific
+  // `context.lock_acquired` from `lock()` instead of double-firing here.
+  if (type !== "lock") {
+    emit({
+      scope,
+      type: "context.annotated",
+      actor: instance,
+      subject: file,
+      payload: { annotation_type: type, id },
+    });
+  }
   return id;
 }
 
@@ -37,6 +49,13 @@ export function lock(
 
   try {
     const id = annotate(instance, scope, file, "lock", content);
+    emit({
+      scope,
+      type: "context.lock_acquired",
+      actor: instance,
+      subject: file,
+      payload: { id },
+    });
     return { ok: true as const, id };
   } catch (err) {
     if (
@@ -76,10 +95,19 @@ export function remove(id: string) {
 }
 
 export function clearLocks(instance: string, scope: string, file: string) {
-  db.run(
+  const result = db.run(
     "DELETE FROM context WHERE scope = ? AND file = ? AND type = 'lock' AND instance_id = ?",
     [scope, file, instance],
   );
+  if (result.changes > 0) {
+    emit({
+      scope,
+      type: "context.lock_released",
+      actor: instance,
+      subject: file,
+      payload: { released: result.changes },
+    });
+  }
 }
 
 export function cleanup() {

@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { emit } from "./events";
 import { list, prune } from "./registry";
 
 function marks(size: number) {
@@ -16,6 +17,13 @@ export function send(
     "INSERT INTO messages (scope, sender, recipient, content) VALUES (?, ?, ?, ?)",
     [scope, sender, recipient, content],
   );
+  emit({
+    scope,
+    type: "message.sent",
+    actor: sender,
+    subject: recipient,
+    payload: { length: content.length },
+  });
 }
 
 export function broadcast(sender: string, scope: string, content: string) {
@@ -33,6 +41,13 @@ export function broadcast(sender: string, scope: string, content: string) {
         [scope, sender, row.id, content],
       );
     }
+    emit({
+      scope,
+      type: "message.broadcast",
+      actor: sender,
+      subject: null,
+      payload: { recipients: rows.length, length: content.length },
+    });
   });
   tx();
   return rows.length;

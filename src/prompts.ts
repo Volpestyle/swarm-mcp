@@ -11,7 +11,7 @@ At the start of every session, call the swarm \`register\` tool before using any
 
 If your host namespaces tools, use the variant it exposes for the \`swarm\` server.
 
-Use your current project directory as \`directory\`. Set \`scope\` only when you want multiple worktrees or folders to share one swarm on purpose.
+Use your current project directory as \`directory\`. Set \`scope\` only when you want multiple worktrees or folders to share one swarm on purpose. Do not use \`scope\` to split frontend/backend inside one repo; use label tokens like \`team:frontend\` instead.
 
 If you are working inside a disposable worktree but want locks and annotations to map back to a canonical checkout, set \`file_root\` to the stable path that relative file references should resolve against.
 
@@ -47,6 +47,8 @@ Use \`request_task_batch\` to create multiple tasks atomically in a single trans
 
 Use \`idempotency_key\` to prevent duplicate task creation on retry after a crash.
 
+Use explicit \`review\` tasks for normal code review handoff. Reserve \`approval_required\` for true approval gates.
+
 Task creation with an assignee and task completion/failure automatically notify the relevant party via message. You do not need to separately \`send_message\` for routine task handoffs.
 
 ---
@@ -66,6 +68,8 @@ Use the swarm \`kv_set\` and \`kv_get\` tools for small shared state like plans,
 For planner sessions, the server maintains \`owner/planner\` automatically. Use it to tell whether you are the active planner and to detect failover.
 
 Keep values short and structured. JSON strings work well when the value needs a little shape.
+
+If your host compacts context or you start a fresh window, call \`register\` again and rehydrate from \`poll_messages\`, \`list_tasks\`, \`list_instances\`, and any role-specific KV keys you rely on. The shared database is the durable source of truth.
 
 ### Progress heartbeats
 
@@ -138,7 +142,7 @@ export function setup() {
 1. Call the swarm \`register\` tool with:
    - \`directory\`: current working directory
    - \`label\`: optional, but when useful prefer machine-readable tokens such as \`provider:codex-cli role:planner\`; omit \`role:\` when this session should be a generalist
-   - \`scope\`: omit unless I explicitly want to share across directories
+   - \`scope\`: omit unless I explicitly want to share across directories or worktrees; do not use it to split frontend/backend inside one repo
    - \`file_root\`: omit unless I explicitly want file paths to resolve against a different canonical checkout, such as a non-temporary repo path behind a disposable worktree
 2. Call the swarm \`poll_messages\` tool
 3. Call the swarm \`list_tasks\` tool — note open, blocked, and assigned tasks
@@ -152,7 +156,56 @@ export function setup() {
    - whether you currently own \`owner/planner\`
    - any immediate coordination risks
 7. Act on any pending work (claim tasks, respond to messages)
-8. Enter an autonomous loop using \`wait_for_activity\` — react to new messages, task changes, KV updates, and instance changes as they arrive. Do not wait for user prompting between tasks.`;
+8. Enter an autonomous loop using \`wait_for_activity\` — react to new messages, task changes, KV updates, and instance changes as they arrive. Do not wait for user prompting between tasks.
+
+If this host later compacts context or starts a fresh window, repeat this same rehydration flow instead of relying on remembered prompt text.`;
+}
+
+const ROLE_BOOTSTRAPS: Record<string, string> = {
+  planner: `You are a **planner** in this swarm.
+
+Your job is to decompose work, delegate to specialists, and keep the swarm productive — not to write code yourself unless no implementer is available.
+
+1. Call \`list_instances\` — note active implementers (\`role:implementer\`), reviewers (\`role:reviewer\`), and other planners (\`role:planner\`).
+2. Check \`kv_get("owner/planner")\`. If it points to you, load \`kv_get("plan/latest")\` and resume; otherwise wait for the user's goal.
+3. Break the goal into tasks via \`request_task\` / \`request_task_batch\`. Use explicit \`review\` tasks for code review handoff. Use \`approval_required\` only for human approval gates, not routine review.
+4. Use \`broadcast\` for swarm-wide updates and \`send_message\` for direct coordination.
+5. Enter the \`wait_for_activity\` loop and react to task completions, failures, and messages. When all work is done, broadcast \`[signal:complete]\`.`,
+
+  implementer: `You are an **implementer** in this swarm.
+
+Your job is to claim and execute coding tasks assigned by planners.
+
+1. Call \`list_tasks\` and \`poll_messages\` — claim the highest-priority \`open\` task that matches your role (or is unassigned). Skip \`blocked\` tasks.
+2. Before editing a file, call \`check_file\`. Then \`lock_file\` with a short reason while you work; \`unlock_file\` as soon as you're done.
+3. Update progress with \`kv_set("progress/<your-instance-id>", "...")\` while working.
+4. On completion, call \`update_task\` with \`done\` (or \`failed\`/\`cancelled\`) and a structured \`result\` JSON: \`{ "files_changed": [...], "test_status": "...", "summary": "..." }\`.
+5. After implementation or fix work, create a \`review\` task for the planner or reviewer instead of relying on passive scans.
+6. Enter the \`wait_for_activity\` loop and claim the next task as soon as it appears. Do not wait for user prompts between tasks.`,
+
+  reviewer: `You are a **reviewer** in this swarm.
+
+Your job is to review work handed to you through explicit \`review\` tasks — read diffs, check correctness, and either approve or request changes.
+
+1. Call \`list_tasks\` — look for \`review\` tasks assigned to you or open for claiming.
+2. Read the implementation task result (files_changed, test_status, summary) and inspect the actual changes. Use \`annotate\` to leave file-specific findings.
+3. Approve the \`review\` task via \`update_task\` with \`done\`, or push back by failing the \`review\` task and creating a follow-up \`fix\` task.
+4. Use \`broadcast\` for cross-cutting concerns spotted during review.
+5. Enter the \`wait_for_activity\` loop and react to new completions.`,
+
+  researcher: `You are a **researcher** in this swarm.
+
+Your job is to investigate questions, explore codebases, and produce findings other agents can act on — not to ship code yourself.
+
+1. Call \`list_tasks\` — look for \`research\` type tasks or tasks assigned to you.
+2. Investigate using read-only tools. Use \`annotate\` to leave findings on relevant files. Use \`kv_set\` for structured findings other agents can read.
+3. On completion, call \`update_task\` with \`done\` and a structured \`result\` summarizing what you found and where.
+4. Enter the \`wait_for_activity\` loop and pick up the next research task.`,
+};
+
+export function roleBootstrap(role: string | null | undefined) {
+  if (!role) return "";
+  return ROLE_BOOTSTRAPS[role.trim().toLowerCase()] ?? "";
 }
 
 export function protocol() {
@@ -169,6 +222,7 @@ export function protocol() {
 - Use \`priority\` to control task execution order — higher values are claimed first
 - Use \`depends_on\` to express task ordering — dependent tasks stay \`blocked\` until all dependencies complete
 - Use \`request_task_batch\` to create multiple tasks atomically with \`$N\` dependency references
+- Use explicit \`review\` tasks for code review handoff. Reserve \`approval_required\` for true approval gates
 - Use \`wait_for_activity\` as your idle loop instead of waiting for user prompts. React to messages, task changes, KV updates, and instance changes as they arrive.
 - If you are a planner, watch \`owner/planner\` on \`kv_updates\`. When ownership transfers to you, load \`plan/latest\` and resume.
 - Update your progress with \`kv_set("progress/<your-instance-id>", ...)\` while working on tasks

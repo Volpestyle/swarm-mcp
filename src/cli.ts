@@ -1,4 +1,5 @@
 import { runInit } from "./init";
+import { run as runCmd, SUBCOMMANDS } from "./cmd";
 
 const [, , subcommand, ...rest] = process.argv;
 
@@ -17,6 +18,11 @@ async function main() {
 
   if (subcommand === "--help" || subcommand === "-h" || subcommand === "help") {
     printHelp();
+    return;
+  }
+
+  if (SUBCOMMANDS.includes(subcommand)) {
+    await runCmd(subcommand, rest);
     return;
   }
 
@@ -39,6 +45,32 @@ Init flags:
   --dir <path>          Install into <path> instead of the current directory.
   --no-skills           Skip copying skills.
   --no-commands         Skip copying slash commands.
+
+Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
+  swarm-mcp inspect [--scope <path>] [--json]
+      One-shot dump of instances, tasks, context, kv, and recent messages.
+  swarm-mcp instances [--scope <path>] [--json]
+  swarm-mcp messages  [--scope <path>] [--to <who>] [--from <who>] [--limit N]
+      Peeks; does not mark messages read.
+  swarm-mcp tasks     [--scope <path>] [--status <status>] [--json]
+  swarm-mcp context   [--scope <path>] [--json]
+  swarm-mcp kv list   [--scope <path>] [--prefix <p>] [--json]
+  swarm-mcp kv get <key> [--scope <path>] [--json]
+
+Write commands (require identity):
+  swarm-mcp send --to <who> <content...> [--as <who>]
+  swarm-mcp broadcast <content...>       [--as <who>]
+  swarm-mcp kv set <key> <value>         [--as <who>]
+  swarm-mcp kv append <key> <json-value> [--as <who>]
+  swarm-mcp kv del <key>                 [--as <who>]
+  swarm-mcp lock <file>   [--note "..."] [--as <who>]
+  swarm-mcp unlock <file>                [--as <who>]
+
+Identity:
+  <who> is a UUID, UUID prefix, or a unique substring of an instance label.
+  Identity resolves from --as, then $SWARM_MCP_INSTANCE_ID, then the sole
+  live instance in scope (if exactly one). Scope defaults to the git root of
+  the current directory; pass --scope to override.
 `);
 }
 

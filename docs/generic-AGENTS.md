@@ -11,11 +11,13 @@ Tool names are namespaced by the host. Depending on the client you may see `swar
 At the start of every session, call `register` before using any other swarm tool.
 
 - `directory`: your current project directory (required)
-- `scope`: omit unless you want multiple directories to share one swarm
+- `scope`: omit unless you want multiple directories or worktrees to share one swarm; do not use it to split frontend/backend inside one repo
 - `file_root`: omit unless working in a disposable worktree that should share locks and annotations with a stable checkout
 - `label`: optional, but prefer machine-readable tokens like `provider:codex-cli role:planner team:frontend`
 
 No `role:` token means the session is a generalist.
+
+If your host resets context or you start a fresh window, call `register` again and rehydrate from `poll_messages`, `list_tasks`, `list_instances`, and any role-specific KV keys you rely on. The shared database is the durable source of truth.
 
 ---
 
@@ -95,6 +97,8 @@ Use `request_task` for review, implementation, fix, test, or research handoffs.
 Include a short title, a useful description, and relevant `files` when possible. Set `assignee` only when you want a specific active session to take it. Set `priority` to control execution order (higher = more urgent).
 
 Use `depends_on` to express task ordering — a dependent task stays `blocked` until all its dependencies reach `done`. If a dependency fails, downstream tasks are auto-cancelled.
+
+Use explicit `review` tasks for normal code review handoff. Reserve `approval_required` for true approval gates such as production deploys or human sign-off checkpoints.
 
 When choosing who to delegate to, inspect `list_instances` labels:
 

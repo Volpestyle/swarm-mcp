@@ -75,7 +75,7 @@ Use `depends_on` to express ordering instead of manually sequencing batches:
 For high-risk changes or work needing human sign-off:
 
 - Set `approval_required: true` when creating the task.
-- The task remains gated until approved (transitions to `open`) or rejected (transitions to `cancelled`).
+- The task remains gated until approved (transitions to `open`) or explicitly cancelled.
 - Use this sparingly — most tasks should flow through without human intervention.
 
 ---
@@ -151,7 +151,7 @@ When `list_instances` shows other sessions with `role:planner`, you must coordin
 
 - Read their stored plan with `kv_get("plan/<their-instance-id>")` or `kv_list("plan/")`
 - Check their progress with `kv_get("progress/<their-instance-id>")`
-- Send a `send_message` introducing yourself and summarizing your intended scope
+- Send a `send_message` introducing yourself and summarizing your intended ownership area or team focus
 
 ### Divide ownership
 

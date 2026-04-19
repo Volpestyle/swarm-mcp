@@ -59,7 +59,7 @@ Use `depends_on` to build a task graph instead of manually sequencing batches:
 For work that requires human sign-off before an implementer begins:
 
 - Set `approval_required: true` when creating the task and you want the human (or any authorized agent) to review the plan before execution
-- When approved, the task transitions to `open`; when rejected, to `cancelled`
+- When approved, the task transitions to `open`; if the work should not proceed, cancel it explicitly
 - Use this for high-risk changes, production deployments, or architectural decisions
 
 ## Coordinate With Peer Planners
@@ -70,7 +70,7 @@ When `list_instances` shows other sessions with `role:planner`:
 
 - Read their stored plan with `kv_get("plan/<their-instance-id>")` or `kv_list("plan/")`
 - Check their progress with `kv_get("progress/<their-instance-id>")`
-- Send a `send_message` introducing yourself and summarizing your intended scope
+- Send a `send_message` introducing yourself and summarizing your intended ownership area or team focus
 
 ### Divide ownership
 
@@ -98,13 +98,14 @@ When `list_instances` shows other sessions with `role:planner`:
 
 ## Review Completed Work
 
-When a task moves to `done`:
+When an implementer finishes work and sends a `review` task:
 
-- Read the implementer's `result` on the task — expect a JSON object with `files_changed`, `test_status`, and `summary` (see Structured Results below)
+- `claim_task` immediately
+- Read the implementer's `result` on the completed implementation task — expect a JSON object with `files_changed`, `test_status`, and `summary` (see Structured Results below)
 - `check_file` for annotations they left
 - Inspect the changed files
 - If approved: `update_task` the review to `done`
-- If changes needed: `update_task` to `failed` and create a `fix` task
+- If changes needed: `update_task` the review to `failed` and create a `fix` task
 
 ## Handle Dependency Failures
 

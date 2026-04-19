@@ -110,6 +110,22 @@ db.exec(`
   )
 `);
 
+// Append-only audit log of every state-changing primitive call. Lets the
+// UI render an activity timeline and lets cascades (auto-unblock,
+// auto-cancel, stale-reclaim) be distinguished from user-driven changes
+// after the fact.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL,
+    type TEXT NOT NULL,
+    actor TEXT,
+    subject TEXT,
+    payload TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )
+`);
+
 function cols(table: string) {
   return db.query(`PRAGMA table_info(${table})`).all() as Array<{
     name: string;
@@ -229,4 +245,10 @@ db.exec(
 );
 db.exec(
   "CREATE UNIQUE INDEX IF NOT EXISTS tasks_idempotency_key_idx ON tasks(scope, idempotency_key) WHERE idempotency_key IS NOT NULL",
+);
+db.exec(
+  "CREATE INDEX IF NOT EXISTS events_scope_id_idx ON events(scope, id)",
+);
+db.exec(
+  "CREATE INDEX IF NOT EXISTS events_created_at_idx ON events(created_at)",
 );

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { db } from "./db";
+import { emit } from "./events";
 import { norm, root, scope as scoped } from "./paths";
 import * as planner from "./planner";
 import { now, stamp } from "./time";
@@ -74,6 +75,16 @@ export function prune() {
     const tx = db.transaction(() => {
       release(ids);
       db.run(`DELETE FROM instances WHERE id IN (${slots})`, ids);
+
+      for (const item of stale) {
+        emit({
+          scope: item.scope,
+          type: "instance.stale_reclaimed",
+          actor: "system",
+          subject: item.id,
+          payload: { label: item.label },
+        });
+      }
 
       // Broadcast recovery notifications for released tasks
       if (releasedTasks.length) {
@@ -171,6 +182,13 @@ export function register(
         label: nextLabel,
         adopted: true,
       };
+      emit({
+        scope: adopted.scope,
+        type: "instance.registered",
+        actor: adopted.id,
+        subject: adopted.id,
+        payload: { label: nextLabel, adopted: true, pid: process.pid },
+      });
       planner.ensureOwner({
         id: adopted.id,
         scope: adopted.scope,
@@ -198,6 +216,13 @@ export function register(
     "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
     [row.id, row.scope, row.directory, row.root, row.file_root, row.pid, row.label],
   );
+  emit({
+    scope: row.scope,
+    type: "instance.registered",
+    actor: row.id,
+    subject: row.id,
+    payload: { label: row.label, adopted: false, pid: row.pid },
+  });
 
   planner.ensureOwner({ id: row.id, scope: row.scope, label: row.label });
 
@@ -223,7 +248,16 @@ export function deregister(id: string) {
   release([id]);
   db.run("DELETE FROM instances WHERE id = ?", [id]);
 
-  if (item) planner.refreshOwner(item.scope);
+  if (item) {
+    emit({
+      scope: item.scope,
+      type: "instance.deregistered",
+      actor: item.id,
+      subject: item.id,
+      payload: { label: item.label },
+    });
+    planner.refreshOwner(item.scope);
+  }
 }
 
 export function heartbeat(id: string) {

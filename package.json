@@ -15,9 +15,11 @@
   "scripts": {
     "start": "node dist/cli.js",
     "build": "esbuild src/cli.ts src/index.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --packages=external --banner:js='#!/usr/bin/env node'",
+    "check:ui": "cd apps/swarm-ui && bun run check && bun run build",
+    "test:tauri": "cargo test --manifest-path apps/swarm-ui/src-tauri/Cargo.toml",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "check": "bun run typecheck && bun run test && bun run build",
+    "check": "bun run typecheck && bun run test && bun run build && bun run check:ui && bun run test:tauri",
     "prepack": "bun run build"
   },
   "dependencies": {

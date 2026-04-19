@@ -6,9 +6,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { db } from "./db";
 import * as context from "./context";
+import * as events from "./events";
 import * as kv from "./kv";
 import * as messages from "./messages";
 import { file as filepath } from "./paths";
+import * as planner from "./planner";
 import * as prompts from "./prompts";
 import * as registry from "./registry";
 import * as tasks from "./tasks";
@@ -26,17 +28,11 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-const NEXT_HINT =
-  "next: call wait_for_activity to receive the next swarm event (messages, task changes, KV updates, instance changes). This is your idle loop — skip only if the user explicitly told you to stop or the overall goal is complete.";
-
 const REGISTER_PROMPT = `You are now registered with the swarm and should operate in autonomous mode.
 
-Workflow:
-1. After every action you take, before ending your turn, call wait_for_activity. It blocks server-side until something arrives, so it is token-cheap.
-2. When it returns, act on the changes immediately — claim newly-open tasks, respond to messages, react to KV/instance changes — then call wait_for_activity again.
-3. Only break out of this loop when the user explicitly tells you to stop or the overall goal is complete.
-
-Other agents are working concurrently. Your responsiveness on this loop is what makes the swarm work — a silent agent is a stalled swarm.`;
+Rehydrate first: poll_messages, list_tasks, list_instances, and any role-specific KV keys you rely on.
+When idle, use wait_for_activity as the loop. React to changes immediately.
+Only stop when the overall goal is complete or the user explicitly tells you to stop.`;
 
 function missing() {
   return {
@@ -46,12 +42,21 @@ function missing() {
   };
 }
 
+function registerContent(reg: registry.Instance) {
+  const content = [
+    { type: "text" as const, text: JSON.stringify(reg) },
+    { type: "text" as const, text: REGISTER_PROMPT },
+  ];
+  const roleBootstrap = prompts.roleBootstrap(planner.extractRole(reg.label));
+  if (roleBootstrap) {
+    content.push({ type: "text" as const, text: roleBootstrap });
+  }
+  return content;
+}
+
 function respond(text: string) {
   return {
-    content: [
-      { type: "text" as const, text },
-      { type: "text" as const, text: NEXT_HINT },
-    ],
+    content: [{ type: "text" as const, text }],
   };
 }
 
@@ -159,6 +164,7 @@ function cleanup() {
   notifyTimer = null;
   tasks.cleanup();
   context.cleanup();
+  events.cleanup();
 }
 
 server.resource(
@@ -273,12 +279,7 @@ server.tool(
   },
   async ({ directory, label, scope, file_root }) => {
     if (instance) {
-      return {
-        content: [
-          { type: "text", text: JSON.stringify(instance) },
-          { type: "text", text: REGISTER_PROMPT },
-        ],
-      };
+      return { content: registerContent(instance) };
     }
 
     // When launched from swarm-ui, the UI pre-creates an instance row in
@@ -289,12 +290,7 @@ server.tool(
     instance = registry.register(directory, label, scope, file_root, preassignedId);
     startInstanceTimers();
 
-    return {
-      content: [
-        { type: "text", text: JSON.stringify(instance) },
-        { type: "text", text: REGISTER_PROMPT },
-      ],
-    };
+    return { content: registerContent(instance) };
   },
 );
 
@@ -973,7 +969,7 @@ server.tool(
   },
   async ({ key, value }) => {
     if (!instance) return missing();
-    kv.set(instance.scope, key, value);
+    kv.set(instance.scope, key, value, instance.id);
     return respond(`Set \"${key}\"`);
   },
 );
@@ -996,7 +992,7 @@ server.tool(
         content: [{ type: "text", text: "Value must be valid JSON" }],
       };
     }
-    const length = kv.append(instance.scope, key, value);
+    const length = kv.append(instance.scope, key, value, instance.id);
     return respond(`Appended to \"${key}\" (${length} items)`);
   },
 );
@@ -1007,7 +1003,7 @@ server.tool(
   { key: z.string().describe("The key to delete") },
   async ({ key }) => {
     if (!instance) return missing();
-    kv.del(instance.scope, key);
+    kv.del(instance.scope, key, instance.id);
     return respond(`Deleted \"${key}\"`);
   },
 );

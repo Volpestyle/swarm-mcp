@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { db } from "./db";
+import { emit } from "./events";
 import { prune } from "./registry";
 import { stamp } from "./time";
 
@@ -95,6 +96,13 @@ function processCompletion(completedId: string, scope: string) {
         `UPDATE tasks SET status = 'cancelled', result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?`,
         [autoCancelledResult(state.depId, state.depStatus), stamp(), task.id],
       );
+      emit({
+        scope,
+        type: "task.cascade.cancelled",
+        actor: "system",
+        subject: task.id,
+        payload: { trigger: completedId, reason: "dependency_failed" },
+      });
       processFailure(task.id, scope);
     } else if (state.kind === "ready") {
       const newStatus = task.assignee ? "claimed" : "open";
@@ -102,6 +110,13 @@ function processCompletion(completedId: string, scope: string) {
         "UPDATE tasks SET status = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?",
         [newStatus, stamp(), task.id],
       );
+      emit({
+        scope,
+        type: "task.cascade.unblocked",
+        actor: "system",
+        subject: task.id,
+        payload: { trigger: completedId, status: newStatus },
+      });
     }
   }
 }
@@ -124,6 +139,13 @@ function processFailure(failedId: string, scope: string) {
       `UPDATE tasks SET status = 'cancelled', result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?`,
       [`auto-cancelled: dependency ${failedId} failed`, stamp(), task.id],
     );
+    emit({
+      scope,
+      type: "task.cascade.cancelled",
+      actor: "system",
+      subject: task.id,
+      payload: { trigger: failedId, reason: "dependency_failed" },
+    });
 
     // Recursive cascade
     processFailure(task.id, scope);
@@ -247,6 +269,20 @@ export function request(
       stamp(),
     ],
   );
+  emit({
+    scope,
+    type: "task.created",
+    actor: requester,
+    subject: id,
+    payload: {
+      task_type: type,
+      title,
+      status: state.status,
+      assignee: opts.assignee ?? null,
+      parent_task_id: opts.parent_task_id ?? null,
+      depends_on: opts.depends_on ?? null,
+    },
+  });
 
   return { id, status: state.status };
 }
@@ -259,7 +295,15 @@ export function claim(id: string, scope: string, assignee: string) {
     [assignee, stamp(), id, scope],
   );
 
-  if (result.changes > 0) return { ok: true as const };
+  if (result.changes > 0) {
+    emit({
+      scope,
+      type: "task.claimed",
+      actor: assignee,
+      subject: id,
+    });
+    return { ok: true as const };
+  }
 
   const task = db
     .query("SELECT status FROM tasks WHERE id = ? AND scope = ?")
@@ -322,6 +366,13 @@ export function update(
       "UPDATE tasks SET status = ?, result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ? AND scope = ?",
       [status, result ?? null, stamp(), id, scope],
     );
+    emit({
+      scope,
+      type: "task.updated",
+      actor,
+      subject: id,
+      payload: { status, prior_status: task.status },
+    });
 
     // Dependency cascades
     if (status === "done") {
@@ -358,6 +409,13 @@ export function approve(id: string, scope: string) {
           "UPDATE tasks SET status = 'cancelled', result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?",
           [autoCancelledResult(state.depId, state.depStatus), stamp(), id],
         );
+        emit({
+          scope,
+          type: "task.cascade.cancelled",
+          actor: "system",
+          subject: id,
+          payload: { trigger: state.depId, reason: "dependency_failed" },
+        });
         processFailure(id, scope);
         return {
           ok: true as const,
@@ -371,6 +429,13 @@ export function approve(id: string, scope: string) {
           "UPDATE tasks SET status = 'blocked', updated_at = unixepoch(), changed_at = ? WHERE id = ?",
           [stamp(), id],
         );
+        emit({
+          scope,
+          type: "task.approved",
+          actor: null,
+          subject: id,
+          payload: { status: "blocked" },
+        });
         return { ok: true as const, status: "blocked" as TaskStatus };
       }
     }
@@ -380,6 +445,13 @@ export function approve(id: string, scope: string) {
       "UPDATE tasks SET status = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?",
       [newStatus, stamp(), id],
     );
+    emit({
+      scope,
+      type: "task.approved",
+      actor: null,
+      subject: id,
+      payload: { status: newStatus },
+    });
     return { ok: true as const, status: newStatus };
   });
   return tx();
@@ -604,6 +676,21 @@ export function requestBatch(
           stamp(),
         ],
       );
+      emit({
+        scope,
+        type: "task.created",
+        actor: requester,
+        subject: resolved[i].id,
+        payload: {
+          task_type: spec.type,
+          title: spec.title,
+          status: state.status,
+          assignee: spec.assignee ?? null,
+          parent_task_id: parentId,
+          depends_on: deps,
+          batch_index: i,
+        },
+      });
     }
   });
   tx();

@@ -19,7 +19,7 @@ cd /path/to/swarm-mcp
 bun install
 ```
 
-Add the server to your coding agent using that host's MCP config format. This server requires Bun because it runs through `bun run` and uses Bun's built-in SQLite support.
+Add the server to your coding agent using that host's MCP config format. Bun is the simplest dev/runtime path because the examples use `bun run`, but the built `dist/*.js` entrypoints also run under Node 20+ with `better-sqlite3`.
 
 ### Codex (`~/.codex/config.toml`)
 
@@ -75,7 +75,7 @@ Call the swarm `register` tool first to join the swarm.
 
 ## How it works
 
-All sessions read and write to `~/.swarm-mcp/swarm.db` by default using WAL mode, auto-vacuum, and a 3s busy timeout. Bun's built-in `bun:sqlite` is used directly -- no external SQLite dependencies.
+All sessions read and write to `~/.swarm-mcp/swarm.db` by default using WAL mode, auto-vacuum, and a 3s busy timeout. Bun uses `bun:sqlite`; Node uses `better-sqlite3`.
 
 Set `SWARM_DB_PATH` before launching the server if you want a different database location.
 
@@ -88,7 +88,7 @@ The `register` tool accepts these parameters. Only `directory` is required.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `directory` | Yes | The live working directory for the current session. |
-| `scope` | No | Shared swarm boundary. Sessions in the same scope can see each other; different scopes are different swarms. Defaults to the detected git root, or to `directory` when no git root exists. |
+| `scope` | No | Shared swarm boundary. Sessions in the same scope can see each other; different scopes are different swarms. Defaults to the detected git root, or to `directory` when no git root exists. Use a new scope only for a separate swarm; do not split frontend/backend inside one repo with scope. Use `team:` label tokens for that. |
 | `file_root` | No | Canonical base path for resolving relative file paths in `annotate`, `lock_file`, `check_file`, and task `files`. Useful when disposable worktrees should share one logical file tree. |
 | `label` | No | Free-form identity text. Recommended convention: machine-readable space-separated tokens like `provider:codex-cli role:planner`. The `role:` token is optional; if missing, the session is treated as a generalist. |
 
@@ -102,9 +102,19 @@ Tasks support several features for building autonomous DAG-based workflows:
 | `depends_on` | Array of task IDs. A task with unmet dependencies starts as `blocked` and auto-transitions to `open` when all deps reach `done`. If any dependency fails, downstream tasks are auto-cancelled. |
 | `idempotency_key` | Unique string. If a task with this key already exists, `request_task` returns the existing task instead of creating a duplicate. Essential for crash-safe plan retries. |
 | `parent_task_id` | Optional parent task ID for tree-structured work tracking. |
-| `approval_required` | If true, task starts in `approval_required` status and must be approved via `approve_task` before work begins. |
+| `approval_required` | If true, task starts in `approval_required` status and must be approved via `approve_task` before work begins. Use this for true approval gates, not routine code review. |
 
 Task statuses: `open`, `claimed`, `in_progress`, `done`, `failed`, `cancelled`, `blocked`, `approval_required`.
+
+### Session resets and prompt compaction
+
+If a host compacts context, starts a fresh window, or loses the previous bootstrap, rejoin the swarm the same way:
+
+1. Call `register` again.
+2. Rehydrate from `poll_messages`, `list_tasks`, and `list_instances`.
+3. For planners, also check `kv_get("owner/planner")` and `kv_get("plan/latest")`.
+
+The durable coordination state lives in the shared database, not in repeated per-tool prompt text.
 
 ---
 
@@ -148,7 +158,7 @@ Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are c
 
 | Tool                 | Description                                                                                                               |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `request_task`       | Post a task (types: `review`, `implement`, `fix`, `test`, `research`, `other`). Supports `priority`, `depends_on`, `idempotency_key`, `parent_task_id`, and `approval_required`. |
+| `request_task`       | Post a task (types: `review`, `implement`, `fix`, `test`, `research`, `other`). Use `review` for routine code review handoff. Supports `priority`, `depends_on`, `idempotency_key`, `parent_task_id`, and `approval_required`. |
 | `request_task_batch` | Create multiple tasks atomically in a single transaction. Supports `$N` references (1-indexed) for intra-batch dependencies. |
 | `claim_task`         | Claim an open task. Prevents double-claiming.                                                                             |
 | `update_task`        | Update a claimed task to `in_progress`, `done`, `failed`, or `cancelled`. Attach a result when useful.                    |
@@ -174,6 +184,51 @@ Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are c
 | `kv_set`    | Set a key-value pair visible to all instances. |
 | `kv_delete` | Delete a key.                                  |
 | `kv_list`   | List keys, optionally filtered by prefix.      |
+
+---
+
+## CLI
+
+The same `swarm-mcp` binary exposes a non-MCP CLI that talks directly to `~/.swarm-mcp/swarm.db`. It is the transport to use from contexts that cannot speak MCP: shell scripts, helper scripts an agent invokes (e.g. a test harness or CLI referee), cron jobs, CI, or an ad-hoc terminal for inspection and debugging.
+
+Agents in an MCP session should continue to use the MCP tools; the CLI is for scripts and outsiders, not for the agent's own loop.
+
+Inspection:
+
+```sh
+swarm-mcp inspect                    # unified dump of instances, tasks, kv, locks, recent messages
+swarm-mcp inspect --scope /path      # pin to an explicit scope
+swarm-mcp messages --from <who>      # peek (does not mark read)
+swarm-mcp kv list --prefix pixel:
+swarm-mcp kv get pixel:turn
+```
+
+Writes (require identity — pass `--as <uuid | prefix | unique-label-substring>` or set `SWARM_MCP_INSTANCE_ID`; falls back to the sole live instance in scope):
+
+```sh
+swarm-mcp send --to <who> "message text"
+swarm-mcp broadcast "status update"
+swarm-mcp kv set  <key> <value>
+swarm-mcp kv del  <key>
+swarm-mcp lock    <file> --note "why"
+swarm-mcp unlock  <file>
+```
+
+Every subcommand accepts `--json` for machine-readable output. Run `swarm-mcp help` for the full list.
+
+Canonical helper-script pattern — a harness the agent invokes to do validation + state update + handoff in one shot:
+
+```js
+// harness.mjs — run as `node harness.mjs <partner-id>` by an agent
+import { execFileSync } from "node:child_process";
+const me = process.env.SWARM_MCP_INSTANCE_ID;
+const scope = process.env.SWARM_SCOPE;
+// ... validate and write artifacts ...
+execFileSync("swarm-mcp", ["kv", "set", "turn", JSON.stringify(next), "--scope", scope, "--as", me]);
+execFileSync("swarm-mcp", ["send", "--to", partner, "your turn", "--scope", scope, "--as", me]);
+```
+
+Security note: `--as` trusts the caller. The CLI will write as any live instance. Do not expose this binary to untrusted callers — the security model is the same as the underlying shared SQLite file.
 
 ---
 

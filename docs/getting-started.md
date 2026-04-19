@@ -10,7 +10,7 @@ It assumes:
 
 ## 1. Install Bun
 
-`swarm-mcp` runs through `bun run` and uses Bun's built-in SQLite support.
+`swarm-mcp` is easiest to run in development through `bun run`. The built `dist/*.js` entrypoints also run under Node 20+ with `better-sqlite3`, but this guide uses Bun for the shortest setup path.
 
 Verify Bun is installed:
 
@@ -99,7 +99,10 @@ In your first coding-agent session, call the swarm server's `register` tool.
 Use:
 
 - `directory`: the project directory you are working in
+- `scope`: usually omit it. By default the server uses the repo's git root, or `directory` when no git root exists. Use a different `scope` only when you want a completely separate swarm.
 - `label`: optional, but if you use one prefer machine-readable tokens like `provider:codex-cli role:implementer`
+
+Do not use `scope` to split frontend/backend inside one repo. Keep one shared scope and use `label` tokens like `team:frontend` and `team:backend` if you want soft grouping inside the same swarm.
 
 See the README's [Registration fields](../README.md#registration-fields) section for the full field reference.
 
@@ -123,7 +126,8 @@ Now call `list_instances` in either session. You should see both sessions in the
 
 If you do not, check:
 
-- Both sessions are using the same project directory or compatible `scope`
+- Both sessions are using the same project directory, or both explicitly joined the same `scope`
+- You did not accidentally put the sessions in different scopes just to represent frontend/backend or other soft teams; use shared scope plus `team:` labels for that
 - Both sessions are pointing at the same database path
 - Both hosts actually loaded the MCP config change after restart
 
