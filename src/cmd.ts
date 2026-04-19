@@ -3,6 +3,7 @@ import * as context from "./context";
 import * as kv from "./kv";
 import * as messages from "./messages";
 import * as registry from "./registry";
+import * as ui from "./ui";
 import { scope as scopeFor } from "./paths";
 
 type Flags = {
@@ -16,6 +17,15 @@ type Flags = {
   prefix?: string;
   status?: string;
   note?: string;
+  target?: string;
+  harness?: string;
+  role?: string;
+  label?: string;
+  kind?: string;
+  x?: number;
+  y?: number;
+  wait?: number;
+  enter: boolean;
 };
 
 type InstRow = {
@@ -29,7 +39,7 @@ type InstRow = {
 };
 
 function parseFlags(argv: string[]): Flags {
-  const flags: Flags = { positional: [], json: false };
+  const flags: Flags = { positional: [], json: false, enter: true };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--json") { flags.json = true; continue; }
@@ -41,6 +51,15 @@ function parseFlags(argv: string[]): Flags {
     if (a === "--prefix") { flags.prefix = argv[++i]; continue; }
     if (a === "--status") { flags.status = argv[++i]; continue; }
     if (a === "--note") { flags.note = argv[++i]; continue; }
+    if (a === "--target") { flags.target = argv[++i]; continue; }
+    if (a === "--harness") { flags.harness = argv[++i]; continue; }
+    if (a === "--role") { flags.role = argv[++i]; continue; }
+    if (a === "--label") { flags.label = argv[++i]; continue; }
+    if (a === "--kind") { flags.kind = argv[++i]; continue; }
+    if (a === "--x") { flags.x = parseFloat(argv[++i] ?? ""); continue; }
+    if (a === "--y") { flags.y = parseFloat(argv[++i] ?? ""); continue; }
+    if (a === "--wait") { flags.wait = parseFloat(argv[++i] ?? ""); continue; }
+    if (a === "--no-enter") { flags.enter = false; continue; }
     if (a.startsWith("--")) throw new Error(`Unknown flag: ${a}`);
     flags.positional.push(a);
   }
@@ -99,6 +118,14 @@ function resolveIdentity(scope: string, flags: Flags): string {
   );
 }
 
+function resolveOptionalIdentity(scope: string, flags: Flags): string | null {
+  const explicit = flags.as ?? process.env.SWARM_MCP_INSTANCE_ID;
+  const insts = instancesInScope(scope);
+  if (explicit) return resolveInstanceRef(explicit, insts);
+  if (insts.length === 1) return insts[0].id;
+  return null;
+}
+
 function printJson(obj: unknown) {
   console.log(JSON.stringify(obj, null, 2));
 }
@@ -112,6 +139,67 @@ function idleLabel(heartbeat: number) {
   if (idle > 30) return `offline (${idle}s)`;
   if (idle > 10) return `stale (${idle}s)`;
   return `live (${idle}s)`;
+}
+
+const UI_WAIT_POLL_MS = 100;
+const DEFAULT_UI_WAIT_SECS = 5;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForUiCommand(id: number, timeoutMs: number) {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  let row = ui.get(id);
+  while (
+    row &&
+    row.status !== "done" &&
+    row.status !== "failed" &&
+    Date.now() < deadline
+  ) {
+    await sleep(UI_WAIT_POLL_MS);
+    row = ui.get(id);
+  }
+  return row;
+}
+
+function parseJsonMaybe(raw: string | null) {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return raw;
+  }
+}
+
+function printUiCommand(row: ui.UiCommandRow, asJson: boolean) {
+  if (asJson) {
+    return printJson({
+      ...row,
+      payload: parseJsonMaybe(row.payload),
+      result: parseJsonMaybe(row.result),
+    });
+  }
+
+  console.log(
+    `#${row.id}  [${row.status}]  ${row.kind}  scope=${row.scope}`,
+  );
+  if (row.result) {
+    console.log(`  result: ${JSON.stringify(parseJsonMaybe(row.result))}`);
+  }
+  if (row.error) {
+    console.log(`  error: ${row.error}`);
+  }
+}
+
+async function maybeWaitForUiCommand(
+  id: number,
+  flags: Flags,
+  fallbackSeconds = DEFAULT_UI_WAIT_SECS,
+) {
+  const waitSeconds = flags.wait ?? fallbackSeconds;
+  if (waitSeconds <= 0) return ui.get(id);
+  return waitForUiCommand(id, Math.round(waitSeconds * 1000));
 }
 
 // ---------------------------------------------------------------------------
@@ -425,11 +513,132 @@ function cmdInspect(flags: Flags) {
   }
 }
 
+async function cmdUi(flags: Flags) {
+  const [sub, ...rest] = flags.positional.slice(1);
+  if (!sub || sub === "commands" || sub === "list") {
+    const rows = ui.list({
+      scope: flags.scope ? resolveScope(flags) : undefined,
+      status: flags.status,
+      limit: flags.limit,
+    });
+    if (flags.json) return printJson(rows.map((row) => ({
+      ...row,
+      payload: parseJsonMaybe(row.payload),
+      result: parseJsonMaybe(row.result),
+    })));
+    if (!rows.length) return console.log("(no ui commands)");
+    for (const row of rows.slice().reverse()) {
+      console.log(
+        `#${row.id}  [${row.status}]  ${row.kind}  scope=${row.scope}`,
+      );
+    }
+    return;
+  }
+
+  if (sub === "get") {
+    const id = Number(rest[0]);
+    if (!Number.isInteger(id)) throw new Error("ui get <id>");
+    const row = ui.get(id);
+    if (!row) {
+      if (flags.json) return printJson(null);
+      process.exit(1);
+    }
+    return printUiCommand(row, flags.json);
+  }
+
+  if (sub === "spawn") {
+    const cwd = rest[0];
+    if (!cwd) {
+      throw new Error(
+        "ui spawn <cwd> [--harness <claude|codex|opencode>] [--role <role>] [--label <tokens>] [--scope <path>] [--wait <seconds>]",
+      );
+    }
+    const scope = scopeFor(cwd, flags.scope);
+    const id = ui.enqueue(
+      scope,
+      "spawn_shell",
+      {
+        cwd,
+        harness: flags.harness ?? null,
+        role: flags.role ?? null,
+        label: flags.label ?? null,
+      },
+      resolveOptionalIdentity(scope, flags),
+    );
+    const row = await maybeWaitForUiCommand(id, flags);
+    if (!row) throw new Error(`ui command ${id} disappeared`);
+    return printUiCommand(row, flags.json);
+  }
+
+  if (sub === "prompt") {
+    const content = rest.join(" ");
+    if (!flags.target) {
+      throw new Error(
+        "ui prompt --target <node|instance|pty> <content...> [--no-enter] [--scope <path>] [--wait <seconds>]",
+      );
+    }
+    if (!content) throw new Error("ui prompt requires content");
+    const scope = resolveScope(flags);
+    const id = ui.enqueue(
+      scope,
+      "send_prompt",
+      {
+        target: flags.target,
+        text: content,
+        enter: flags.enter,
+      },
+      resolveOptionalIdentity(scope, flags),
+    );
+    const row = await maybeWaitForUiCommand(id, flags);
+    if (!row) throw new Error(`ui command ${id} disappeared`);
+    return printUiCommand(row, flags.json);
+  }
+
+  if (sub === "move") {
+    if (!flags.target || !Number.isFinite(flags.x) || !Number.isFinite(flags.y)) {
+      throw new Error(
+        "ui move --target <node|instance|pty> --x <number> --y <number> [--scope <path>] [--wait <seconds>]",
+      );
+    }
+    const scope = resolveScope(flags);
+    const id = ui.enqueue(
+      scope,
+      "move_node",
+      {
+        target: flags.target,
+        x: flags.x,
+        y: flags.y,
+      },
+      resolveOptionalIdentity(scope, flags),
+    );
+    const row = await maybeWaitForUiCommand(id, flags);
+    if (!row) throw new Error(`ui command ${id} disappeared`);
+    return printUiCommand(row, flags.json);
+  }
+
+  if (sub === "organize") {
+    const scope = resolveScope(flags);
+    const id = ui.enqueue(
+      scope,
+      "organize_nodes",
+      {
+        kind: flags.kind ?? "grid",
+      },
+      resolveOptionalIdentity(scope, flags),
+    );
+    const row = await maybeWaitForUiCommand(id, flags);
+    if (!row) throw new Error(`ui command ${id} disappeared`);
+    return printUiCommand(row, flags.json);
+  }
+
+  throw new Error(`Unknown ui subcommand: ${sub}`);
+}
+
 // ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
 
-const HANDLERS: Record<string, (flags: Flags) => void> = {
+const HANDLERS: Record<string, (flags: Flags) => void | Promise<void>> = {
   instances: cmdInstances,
   messages: cmdMessages,
   tasks: cmdTasks,
@@ -440,6 +649,7 @@ const HANDLERS: Record<string, (flags: Flags) => void> = {
   lock: cmdLock,
   unlock: cmdUnlock,
   inspect: cmdInspect,
+  ui: cmdUi,
 };
 
 export const SUBCOMMANDS = Object.keys(HANDLERS);
@@ -451,7 +661,7 @@ export async function run(subcommand: string, argv: string[]) {
   registry.prune();
   try {
     const flags = parseFlags([subcommand, ...argv]);
-    handler(flags);
+    await handler(flags);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`swarm-mcp ${subcommand}: ${msg}`);

@@ -9,10 +9,10 @@
 
 use crate::{
     bind::Binder,
-    model::{AppError, InstanceStatus},
+    model::{AppError, InstanceStatus, SavedLayout},
     writes,
 };
-use tauri::State;
+use tauri::{AppHandle, Runtime, State};
 
 fn instance_status_from_heartbeat(heartbeat: i64) -> InstanceStatus {
     let now = std::time::SystemTime::now()
@@ -96,9 +96,9 @@ pub fn ui_remove_dependency(
 
 /// Remove an instance row and everything keyed to it (locks, queued
 /// messages, task assignments released). Used when the user clicks the
-/// remove button on a node whose PTY is already gone — e.g., an orphan
-/// row left over from a previous UI session, or a child process the user
-/// killed outside the UI.
+/// remove button on a disconnected node whose PTY is already gone — e.g.,
+/// an orphan row left over from a previous UI session, or a child process
+/// the user killed outside the UI.
 ///
 /// No scope check: the UI can see any instance in the snapshot, so the
 /// user gets to decide what to clean up. The binder mapping is dropped
@@ -126,7 +126,7 @@ pub fn ui_deregister_instance(
     }
 
     let status = instance_status_from_heartbeat(instance.heartbeat);
-    if status != InstanceStatus::Offline {
+    if !matches!(status, InstanceStatus::Stale | InstanceStatus::Offline) {
         return Err(AppError::Validation(format!(
             "instance {trimmed} is {} and cannot be removed yet",
             instance_status_label(status)
@@ -137,4 +137,26 @@ pub fn ui_deregister_instance(
 
     binder.unbind(trimmed);
     Ok(())
+}
+
+/// Persist the graph layout for one swarm scope under the shared `ui/layout`
+/// KV entry. The frontend calls this after local drag/reflow changes so
+/// layout becomes durable and can also be driven by the CLI worker.
+#[tauri::command]
+pub fn ui_set_layout(scope: String, layout: SavedLayout) -> Result<(), AppError> {
+    let trimmed = scope.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Validation("scope is required".into()));
+    }
+
+    let conn = writes::open_rw().map_err(AppError::Operation)?;
+    writes::save_ui_layout(&conn, trimmed, &layout).map_err(AppError::Operation)
+}
+
+/// Exit the entire Tauri application process. Used by the UI's quit-confirm
+/// dialog so app shutdown does not depend on platform-specific window-close
+/// behavior (macOS keeps app lifetime separate from window lifetime).
+#[tauri::command]
+pub fn ui_exit_app<R: Runtime>(app_handle: AppHandle<R>) {
+    app_handle.exit(0);
 }

@@ -101,8 +101,12 @@
   .swarm-status-bar {
     position: absolute;
     bottom: 12px;
-    left: 50%;
+    /* Shift left by half the sidebar width so the bar stays centered within
+       the visible canvas region (the sidebar overlays the right edge). */
+    left: calc(50% - var(--sidebar-inset, 0px) / 2);
     transform: translateX(-50%);
+    transition: left var(--sidebar-transition-duration, 460ms)
+      cubic-bezier(0.22, 1, 0.36, 1);
     display: flex;
     align-items: center;
     gap: 8px;

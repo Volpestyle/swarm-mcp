@@ -126,6 +126,23 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ui_commands (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL,
+    created_by TEXT,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    claimed_by TEXT,
+    result TEXT,
+    error TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    started_at INTEGER,
+    completed_at INTEGER
+  )
+`);
+
 function cols(table: string) {
   return db.query(`PRAGMA table_info(${table})`).all() as Array<{
     name: string;
@@ -251,4 +268,7 @@ db.exec(
 );
 db.exec(
   "CREATE INDEX IF NOT EXISTS events_created_at_idx ON events(created_at)",
+);
+db.exec(
+  "CREATE INDEX IF NOT EXISTS ui_commands_scope_status_id_idx ON ui_commands(scope, status, id)",
 );

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use dirs::config_dir;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Runtime, State};
 use uuid::Uuid;
 
 use crate::bind::Binder;
@@ -132,6 +132,32 @@ fn validate_role(
     }
 }
 
+/// Validate a user-supplied agent name. Names ride inside the swarm label as a
+/// `name:<value>` token, which is whitespace/colon-separated, so we restrict
+/// the character set to letters, digits, dashes, dots, and underscores.
+fn validate_name(name: Option<&str>) -> Result<Option<String>, AppError> {
+    let Some(name) = name.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+
+    if name.len() > 32 {
+        return Err(AppError::Validation(
+            "name must be 32 characters or fewer".into(),
+        ));
+    }
+
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err(AppError::Validation(
+            "name may only contain letters, digits, dashes, dots, and underscores".into(),
+        ));
+    }
+
+    Ok(Some(name.to_owned()))
+}
+
 fn instance_status_from_heartbeat(heartbeat: i64) -> InstanceStatus {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -150,6 +176,7 @@ fn instance_status_label(status: InstanceStatus) -> &'static str {
 
 fn build_label(
     role: Option<&str>,
+    name: Option<&str>,
     token: &str,
     preset_label_tokens: &str,
     extra_label_tokens: Option<&str>,
@@ -165,6 +192,9 @@ fn build_label(
         }
     };
 
+    if let Some(name) = name {
+        push_tokens(&format!("name:{name}"));
+    }
     if let Some(role) = role {
         push_tokens(&format!("role:{role}"));
     }
@@ -230,12 +260,41 @@ pub async fn spawn_shell(
     role: Option<String>,
     scope: Option<String>,
     label: Option<String>,
+    name: Option<String>,
+) -> Result<ShellSpawnResult, AppError> {
+    spawn_shell_impl(
+        &app_handle,
+        &pty_manager,
+        &binder,
+        &launch_config,
+        cwd,
+        harness,
+        role,
+        scope,
+        label,
+        name,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_shell_impl<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    pty_manager: &PtyManager,
+    binder: &Binder,
+    launch_config: &LaunchConfig,
+    cwd: String,
+    harness: Option<String>,
+    role: Option<String>,
+    scope: Option<String>,
+    label: Option<String>,
+    name: Option<String>,
 ) -> Result<ShellSpawnResult, AppError> {
     validate_working_dir(&cwd)?;
 
     let shell = shell_path();
     let harness_cmd = validate_harness_name(harness.as_deref())?;
-    let validated_role = validate_role(role.as_deref(), &launch_config)?;
+    let validated_role = validate_role(role.as_deref(), launch_config)?;
+    let validated_name = validate_name(name.as_deref())?;
     let display_command = harness_cmd.map_or_else(|| shell.clone(), str::to_owned);
 
     let mut env = HashMap::new();
@@ -244,6 +303,7 @@ pub async fn spawn_shell(
         let token = launch_token();
         let label_string = build_label(
             validated_role.as_deref(),
+            validated_name.as_deref(),
             &token,
             &format!("provider:{harness_name}"),
             label.as_deref(),
@@ -278,7 +338,7 @@ pub async fn spawn_shell(
     };
 
     let pty_id = match pty_manager.create_session(
-        &app_handle,
+        app_handle,
         PtyCreateRequest {
             command: shell,
             args: Vec::new(),
@@ -454,7 +514,7 @@ mod tests {
 
     #[test]
     fn build_label_includes_role_and_token() {
-        let label = build_label(Some("planner"), "abc", "provider:oc", None);
+        let label = build_label(Some("planner"), None, "abc", "provider:oc", None);
         assert!(label.contains("role:planner"));
         assert!(label.contains("launch:abc"));
         assert!(label.contains("provider:oc"));
@@ -464,6 +524,7 @@ mod tests {
     fn build_label_deduplicates_tokens() {
         let label = build_label(
             Some("planner"),
+            None,
             "abc",
             "provider:oc",
             Some("provider:oc extra:tag"),
@@ -474,9 +535,43 @@ mod tests {
 
     #[test]
     fn build_label_without_role() {
-        let label = build_label(None, "abc", "provider:oc", None);
+        let label = build_label(None, None, "abc", "provider:oc", None);
         assert!(!label.contains("role:"));
         assert!(label.contains("launch:abc"));
+    }
+
+    #[test]
+    fn build_label_includes_name_token() {
+        let label = build_label(Some("planner"), Some("scout"), "abc", "provider:oc", None);
+        assert!(label.contains("name:scout"));
+        assert!(label.contains("role:planner"));
+    }
+
+    #[test]
+    fn validate_name_rejects_whitespace_and_colons() {
+        assert!(validate_name(Some("hello world")).is_err());
+        assert!(validate_name(Some("name:thing")).is_err());
+        assert!(validate_name(Some("planner!")).is_err());
+    }
+
+    #[test]
+    fn validate_name_accepts_safe_characters() {
+        assert_eq!(
+            validate_name(Some("front-end_2.0")).unwrap(),
+            Some("front-end_2.0".to_owned())
+        );
+    }
+
+    #[test]
+    fn validate_name_rejects_overlong_input() {
+        let long = "a".repeat(33);
+        assert!(validate_name(Some(&long)).is_err());
+    }
+
+    #[test]
+    fn validate_name_treats_blank_as_none() {
+        assert_eq!(validate_name(None).unwrap(), None);
+        assert_eq!(validate_name(Some("   ")).unwrap(), None);
     }
 
     #[test]

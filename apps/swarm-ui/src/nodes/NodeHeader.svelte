@@ -49,9 +49,12 @@
     : '';
   $: isAppOwned = nodeType === 'pty' || nodeType === 'bound';
   $: showAdopting = instanceId !== null && !adopted;
-  // Only offline instance rows can be deleted safely. Live PTYs still use the
-  // stop button; stale/online instance-only rows must age out or be respawned.
-  $: canRemoveInstance = instanceId !== null && status === 'offline';
+  // Disconnected instance-only rows can be deleted safely once they are no
+  // longer online. Live PTYs still use the stop button.
+  $: canRemoveInstance =
+    nodeType === 'instance' &&
+    instanceId !== null &&
+    (status === 'offline' || status === 'stale');
   // Show the respawn button only on instance-only nodes whose heartbeat has
   // aged out — meaning the owning process is gone and reviving the swarm
   // row with a fresh PTY is useful. Online externals are excluded so we
@@ -246,7 +249,7 @@
       {#if canRemoveInstance}
         <button
           class="stop"
-          title="Remove instance from swarm"
+          title="Remove disconnected instance from swarm"
           on:click|stopPropagation={handleRemoveInstance}
         >
           <!-- Trash icon -->

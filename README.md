@@ -189,9 +189,9 @@ Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are c
 
 ## CLI
 
-The same `swarm-mcp` binary exposes a non-MCP CLI that talks directly to `~/.swarm-mcp/swarm.db`. It is the transport to use from contexts that cannot speak MCP: shell scripts, helper scripts an agent invokes (e.g. a test harness or CLI referee), cron jobs, CI, or an ad-hoc terminal for inspection and debugging.
+The same `swarm-mcp` binary exposes a non-MCP CLI that talks directly to `~/.swarm-mcp/swarm.db`. Use it from contexts that cannot speak MCP: shell scripts, helper scripts an agent invokes (e.g. a test harness or CLI referee), cron jobs, CI, an ad-hoc terminal for inspection/debugging, or to control a running `swarm-ui` app.
 
-Agents in an MCP session should continue to use the MCP tools; the CLI is for scripts and outsiders, not for the agent's own loop.
+Inside an MCP-enabled agent session, prefer the MCP tools for swarm coordination primitives (`register`, messages, tasks, locks, KV). The CLI is primarily for scripts, operator terminals, and the `swarm-ui` control surface.
 
 Inspection:
 
@@ -213,6 +213,26 @@ swarm-mcp kv del  <key>
 swarm-mcp lock    <file> --note "why"
 swarm-mcp unlock  <file>
 ```
+
+Swarm UI control:
+
+```sh
+swarm-mcp ui spawn /path/to/repo --harness codex --role planner
+swarm-mcp ui prompt --target role:planner "check the failing tests"
+swarm-mcp ui move --target bound:<instance-id> --x 120 --y 80
+swarm-mcp ui organize --kind grid
+swarm-mcp ui list
+```
+
+These commands enqueue work for a running `swarm-ui` app to claim and execute. If no desktop app is running, commands remain `pending` until one starts.
+
+Notes:
+
+- `swarm-mcp ui spawn`, `ui prompt`, `ui move`, and `ui organize` wait up to 5 seconds by default for the desktop app to claim + complete the command. Pass `--wait 0` to return immediately after enqueue.
+- Use `swarm-mcp ui list` and `swarm-mcp ui get <id>` to inspect queued, running, completed, or failed UI commands.
+- `--target` accepts `bound:<instance-id>`, `instance:<instance-id>`, `pty:<pty-id>`, or a bare instance / PTY reference. Bare instance refs resolve by full UUID, unique UUID prefix, or unique label substring in scope. Bare PTY refs resolve by full PTY id, unique PTY id prefix, or a unique substring of the PTY command.
+- `ui move` persists layout into the shared `ui/layout` KV entry for the target scope, so changes survive refreshes and can be driven from either the desktop UI or the CLI.
+- `ui organize` currently supports only `--kind grid`.
 
 Every subcommand accepts `--json` for machine-readable output. Run `swarm-mcp help` for the full list.
 

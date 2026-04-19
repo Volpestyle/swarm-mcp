@@ -42,6 +42,8 @@ fn main() {
             swarm_ui::ui_commands::ui_unassign_task,
             swarm_ui::ui_commands::ui_remove_dependency,
             swarm_ui::ui_commands::ui_deregister_instance,
+            swarm_ui::ui_commands::ui_set_layout,
+            swarm_ui::ui_commands::ui_exit_app,
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -84,6 +86,7 @@ fn main() {
             });
 
             start_swarm_watcher(app_handle.clone(), Some(callback))?;
+            swarm_ui::ui_control::start_ui_command_worker(app_handle.clone());
 
             // Clean up UI-owned instance rows when their PTY ends. The child
             // inside a registered PTY calls `swarm.deregister` itself on

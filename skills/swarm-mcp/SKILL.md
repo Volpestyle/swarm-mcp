@@ -39,7 +39,7 @@ For planner sessions, the server maintains `owner/planner` automatically. Check 
 |-------|-----------|-----------|
 | Bootstrap and registration fields | `references/bootstrap.md` | You need to decide `directory`, `scope`, `file_root`, or `label` |
 | Specialists, generalists, and team conventions | `references/roles-and-teams.md` | You need to route work by `role:` or `team:` labels |
-| `swarm-mcp` CLI for helper scripts | `references/cli.md` | You are about to write or invoke a helper script (shell / node / etc.) that needs to read or write swarm state from outside an MCP session |
+| `swarm-mcp` CLI reference | `references/cli.md` | You are about to write or invoke a helper script, inspect swarm state from a plain terminal, or control `swarm-ui` through the CLI |
 
 ## Constraints
 

@@ -20,6 +20,7 @@
 
   const dispatch = createEventDispatcher<{
     close: { returnNodeId: string | null };
+    closeAgent: { nodeId: string };
     opened: void;
     closed: void;
   }>();
@@ -240,6 +241,16 @@
 
     const meta = event.metaKey || event.ctrlKey;
     if (!meta) return;
+
+    if (!event.shiftKey && !event.altKey && event.key.toLowerCase() === 'w') {
+      const nodeId = activeNodeIdFor(focusedPane) ?? paneANodeId;
+      if (nodeId) {
+        event.preventDefault();
+        event.stopPropagation();
+        dispatch('closeAgent', { nodeId });
+      }
+      return;
+    }
 
     if ((event.key === '`' || event.code === 'Backquote') && !event.shiftKey) {
       if (layout === 'split') {

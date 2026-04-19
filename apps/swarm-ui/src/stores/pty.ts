@@ -415,9 +415,13 @@ export async function closePty(id: string): Promise<void> {
 /**
  * Get the current ring buffer contents for a PTY session.
  * Used for reconnect/remount to replay recent output.
+ *
+ * The backend returns the snapshot as a raw `tauri::ipc::Response` body
+ * rather than a JSON `number[]`, so multi-megabyte buffers deserialize in
+ * constant time instead of paying `O(n)` JSON parsing on the main thread.
  */
 export async function getPtyBuffer(id: string): Promise<Uint8Array> {
-  const data = await invoke<number[]>('pty_get_buffer', { id });
+  const data = await invoke<ArrayBuffer>('pty_get_buffer', { id });
   return new Uint8Array(data);
 }
 
@@ -426,6 +430,12 @@ export interface SpawnShellOptions {
   role?: string;
   scope?: string;
   label?: string;
+  /**
+   * Optional human-friendly identifier shown on the node header. Stored as a
+   * `name:<value>` token on the swarm label. Falls back to a slice of the
+   * instance UUID when absent.
+   */
+  name?: string;
 }
 
 /**
@@ -446,6 +456,7 @@ export async function spawnShell(
   const trimmedRole = options.role?.trim() || null;
   const trimmedScope = options.scope?.trim() || null;
   const trimmedLabel = options.label?.trim() || null;
+  const trimmedName = options.name?.trim() || null;
 
   const result = await invoke<ShellSpawnResult>('spawn_shell', {
     cwd,
@@ -453,6 +464,7 @@ export async function spawnShell(
     role: trimmedRole,
     scope: trimmedScope,
     label: trimmedLabel,
+    name: trimmedName,
   });
 
   const session: PtySession = {
@@ -529,10 +541,10 @@ export async function respawnInstance(instanceId: string): Promise<RespawnResult
 }
 
 /**
- * Remove an instance row from swarm.db. Used when the user clicks the
- * remove button on a node whose PTY is already gone — e.g., an orphan
- * placeholder left over from a previous UI session, or a child process
- * killed outside the UI.
+ * Remove a disconnected instance row from swarm.db. Used when the user
+ * clicks the trash button on a stale/offline node whose PTY is already
+ * gone — e.g., an orphan placeholder left over from a previous UI
+ * session, or a child process killed outside the UI.
  */
 export async function deregisterInstance(instanceId: string): Promise<void> {
   await invoke('ui_deregister_instance', { instanceId });

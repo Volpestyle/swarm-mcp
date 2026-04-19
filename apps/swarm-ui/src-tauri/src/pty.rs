@@ -7,7 +7,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Runtime, State};
 use uuid::Uuid;
 
 use crate::events::{pty_data_event, pty_exit_event, PTY_BOUND_EXIT, PTY_CLOSED, PTY_CREATED};
@@ -200,9 +200,9 @@ impl PtyManager {
         }
     }
 
-    pub fn create_session(
+    pub fn create_session<R: Runtime>(
         &self,
-        app_handle: &AppHandle,
+        app_handle: &AppHandle<R>,
         request: PtyCreateRequest,
     ) -> Result<String, AppError> {
         let PtyCreateRequest {
@@ -303,6 +303,24 @@ impl PtyManager {
         Ok(snapshot)
     }
 
+    pub fn write_input(&self, id: &str, data: &[u8]) -> Result<(), AppError> {
+        let handle = self.session(id)?;
+        let mut writer_slot = handle
+            .writer
+            .lock()
+            .map_err(|_| AppError::Internal("PTY writer lock poisoned".into()))?;
+        let writer = writer_slot
+            .as_mut()
+            .ok_or_else(|| AppError::Operation(format!("PTY session is closed: {id}")))?;
+
+        writer
+            .write_all(data)
+            .map_err(|error| AppError::Operation(format!("failed to write to PTY: {error}")))?;
+        writer
+            .flush()
+            .map_err(|error| AppError::Operation(format!("failed to flush PTY input: {error}")))
+    }
+
     fn session(&self, id: &str) -> Result<Arc<PtyHandle>, AppError> {
         self.sessions
             .read()
@@ -321,8 +339,8 @@ impl PtyManager {
     }
 }
 
-fn spawn_output_threads(
-    app_handle: AppHandle,
+fn spawn_output_threads<R: Runtime + 'static>(
+    app_handle: AppHandle<R>,
     id: String,
     handle: Arc<PtyHandle>,
     mut reader: Box<dyn Read + Send>,
@@ -397,7 +415,7 @@ fn spawn_output_threads(
 ///
 /// main.rs listens for this to tear down the binder mapping and delete any
 /// UI-owned placeholder row that was never adopted by the child process.
-fn emit_bound_exit_if_any(app_handle: &AppHandle, handle: &Arc<PtyHandle>) {
+fn emit_bound_exit_if_any<R: Runtime>(app_handle: &AppHandle<R>, handle: &Arc<PtyHandle>) {
     if let Some((pty_id, instance_id)) = handle.take_bound_instance() {
         let _ = app_handle.emit(
             PTY_BOUND_EXIT,
@@ -407,7 +425,7 @@ fn emit_bound_exit_if_any(app_handle: &AppHandle, handle: &Arc<PtyHandle>) {
 }
 
 fn cleanup_session(
-    app_handle: &AppHandle,
+    app_handle: &AppHandle<impl Runtime>,
     sessions: &SessionMap,
     id: &str,
     handle: &Arc<PtyHandle>,
@@ -433,7 +451,7 @@ fn cleanup_session(
 }
 
 fn flush_pending(
-    app_handle: &AppHandle,
+    app_handle: &AppHandle<impl Runtime>,
     event_name: &str,
     handle: &Arc<PtyHandle>,
     pending: &mut Vec<u8>,
@@ -519,21 +537,7 @@ pub fn pty_write(
     id: String,
     data: Vec<u8>,
 ) -> Result<(), AppError> {
-    let handle = manager.session(&id)?;
-    let mut writer_slot = handle
-        .writer
-        .lock()
-        .map_err(|_| AppError::Internal("PTY writer lock poisoned".into()))?;
-    let writer = writer_slot
-        .as_mut()
-        .ok_or_else(|| AppError::Operation(format!("PTY session is closed: {id}")))?;
-
-    writer
-        .write_all(&data)
-        .map_err(|error| AppError::Operation(format!("failed to write to PTY: {error}")))?;
-    writer
-        .flush()
-        .map_err(|error| AppError::Operation(format!("failed to flush PTY input: {error}")))
+    manager.write_input(&id, &data)
 }
 
 #[tauri::command]
@@ -625,9 +629,9 @@ pub async fn pty_close(
 pub fn pty_get_buffer(
     manager: State<'_, PtyManager>,
     id: String,
-) -> Result<Vec<u8>, AppError> {
+) -> Result<tauri::ipc::Response, AppError> {
     let handle = manager.session(&id)?;
-    Ok(handle.buffer_snapshot())
+    Ok(tauri::ipc::Response::new(handle.buffer_snapshot()))
 }
 
 #[tauri::command]

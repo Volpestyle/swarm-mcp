@@ -20,7 +20,9 @@
   } from '@xyflow/svelte';
   import '@xyflow/svelte/dist/style.css';
   import { invoke } from '@tauri-apps/api/core';
-  import { onMount, onDestroy } from 'svelte';
+  import type { UnlistenFn } from '@tauri-apps/api/event';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
 
@@ -40,6 +42,8 @@
     bindings,
     initPtyStore,
     destroyPtyStore,
+    closePty,
+    deregisterInstance,
   } from './stores/pty';
 
   // Graph builder (Agent 3)
@@ -58,8 +62,12 @@
   import SettingsModal from './panels/SettingsModal.svelte';
   import SwarmStatus from './panels/SwarmStatus.svelte';
   import FullscreenWorkspace from './panels/FullscreenWorkspace.svelte';
+  import CloseConfirmModal from './panels/CloseConfirmModal.svelte';
   import { workspaceOverlayActive } from './lib/workspaceOverlay';
-  import { disposeAllTerminalSurfaces } from './lib/terminalSurface';
+  import {
+    disposeAllTerminalSurfaces,
+    getTerminalSurface,
+  } from './lib/terminalSurface';
 
   // Styles
   import './styles/terminal.css';
@@ -97,7 +105,10 @@
   let selectedEdge: XYFlowEdge | null = null;
   let hasSelection = false;
   let showSettings = false;
+  let showCloseConfirm = false;
   let layoutSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let closeRequestUnlisten: UnlistenFn | null = null;
+  let appWindow: ReturnType<typeof getCurrentWindow> | null = null;
 
   // -------------------------------------------------------------------
   // Fullscreen workspace state
@@ -109,9 +120,14 @@
   // overlay.
   // -------------------------------------------------------------------
   type WorkspaceStage = 'closed' | 'opening' | 'open' | 'closing';
+  type LauncherHandle = {
+    launch: () => Promise<boolean>;
+  };
 
   let workspaceStage: WorkspaceStage = 'closed';
   let workspaceInitialNodeId: string | null = null;
+  let workspaceReturnNodeId: string | null = null;
+  let launcherRef: LauncherHandle | null = null;
   $: workspaceActive = workspaceStage !== 'closed';
   $: workspaceOverlayStage = workspaceStage === 'closed' ? 'opening' : workspaceStage;
   // Keep graph terminals mounted during `opening` so the overlay can steal the
@@ -134,6 +150,145 @@
     if (!(target instanceof Element)) return null;
     const nodeId = target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId;
     return nodeHasPty(nodeId) ? nodeId : null;
+  }
+
+  function findNodeIdFromTarget(target: EventTarget | null): string | null {
+    if (!(target instanceof Element)) return null;
+    return target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? null;
+  }
+
+  function findNodeById(nodeId: string | null | undefined): XYFlowNode | null {
+    if (!nodeId) return null;
+    return nodes.find((node) => node.id === nodeId) ?? null;
+  }
+
+  function syncNodeSelection(selectedId: string | null): void {
+    nodes = nodes.map((node) => {
+      const nextSelected = selectedId !== null && node.id === selectedId;
+      return node.selected === nextSelected
+        ? node
+        : { ...node, selected: nextSelected };
+    });
+  }
+
+  function syncEdgeSelection(selectedId: string | null): void {
+    edges = edges.map((edge) => {
+      const nextSelected = selectedId !== null && edge.id === selectedId;
+      return edge.selected === nextSelected
+        ? edge
+        : { ...edge, selected: nextSelected };
+    });
+  }
+
+  function setSelectedNode(nodeId: string | null): void {
+    selectedNodeId = nodeId;
+    selectedEdgeId = null;
+    syncNodeSelection(nodeId);
+    syncEdgeSelection(null);
+  }
+
+  function setSelectedEdge(edgeId: string | null): void {
+    selectedEdgeId = edgeId;
+    selectedNodeId = null;
+    syncEdgeSelection(edgeId);
+    syncNodeSelection(null);
+  }
+
+  function clearSelection(): void {
+    selectedNodeId = null;
+    selectedEdgeId = null;
+    syncNodeSelection(null);
+    syncEdgeSelection(null);
+  }
+
+  function orderedSelectableNodeIds(): string[] {
+    return nodes
+      .slice()
+      .sort((left, right) => {
+        const leftY = left.position?.y ?? 0;
+        const rightY = right.position?.y ?? 0;
+        if (leftY !== rightY) return leftY - rightY;
+
+        const leftX = left.position?.x ?? 0;
+        const rightX = right.position?.x ?? 0;
+        if (leftX !== rightX) return leftX - rightX;
+
+        return left.id.localeCompare(right.id);
+      })
+      .map((node) => node.id);
+  }
+
+  function cycleSelectedNode(delta: number): void {
+    const ids = orderedSelectableNodeIds();
+    if (ids.length === 0) return;
+
+    const currentIndex = selectedNodeId ? ids.indexOf(selectedNodeId) : -1;
+    const baseIndex = currentIndex >= 0
+      ? currentIndex
+      : delta > 0
+        ? -1
+        : 0;
+    const nextIndex = (baseIndex + delta + ids.length) % ids.length;
+    const nextId = ids[nextIndex];
+    if (!nextId) return;
+
+    setSelectedNode(nextId);
+    void focusNodeTerminal(nextId);
+  }
+
+  async function focusNodeTerminal(nodeId: string | null): Promise<void> {
+    const ptyId = findNodeById(nodeId)?.data?.ptySession?.id;
+    if (!ptyId) return;
+
+    await tick();
+    getTerminalSurface(ptyId).focus();
+  }
+
+  function nodeCanBeClosed(node: XYFlowNode | null): boolean {
+    if (!node) return false;
+    const data = node.data;
+    if (data?.ptySession?.id) return true;
+    return (
+      data?.nodeType === 'instance' &&
+      (data?.instance?.status === 'offline' || data?.instance?.status === 'stale')
+    );
+  }
+
+  function resolveClosableNodeId(event: KeyboardEvent): string | null {
+    const fromTarget =
+      findNodeIdFromTarget(event.target) ??
+      findNodeIdFromTarget(document.activeElement);
+    if (nodeCanBeClosed(findNodeById(fromTarget))) return fromTarget;
+
+    if (nodeCanBeClosed(findNodeById(selectedNodeId))) return selectedNodeId;
+    return null;
+  }
+
+  async function closeNodeById(nodeId: string): Promise<boolean> {
+    const node = findNodeById(nodeId);
+    if (!node) return false;
+
+    try {
+      const ptyId = node.data?.ptySession?.id;
+      if (ptyId) {
+        await closePty(ptyId);
+        return true;
+      }
+
+      const instanceId = node.data?.instance?.id;
+      if (
+        node.data?.nodeType === 'instance' &&
+        (node.data?.instance?.status === 'offline' || node.data?.instance?.status === 'stale') &&
+        instanceId
+      ) {
+        await deregisterInstance(instanceId);
+        return true;
+      }
+    } catch (err) {
+      console.error('[App] failed to close node:', err);
+    }
+
+    return false;
   }
 
   function resolveFullscreenTargetId(event: KeyboardEvent): string | null {
@@ -161,12 +316,21 @@
     event: CustomEvent<{ returnNodeId: string | null }>,
   ) {
     if (workspaceStage === 'closing' || workspaceStage === 'closed') return;
+    workspaceReturnNodeId = event.detail.returnNodeId;
+    if (event.detail.returnNodeId) {
+      setSelectedNode(event.detail.returnNodeId);
+    }
     workspaceStage = 'closing';
   }
 
   function handleWorkspaceClosed() {
+    const returnNodeId = workspaceReturnNodeId;
     workspaceStage = 'closed';
     workspaceInitialNodeId = null;
+    workspaceReturnNodeId = null;
+    if (returnNodeId) {
+      void focusNodeTerminal(returnNodeId);
+    }
   }
 
   // Right-panel tab state. Auto-switches to 'inspect' when a node/edge is
@@ -315,10 +479,18 @@
   // -------------------------------------------------------------------
 
   onMount(async () => {
+    appWindow = getCurrentWindow();
+    closeRequestUnlisten = await appWindow.onCloseRequested((event) => {
+      event.preventDefault();
+      requestAppClose();
+    });
+
     await Promise.all([initSwarmStore(), initPtyStore()]);
   });
 
   onDestroy(() => {
+    closeRequestUnlisten?.();
+    closeRequestUnlisten = null;
     if (layoutSaveTimer) {
       clearTimeout(layoutSaveTimer);
       layoutSaveTimer = null;
@@ -333,23 +505,19 @@
   // -------------------------------------------------------------------
 
   function handleNodeClick({ node }: { node: { id: string } }) {
-    selectedNodeId = node.id;
-    selectedEdgeId = null;
+    setSelectedNode(node.id);
   }
 
   function handleEdgeClick({ edge }: { edge: { id: string } }) {
-    selectedEdgeId = edge.id;
-    selectedNodeId = null;
+    setSelectedEdge(edge.id);
   }
 
   function handlePaneClick() {
-    selectedNodeId = null;
-    selectedEdgeId = null;
+    clearSelection();
   }
 
   function handleInspectorClose() {
-    selectedNodeId = null;
-    selectedEdgeId = null;
+    clearSelection();
   }
 
   function currentLayoutSnapshot(nodeList: XYFlowNode[]): Record<string, Position> {
@@ -434,23 +602,111 @@
     showSettings = false;
   }
 
+  async function triggerLaunchShortcut(): Promise<void> {
+    if (!launcherRef) return;
+    await launcherRef.launch();
+  }
+
+  async function triggerCloseShortcut(nodeId: string): Promise<void> {
+    await closeNodeById(nodeId);
+  }
+
+  function requestAppClose(): void {
+    if (showCloseConfirm) return;
+    showCloseConfirm = true;
+  }
+
+  function cancelAppClose(): void {
+    showCloseConfirm = false;
+  }
+
+  async function confirmAppClose(): Promise<void> {
+    showCloseConfirm = false;
+    try {
+      await invoke('ui_exit_app');
+    } catch (err) {
+      console.error('[App] failed to exit app:', err);
+    }
+  }
+
   function handleWindowKeydown(event: KeyboardEvent) {
+    if (showCloseConfirm) return;
+
     const meta = event.metaKey || event.ctrlKey;
 
-    if (workspaceStage === 'closed' && !event.defaultPrevented && !event.repeat && !event.isComposing) {
-      const wantsFullscreen =
+    if (!event.defaultPrevented && !event.repeat && !event.isComposing) {
+      const wantsLaunch =
         meta &&
-        event.shiftKey &&
+        !event.shiftKey &&
         !event.altKey &&
-        event.key.toLowerCase() === 'f';
+        event.key.toLowerCase() === 'n';
 
-      if (wantsFullscreen) {
-        const nodeId = resolveFullscreenTargetId(event);
+      if (wantsLaunch && !showSettings) {
+        event.preventDefault();
+        event.stopPropagation();
+        void triggerLaunchShortcut();
+        return;
+      }
+
+      const wantsClose =
+        meta &&
+        !event.shiftKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'w';
+
+      if (wantsClose && workspaceStage === 'closed') {
+        const nodeId = showSettings ? null : resolveClosableNodeId(event);
+        event.preventDefault();
+        event.stopPropagation();
         if (nodeId) {
+          void triggerCloseShortcut(nodeId);
+        } else {
+          requestAppClose();
+        }
+        return;
+      }
+
+      if (workspaceStage === 'closed') {
+        const wantsCycleNext =
+          meta &&
+          event.shiftKey &&
+          !event.altKey &&
+          (event.key === ']' || event.key === '}' || event.code === 'BracketRight');
+
+        if (wantsCycleNext && !showSettings) {
           event.preventDefault();
           event.stopPropagation();
-          openWorkspace(nodeId);
+          cycleSelectedNode(+1);
           return;
+        }
+
+        const wantsCyclePrevious =
+          meta &&
+          event.shiftKey &&
+          !event.altKey &&
+          (event.key === '[' || event.key === '{' || event.code === 'BracketLeft');
+
+        if (wantsCyclePrevious && !showSettings) {
+          event.preventDefault();
+          event.stopPropagation();
+          cycleSelectedNode(-1);
+          return;
+        }
+
+        const wantsFullscreen =
+          meta &&
+          event.shiftKey &&
+          !event.altKey &&
+          event.key.toLowerCase() === 'f';
+
+        if (wantsFullscreen) {
+          const nodeId = resolveFullscreenTargetId(event);
+          if (nodeId) {
+            event.preventDefault();
+            event.stopPropagation();
+            openWorkspace(nodeId);
+            return;
+          }
         }
       }
     }
@@ -483,6 +739,12 @@
       default:
         return '#313244';
     }
+  }
+
+  function handleWorkspaceCloseAgent(
+    event: CustomEvent<{ nodeId: string }>,
+  ): void {
+    void closeNodeById(event.detail.nodeId);
   }
 </script>
 
@@ -626,7 +888,7 @@
 
     <div class="tab-panels">
       <div class="tab-panel" class:hidden={activeTab !== 'launch'}>
-        <Launcher />
+        <Launcher bind:this={launcherRef} />
       </div>
       <div class="tab-panel" class:hidden={activeTab !== 'inspect'}>
         <Inspector {selectedNode} {selectedEdge} />
@@ -638,11 +900,19 @@
     <SettingsModal on:close={closeSettings} />
   {/if}
 
+  {#if showCloseConfirm}
+    <CloseConfirmModal
+      on:cancel={cancelAppClose}
+      on:confirm={confirmAppClose}
+    />
+  {/if}
+
   {#if workspaceActive}
     <FullscreenWorkspace
       {nodes}
       initialNodeId={workspaceInitialNodeId}
       stage={workspaceOverlayStage}
+      on:closeAgent={handleWorkspaceCloseAgent}
       on:opened={handleWorkspaceOpen}
       on:close={handleWorkspaceClose}
       on:closed={handleWorkspaceClosed}

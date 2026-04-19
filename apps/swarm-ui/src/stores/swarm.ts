@@ -21,6 +21,8 @@ import type {
   Event,
   SwarmUpdate,
   TaskStatus,
+  Position,
+  SavedLayout,
 } from '../lib/types';
 
 // ---------------------------------------------------------------------------
@@ -202,6 +204,43 @@ export const events: Readable<Event[]> = derived(
 
 /** UI metadata from `ui/*` KV entries */
 export const uiMeta = writable<Record<string, unknown> | null>(null);
+
+function parseSavedLayoutValue(value: unknown): Record<string, Position> {
+  if (!value || typeof value !== 'object') return {};
+  const nodes = (value as SavedLayout).nodes;
+  if (!nodes || typeof nodes !== 'object') return {};
+
+  const parsed: Record<string, Position> = {};
+  for (const [nodeId, pos] of Object.entries(nodes)) {
+    if (!pos || typeof pos !== 'object') continue;
+    const x = Number((pos as Position).x);
+    const y = Number((pos as Position).y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    parsed[nodeId] = { x, y };
+  }
+  return parsed;
+}
+
+export const savedLayout: Readable<Record<string, Position>> = derived(
+  [uiMeta, activeScope],
+  ([$uiMeta, $scope]) => {
+    if (!$uiMeta) return {};
+
+    const merged: Record<string, Position> = {};
+    for (const [key, value] of Object.entries($uiMeta)) {
+      if (key === 'ui/layout') {
+        Object.assign(merged, parseSavedLayoutValue(value));
+        continue;
+      }
+
+      if (!key.endsWith('::ui/layout')) continue;
+      const entryScope = key.slice(0, -'::ui/layout'.length);
+      if ($scope !== null && entryScope !== $scope) continue;
+      Object.assign(merged, parseSavedLayoutValue(value));
+    }
+    return merged;
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Derived stores — computed views

@@ -17,9 +17,13 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::{model::INSTANCE_STALE_AFTER_SECS, swarm::swarm_db_path};
+use crate::{
+    model::{GraphPosition, SavedLayout, INSTANCE_STALE_AFTER_SECS},
+    swarm::swarm_db_path,
+};
 
 const PLANNER_OWNER_KEY: &str = "owner/planner";
+const UI_LAYOUT_KEY: &str = "ui/layout";
 
 fn now_secs() -> i64 {
     let secs = std::time::SystemTime::now()
@@ -170,6 +174,144 @@ fn kv_get_value(conn: &Connection, scope: &str, key: &str) -> Result<Option<Stri
     )
     .optional()
     .map_err(|err| format!("failed to read kv {scope}/{key}: {err}"))
+}
+
+pub struct UiCommandRecord {
+    pub id: i64,
+    pub scope: String,
+    pub created_by: Option<String>,
+    pub kind: String,
+    pub payload: String,
+}
+
+pub fn claim_next_ui_command(
+    conn: &Connection,
+    worker_id: &str,
+) -> Result<Option<UiCommandRecord>, String> {
+    loop {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|err| format!("failed to begin ui command tx: {err}"))?;
+        let row = tx
+            .query_row(
+                "SELECT id, scope, created_by, kind, payload
+                 FROM ui_commands
+                 WHERE status = 'pending'
+                 ORDER BY id ASC
+                 LIMIT 1",
+                [],
+                |row| {
+                    Ok(UiCommandRecord {
+                        id: row.get(0)?,
+                        scope: row.get(1)?,
+                        created_by: row.get(2)?,
+                        kind: row.get(3)?,
+                        payload: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|err| format!("failed to query next ui command: {err}"))?;
+
+        let Some(record) = row else {
+            tx.commit()
+                .map_err(|err| format!("failed to commit empty ui command tx: {err}"))?;
+            return Ok(None);
+        };
+
+        let updated = tx
+            .execute(
+                "UPDATE ui_commands
+                 SET status = 'running', claimed_by = ?, started_at = unixepoch()
+                 WHERE id = ? AND status = 'pending'",
+                params![worker_id, record.id],
+            )
+            .map_err(|err| format!("failed to claim ui command {}: {err}", record.id))?;
+
+        tx.commit()
+            .map_err(|err| format!("failed to commit ui command claim: {err}"))?;
+
+        if updated == 1 {
+            emit_event(
+                conn,
+                &record.scope,
+                "ui.command.started",
+                Some(worker_id),
+                Some(&record.kind),
+                Some(json!({ "command_id": record.id, "created_by": record.created_by })),
+            )?;
+            return Ok(Some(record));
+        }
+    }
+}
+
+pub fn complete_ui_command(
+    conn: &Connection,
+    record: &UiCommandRecord,
+    result: &Value,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE ui_commands
+         SET status = 'done', result = ?, error = NULL, completed_at = unixepoch()
+         WHERE id = ?",
+        params![result.to_string(), record.id],
+    )
+    .map_err(|err| format!("failed to complete ui command {}: {err}", record.id))?;
+    emit_event(
+        conn,
+        &record.scope,
+        "ui.command.completed",
+        record.created_by.as_deref(),
+        Some(&record.kind),
+        Some(json!({ "command_id": record.id, "result": result })),
+    )
+}
+
+pub fn fail_ui_command(
+    conn: &Connection,
+    record: &UiCommandRecord,
+    error: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE ui_commands
+         SET status = 'failed', error = ?, completed_at = unixepoch()
+         WHERE id = ?",
+        params![error, record.id],
+    )
+    .map_err(|err| format!("failed to fail ui command {}: {err}", record.id))?;
+    emit_event(
+        conn,
+        &record.scope,
+        "ui.command.failed",
+        record.created_by.as_deref(),
+        Some(&record.kind),
+        Some(json!({ "command_id": record.id, "error": error })),
+    )
+}
+
+pub fn load_ui_layout(conn: &Connection, scope: &str) -> Result<SavedLayout, String> {
+    let Some(raw) = kv_get_value(conn, scope, UI_LAYOUT_KEY)? else {
+        return Ok(SavedLayout::default());
+    };
+    serde_json::from_str(&raw).map_err(|err| format!("failed to parse {UI_LAYOUT_KEY}: {err}"))
+}
+
+pub fn save_ui_layout(conn: &Connection, scope: &str, layout: &SavedLayout) -> Result<(), String> {
+    let raw = serde_json::to_string(layout)
+        .map_err(|err| format!("failed to serialize {UI_LAYOUT_KEY}: {err}"))?;
+    kv_set_value(conn, scope, UI_LAYOUT_KEY, &raw)
+}
+
+pub fn set_ui_layout_position(
+    conn: &Connection,
+    scope: &str,
+    node_id: &str,
+    position: GraphPosition,
+) -> Result<SavedLayout, String> {
+    let mut layout = load_ui_layout(conn, scope)?;
+    layout.nodes.insert(node_id.to_owned(), position);
+    save_ui_layout(conn, scope, &layout)?;
+    Ok(layout)
 }
 
 fn has_role(label: Option<&str>, role: &str) -> bool {
@@ -372,6 +514,21 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
           scope TEXT PRIMARY KEY,
           changed_at INTEGER NOT NULL DEFAULT 0
         );
+
+        CREATE TABLE IF NOT EXISTS ui_commands (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          scope TEXT NOT NULL,
+          created_by TEXT,
+          kind TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          claimed_by TEXT,
+          result TEXT,
+          error TEXT,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          started_at INTEGER,
+          completed_at INTEGER
+        );
         "#,
     )
     .map_err(|err| format!("failed to bootstrap schema: {err}"))?;
@@ -451,6 +608,11 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
         [],
     )
     .map_err(|err| format!("failed to create events index: {err}"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS ui_commands_scope_status_id_idx ON ui_commands(scope, status, id)",
+        [],
+    )
+    .map_err(|err| format!("failed to create ui_commands index: {err}"))?;
 
     if table_exists(conn, "tasks")? {
         conn.execute(

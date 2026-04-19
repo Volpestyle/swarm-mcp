@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -240,6 +242,12 @@ pub struct PtySession {
 pub struct GraphPosition {
     pub x: f64,
     pub y: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SavedLayout {
+    #[serde(default)]
+    pub nodes: HashMap<String, GraphPosition>,
 }
 
 #[allow(dead_code)]

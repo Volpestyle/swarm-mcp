@@ -26,6 +26,9 @@
   const STORAGE_KEY_ROLE = 'swarm-ui.launcher.role';
   const STORAGE_KEY_SCOPE = 'swarm-ui.launcher.scope';
 
+  const NAME_PATTERN = /^[A-Za-z0-9_.-]+$/;
+  const NAME_MAX_LEN = 32;
+
   function loadStored(key: string): string {
     if (typeof localStorage === 'undefined') return '';
     return localStorage.getItem(key) ?? '';
@@ -44,6 +47,7 @@
   let workingDir: string = loadStored(STORAGE_KEY_CWD);
   let scope: string = loadStored(STORAGE_KEY_SCOPE);
   let label: string = '';
+  let name: string = '';
   // Default harness to the user's last pick, or `claude` for first-run users
   // (so the spawned node comes up bound + draggable).
   let harness: string = loadStored(STORAGE_KEY_HARNESS) || 'claude';
@@ -73,6 +77,18 @@
     return null;
   }
 
+  function validateName(value: string): string | null {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (trimmed.length > NAME_MAX_LEN) {
+      return `Name must be ${NAME_MAX_LEN} characters or fewer`;
+    }
+    if (!NAME_PATTERN.test(trimmed)) {
+      return 'Name may only contain letters, digits, dashes, dots, and underscores';
+    }
+    return null;
+  }
+
   onMount(async () => {
     try {
       rolePresets = await getRolePresets();
@@ -87,11 +103,20 @@
     }
   });
 
-  async function handleLaunch() {
+  export async function launch(): Promise<boolean> {
     const cwdError = validateCwd(workingDir, 'Working directory');
     if (cwdError) {
       error = cwdError;
-      return;
+      return false;
+    }
+    const nameError = validateName(name);
+    if (nameError) {
+      error = nameError;
+      return false;
+    }
+
+    if (loading) {
+      return false;
     }
 
     loading = true;
@@ -104,20 +129,30 @@
         role: harness ? role || undefined : undefined,
         scope: scope.trim() || undefined,
         label: label.trim() || undefined,
+        // Same reasoning as role: a name token only makes sense when the
+        // harness is going to adopt the pre-created instance row.
+        name: harness ? name.trim() || undefined : undefined,
       });
 
       saveStored(STORAGE_KEY_CWD, workingDir.trim());
       saveStored(STORAGE_KEY_HARNESS, harness);
       saveStored(STORAGE_KEY_ROLE, role);
       saveStored(STORAGE_KEY_SCOPE, scope.trim());
-      // Label is intentionally one-shot — power users will set it per-launch.
+      // Label and name are intentionally one-shot — set per-launch.
       label = '';
+      name = '';
+      return true;
     } catch (err) {
       error = `Failed to launch: ${err}`;
       console.error('[Launcher] spawn error:', err);
+      return false;
     } finally {
       loading = false;
     }
+  }
+
+  async function handleLaunch() {
+    await launch();
   }
 </script>
 
@@ -161,6 +196,23 @@
         </div>
       </div>
 
+      <div class="form-group">
+        <label for="name-input">Name <span class="optional-tag">optional</span></label>
+        <input
+          id="name-input"
+          type="text"
+          class="input mono"
+          placeholder="e.g. scout"
+          bind:value={name}
+          disabled={!harness}
+          title={!harness ? 'Pick a harness first — names are stored on the swarm row' : ''}
+        />
+        <p class="field-hint">
+          Friendly label shown on the node header. Falls back to the instance
+          ID prefix when blank.
+        </p>
+      </div>
+
       <div class="form-grid-2">
         <div class="form-group">
           <label for="scope-input">Scope</label>
@@ -193,12 +245,19 @@
         class="btn btn-primary"
         on:click={handleLaunch}
         disabled={launchDisabled}
+        aria-keyshortcuts="Meta+N Control+N"
         title={launchDisabled && !workingDir.trim()
           ? 'Enter a working directory first'
-          : ''}
+          : 'Launch a new node (Cmd/Ctrl+N)'
+        }
       >
         {loading ? 'Launching…' : 'Launch'}
       </button>
+
+      <p class="hint">
+        Shortcut: <code>Cmd/Ctrl+N</code> launches a node with the current form
+        values.
+      </p>
 
       {#if harness && role}
         <p class="hint">
@@ -361,6 +420,15 @@
     font-size: 10px;
     line-height: 1.45;
     color: #585b70;
+  }
+
+  .optional-tag {
+    font-size: 9.5px;
+    font-weight: 400;
+    color: #585b70;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-left: 4px;
   }
 
   .hint code {
