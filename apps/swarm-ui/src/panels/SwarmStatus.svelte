@@ -8,11 +8,42 @@
   Derived from swarm store and pty store values.
 -->
 <script lang="ts">
-  import { swarmSummary } from '../stores/swarm';
+  import {
+    activeScope,
+    availableScopes,
+    scopeSelection,
+    setScopeSelection,
+    swarmSummary,
+  } from '../stores/swarm';
   import { pendingPtyCount } from '../stores/pty';
+
+  function handleScopeChange(event: Event): void {
+    const target = event.currentTarget as HTMLSelectElement;
+    setScopeSelection(target.value);
+  }
+
+  function shortScope(scope: string | null): string {
+    if (!scope) return 'all scopes';
+    const parts = scope.split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] ?? scope;
+  }
 </script>
 
 <div class="swarm-status-bar">
+  <div class="status-group scope-group">
+    <span class="status-label">scope</span>
+    <select class="scope-select" value={$scopeSelection} on:change={handleScopeChange}>
+      <option value="auto">auto</option>
+      <option value="all">all scopes</option>
+      {#each $availableScopes as scope (scope)}
+        <option value={scope}>{shortScope(scope)}</option>
+      {/each}
+    </select>
+    <span class="scope-chip">{shortScope($activeScope)}</span>
+  </div>
+
+  <span class="divider">|</span>
+
   <div class="status-group">
     <span class="status-dot-inline online"></span>
     <span class="status-value">{$swarmSummary.active}</span>
@@ -95,6 +126,10 @@
     gap: 4px;
   }
 
+  .scope-group {
+    gap: 6px;
+  }
+
   .status-value {
     font-weight: 600;
     color: var(--terminal-fg, #c0caf5);
@@ -110,6 +145,29 @@
 
   .status-label {
     color: #6c7086;
+  }
+
+  .scope-select {
+    min-width: 92px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--node-border, #313244);
+    background: rgba(17, 17, 27, 0.72);
+    color: var(--terminal-fg, #c0caf5);
+    font-size: 11px;
+    outline: none;
+  }
+
+  .scope-chip {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(137, 180, 250, 0.14);
+    color: var(--status-pending, #89b4fa);
+    font-size: 11px;
   }
 
   .divider {

@@ -20,5 +20,6 @@
     "src/**/*.svelte",
     "vite.config.ts",
     "tailwind.config.ts"
-  ]
+  ],
+  "exclude": ["src/**/*.test.ts"]
 }

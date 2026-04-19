@@ -19,10 +19,11 @@
     useInternalNode,
     type Position,
   } from '@xyflow/svelte';
-  import type { ConnectionEdgeData, Task } from '../lib/types';
+  import type { ConnectionEdgeData, Event, Task } from '../lib/types';
   import { getFloatingEdgeParams } from '../lib/floatingEdge';
+  import { isSystemMessage } from '../lib/messages';
   import { timestampToMillis } from '../lib/time';
-  import { onMessageAppended } from '../stores/swarm';
+  import { onEventAppended, onMessageAppended } from '../stores/swarm';
 
   export let id: string | undefined = undefined;
   export let source: string;
@@ -134,14 +135,24 @@
     cy: number;
     /** true: travel source→target (0→1); false: target→source (1→0) */
     forward: boolean;
+    /** [auto]/[signal:*]/sender=system — colored neutral grey, not blue. */
+    system: boolean;
   }
 
   let packets: Packet[] = [];
-  const waiting: Array<{ msgId: number; forward: boolean }> = [];
+  const waiting: Array<{ msgId: number; forward: boolean; system: boolean }> = [];
   let drainTimer: ReturnType<typeof setTimeout> | null = null;
   let unsubscribe: (() => void) | null = null;
+  let unsubscribeEvents: (() => void) | null = null;
   let rafId: number | null = null;
   let counter = 0;
+
+  // Real-time pulse triggered by audit-log message events. Decays via the
+  // CSS transition on `.message-edge-path.pulsing`. We bump a token per
+  // pulse so consecutive bursts retrigger the transition correctly.
+  let pulsing = false;
+  let pulseClearTimer: ReturnType<typeof setTimeout> | null = null;
+  const PULSE_DECAY_MS = 1200;
 
   function advance(ts: number): void {
     if (!pathEl || packets.length === 0) {
@@ -171,7 +182,7 @@
     }
   }
 
-  function spawnPacket(msgId: number, forward: boolean): void {
+  function spawnPacket(msgId: number, forward: boolean, system: boolean): void {
     if (!pathEl) return;
     const key = `${msgId}-${++counter}`;
     const start = performance.now();
@@ -179,17 +190,17 @@
     const origin = pathEl.getPointAtLength(forward ? 0 : total);
     packets = [
       ...packets,
-      { key, startMs: start, cx: origin.x, cy: origin.y, forward },
+      { key, startMs: start, cx: origin.x, cy: origin.y, forward, system },
     ];
     if (rafId === null) rafId = requestAnimationFrame(advance);
   }
 
-  function enqueuePacket(msgId: number, forward: boolean): void {
+  function enqueuePacket(msgId: number, forward: boolean, system: boolean): void {
     if (packets.length < MAX_IN_FLIGHT) {
-      spawnPacket(msgId, forward);
+      spawnPacket(msgId, forward, system);
       return;
     }
-    waiting.push({ msgId, forward });
+    waiting.push({ msgId, forward, system });
     if (!drainTimer) scheduleDrain();
   }
 
@@ -198,7 +209,7 @@
       drainTimer = null;
       while (waiting.length > 0 && packets.length < MAX_IN_FLIGHT) {
         const next = waiting.shift();
-        if (next !== undefined) spawnPacket(next.msgId, next.forward);
+        if (next !== undefined) spawnPacket(next.msgId, next.forward, next.system);
       }
       if (waiting.length > 0) scheduleDrain();
     }, STAGGER_MS);
@@ -207,23 +218,54 @@
   onMount(() => {
     unsubscribe = onMessageAppended((msg) => {
       if (!sourceInstanceId || !targetInstanceId) return;
+      const sys = isSystemMessage(msg);
       if (msg.sender === sourceInstanceId && msg.recipient === targetInstanceId) {
-        enqueuePacket(msg.id, true);
+        enqueuePacket(msg.id, true, sys);
       } else if (
         msg.sender === targetInstanceId &&
         msg.recipient === sourceInstanceId
       ) {
-        enqueuePacket(msg.id, false);
+        enqueuePacket(msg.id, false, sys);
       }
+    });
+
+    unsubscribeEvents = onEventAppended((evt) => {
+      if (!sourceInstanceId || !targetInstanceId) return;
+      if (!shouldFlash(evt, sourceInstanceId, targetInstanceId)) return;
+      triggerPulse();
     });
   });
 
   onDestroy(() => {
     unsubscribe?.();
+    unsubscribeEvents?.();
     if (drainTimer) clearTimeout(drainTimer);
+    if (pulseClearTimer) clearTimeout(pulseClearTimer);
     if (rafId !== null) cancelAnimationFrame(rafId);
     clearInterval(clockTick);
   });
+
+  function shouldFlash(evt: Event, src: string, tgt: string): boolean {
+    if (evt.actor !== src && evt.actor !== tgt) return false;
+    if (evt.type === 'message.broadcast') return true;
+    if (evt.type === 'message.sent') {
+      return evt.subject === src || evt.subject === tgt;
+    }
+    return false;
+  }
+
+  function triggerPulse(): void {
+    // Force a re-trigger: drop, then re-set on the next microtask so the
+    // CSS transition replays even if pulses arrive back-to-back.
+    pulsing = false;
+    if (pulseClearTimer) clearTimeout(pulseClearTimer);
+    queueMicrotask(() => {
+      pulsing = true;
+      pulseClearTimer = setTimeout(() => {
+        pulsing = false;
+      }, PULSE_DECAY_MS);
+    });
+  }
 
   $: messagePreview = lastMessage?.content
     ? lastMessage.content.slice(0, 80) + (lastMessage.content.length > 80 ? '...' : '')
@@ -241,6 +283,7 @@
     class="message-edge-path"
     class:active={isActive}
     class:stale
+    class:pulsing
     style="animation-duration: {animationSeconds}s"
     d={edgePath}
   />
@@ -249,7 +292,13 @@
   <path d={edgePath} stroke="transparent" stroke-width="16" fill="none" />
 
   {#each packets as packet (packet.key)}
-    <circle class="message-packet" r="4" cx={packet.cx} cy={packet.cy} />
+    <circle
+      class="message-packet"
+      class:system={packet.system}
+      r="4"
+      cx={packet.cx}
+      cy={packet.cy}
+    />
   {/each}
 </g>
 

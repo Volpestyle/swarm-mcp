@@ -63,8 +63,16 @@ function applyAppearance(settings: AppearanceSettings): void {
   const borderOpacity = Math.min(0.60, Math.max(0.28, settings.backgroundOpacity * 0.65));
   const surfaceBlur = settings.backgroundOpacity < 0.98 ? '20px' : '0px';
 
+  // Sidebar reads as a translucent layer floating over the canvas — keep it
+  // noticeably more see-through than panels/modals so the graph is visible
+  // underneath. Stronger blur preserves text legibility at low alpha.
+  const sidebarOpacity = Math.min(0.35, Math.max(0.12, panelOpacity * 0.28));
+  const sidebarBlur = settings.backgroundOpacity < 0.98 ? '40px' : '0px';
+
   root.style.setProperty('--canvas-bg', rgba(17, 17, 27, canvasOpacity));
   root.style.setProperty('--panel-bg', rgba(30, 30, 46, panelOpacity));
+  root.style.setProperty('--sidebar-bg', rgba(30, 30, 46, sidebarOpacity));
+  root.style.setProperty('--sidebar-blur', sidebarBlur);
   root.style.setProperty('--node-bg', rgba(30, 30, 46, nodeOpacity));
   root.style.setProperty('--node-header-bg', rgba(24, 24, 37, headerOpacity));
   root.style.setProperty('--terminal-bg', rgba(26, 27, 38, terminalOpacity));

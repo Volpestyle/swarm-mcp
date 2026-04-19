@@ -17,6 +17,8 @@
 
   --canvas-bg: rgba(17, 17, 27, 0.15);
   --panel-bg: rgba(30, 30, 46, 0.68);
+  --sidebar-bg: rgba(30, 30, 46, 0.20);
+  --sidebar-blur: 40px;
 
   /* Terminal colors — must stay opaque; ghostty-web's canvas compositor
      accumulates alpha paints, which ghosts prior frames on clear/selection. */
@@ -225,6 +227,27 @@
   flex-shrink: 0;
 }
 
+/* Lock badge: surfaces context.lock_acquired state at a glance so the user
+   can see who holds locks without opening the Inspector. Matches
+   .task-count-badge dimensions. */
+.lock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px 1px 5px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--status-stale) 18%, transparent);
+  color: var(--status-stale);
+  border: 1px solid color-mix(in srgb, var(--status-stale) 30%, transparent);
+  flex-shrink: 0;
+}
+
+.lock-badge .lock-icon {
+  display: block;
+}
+
 /* Pending-adoption indicator: instance row pre-created by swarm-ui but the
    child process inside the PTY hasn't called swarm.register yet. Messages
    sent to this node are queued in swarm.db but won't be consumed until the
@@ -304,7 +327,7 @@
 
 /* xterm.js specific overrides */
 .terminal-container .xterm {
-  padding: 4px 8px;
+  padding: 4px 0 4px 8px;
 }
 
 .terminal-container .xterm-viewport {
@@ -401,6 +424,16 @@
   opacity: 0.4;
 }
 
+/* Real-time message pulse: triggered by an `events:new` message.sent /
+   message.broadcast row, decays via the transition over PULSE_DECAY_MS
+   in ConnectionEdge.svelte. The drop-shadow draws the eye even when the
+   underlying path is already animating dashes. */
+.message-edge-path.pulsing {
+  filter: drop-shadow(0 0 6px var(--edge-message));
+  stroke-width: 3.5;
+  transition: filter 1.1s ease-out, stroke-width 1.1s ease-out;
+}
+
 /* Packet: one SVG <circle> per new message, animated along the edge path
    via <animateMotion>. The flow comes from spawning/removing them in
    MessageEdge.svelte, not from a looping CSS animation. */
@@ -409,6 +442,14 @@
   filter: drop-shadow(0 0 4px var(--edge-message));
   opacity: 0.95;
   pointer-events: none;
+}
+
+/* System packets ([auto]/[signal:*]/sender=system) — neutral grey so the
+   eye doesn't read them as peer chat. */
+.message-packet.system {
+  fill: #6c7086;
+  filter: drop-shadow(0 0 3px rgba(108, 112, 134, 0.6));
+  opacity: 0.75;
 }
 
 /* ---------------------------------------------------------------------------

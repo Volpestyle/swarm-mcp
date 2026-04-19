@@ -1,26 +1,27 @@
 <!--
-  Launcher.svelte — Agent/shell spawn controls
+  Launcher.svelte — Unified spawn controls
 
-  - Quick shell launch (cwd + harness) at the top
-  - Agent spawn form (role, cwd, scope, label)
-  - Pending PTY sessions list appears when unbound sessions exist
+  Single form: working dir + harness + optional role + optional scope/label.
+
+  - When a harness is picked, the backend pre-creates a swarm instance row
+    and binds it to the PTY immediately, so the node renders draggable from
+    the first paint.
+  - When a role is also picked, the swarm label gets a `role:<role>` token.
+    Role guidance comes from the explicit `swarm.register` response, not a
+    hidden frontend prompt.
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { RolePresetSummary } from '../lib/types';
   import {
-    spawnAgent,
     spawnShell,
     getRolePresets,
     unboundPtySessions,
   } from '../stores/pty';
 
-  // Persisted last-used values. A fresh swarm-ui window has no useful
-  // default for cwd — best we can do is remember what the user launched
-  // with last time. Keys are namespaced so future settings can live next
-  // to them.
-  const STORAGE_KEY_SHELL_CWD = 'swarm-ui.launcher.shellCwd';
-  const STORAGE_KEY_AGENT_CWD = 'swarm-ui.launcher.workingDir';
+  // Persisted last-used values so users don't retype the same cwd every
+  // launch. Keys are namespaced for future settings.
+  const STORAGE_KEY_CWD = 'swarm-ui.launcher.workingDir';
   const STORAGE_KEY_HARNESS = 'swarm-ui.launcher.harness';
   const STORAGE_KEY_ROLE = 'swarm-ui.launcher.role';
   const STORAGE_KEY_SCOPE = 'swarm-ui.launcher.scope';
@@ -39,20 +40,18 @@
     }
   }
 
-  // Form state — hydrated from localStorage on mount so users don't retype
-  // the same cwd every launch.
-  let role: string = loadStored(STORAGE_KEY_ROLE);
-  let workingDir: string = loadStored(STORAGE_KEY_AGENT_CWD);
+  // Form state — hydrated from localStorage on mount.
+  let workingDir: string = loadStored(STORAGE_KEY_CWD);
   let scope: string = loadStored(STORAGE_KEY_SCOPE);
   let label: string = '';
-  let shellCwd: string = loadStored(STORAGE_KEY_SHELL_CWD);
-  // Default harness to whatever the user last picked, falling back to
-  // `claude` so first-run users get a swarm-aware shell (which goes through
-  // the adoption flow and comes up bound + draggable).
-  let shellHarness: string = loadStored(STORAGE_KEY_HARNESS) || 'claude';
+  // Default harness to the user's last pick, or `claude` for first-run users
+  // (so the spawned node comes up bound + draggable).
+  let harness: string = loadStored(STORAGE_KEY_HARNESS) || 'claude';
+  // Empty string in the UI means "generalist" (no role: token on the label).
+  let role: string = loadStored(STORAGE_KEY_ROLE);
 
-  const shellHarnessOptions: { value: string; label: string }[] = [
-    { value: '', label: 'Shell' },
+  const harnessOptions: { value: string; label: string }[] = [
+    { value: '', label: 'Shell (no swarm identity)' },
     { value: 'claude', label: 'claude' },
     { value: 'codex', label: 'codex' },
     { value: 'opencode', label: 'opencode' },
@@ -62,9 +61,8 @@
   let loading = false;
   let error: string | null = null;
 
-  $: effectiveShellCwd = shellCwd.trim() || workingDir.trim();
-  $: shellRunDisabled = loading || !effectiveShellCwd;
-  $: agentLaunchDisabled = loading || !workingDir.trim() || !role;
+  $: launchDisabled = loading || !workingDir.trim();
+  $: roleDisabled = !harness;
 
   function validateCwd(value: string, context: string): string | null {
     const trimmed = value.trim();
@@ -81,134 +79,51 @@
     } catch (err) {
       console.warn('[Launcher] failed to load role presets:', err);
       rolePresets = [
-        { role: 'planner', command: 'opencode', args: [], default_label_tokens: 'provider:opencode' },
-        { role: 'implementer', command: 'opencode', args: [], default_label_tokens: 'provider:opencode' },
-        { role: 'reviewer', command: 'opencode', args: [], default_label_tokens: 'provider:opencode' },
-        { role: 'researcher', command: 'opencode', args: [], default_label_tokens: 'provider:opencode' },
+        { role: 'planner' },
+        { role: 'implementer' },
+        { role: 'reviewer' },
+        { role: 'researcher' },
       ];
-    }
-
-    // If no role was persisted, default to the first preset so the Launch
-    // button isn't disabled on first render.
-    if (!role && rolePresets.length > 0) {
-      role = rolePresets[0].role;
     }
   });
 
-  async function handleSpawnAgent() {
+  async function handleLaunch() {
     const cwdError = validateCwd(workingDir, 'Working directory');
     if (cwdError) {
       error = cwdError;
       return;
     }
+
     loading = true;
     error = null;
     try {
-      await spawnAgent(
-        role,
-        workingDir.trim(),
-        scope.trim() || undefined,
-        label.trim() || undefined,
-      );
-      // Persist the cwd/role/scope so the next launch doesn't require
-      // re-entering them. Label is intentionally one-shot.
-      saveStored(STORAGE_KEY_AGENT_CWD, workingDir.trim());
+      await spawnShell(workingDir.trim(), {
+        harness: harness || undefined,
+        // Without a harness there's no MCP server to adopt the role token,
+        // so suppress role to avoid a confusing label on the orphan row.
+        role: harness ? role || undefined : undefined,
+        scope: scope.trim() || undefined,
+        label: label.trim() || undefined,
+      });
+
+      saveStored(STORAGE_KEY_CWD, workingDir.trim());
+      saveStored(STORAGE_KEY_HARNESS, harness);
       saveStored(STORAGE_KEY_ROLE, role);
       saveStored(STORAGE_KEY_SCOPE, scope.trim());
+      // Label is intentionally one-shot — power users will set it per-launch.
       label = '';
     } catch (err) {
-      error = `Failed to spawn agent: ${err}`;
+      error = `Failed to launch: ${err}`;
       console.error('[Launcher] spawn error:', err);
     } finally {
       loading = false;
     }
   }
-
-  async function handleSpawnShell() {
-    const cwd = effectiveShellCwd;
-    const cwdError = validateCwd(cwd, 'Working directory');
-    if (cwdError) {
-      error = cwdError;
-      return;
-    }
-
-    loading = true;
-    error = null;
-    try {
-      await spawnShell(cwd, shellHarness || undefined);
-      saveStored(STORAGE_KEY_SHELL_CWD, shellCwd.trim());
-      saveStored(STORAGE_KEY_HARNESS, shellHarness);
-    } catch (err) {
-      error = `Failed to spawn shell: ${err}`;
-      console.error('[Launcher] shell error:', err);
-    } finally {
-      loading = false;
-    }
-  }
-
 </script>
 
 <div class="launcher">
   <div class="body">
-    <!-- Quick shell launch -->
     <section class="block">
-      <div class="shell-row">
-        <input
-          type="text"
-          class="input"
-          class:invalid={shellCwd.length > 0 && !effectiveShellCwd}
-          placeholder={workingDir ? `defaults to ${workingDir}` : 'cwd (/abs/path)'}
-          bind:value={shellCwd}
-        />
-        <select
-          class="input harness"
-          bind:value={shellHarness}
-          aria-label="Shell harness"
-        >
-          {#each shellHarnessOptions as option (option.value)}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-        <button
-          class="btn"
-          on:click={handleSpawnShell}
-          disabled={shellRunDisabled}
-          title={shellRunDisabled && !effectiveShellCwd
-            ? 'Enter a working directory first'
-            : ''}
-        >
-          {shellHarness ? 'Run' : 'Sh'}
-        </button>
-      </div>
-      {#if shellHarness}
-        <p class="hint">
-          Pre-creates a swarm instance and binds it to the shell — the
-          harness adopts it on register and the node comes up draggable.
-        </p>
-      {:else}
-        <p class="hint">
-          Plain shell has no swarm identity. Pick a harness to launch with
-          adoption.
-        </p>
-      {/if}
-    </section>
-
-    <div class="divider"></div>
-
-    <!-- Agent spawn -->
-    <section class="block">
-      <h4>Spawn agent</h4>
-
-      <div class="form-group">
-        <label for="role-select">Role</label>
-        <select id="role-select" class="input" bind:value={role}>
-          <option value="">Select a role</option>
-          {#each rolePresets as preset (preset.role)}
-            <option value={preset.role}>{preset.role}</option>
-          {/each}
-        </select>
-      </div>
-
       <div class="form-group">
         <label for="working-dir">Working dir</label>
         <input
@@ -222,6 +137,32 @@
 
       <div class="form-grid-2">
         <div class="form-group">
+          <label for="harness-select">Harness</label>
+          <select id="harness-select" class="input" bind:value={harness}>
+            {#each harnessOptions as option (option.value)}
+              <option value={option.value}>{option.label}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="role-select">Role</label>
+          <select
+            id="role-select"
+            class="input"
+            bind:value={role}
+            disabled={roleDisabled}
+            title={roleDisabled ? 'Pick a harness first' : ''}
+          >
+            <option value="">—</option>
+            {#each rolePresets as preset (preset.role)}
+              <option value={preset.role}>{preset.role}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
+
+      <div class="form-grid-2">
+        <div class="form-group">
           <label for="scope-input">Scope</label>
           <input
             id="scope-input"
@@ -230,14 +171,19 @@
             placeholder="auto"
             bind:value={scope}
           />
+          <p class="field-hint">
+            Defaults to the repo root. Use a different scope only for a
+            separate swarm; use label tokens like <code>team:frontend</code>
+            to split frontend/backend inside one swarm.
+          </p>
         </div>
         <div class="form-group">
-          <label for="label-input">Label</label>
+          <label for="label-input">Label tokens</label>
           <input
             id="label-input"
             type="text"
             class="input"
-            placeholder="frontend:auth"
+            placeholder="team:frontend"
             bind:value={label}
           />
         </div>
@@ -245,14 +191,32 @@
 
       <button
         class="btn btn-primary"
-        on:click={handleSpawnAgent}
-        disabled={agentLaunchDisabled}
-        title={agentLaunchDisabled && !workingDir.trim()
+        on:click={handleLaunch}
+        disabled={launchDisabled}
+        title={launchDisabled && !workingDir.trim()
           ? 'Enter a working directory first'
           : ''}
       >
-        {loading ? 'Launching…' : 'Launch agent'}
+        {loading ? 'Launching…' : 'Launch'}
       </button>
+
+      {#if harness && role}
+        <p class="hint">
+          Spawns a shell, auto-types <code>{harness}</code>, and pre-creates a
+          swarm row labeled <code>role:{role}</code>. Role guidance arrives
+          when the agent calls <code>register</code>.
+        </p>
+      {:else if harness}
+        <p class="hint">
+          Spawns a shell and auto-types <code>{harness}</code>. The harness
+          adopts the pre-created swarm row on register.
+        </p>
+      {:else}
+        <p class="hint">
+          Plain shell with no swarm identity. Pick a harness for a registered,
+          draggable node.
+        </p>
+      {/if}
 
       {#if error}
         <div class="error">{error}</div>
@@ -291,8 +255,6 @@
     min-height: 0;
     overflow: hidden;
   }
-
-  /* --- Body ---------------------------------------------------- */
 
   .body {
     padding: 14px 16px;
@@ -334,16 +296,6 @@
     margin: 2px 0;
   }
 
-  /* --- Form ---------------------------------------------------- */
-
-  .shell-row {
-    display: flex;
-    gap: 6px;
-  }
-
-  .shell-row .input { flex: 1; min-width: 0; }
-  .shell-row .harness { flex: 0 0 80px; }
-
   .form-group {
     display: flex;
     flex-direction: column;
@@ -366,7 +318,7 @@
   .input {
     width: 100%;
     padding: 6px 8px;
-    background: rgba(17, 17, 27, 0.55);
+    background: rgba(17, 17, 27, 0.22);
     border: 1px solid rgba(108, 112, 134, 0.25);
     border-radius: 4px;
     color: var(--terminal-fg, #c0caf5);
@@ -389,11 +341,12 @@
 
   .input:focus {
     border-color: rgba(137, 180, 250, 0.6);
-    background: rgba(17, 17, 27, 0.8);
+    background: rgba(17, 17, 27, 0.42);
   }
 
-  .input.invalid {
-    border-color: rgba(243, 139, 168, 0.45);
+  .input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .hint {
@@ -401,6 +354,31 @@
     font-size: 10.5px;
     line-height: 1.45;
     color: #6c7086;
+  }
+
+  .field-hint {
+    margin: 0;
+    font-size: 10px;
+    line-height: 1.45;
+    color: #585b70;
+  }
+
+  .hint code {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    background: rgba(17, 17, 27, 0.30);
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #cdd6f4;
+  }
+
+  .field-hint code {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    background: rgba(17, 17, 27, 0.30);
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #cdd6f4;
   }
 
   select.input {
@@ -412,12 +390,10 @@
     background-position: right 8px center;
   }
 
-  /* --- Buttons ------------------------------------------------- */
-
   .btn {
     padding: 6px 12px;
     border: 1px solid rgba(108, 112, 134, 0.3);
-    background: rgba(17, 17, 27, 0.55);
+    background: rgba(17, 17, 27, 0.22);
     color: var(--terminal-fg, #c0caf5);
     border-radius: 4px;
     font-size: 12px;
@@ -447,8 +423,6 @@
     background: rgba(137, 180, 250, 0.2);
     border-color: rgba(137, 180, 250, 0.7);
   }
-
-  /* --- Errors / pending --------------------------------------- */
 
   .error {
     font-size: 11px;
@@ -490,7 +464,7 @@
   .pending-token {
     font-size: 10px;
     color: #6c7086;
-    background: rgba(17, 17, 27, 0.6);
+    background: rgba(17, 17, 27, 0.30);
     padding: 1px 5px;
     border-radius: 3px;
   }

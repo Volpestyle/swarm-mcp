@@ -14,7 +14,7 @@
 -->
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { Handle, Position, NodeResizer } from '@xyflow/svelte';
+  import { Handle, Position, NodeResizer, useSvelteFlow } from '@xyflow/svelte';
   import type { SwarmNodeData } from '../lib/types';
   import {
     createTerminal,
@@ -24,6 +24,7 @@
   import type { TerminalHandle } from '../lib/types';
   import { formatTimestamp } from '../lib/time';
   import {
+    markPtyTerminalReady,
     subscribeToPty,
     subscribeToPtyExit,
     writeToPty,
@@ -47,6 +48,7 @@
   let exitUnlisten: (() => void) | null = null;
   let exitCode: number | null = null;
   let disposed = false;
+  const { updateNode } = useSvelteFlow();
 
   // Derived from data
   $: hasPty = data.ptySession !== null;
@@ -65,6 +67,29 @@
   onDestroy(() => {
     cleanupTerminal();
   });
+
+  function snapNodeWidthToTerminalGrid(): void {
+    if (!nodeElement || !terminalContainer) return;
+
+    const canvas = terminalContainer.querySelector('canvas');
+    if (!(canvas instanceof HTMLCanvasElement)) return;
+
+    const containerStyle = window.getComputedStyle(terminalContainer);
+    const horizontalPadding =
+      (Number.parseFloat(containerStyle.paddingLeft) || 0) +
+      (Number.parseFloat(containerStyle.paddingRight) || 0);
+    const canvasWidth = canvas.getBoundingClientRect().width;
+    const remainder =
+      terminalContainer.clientWidth - horizontalPadding - canvasWidth;
+
+    if (!Number.isFinite(remainder) || remainder < 2) return;
+
+    const currentWidth = nodeElement.getBoundingClientRect().width;
+    const nextWidth = Math.round(currentWidth - remainder);
+    if (nextWidth < 360 || Math.abs(nextWidth - currentWidth) < 1) return;
+
+    updateNode(id, { width: nextWidth });
+  }
 
   async function initTerminal() {
     if (!terminalContainer || !ptyId) return;
@@ -119,6 +144,26 @@
     // charHeight. We just forward the resulting size to the PTY.
     handle.onResize(({ cols, rows }) => {
       void resizePty(boundPtyId, cols, rows);
+    });
+
+    try {
+      const { cols, rows } = handle.getSize();
+      if (cols > 0 && rows > 0) {
+        await resizePty(boundPtyId, cols, rows);
+      }
+    } catch (err) {
+      console.debug('[TerminalNode] initial PTY resize skipped:', err);
+    } finally {
+      markPtyTerminalReady(boundPtyId);
+      requestAnimationFrame(() => {
+        snapNodeWidthToTerminalGrid();
+      });
+    }
+  }
+
+  function handleResizeEnd() {
+    requestAnimationFrame(() => {
+      snapNodeWidthToTerminalGrid();
     });
   }
 
@@ -175,6 +220,7 @@
     isVisible={selected}
     lineClass="resize-line"
     handleClass="resize-handle"
+    onResizeEnd={handleResizeEnd}
   />
 
   <!-- Port handles on all four sides. The adaptive edge router picks
@@ -205,6 +251,7 @@
     {cwd}
     nodeType={data.nodeType}
     assignedTasks={data.assignedTasks}
+    locks={data.locks}
     ptyId={ptyId}
     launchToken={data.ptySession?.launch_token ?? null}
     adopted={instance?.adopted ?? true}

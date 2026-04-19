@@ -5,7 +5,7 @@
   Used as the top bar of every TerminalNode card.
 -->
 <script lang="ts">
-  import type { NodeType, InstanceStatus, Task } from '../lib/types';
+  import type { Lock, NodeType, InstanceStatus, Task } from '../lib/types';
   import { closePty, deregisterInstance, respawnInstance } from '../stores/pty';
   import { createEventDispatcher } from 'svelte';
 
@@ -15,6 +15,7 @@
   export let cwd: string = '';
   export let nodeType: NodeType = 'instance';
   export let assignedTasks: Task[] = [];
+  export let locks: Lock[] = [];
   export let ptyId: string | null = null;
   export let launchToken: string | null = null;
   /**
@@ -37,6 +38,10 @@
   $: activeTaskCount = assignedTasks.filter(
     (t) => t.status === 'in_progress' || t.status === 'claimed' || t.status === 'open'
   ).length;
+  $: lockCount = locks.length;
+  $: lockTooltip = lockCount > 0
+    ? locks.map((l) => l.file).join('\n')
+    : '';
   $: isAppOwned = nodeType === 'pty' || nodeType === 'bound';
   $: showAdopting = instanceId !== null && !adopted;
   // Only offline instance rows can be deleted safely. Live PTYs still use the
@@ -143,6 +148,27 @@
 
   {#if activeTaskCount > 0}
     <span class="task-count-badge">{activeTaskCount}</span>
+  {/if}
+
+  {#if lockCount > 0}
+    <span class="lock-badge" title={`Locked: ${lockTooltip}`}>
+      <svg
+        class="lock-icon"
+        width="11"
+        height="11"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.4"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="4" y="11" width="16" height="10" rx="2"/>
+        <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+      </svg>
+      {lockCount}
+    </span>
   {/if}
 
   <div class="node-controls">

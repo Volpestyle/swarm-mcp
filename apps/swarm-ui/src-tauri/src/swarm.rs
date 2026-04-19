@@ -15,15 +15,20 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::{
-    events::{MESSAGES_APPENDED, SWARM_UPDATE},
+    events::{EVENTS_APPENDED, MESSAGES_APPENDED, SWARM_UPDATE},
     model::{
-        AppError, Instance, InstanceStatus, Lock, Message, SwarmUpdate, Task, TaskStatus, TaskType,
+        Annotation, AppError, Event, Instance, InstanceStatus, KvEntry, Lock, Message, SwarmUpdate,
+        Task, TaskStatus, TaskType,
     },
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const RECENT_MESSAGE_LIMIT: i64 = 100;
 const RECENT_TASK_WINDOW_MS: i64 = 24 * 60 * 60 * 1_000;
+/// Cold-start backfill for the Activity timeline. Matches the frontend
+/// ring buffer's high-water mark (the store keeps 500, so seeding 200
+/// gives the user history without overwhelming the initial render).
+const RECENT_EVENT_LIMIT: i64 = 200;
 const SWARM_DB_ENV: &str = "SWARM_DB_PATH";
 const UI_KEY_PREFIX: &str = "ui/";
 const COLLISION_SEPARATOR: &str = "::";
@@ -47,6 +52,9 @@ struct WatcherState {
     /// `MESSAGES_APPENDED`. Advanced only after a successful emit so a
     /// transient error replays the delta next tick.
     last_emitted_message_id: i64,
+    /// Highest `events.id` that has already been emitted on
+    /// `EVENTS_APPENDED`. Same replay guarantee as the message cursor.
+    last_emitted_event_id: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +64,15 @@ struct Watermarks {
     instance_count: i64,
     last_heartbeat_max: i64,
     kv_scope_changed_at: i64,
+    /// `MAX(created_at)` from `context`. Lets non-lock annotations
+    /// (findings, warnings, bugs, notes, todos) invalidate the snapshot
+    /// the same way locks already do.
+    context_max_created_at: i64,
+    context_count: i64,
+    /// `MAX(id)` from `events`. Drives both the snapshot invalidation
+    /// (so the Activity tab refreshes promptly) and the per-tick delta
+    /// emit on `EVENTS_APPENDED`.
+    last_event_id: i64,
 }
 
 #[derive(Debug)]
@@ -153,10 +170,17 @@ fn seed_initial_snapshot(db_path: &PathBuf) -> Result<(), String> {
 
     let snapshot = load_snapshot(&conn)?;
     let watermarks = load_watermarks(&conn)?;
-    // Seed last_emitted to the current max so startup doesn't flood the UI
-    // with historical messages replayed as packets.
-    let initial_last_emitted = watermarks.last_message_id;
-    publish_initial_snapshot(snapshot, Some(watermarks), initial_last_emitted)
+    // Seed both delta cursors to the current max so startup doesn't flood
+    // the UI with historical rows replayed as packets / events. The
+    // snapshot itself already includes the recent windows.
+    let initial_last_emitted_message = watermarks.last_message_id;
+    let initial_last_emitted_event = watermarks.last_event_id;
+    publish_initial_snapshot(
+        snapshot,
+        Some(watermarks),
+        initial_last_emitted_message,
+        initial_last_emitted_event,
+    )
 }
 
 fn poll_database<R: Runtime>(
@@ -167,7 +191,8 @@ fn poll_database<R: Runtime>(
     let watermarks = load_watermarks(conn)?;
     let previous = read_state()?;
     let unchanged = previous.watermarks.as_ref() == Some(&watermarks);
-    let last_emitted = previous.last_emitted_message_id;
+    let last_emitted_message = previous.last_emitted_message_id;
+    let last_emitted_event = previous.last_emitted_event_id;
     drop(previous);
 
     if unchanged {
@@ -177,13 +202,23 @@ fn poll_database<R: Runtime>(
     // Emit the message delta before swapping the snapshot so consumers see
     // the arrival event even if the snapshot hasn't changed shape (e.g. a
     // single new message pushes an older one off the 100-row window).
-    if watermarks.last_message_id > last_emitted {
-        let new_messages = load_messages_since(conn, last_emitted)?;
+    if watermarks.last_message_id > last_emitted_message {
+        let new_messages = load_messages_since(conn, last_emitted_message)?;
         if !new_messages.is_empty() {
             app_handle
                 .emit(MESSAGES_APPENDED, &new_messages)
                 .map_err(|err| format!("failed to emit message delta: {err}"))?;
             set_last_emitted_message_id(watermarks.last_message_id)?;
+        }
+    }
+
+    if watermarks.last_event_id > last_emitted_event {
+        let new_events = load_events_since(conn, last_emitted_event)?;
+        if !new_events.is_empty() {
+            app_handle
+                .emit(EVENTS_APPENDED, &new_events)
+                .map_err(|err| format!("failed to emit event delta: {err}"))?;
+            set_last_emitted_event_id(watermarks.last_event_id)?;
         }
     }
 
@@ -231,6 +266,7 @@ fn publish_initial_snapshot(
     snapshot: SwarmUpdate,
     watermarks: Option<Watermarks>,
     last_emitted_message_id: i64,
+    last_emitted_event_id: i64,
 ) -> Result<(), String> {
     let serialized = serialize_snapshot(&snapshot)?;
     let mut state = write_state()?;
@@ -238,12 +274,19 @@ fn publish_initial_snapshot(
     state.serialized = serialized;
     state.watermarks = watermarks;
     state.last_emitted_message_id = last_emitted_message_id;
+    state.last_emitted_event_id = last_emitted_event_id;
     Ok(())
 }
 
 fn set_last_emitted_message_id(new_value: i64) -> Result<(), String> {
     let mut state = write_state()?;
     state.last_emitted_message_id = new_value;
+    Ok(())
+}
+
+fn set_last_emitted_event_id(new_value: i64) -> Result<(), String> {
+    let mut state = write_state()?;
+    state.last_emitted_event_id = new_value;
     Ok(())
 }
 
@@ -285,13 +328,92 @@ fn emit_snapshot<R: Runtime>(
 }
 
 fn load_snapshot(conn: &Connection) -> Result<SwarmUpdate, String> {
+    let annotations = load_annotations(conn)?;
+    let locks = annotations
+        .iter()
+        .filter(|a| a.type_ == "lock")
+        .map(|a| Lock {
+            scope: a.scope.clone(),
+            file: a.file.clone(),
+            instance_id: a.instance_id.clone(),
+        })
+        .collect();
     Ok(SwarmUpdate {
         instances: load_instances(conn)?,
         tasks: load_tasks(conn)?,
         messages: load_messages(conn)?,
-        locks: load_locks(conn)?,
+        locks,
+        annotations,
+        kv: load_kv(conn)?,
+        events: load_recent_events(conn)?,
         ui_meta: load_ui_meta(conn)?,
     })
+}
+
+fn load_recent_events(conn: &Connection) -> Result<Vec<Event>, String> {
+    if !table_exists(conn, "events")? {
+        return Ok(Vec::new());
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, scope, type, actor, subject, payload, created_at
+             FROM events
+             ORDER BY id DESC
+             LIMIT ?",
+        )
+        .map_err(|err| format!("failed to prepare events query: {err}"))?;
+
+    let mut rows = stmt
+        .query_map([RECENT_EVENT_LIMIT], |row| {
+            Ok(Event {
+                id: row.get(0)?,
+                scope: row.get(1)?,
+                type_: row.get(2)?,
+                actor: row.get(3)?,
+                subject: row.get(4)?,
+                payload: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })
+        .map_err(|err| format!("failed to query events: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read events: {err}"))?;
+
+    // Replay direction matches what the frontend ring buffer expects:
+    // oldest first, so appending each delta keeps the natural timeline.
+    rows.reverse();
+    Ok(rows)
+}
+
+fn load_events_since(conn: &Connection, after_id: i64) -> Result<Vec<Event>, String> {
+    if !table_exists(conn, "events")? {
+        return Ok(Vec::new());
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, scope, type, actor, subject, payload, created_at
+             FROM events
+             WHERE id > ?
+             ORDER BY id ASC",
+        )
+        .map_err(|err| format!("failed to prepare delta events query: {err}"))?;
+
+    stmt.query_map([after_id], |row| {
+        Ok(Event {
+            id: row.get(0)?,
+            scope: row.get(1)?,
+            type_: row.get(2)?,
+            actor: row.get(3)?,
+            subject: row.get(4)?,
+            payload: row.get(5)?,
+            created_at: row.get(6)?,
+        })
+    })
+    .map_err(|err| format!("failed to query delta events: {err}"))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|err| format!("failed to read delta events: {err}"))
 }
 
 fn load_instances(conn: &Connection) -> Result<Vec<Instance>, String> {
@@ -427,28 +549,56 @@ fn load_messages_since(conn: &Connection, after_id: i64) -> Result<Vec<Message>,
     .map_err(|err| format!("failed to read delta messages: {err}"))
 }
 
-fn load_locks(conn: &Connection) -> Result<Vec<Lock>, String> {
+fn load_annotations(conn: &Connection) -> Result<Vec<Annotation>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT scope, file, instance_id
+            "SELECT id, scope, instance_id, file, type, content, created_at
              FROM context
-             WHERE type = 'lock'
-             ORDER BY scope ASC, file ASC, instance_id ASC",
+             ORDER BY created_at DESC, id ASC",
         )
-        .map_err(|err| format!("failed to prepare lock query: {err}"))?;
+        .map_err(|err| format!("failed to prepare annotation query: {err}"))?;
 
     let rows = stmt
         .query_map([], |row| {
-            Ok(Lock {
-                scope: row.get(0)?,
-                file: row.get(1)?,
+            Ok(Annotation {
+                id: row.get(0)?,
+                scope: row.get(1)?,
                 instance_id: row.get(2)?,
+                file: row.get(3)?,
+                type_: row.get(4)?,
+                content: row.get(5)?,
+                created_at: row.get(6)?,
             })
         })
-        .map_err(|err| format!("failed to query locks: {err}"))?;
+        .map_err(|err| format!("failed to query annotations: {err}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|err| format!("failed to read locks: {err}"))
+        .map_err(|err| format!("failed to read annotations: {err}"))
+}
+
+fn load_kv(conn: &Connection) -> Result<Vec<KvEntry>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT scope, key, value, updated_at
+             FROM kv
+             WHERE key NOT LIKE ?
+             ORDER BY scope ASC, key ASC",
+        )
+        .map_err(|err| format!("failed to prepare kv query: {err}"))?;
+
+    let rows = stmt
+        .query_map([format!("{UI_KEY_PREFIX}%")], |row| {
+            Ok(KvEntry {
+                scope: row.get(0)?,
+                key: row.get(1)?,
+                value: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        })
+        .map_err(|err| format!("failed to query kv: {err}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read kv: {err}"))
 }
 
 fn load_ui_meta(conn: &Connection) -> Result<Option<Value>, String> {
@@ -581,12 +731,34 @@ fn load_watermarks(conn: &Connection) -> Result<Watermarks, String> {
         0
     };
 
+    // `MAX(created_at)` advances on insert; `COUNT(*)` shifts on delete (lock
+    // release, prune). Together they invalidate the snapshot regardless of
+    // which mutation happened.
+    let (context_count, context_max_created_at) = conn
+        .query_row(
+            "SELECT COUNT(*), COALESCE(MAX(created_at), 0) FROM context",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .map_err(|err| format!("failed to read context watermarks: {err}"))?;
+
+    // The events table may not exist on older DBs; treat as zero so the
+    // watcher still works against a pre-Tier-3A swarm-mcp.
+    let last_event_id = if table_exists(conn, "events")? {
+        scalar_i64(conn, "SELECT COALESCE(MAX(id), 0) FROM events")?
+    } else {
+        0
+    };
+
     Ok(Watermarks {
         last_message_id,
         last_task_changed_at,
         instance_count,
         last_heartbeat_max,
         kv_scope_changed_at,
+        context_max_created_at,
+        context_count,
+        last_event_id,
     })
 }
 
@@ -762,5 +934,98 @@ mod tests {
     fn parse_json_value_invalid_falls_back_to_string() {
         let val = parse_json_value("not json".to_owned());
         assert_eq!(val, Value::String("not json".to_owned()));
+    }
+
+    fn init_kv_schema(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE kv (
+                scope TEXT NOT NULL DEFAULT '',
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                PRIMARY KEY (scope, key)
+            );",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn load_kv_filters_out_ui_keys() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_kv_schema(&conn);
+        conn.execute(
+            "INSERT INTO kv (scope, key, value, updated_at) VALUES
+                ('s', 'ui/layout', '{}', 100),
+                ('s', 'pixel:turn', '{\"n\":3}', 200),
+                ('s', 'progress/foo', 'bar', 150)",
+            [],
+        )
+        .unwrap();
+
+        let entries = load_kv(&conn).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        // Sorted by scope ASC, key ASC.
+        assert_eq!(entries[0].key, "pixel:turn");
+        assert_eq!(entries[0].value, "{\"n\":3}");
+        assert_eq!(entries[1].key, "progress/foo");
+    }
+
+    #[test]
+    fn load_kv_empty_returns_empty_vec() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_kv_schema(&conn);
+
+        let entries = load_kv(&conn).unwrap();
+
+        assert!(entries.is_empty());
+    }
+
+    fn init_context_schema(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE context (
+                id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL DEFAULT '',
+                instance_id TEXT NOT NULL,
+                file TEXT NOT NULL,
+                type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn load_annotations_returns_all_types() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_context_schema(&conn);
+        conn.execute(
+            "INSERT INTO context (id, scope, instance_id, file, type, content, created_at) VALUES
+                ('a1', 's', 'inst1', '/tmp/foo.ts', 'lock', '', 100),
+                ('a2', 's', 'inst1', '/tmp/foo.ts', 'finding', 'NPE on line 42', 200),
+                ('a3', 's', 'inst2', '/tmp/bar.ts', 'todo', 'rename helper', 150)",
+            [],
+        )
+        .unwrap();
+
+        let rows = load_annotations(&conn).unwrap();
+
+        // Sorted by created_at DESC: 200, 150, 100
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].type_, "finding");
+        assert_eq!(rows[0].content, "NPE on line 42");
+        assert_eq!(rows[1].type_, "todo");
+        assert_eq!(rows[2].type_, "lock");
+    }
+
+    #[test]
+    fn load_annotations_empty_returns_empty_vec() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_context_schema(&conn);
+
+        let rows = load_annotations(&conn).unwrap();
+
+        assert!(rows.is_empty());
     }
 }

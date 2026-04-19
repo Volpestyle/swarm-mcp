@@ -10,12 +10,16 @@
 // keeps `messages.ts` dumb and validates in `index.ts`.
 // =============================================================================
 
+use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{model::INSTANCE_STALE_AFTER_SECS, swarm::swarm_db_path};
+
+const PLANNER_OWNER_KEY: &str = "owner/planner";
 
 fn now_secs() -> i64 {
     let secs = std::time::SystemTime::now()
@@ -23,6 +27,14 @@ fn now_secs() -> i64 {
         .map(|duration| duration.as_secs())
         .unwrap_or_default();
     i64::try_from(secs).unwrap_or(i64::MAX)
+}
+
+fn now_millis() -> i64 {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    i64::try_from(millis).unwrap_or(i64::MAX)
 }
 
 /// Open a read-write connection to the shared swarm.db.
@@ -37,16 +49,418 @@ pub fn open_rw() -> Result<Connection, String> {
 
 /// Open a read-write connection at an explicit path. Exposed for tests.
 pub fn open_rw_at(path: &Path) -> Result<Connection, String> {
+    if let Some(parent) = path.parent() {
+        create_dir_all(parent).map_err(|err| {
+            format!(
+                "failed to create swarm db directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+
     let conn = Connection::open_with_flags(
         path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|err| format!("failed to open swarm db rw at {}: {err}", path.display()))?;
 
     conn.busy_timeout(std::time::Duration::from_millis(3000))
         .map_err(|err| format!("failed to set busy_timeout: {err}"))?;
 
+    ensure_schema(&conn)?;
+
     Ok(conn)
+}
+
+fn table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        [table],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|row| row.is_some())
+    .map_err(|err| format!("failed to inspect sqlite_master for {table}: {err}"))
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|err| format!("failed to inspect schema for {table}: {err}"))?;
+    let mut rows = stmt
+        .query([])
+        .map_err(|err| format!("failed to query schema for {table}: {err}"))?;
+    while let Some(row) = rows
+        .next()
+        .map_err(|err| format!("failed to read schema row for {table}: {err}"))?
+    {
+        let name: String = row
+            .get(1)
+            .map_err(|err| format!("failed to read column name for {table}: {err}"))?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn add_column_if_missing(conn: &Connection, table: &str, spec: &str) -> Result<(), String> {
+    let name = spec
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| format!("invalid column spec: {spec}"))?;
+    if column_exists(conn, table, name)? {
+        return Ok(());
+    }
+
+    conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {spec}"), [])
+        .map_err(|err| format!("failed to add {table}.{name}: {err}"))?;
+    Ok(())
+}
+
+fn touch_kv_scope(conn: &Connection, scope: &str) -> Result<(), String> {
+    let changed_at = now_millis();
+    conn.execute(
+        r#"
+        INSERT INTO kv_scope_updates (scope, changed_at) VALUES (?, ?)
+        ON CONFLICT(scope) DO UPDATE SET changed_at =
+          CASE
+            WHEN excluded.changed_at > kv_scope_updates.changed_at THEN excluded.changed_at
+            ELSE kv_scope_updates.changed_at + 1
+          END
+        "#,
+        params![scope, changed_at],
+    )
+    .map_err(|err| format!("failed to touch kv scope update for {scope}: {err}"))?;
+    Ok(())
+}
+
+fn kv_set_value(conn: &Connection, scope: &str, key: &str, value: &str) -> Result<(), String> {
+    conn.execute(
+        r#"
+        INSERT INTO kv (scope, key, value, updated_at) VALUES (?, ?, ?, unixepoch())
+        ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        "#,
+        params![scope, key, value],
+    )
+    .map_err(|err| format!("failed to set kv {scope}/{key}: {err}"))?;
+    touch_kv_scope(conn, scope)
+}
+
+fn kv_delete_value(conn: &Connection, scope: &str, key: &str) -> Result<(), String> {
+    let deleted = conn
+        .execute(
+            "DELETE FROM kv WHERE scope = ? AND key = ?",
+            params![scope, key],
+        )
+        .map_err(|err| format!("failed to delete kv {scope}/{key}: {err}"))?;
+    if deleted > 0 {
+        touch_kv_scope(conn, scope)?;
+    }
+    Ok(())
+}
+
+fn kv_get_value(conn: &Connection, scope: &str, key: &str) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT value FROM kv WHERE scope = ? AND key = ?",
+        params![scope, key],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|err| format!("failed to read kv {scope}/{key}: {err}"))
+}
+
+fn has_role(label: Option<&str>, role: &str) -> bool {
+    label
+        .unwrap_or_default()
+        .split_whitespace()
+        .any(|token| token == format!("role:{role}"))
+}
+
+fn active_planner(
+    conn: &Connection,
+    scope: &str,
+    instance_id: &str,
+) -> Result<Option<(String, Option<String>)>, String> {
+    let row = conn
+        .query_row(
+            "SELECT id, label FROM instances WHERE id = ? AND scope = ?",
+            params![instance_id, scope],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()
+        .map_err(|err| format!("failed to read planner instance {instance_id}: {err}"))?;
+
+    Ok(row.filter(|(_, label)| has_role(label.as_deref(), "planner")))
+}
+
+fn next_planner(conn: &Connection, scope: &str) -> Result<Option<(String, Option<String>)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, label FROM instances WHERE scope = ? ORDER BY registered_at ASC, id ASC",
+        )
+        .map_err(|err| format!("failed to prepare planner lookup for {scope}: {err}"))?;
+
+    let rows = stmt
+        .query_map([scope], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .map_err(|err| format!("failed to query planners for {scope}: {err}"))?;
+
+    for row in rows {
+        let (id, label) = row.map_err(|err| format!("failed to read planner row: {err}"))?;
+        if has_role(label.as_deref(), "planner") {
+            return Ok(Some((id, label)));
+        }
+    }
+
+    Ok(None)
+}
+
+fn refresh_planner_owner(conn: &Connection, scope: &str) -> Result<(), String> {
+    let current = kv_get_value(conn, scope, PLANNER_OWNER_KEY)?;
+    if let Some(raw) = current {
+        let parsed = serde_json::from_str::<Value>(&raw).ok();
+        if let Some(instance_id) = parsed
+            .as_ref()
+            .and_then(|value| value.get("instance_id"))
+            .and_then(Value::as_str)
+        {
+            if active_planner(conn, scope, instance_id)?.is_some() {
+                return Ok(());
+            }
+        }
+    }
+
+    if let Some((id, label)) = next_planner(conn, scope)? {
+        let payload = json!({
+            "instance_id": id,
+            "label": label,
+            "assigned_at": now_millis(),
+        });
+        kv_set_value(conn, scope, PLANNER_OWNER_KEY, &payload.to_string())?;
+    } else {
+        kv_delete_value(conn, scope, PLANNER_OWNER_KEY)?;
+    }
+
+    Ok(())
+}
+
+fn emit_event(
+    conn: &Connection,
+    scope: &str,
+    event_type: &str,
+    actor: Option<&str>,
+    subject: Option<&str>,
+    payload: Option<Value>,
+) -> Result<(), String> {
+    let payload_text = payload.map(|value| value.to_string());
+    conn.execute(
+        "INSERT INTO events (scope, type, actor, subject, payload) VALUES (?, ?, ?, ?, ?)",
+        params![scope, event_type, actor, subject, payload_text],
+    )
+    .map_err(|err| format!("failed to write event {event_type}: {err}"))?;
+    Ok(())
+}
+
+fn dependency_state(
+    conn: &Connection,
+    scope: &str,
+    dep_ids: &[String],
+) -> Result<&'static str, String> {
+    if dep_ids.is_empty() {
+        return Ok("ready");
+    }
+
+    let mut all_done = true;
+    for dep_id in dep_ids {
+        let status = conn
+            .query_row(
+                "SELECT status FROM tasks WHERE id = ? AND scope = ?",
+                params![dep_id, scope],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|err| format!("failed to read dependency {dep_id}: {err}"))?;
+
+        match status.as_deref() {
+            Some("failed") | Some("cancelled") => return Ok("failed"),
+            Some("done") => {}
+            _ => all_done = false,
+        }
+    }
+
+    Ok(if all_done { "ready" } else { "blocked" })
+}
+
+fn ensure_schema(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        PRAGMA journal_mode = WAL;
+        PRAGMA auto_vacuum = INCREMENTAL;
+
+        CREATE TABLE IF NOT EXISTS instances (
+          id TEXT PRIMARY KEY,
+          scope TEXT NOT NULL,
+          directory TEXT NOT NULL,
+          root TEXT NOT NULL,
+          file_root TEXT NOT NULL DEFAULT '',
+          pid INTEGER NOT NULL,
+          label TEXT,
+          registered_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          heartbeat INTEGER NOT NULL DEFAULT (unixepoch()),
+          adopted INTEGER NOT NULL DEFAULT 1
+        );
+
+        CREATE TABLE IF NOT EXISTS messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          scope TEXT NOT NULL DEFAULT '',
+          sender TEXT NOT NULL,
+          recipient TEXT,
+          content TEXT NOT NULL,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          read INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS tasks (
+          id TEXT PRIMARY KEY,
+          scope TEXT NOT NULL DEFAULT '',
+          type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          requester TEXT NOT NULL,
+          assignee TEXT,
+          status TEXT NOT NULL DEFAULT 'open',
+          files TEXT,
+          result TEXT,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          changed_at INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS context (
+          id TEXT PRIMARY KEY,
+          scope TEXT NOT NULL DEFAULT '',
+          instance_id TEXT NOT NULL,
+          file TEXT NOT NULL,
+          type TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+
+        CREATE TABLE IF NOT EXISTS events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          scope TEXT NOT NULL,
+          type TEXT NOT NULL,
+          actor TEXT,
+          subject TEXT,
+          payload TEXT,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+
+        CREATE TABLE IF NOT EXISTS kv (
+          scope TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          PRIMARY KEY (scope, key)
+        );
+
+        CREATE TABLE IF NOT EXISTS kv_scope_updates (
+          scope TEXT PRIMARY KEY,
+          changed_at INTEGER NOT NULL DEFAULT 0
+        );
+        "#,
+    )
+    .map_err(|err| format!("failed to bootstrap schema: {err}"))?;
+
+    add_column_if_missing(conn, "instances", "scope TEXT NOT NULL DEFAULT ''")?;
+    add_column_if_missing(conn, "instances", "root TEXT NOT NULL DEFAULT ''")?;
+    add_column_if_missing(conn, "instances", "file_root TEXT NOT NULL DEFAULT ''")?;
+    add_column_if_missing(conn, "instances", "adopted INTEGER NOT NULL DEFAULT 1")?;
+    add_column_if_missing(conn, "messages", "scope TEXT NOT NULL DEFAULT ''")?;
+    add_column_if_missing(conn, "tasks", "scope TEXT NOT NULL DEFAULT ''")?;
+    add_column_if_missing(conn, "tasks", "changed_at INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(conn, "tasks", "priority INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(conn, "tasks", "depends_on TEXT")?;
+    add_column_if_missing(conn, "tasks", "idempotency_key TEXT")?;
+    add_column_if_missing(conn, "tasks", "parent_task_id TEXT")?;
+    add_column_if_missing(conn, "context", "scope TEXT NOT NULL DEFAULT ''")?;
+
+    conn.execute(
+        r#"
+        INSERT INTO kv_scope_updates (scope, changed_at)
+        SELECT scope, MAX(updated_at) * 1000
+        FROM kv
+        GROUP BY scope
+        ON CONFLICT(scope) DO NOTHING
+        "#,
+        [],
+    )
+    .map_err(|err| format!("failed to seed kv_scope_updates: {err}"))?;
+
+    conn.execute("UPDATE instances SET scope = directory WHERE scope = ''", [])
+        .map_err(|err| format!("failed to backfill instances.scope: {err}"))?;
+    conn.execute("UPDATE instances SET root = directory WHERE root = ''", [])
+        .map_err(|err| format!("failed to backfill instances.root: {err}"))?;
+    conn.execute(
+        "UPDATE instances SET file_root = directory WHERE file_root = ''",
+        [],
+    )
+    .map_err(|err| format!("failed to backfill instances.file_root: {err}"))?;
+    conn.execute(
+        "UPDATE tasks SET changed_at = updated_at * 1000 WHERE changed_at = 0",
+        [],
+    )
+    .map_err(|err| format!("failed to backfill tasks.changed_at: {err}"))?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS messages_scope_recipient_read_idx ON messages(scope, recipient, read, id)",
+        [],
+    )
+    .map_err(|err| format!("failed to create messages index: {err}"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS instances_scope_idx ON instances(scope)",
+        [],
+    )
+    .map_err(|err| format!("failed to create instances index: {err}"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS tasks_scope_status_idx ON tasks(scope, status)",
+        [],
+    )
+    .map_err(|err| format!("failed to create tasks status index: {err}"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS tasks_scope_changed_at_idx ON tasks(scope, changed_at)",
+        [],
+    )
+    .map_err(|err| format!("failed to create tasks changed_at index: {err}"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS context_scope_file_idx ON context(scope, file)",
+        [],
+    )
+    .map_err(|err| format!("failed to create context index: {err}"))?;
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS context_lock_idx ON context(scope, file) WHERE type = 'lock'",
+        [],
+    )
+    .map_err(|err| format!("failed to create context lock index: {err}"))?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS events_scope_id_idx ON events(scope, id)",
+        [],
+    )
+    .map_err(|err| format!("failed to create events index: {err}"))?;
+
+    if table_exists(conn, "tasks")? {
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS tasks_idempotency_key_idx ON tasks(scope, idempotency_key) WHERE idempotency_key IS NOT NULL",
+            [],
+        )
+        .map_err(|err| format!("failed to create idempotency index: {err}"))?;
+    }
+
+    Ok(())
 }
 
 /// Ensure the `instances.adopted` column exists on the shared swarm.db.
@@ -56,25 +470,7 @@ pub fn open_rw_at(path: &Path) -> Result<Connection, String> {
 /// idempotent ALTER here guarantees the column is present before any write
 /// that references it.
 pub fn ensure_adopted_column(conn: &Connection) -> Result<(), String> {
-    let exists = conn
-        .query_row(
-            "SELECT 1 FROM pragma_table_info('instances') WHERE name = 'adopted'",
-            [],
-            |_| Ok(()),
-        )
-        .optional()
-        .map_err(|err| format!("failed to inspect instances schema: {err}"))?
-        .is_some();
-
-    if !exists {
-        conn.execute(
-            "ALTER TABLE instances ADD COLUMN adopted INTEGER NOT NULL DEFAULT 1",
-            [],
-        )
-        .map_err(|err| format!("failed to add adopted column: {err}"))?;
-    }
-
-    Ok(())
+    ensure_schema(conn)
 }
 
 /// Walk upward from `dir` looking for a `.git` entry, returning the first
@@ -183,6 +579,9 @@ pub fn delete_unadopted_instance(conn: &Connection, instance_id: &str) -> Result
 /// Used by the UI when the user manually removes a node (PTY already
 /// gone, instance row ghosted by a restart, etc.).
 pub fn deregister_instance(conn: &Connection, instance_id: &str) -> Result<(), String> {
+    let instance = load_instance_info(conn, instance_id)?
+        .ok_or_else(|| format!("instance {instance_id} not found"))?;
+
     let tx = conn
         .unchecked_transaction()
         .map_err(|err| format!("failed to begin tx for deregister: {err}"))?;
@@ -224,8 +623,21 @@ pub fn deregister_instance(conn: &Connection, instance_id: &str) -> Result<(), S
     )
     .map_err(|err| format!("failed to delete instance row: {err}"))?;
 
+    tx.execute(
+        "INSERT INTO events (scope, type, actor, subject, payload) VALUES (?, 'instance.deregistered', ?, ?, ?)",
+        params![
+            instance.scope,
+            instance_id,
+            instance_id,
+            json!({ "label": instance.label }).to_string()
+        ],
+    )
+    .map_err(|err| format!("failed to record instance.deregistered: {err}"))?;
+
     tx.commit()
         .map_err(|err| format!("failed to commit deregister tx: {err}"))?;
+
+    refresh_planner_owner(conn, &instance.scope)?;
 
     Ok(())
 }
@@ -250,7 +662,47 @@ pub fn sweep_unadopted_orphans(conn: &Connection) -> Result<usize, String> {
     drop(stmt);
 
     for id in &ids {
-        deregister_instance(conn, id)?;
+        let Some(instance) = load_instance_info(conn, id)? else {
+            continue;
+        };
+
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|err| format!("failed to begin orphan sweep tx: {err}"))?;
+
+        tx.execute(
+            "UPDATE tasks
+             SET assignee = NULL, status = 'open',
+                 updated_at = unixepoch(), changed_at = unixepoch() * 1000
+             WHERE assignee = ? AND status IN ('claimed', 'in_progress')",
+            params![id],
+        )
+        .map_err(|err| format!("failed to release orphan claimed tasks: {err}"))?;
+        tx.execute(
+            "UPDATE tasks
+             SET assignee = NULL, updated_at = unixepoch(), changed_at = unixepoch() * 1000
+             WHERE assignee = ? AND status IN ('blocked', 'approval_required')",
+            params![id],
+        )
+        .map_err(|err| format!("failed to clear orphan blocked-task assignee: {err}"))?;
+        tx.execute(
+            "DELETE FROM context WHERE type = 'lock' AND instance_id = ?",
+            params![id],
+        )
+        .map_err(|err| format!("failed to drop orphan locks: {err}"))?;
+        tx.execute("DELETE FROM messages WHERE recipient = ?", params![id])
+            .map_err(|err| format!("failed to drop orphan messages: {err}"))?;
+        tx.execute("DELETE FROM instances WHERE id = ?", params![id])
+            .map_err(|err| format!("failed to delete orphan instance: {err}"))?;
+        tx.execute(
+            "INSERT INTO events (scope, type, actor, subject, payload) VALUES (?, 'instance.stale_reclaimed', 'system', ?, ?)",
+            params![instance.scope, id, json!({ "label": instance.label }).to_string()],
+        )
+        .map_err(|err| format!("failed to record instance.stale_reclaimed: {err}"))?;
+        tx.commit()
+            .map_err(|err| format!("failed to commit orphan sweep tx: {err}"))?;
+
+        refresh_planner_owner(conn, &instance.scope)?;
     }
 
     Ok(ids.len())
@@ -322,6 +774,32 @@ pub fn clear_messages_between(
             params![instance_a, instance_b, instance_b, instance_a],
         )
         .map_err(|err| format!("failed to clear messages: {err}"))?;
+
+    if deleted > 0 {
+        let scope = conn
+            .query_row(
+                "SELECT scope FROM instances WHERE id = ? LIMIT 1",
+                params![instance_a],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|err| format!("failed to resolve scope for message clear: {err}"))?
+            .unwrap_or_default();
+        if !scope.is_empty() {
+            emit_event(
+                conn,
+                &scope,
+                "message.cleared",
+                None,
+                Some(instance_a),
+                Some(json!({
+                    "peer": instance_b,
+                    "deleted": deleted,
+                })),
+            )?;
+        }
+    }
+
     Ok(deleted)
 }
 
@@ -330,20 +808,58 @@ pub fn clear_messages_between(
 /// `deregister_instance` but scoped to one task. Returns `true` if a row
 /// was modified.
 pub fn unassign_task(conn: &Connection, task_id: &str) -> Result<bool, String> {
+    let task = conn
+        .query_row(
+            "SELECT scope, status, assignee FROM tasks WHERE id = ?",
+            params![task_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|err| format!("failed to load task for unassign: {err}"))?;
+
+    let Some((scope, prior_status, prior_assignee)) = task else {
+        return Ok(false);
+    };
+
+    let next_status = if matches!(prior_status.as_str(), "claimed" | "in_progress") {
+        "open"
+    } else {
+        prior_status.as_str()
+    };
+
     let updated = conn
         .execute(
             "UPDATE tasks
              SET assignee = NULL,
-                 status = CASE
-                     WHEN status IN ('claimed', 'in_progress') THEN 'open'
-                     ELSE status
-                 END,
+                 status = ?,
                  updated_at = unixepoch(),
                  changed_at = unixepoch() * 1000
              WHERE id = ?",
-            params![task_id],
+            params![next_status, task_id],
         )
         .map_err(|err| format!("failed to unassign task: {err}"))?;
+
+    if updated > 0 {
+        emit_event(
+            conn,
+            &scope,
+            "task.updated",
+            prior_assignee.as_deref(),
+            Some(task_id),
+            Some(json!({
+                "status": next_status,
+                "prior_status": prior_status,
+                "assignee": Value::Null,
+            })),
+        )?;
+    }
+
     Ok(updated > 0)
 }
 
@@ -355,15 +871,25 @@ pub fn remove_task_dependency(
     dependent_task_id: &str,
     dependency_task_id: &str,
 ) -> Result<bool, String> {
-    let raw: Option<String> = conn
+    let task = conn
         .query_row(
-            "SELECT depends_on FROM tasks WHERE id = ?",
+            "SELECT scope, depends_on, assignee, status FROM tasks WHERE id = ?",
             params![dependent_task_id],
-            |row| row.get(0),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
         )
         .optional()
-        .map_err(|err| format!("failed to load depends_on: {err}"))?
-        .flatten();
+        .map_err(|err| format!("failed to load depends_on: {err}"))?;
+
+    let Some((scope, raw, assignee, prior_status)) = task else {
+        return Ok(false);
+    };
 
     let mut ids: Vec<String> = match raw.as_deref() {
         Some(json) if !json.is_empty() => serde_json::from_str(json)
@@ -377,18 +903,83 @@ pub fn remove_task_dependency(
         return Ok(false);
     }
 
-    let next = serde_json::to_string(&ids)
-        .map_err(|err| format!("failed to serialize depends_on: {err}"))?;
+    let next_dep_value = if ids.is_empty() {
+        None
+    } else {
+        Some(
+            serde_json::to_string(&ids)
+                .map_err(|err| format!("failed to serialize depends_on: {err}"))?,
+        )
+    };
+
+    let dep_state = dependency_state(conn, &scope, &ids)?;
+    let (next_status, next_result, event_type) = match prior_status.as_str() {
+        "blocked" => match dep_state {
+            "ready" => (
+                assignee
+                    .as_deref()
+                    .map_or("open".to_owned(), |_| "claimed".to_owned()),
+                None,
+                "task.cascade.unblocked",
+            ),
+            "failed" => (
+                "cancelled".to_owned(),
+                Some(format!(
+                    "auto-cancelled: dependency state still contains failed/cancelled tasks after removing {dependency_task_id}"
+                )),
+                "task.cascade.cancelled",
+            ),
+            _ => (prior_status.clone(), None, "task.updated"),
+        },
+        "approval_required" => match dep_state {
+            "failed" => (
+                "cancelled".to_owned(),
+                Some(format!(
+                    "auto-cancelled: dependency state still contains failed/cancelled tasks after removing {dependency_task_id}"
+                )),
+                "task.cascade.cancelled",
+            ),
+            _ => (prior_status.clone(), None, "task.updated"),
+        },
+        _ => (prior_status.clone(), None, "task.updated"),
+    };
 
     conn.execute(
         "UPDATE tasks
          SET depends_on = ?,
+             status = ?,
+             result = ?,
              updated_at = unixepoch(),
              changed_at = unixepoch() * 1000
          WHERE id = ?",
-        params![next, dependent_task_id],
+        params![next_dep_value, next_status, next_result, dependent_task_id],
     )
     .map_err(|err| format!("failed to write depends_on: {err}"))?;
+
+    let payload = match event_type {
+        "task.cascade.unblocked" => json!({
+            "trigger": dependency_task_id,
+            "status": next_status,
+        }),
+        "task.cascade.cancelled" => json!({
+            "trigger": dependency_task_id,
+            "reason": "dependency_failed",
+        }),
+        _ => json!({
+            "status": next_status,
+            "prior_status": prior_status,
+            "removed_dependency": dependency_task_id,
+        }),
+    };
+
+    emit_event(
+        conn,
+        &scope,
+        event_type,
+        None,
+        Some(dependent_task_id),
+        Some(payload),
+    )?;
 
     Ok(true)
 }
@@ -725,5 +1316,136 @@ mod tests {
         assert_eq!(instance_adoption_state(&conn, &pending.id).unwrap(), Some(true));
 
         assert_eq!(instance_adoption_state(&conn, "missing").unwrap(), None);
+    }
+
+    #[test]
+    fn deregister_instance_refreshes_planner_owner() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn);
+        ensure_adopted_column(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted)
+             VALUES
+             ('planner-a', 's', '/tmp', '/tmp', '/tmp', 1, 'role:planner', 1),
+             ('planner-b', 's', '/tmp', '/tmp', '/tmp', 2, 'role:planner', 1)",
+            [],
+        )
+        .unwrap();
+        kv_set_value(
+            &conn,
+            "s",
+            PLANNER_OWNER_KEY,
+            &json!({
+                "instance_id": "planner-a",
+                "label": "role:planner",
+                "assigned_at": 1,
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        deregister_instance(&conn, "planner-a").unwrap();
+
+        let owner = kv_get_value(&conn, "s", PLANNER_OWNER_KEY)
+            .unwrap()
+            .expect("owner/planner should be reassigned");
+        let parsed: Value = serde_json::from_str(&owner).unwrap();
+        assert_eq!(
+            parsed.get("instance_id").and_then(Value::as_str),
+            Some("planner-b")
+        );
+    }
+
+    #[test]
+    fn unassign_task_releases_claimed_work() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn);
+        ensure_adopted_column(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO tasks (id, scope, type, title, requester, assignee, status)
+             VALUES ('task-1', 's', 'implement', 'claimed', 'planner', 'worker-1', 'claimed')",
+            [],
+        )
+        .unwrap();
+
+        let changed = unassign_task(&conn, "task-1").unwrap();
+        assert!(changed);
+
+        let (status, assignee): (String, Option<String>) = conn
+            .query_row(
+                "SELECT status, assignee FROM tasks WHERE id = 'task-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "open");
+        assert_eq!(assignee, None);
+    }
+
+    #[test]
+    fn remove_task_dependency_recomputes_blocked_and_approval_required_tasks() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn);
+        ensure_adopted_column(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO tasks (id, scope, type, title, requester, status)
+             VALUES
+             ('dep-ready', 's', 'implement', 'dep ready', 'planner', 'done'),
+             ('dep-failed', 's', 'implement', 'dep failed', 'planner', 'failed')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tasks (id, scope, type, title, requester, status, depends_on)
+             VALUES
+             ('blocked-task', 's', 'implement', 'blocked', 'planner', 'blocked', ?),
+             ('approval-task', 's', 'review', 'approval', 'planner', 'approval_required', ?)",
+            params![
+                serde_json::to_string(&vec!["dep-ready"]).unwrap(),
+                serde_json::to_string(&vec!["dep-ready", "dep-failed"]).unwrap(),
+            ],
+        )
+        .unwrap();
+
+        let changed = remove_task_dependency(&conn, "blocked-task", "dep-ready").unwrap();
+        assert!(changed);
+        let changed = remove_task_dependency(&conn, "approval-task", "dep-ready").unwrap();
+        assert!(changed);
+
+        let (blocked_status, blocked_depends_on): (String, Option<String>) = conn
+            .query_row(
+                "SELECT status, depends_on FROM tasks WHERE id = 'blocked-task'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(blocked_status, "open");
+        assert_eq!(blocked_depends_on, None);
+
+        let (approval_status, approval_result, approval_depends_on): (
+            String,
+            Option<String>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT status, result, depends_on FROM tasks WHERE id = 'approval-task'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(approval_status, "cancelled");
+        assert!(
+            approval_result
+                .as_deref()
+                .unwrap_or_default()
+                .contains("auto-cancelled"),
+        );
+        assert_eq!(
+            approval_depends_on,
+            Some(serde_json::to_string(&vec!["dep-failed"]).unwrap())
+        );
     }
 }

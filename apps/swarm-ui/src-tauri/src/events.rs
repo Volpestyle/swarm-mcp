@@ -3,6 +3,10 @@ pub const SWARM_UPDATE: &str = "swarm:update";
 /// Used by the frontend's packet animation so every row renders as a single
 /// visual event instead of re-walking the full last-100 snapshot each tick.
 pub const MESSAGES_APPENDED: &str = "swarm:messages:new";
+/// Delta event carrying only audit-log rows newly inserted since the last
+/// emit. Powers the Activity timeline panel and graph-level signals
+/// (lock badges, edge flashes) without re-shipping the full event window.
+pub const EVENTS_APPENDED: &str = "swarm:events:new";
 pub const PTY_CREATED: &str = "pty:created";
 pub const PTY_CLOSED: &str = "pty:closed";
 pub const BIND_RESOLVED: &str = "bind:resolved";

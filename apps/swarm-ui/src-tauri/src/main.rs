@@ -34,7 +34,6 @@ fn main() {
             swarm_ui::pty::pty_close,
             swarm_ui::pty::pty_get_buffer,
             swarm_ui::pty::get_pty_sessions,
-            swarm_ui::launch::agent_spawn,
             swarm_ui::launch::spawn_shell,
             swarm_ui::launch::respawn_instance,
             swarm_ui::launch::get_role_presets,
@@ -77,7 +76,7 @@ fn main() {
                 // Legacy label-token resolution path — kept so an externally
                 // launched agent (manual `claude` with a hand-crafted label)
                 // still binds. The primary UI-spawned flow binds immediately
-                // in `launch::agent_spawn`.
+                // in `launch::spawn_shell`.
                 for event in binder.try_resolve(&update.instances) {
                     let _ = pty_manager.set_bound_instance(&event.pty_id, &event.instance_id);
                     let _ = callback_handle.emit(BIND_RESOLVED, &event);

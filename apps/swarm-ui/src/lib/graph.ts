@@ -53,6 +53,7 @@ export function buildGraph(
   const resolvedPtyIds = new Set<string>();
 
   for (const [instanceId, ptyId] of bindings.resolved) {
+    if (!instances.has(instanceId)) continue;
     resolvedInstanceIds.add(instanceId);
     resolvedPtyIds.add(ptyId);
   }
@@ -100,6 +101,7 @@ export function buildGraph(
   // 3. Unbound PTY nodes (pending)
   for (const [id, pty] of ptySessions) {
     if (resolvedPtyIds.has(id)) continue;
+    if (pty.bound_instance_id && !instances.has(pty.bound_instance_id)) continue;
     const nodeId = `pty:${id}`;
 
     nodes.push(makeNode(nodeId, 'pty', null, pty, {

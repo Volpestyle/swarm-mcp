@@ -48,7 +48,7 @@ impl Binder {
 
     /// Record a resolved instance↔PTY binding without waiting for the
     /// launch-token label matching dance. Used by the UI-owned pre-creation
-    /// path in `launch.rs::agent_spawn` where the UI already knows the
+    /// path in `launch.rs::spawn_shell` where the UI already knows the
     /// instance id at spawn time.
     pub fn bind_immediate(&self, instance_id: &str, pty_id: &str) -> Result<(), String> {
         self.inner
@@ -57,6 +57,14 @@ impl Binder {
             .resolved
             .insert(instance_id.to_owned(), pty_id.to_owned());
         Ok(())
+    }
+
+    /// Look up the PTY currently bound to `instance_id`, if any. Callers use
+    /// this to refuse double-binds (e.g. respawning an instance that already
+    /// has a live PTY in this UI session).
+    #[must_use]
+    pub fn resolved_pty_for(&self, instance_id: &str) -> Option<String> {
+        self.inner.read().ok()?.resolved.get(instance_id).cloned()
     }
 
     /// Remove a resolved binding. Called on PTY exit so stale entries don't

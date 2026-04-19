@@ -16,6 +16,9 @@ import type {
   Task,
   Message,
   Lock,
+  Annotation,
+  KvEntry,
+  Event,
   SwarmUpdate,
   TaskStatus,
 } from '../lib/types';
@@ -24,17 +27,178 @@ import type {
 // Core stores — normalized state
 // ---------------------------------------------------------------------------
 
+const SCOPE_SELECTION_KEY = 'swarm-ui.scope-selection';
+const LAUNCHER_SCOPE_KEY = 'swarm-ui.launcher.scope';
+
+function loadStoredScopeSelection(): string {
+  if (typeof localStorage === 'undefined') return 'auto';
+  return localStorage.getItem(SCOPE_SELECTION_KEY) ?? 'auto';
+}
+
+function storedLauncherScope(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  const value = localStorage.getItem(LAUNCHER_SCOPE_KEY)?.trim();
+  return value ? value : null;
+}
+
+const rawInstances = writable<Map<string, Instance>>(new Map());
+const rawTasks = writable<Map<string, Task>>(new Map());
+const rawMessages = writable<Message[]>([]);
+const rawLocks = writable<Lock[]>([]);
+const rawAnnotations = writable<Annotation[]>([]);
+const rawKvEntries = writable<KvEntry[]>([]);
+const rawEvents = writable<Event[]>([]);
+
+export const scopeSelection = writable<string>(loadStoredScopeSelection());
+if (typeof window !== 'undefined') {
+  scopeSelection.subscribe((value) => {
+    window.localStorage.setItem(SCOPE_SELECTION_KEY, value);
+  });
+}
+
+export function setScopeSelection(value: string): void {
+  scopeSelection.set(value || 'auto');
+}
+
+export const availableScopes: Readable<string[]> = derived(
+  [
+    rawInstances,
+    rawTasks,
+    rawMessages,
+    rawLocks,
+    rawAnnotations,
+    rawKvEntries,
+    rawEvents,
+  ],
+  ([
+    $instances,
+    $tasks,
+    $messages,
+    $locks,
+    $annotations,
+    $kvEntries,
+    $events,
+  ]) => {
+    const scopes = new Set<string>();
+    for (const instance of $instances.values()) scopes.add(instance.scope);
+    for (const task of $tasks.values()) scopes.add(task.scope);
+    for (const msg of $messages) scopes.add(msg.scope);
+    for (const lock of $locks) scopes.add(lock.scope);
+    for (const annotation of $annotations) scopes.add(annotation.scope);
+    for (const entry of $kvEntries) scopes.add(entry.scope);
+    for (const evt of $events) scopes.add(evt.scope);
+    return [...scopes].filter(Boolean).sort();
+  },
+);
+
+export const activeScope: Readable<string | null> = derived(
+  [scopeSelection, availableScopes, rawInstances],
+  ([$selection, $scopes, $instances]) => {
+    if ($selection === 'all') return null;
+    if ($selection !== 'auto') return $selection;
+
+    const preferred = storedLauncherScope();
+    if (preferred && ($scopes.includes(preferred) || $scopes.length === 0)) {
+      return preferred;
+    }
+
+    if ($scopes.length === 1) return $scopes[0] ?? null;
+
+    const onlineCounts = new Map<string, number>();
+    for (const instance of $instances.values()) {
+      if (instance.status !== 'online') continue;
+      onlineCounts.set(
+        instance.scope,
+        (onlineCounts.get(instance.scope) ?? 0) + 1,
+      );
+    }
+
+    const rankedOnline = [...onlineCounts.entries()].sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return a[0].localeCompare(b[0]);
+    });
+    if (rankedOnline.length > 0) return rankedOnline[0]?.[0] ?? null;
+
+    return $scopes[0] ?? null;
+  },
+);
+
 /** All known instances indexed by ID */
-export const instances = writable<Map<string, Instance>>(new Map());
+export const instances: Readable<Map<string, Instance>> = derived(
+  [rawInstances, activeScope],
+  ([$instances, $scope]) => {
+    if ($scope === null) return $instances;
+    const filtered = new Map<string, Instance>();
+    for (const [id, instance] of $instances) {
+      if (instance.scope === $scope) filtered.set(id, instance);
+    }
+    return filtered;
+  },
+);
 
 /** All recent tasks indexed by ID */
-export const tasks = writable<Map<string, Task>>(new Map());
+export const tasks: Readable<Map<string, Task>> = derived(
+  [rawTasks, activeScope],
+  ([$tasks, $scope]) => {
+    if ($scope === null) return $tasks;
+    const filtered = new Map<string, Task>();
+    for (const [id, task] of $tasks) {
+      if (task.scope === $scope) filtered.set(id, task);
+    }
+    return filtered;
+  },
+);
 
 /** Recent messages (bounded, most recent first) */
-export const messages = writable<Message[]>([]);
+export const messages: Readable<Message[]> = derived(
+  [rawMessages, activeScope],
+  ([$messages, $scope]) =>
+    $scope === null
+      ? $messages
+      : $messages.filter((message) => message.scope === $scope),
+);
 
 /** Active file locks */
-export const locks = writable<Lock[]>([]);
+export const locks: Readable<Lock[]> = derived(
+  [rawLocks, activeScope],
+  ([$locks, $scope]) =>
+    $scope === null ? $locks : $locks.filter((lock) => lock.scope === $scope),
+);
+
+/**
+ * All `context` rows including locks. Non-lock types (finding, warning,
+ * bug, note, todo) are rendered alongside locks in the Inspector's
+ * "Context" section so agent annotations are visible.
+ */
+export const annotations: Readable<Annotation[]> = derived(
+  [rawAnnotations, activeScope],
+  ([$annotations, $scope]) =>
+    $scope === null
+      ? $annotations
+      : $annotations.filter((annotation) => annotation.scope === $scope),
+);
+
+/**
+ * Non-`ui/*` KV entries — coordination state agents share through the kv
+ * table. Surfaced in the Inspector "Coordination (KV)" section so turn
+ * counters, status flags, and queues are visible alongside messages/tasks.
+ */
+export const kvEntries: Readable<KvEntry[]> = derived(
+  [rawKvEntries, activeScope],
+  ([$entries, $scope]) =>
+    $scope === null ? $entries : $entries.filter((entry) => entry.scope === $scope),
+);
+
+/**
+ * Audit-log rows used by the Activity timeline. Bounded ring buffer —
+ * cold-start seeds from the snapshot, then each `swarm:events:new` delta
+ * appends. Oldest rows drop off when the buffer fills.
+ */
+export const events: Readable<Event[]> = derived(
+  [rawEvents, activeScope],
+  ([$events, $scope]) =>
+    $scope === null ? $events : $events.filter((evt) => evt.scope === $scope),
+);
 
 /** UI metadata from `ui/*` KV entries */
 export const uiMeta = writable<Record<string, unknown> | null>(null);
@@ -205,12 +369,40 @@ function fanoutAppendedMessage(msg: Message): void {
   }
 }
 
+/**
+ * Side-channel feed for newly-arrived audit-log rows. Mirrors the message
+ * fanout — graph-level signals (lock badges, edge flashes, KV ripples)
+ * subscribe here so each event triggers a single transient effect instead
+ * of re-walking the ring buffer on every poll.
+ */
+type EventAppendedListener = (evt: Event) => void;
+
+const eventAppendedListeners = new Set<EventAppendedListener>();
+
+export function onEventAppended(cb: EventAppendedListener): () => void {
+  eventAppendedListeners.add(cb);
+  return () => {
+    eventAppendedListeners.delete(cb);
+  };
+}
+
+function fanoutAppendedEvent(evt: Event): void {
+  for (const cb of eventAppendedListeners) {
+    try {
+      cb(evt);
+    } catch (err) {
+      console.error('[swarm] onEventAppended listener threw:', err);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Initialization and event handling
 // ---------------------------------------------------------------------------
 
 let swarmUnlisten: UnlistenFn | null = null;
 let messagesAppendedUnlisten: UnlistenFn | null = null;
+let eventsAppendedUnlisten: UnlistenFn | null = null;
 let initialized = false;
 
 /**
@@ -248,6 +440,19 @@ export async function initSwarmStore(): Promise<void> {
       }
     },
   );
+
+  // Audit-log delta feed — append to the ring buffer and fan out to
+  // graph-level signal subscribers (lock badges, edge flashes...).
+  eventsAppendedUnlisten = await listen<Event[]>(
+    'swarm:events:new',
+    (event) => {
+      if (event.payload.length === 0) return;
+      rawEvents.update((current) => appendBoundedEvents(current, event.payload));
+      for (const evt of event.payload) {
+        fanoutAppendedEvent(evt);
+      }
+    },
+  );
 }
 
 /**
@@ -263,7 +468,12 @@ export function destroySwarmStore(): void {
     messagesAppendedUnlisten();
     messagesAppendedUnlisten = null;
   }
+  if (eventsAppendedUnlisten) {
+    eventsAppendedUnlisten();
+    eventsAppendedUnlisten = null;
+  }
   messageAppendedListeners.clear();
+  eventAppendedListeners.clear();
   initialized = false;
 }
 
@@ -273,6 +483,24 @@ export function destroySwarmStore(): void {
 
 /** Maximum number of messages to retain in the store */
 const MAX_MESSAGES = 200;
+
+/** Ring-buffer cap for the activity timeline. */
+const MAX_EVENTS = 500;
+
+function appendBoundedEvents(current: Event[], incoming: Event[]): Event[] {
+  if (incoming.length === 0) return current;
+  // Dedupe by id — the snapshot can backfill rows the delta also
+  // delivered if the cursors disagree by a tick.
+  const seen = new Set(current.map((e) => e.id));
+  const merged = [...current];
+  for (const evt of incoming) {
+    if (seen.has(evt.id)) continue;
+    seen.add(evt.id);
+    merged.push(evt);
+  }
+  if (merged.length <= MAX_EVENTS) return merged;
+  return merged.slice(merged.length - MAX_EVENTS);
+}
 
 /**
  * Apply a SwarmUpdate payload to the stores. This is called both for the
@@ -287,24 +515,39 @@ function applyUpdate(update: SwarmUpdate): void {
   for (const inst of update.instances) {
     instanceMap.set(inst.id, inst);
   }
-  instances.set(instanceMap);
+  rawInstances.set(instanceMap);
 
   // Tasks: full replacement indexed by ID
   const taskMap = new Map<string, Task>();
   for (const task of update.tasks) {
     taskMap.set(task.id, task);
   }
-  tasks.set(taskMap);
+  rawTasks.set(taskMap);
 
   // Messages: replace, bounded to MAX_MESSAGES, most recent first
   const sortedMessages = update.messages
     .slice()
     .sort((a, b) => b.created_at - a.created_at)
     .slice(0, MAX_MESSAGES);
-  messages.set(sortedMessages);
+  rawMessages.set(sortedMessages);
 
   // Locks: full replacement
-  locks.set(update.locks);
+  rawLocks.set(update.locks);
+
+  // Annotations: full replacement (includes locks)
+  rawAnnotations.set(update.annotations ?? []);
+
+  // KV entries: full replacement
+  rawKvEntries.set(update.kv ?? []);
+
+  // Audit log: merge with existing buffer to keep the timeline coherent
+  // across snapshot replays. The delta listener handles the steady-state
+  // case; this branch covers cold starts and reconnects.
+  if (update.events && update.events.length > 0) {
+    rawEvents.update((current) =>
+      appendBoundedEvents(current, update.events ?? []),
+    );
+  }
 
   // UI metadata
   uiMeta.set(update.ui_meta ?? null);

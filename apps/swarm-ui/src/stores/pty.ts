@@ -17,12 +17,85 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   PtySession,
   BindingState,
-  LaunchResult,
   ShellSpawnResult,
   RespawnResult,
   PtyExitPayload,
   RolePresetSummary,
 } from '../lib/types';
+import { resolveHarnessCommand } from './harnessAliases';
+
+const HARNESS_AUTOTYPE_MIN_DELAY_MS = 200;
+const PTY_READY_TIMEOUT_MS = 1500;
+
+type ReadyGate = {
+  ready: boolean;
+  promise: Promise<void>;
+  resolve: () => void;
+};
+
+const ptyReadyGates = new Map<string, ReadyGate>();
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function createReadyGate(): ReadyGate {
+  let resolvePromise: (() => void) | null = null;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    ready: false,
+    promise,
+    resolve: () => {
+      if (resolvePromise) {
+        resolvePromise();
+        resolvePromise = null;
+      }
+    },
+  };
+}
+
+function readyGateForPty(ptyId: string): ReadyGate {
+  let gate = ptyReadyGates.get(ptyId);
+  if (!gate) {
+    gate = createReadyGate();
+    ptyReadyGates.set(ptyId, gate);
+  }
+  return gate;
+}
+
+async function waitForPtyTerminalReady(ptyId: string): Promise<void> {
+  const gate = readyGateForPty(ptyId);
+  if (gate.ready) return;
+
+  await Promise.race([gate.promise, delay(PTY_READY_TIMEOUT_MS)]);
+}
+
+async function autoTypeHarnessWhenReady(
+  ptyId: string,
+  harness: string,
+): Promise<void> {
+  await Promise.all([
+    waitForPtyTerminalReady(ptyId),
+    delay(HARNESS_AUTOTYPE_MIN_DELAY_MS),
+  ]);
+
+  const aliased = resolveHarnessCommand(harness);
+  const encoded = new TextEncoder().encode(`${aliased}\n`);
+  await writeToPty(ptyId, encoded);
+}
+
+export function markPtyTerminalReady(ptyId: string): void {
+  const gate = readyGateForPty(ptyId);
+  if (gate.ready) return;
+  gate.ready = true;
+  gate.resolve();
+}
+
+function clearPtyTerminalReady(ptyId: string): void {
+  ptyReadyGates.delete(ptyId);
+}
 
 function upsertSession(session: PtySession): void {
   ptySessions.update((map) => {
@@ -214,6 +287,7 @@ export async function initPtyStore(): Promise<void> {
 
   // Listen for PTY closure events
   ptyClosedUnlisten = await listen<string>('pty:closed', (event) => {
+    clearPtyTerminalReady(event.payload);
     removeBindingForPty(event.payload);
     ptySessions.update((map) => {
       const next = new Map(map);
@@ -328,6 +402,7 @@ export async function resizePty(
  */
 export async function closePty(id: string): Promise<void> {
   await invoke('pty_close', { id });
+  clearPtyTerminalReady(id);
   // Optimistic removal (backend will also emit pty:closed)
   removeBindingForPty(id);
   ptySessions.update((map) => {
@@ -346,67 +421,43 @@ export async function getPtyBuffer(id: string): Promise<Uint8Array> {
   return new Uint8Array(data);
 }
 
-/**
- * Spawn an agent with role, working directory, and optional scope/label.
- * Returns the PTY ID and launch token.
- */
-export async function spawnAgent(
-  role: string,
-  workingDir: string,
-  scope?: string,
-  label?: string,
-): Promise<LaunchResult> {
-  const result = await invoke<LaunchResult>('agent_spawn', {
-    role,
-    working_dir: workingDir,
-    scope: scope ?? null,
-    label: label ?? null,
-  });
-
-  // Add PTY session to local store. The backend pre-creates the swarm
-  // instance row and emits `bind:resolved` before returning, so the binding
-  // is resolved from the moment the PTY exists — no pending phase.
-  const session: PtySession = {
-    id: result.pty_id,
-    command: role,
-    cwd: workingDir,
-    started_at: Date.now(),
-    exit_code: null,
-    bound_instance_id: result.instance_id,
-    launch_token: result.token,
-  };
-
-  upsertSession(session);
-  resolveBinding(result.instance_id, result.pty_id);
-
-  return result;
+export interface SpawnShellOptions {
+  harness?: string;
+  role?: string;
+  scope?: string;
+  label?: string;
 }
 
 /**
- * Spawn a plain shell session (no agent registration).
+ * Spawn a swarm-aware shell. When `harness` is set, the backend pre-creates
+ * a swarm instance row, binds it to the PTY, and we auto-type the harness
+ * command into the shell so ctrl-c drops back to a shell prompt instead of
+ * killing the node.
  *
- * When a harness (e.g. "claude", "codex", "opencode") is provided, the backend
- * still spawns an interactive shell — the harness command is auto-typed into
- * the shell's stdin so ctrl-c drops back to a shell prompt instead of
- * terminating the PTY node.
- *
- * Returns the PTY ID.
+ * When `role` is also set, the role token is stored on the swarm label. The
+ * agent receives role-specific guidance when it explicitly calls
+ * `swarm.register`; we intentionally avoid hidden auto-typed prompts here.
  */
 export async function spawnShell(
   cwd: string,
-  harness?: string,
+  options: SpawnShellOptions = {},
 ): Promise<ShellSpawnResult> {
-  const trimmedHarness = harness?.trim();
-  const hasHarness = !!trimmedHarness && trimmedHarness.length > 0;
+  const trimmedHarness = options.harness?.trim() || null;
+  const trimmedRole = options.role?.trim() || null;
+  const trimmedScope = options.scope?.trim() || null;
+  const trimmedLabel = options.label?.trim() || null;
 
   const result = await invoke<ShellSpawnResult>('spawn_shell', {
     cwd,
-    harness: hasHarness ? trimmedHarness : null,
+    harness: trimmedHarness,
+    role: trimmedRole,
+    scope: trimmedScope,
+    label: trimmedLabel,
   });
 
   const session: PtySession = {
     id: result.pty_id,
-    command: hasHarness ? trimmedHarness! : '$SHELL',
+    command: trimmedHarness ?? '$SHELL',
     cwd,
     started_at: Date.now(),
     exit_code: null,
@@ -416,25 +467,17 @@ export async function spawnShell(
 
   upsertSession(session);
 
-  // When a harness was picked, the backend pre-created + bound a swarm
-  // instance. Mirror that binding into the frontend store so the node
-  // renders as `bound:` (draggable) from the first paint.
   if (result.instance_id) {
     resolveBinding(result.instance_id, result.pty_id);
   }
 
-  if (hasHarness) {
-    // Give the shell a moment to paint its prompt, then type the harness
-    // command for the user. The shell inherits SWARM_MCP_INSTANCE_ID from
-    // the PTY env, so the harness's swarm-mcp subprocess will adopt the
-    // pre-created row on register. Any failure is non-fatal — the shell
-    // itself is still usable.
-    const encoded = new TextEncoder().encode(`${trimmedHarness}\n`);
-    setTimeout(() => {
-      writeToPty(result.pty_id, encoded).catch((err) => {
-        console.warn('[pty] failed to auto-type harness into shell:', err);
-      });
-    }, 200);
+  if (trimmedHarness) {
+    void autoTypeHarnessWhenReady(
+      result.pty_id,
+      trimmedHarness,
+    ).catch((err) => {
+      console.warn('[pty] failed to auto-type harness into shell:', err);
+    });
   }
 
   return result;
@@ -454,7 +497,8 @@ export async function getRolePresets(): Promise<RolePresetSummary[]> {
  *
  * For harness-shell instances (claude/codex/opencode) the result carries the
  * harness name and we auto-type it into the new PTY's stdin, matching the
- * ergonomics of `spawnShell` above.
+ * ergonomics of `spawnShell` above. Role guidance still comes from an
+ * explicit `swarm.register` call, not a hidden auto-typed prompt.
  */
 export async function respawnInstance(instanceId: string): Promise<RespawnResult> {
   const result = await invoke<RespawnResult>('respawn_instance', { instanceId });
@@ -473,12 +517,12 @@ export async function respawnInstance(instanceId: string): Promise<RespawnResult
   resolveBinding(result.instance_id, result.pty_id);
 
   if (result.harness) {
-    const encoded = new TextEncoder().encode(`${result.harness}\n`);
-    setTimeout(() => {
-      writeToPty(result.pty_id, encoded).catch((err) => {
-        console.warn('[pty] failed to auto-type harness on respawn:', err);
-      });
-    }, 200);
+    void autoTypeHarnessWhenReady(
+      result.pty_id,
+      result.harness,
+    ).catch((err) => {
+      console.warn('[pty] failed to auto-type harness on respawn:', err);
+    });
   }
 
   return result;

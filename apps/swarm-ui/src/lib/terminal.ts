@@ -10,7 +10,7 @@
 // - Lifecycle is tied to Svelte onMount/onDestroy in TerminalNode.svelte.
 // =============================================================================
 
-import { init, Terminal, FitAddon } from 'ghostty-web';
+import { init, Terminal } from 'ghostty-web';
 import type { TerminalHandle, TerminalOptions, TerminalTheme } from './types';
 
 const DEFAULT_FONT_SIZE = 13;
@@ -47,6 +47,10 @@ const DEFAULT_THEME: Required<TerminalTheme> = {
 let handleCounter = 0;
 let initPromise: Promise<void> | null = null;
 
+function parsePixels(value: string): number {
+  return Number.parseInt(value, 10) || 0;
+}
+
 /** Loads the ghostty-web WASM module once. Shared across all terminals. */
 function ensureInit(): Promise<void> {
   if (!initPromise) {
@@ -76,24 +80,76 @@ export async function createTerminal(
     theme: resolved.theme,
   });
 
-  // FitAddon reads the renderer's real charWidth/charHeight (set after open())
-  // and computes the largest (cols, rows) that fit the container, then resizes
-  // the terminal. Without this we'd guess metrics, undercount rows, and leave
-  // a strip of empty container background below the canvas.
-  const fit = new FitAddon();
-  term.loadAddon(fit);
+  let disposed = false;
+  let resizeFrame = 0;
+  let resizeObserver: ResizeObserver | null = null;
+
+  const fitToContainer = () => {
+    if (disposed) return;
+
+    const element = term.element;
+    const renderer = term.renderer;
+    const metrics = renderer?.getMetrics?.();
+    if (!element || !metrics || metrics.width === 0 || metrics.height === 0) {
+      return;
+    }
+
+    const computed = window.getComputedStyle(element);
+    const horizontalPadding =
+      parsePixels(computed.paddingLeft) + parsePixels(computed.paddingRight);
+    const verticalPadding =
+      parsePixels(computed.paddingTop) + parsePixels(computed.paddingBottom);
+    const usableWidth = element.clientWidth - horizontalPadding;
+    const usableHeight = element.clientHeight - verticalPadding;
+    if (usableWidth <= 0 || usableHeight <= 0) return;
+
+    const cols = Math.max(2, Math.floor(usableWidth / metrics.width));
+    const rows = Math.max(1, Math.floor(usableHeight / metrics.height));
+    if (cols !== term.cols || rows !== term.rows) {
+      term.resize(cols, rows);
+    }
+  };
+
+  const scheduleFit = () => {
+    if (disposed || resizeFrame !== 0) return;
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = 0;
+      fitToContainer();
+    });
+  };
 
   term.open(container);
-  fit.fit();
-  fit.observeResize();
+  fitToContainer();
+
+  resizeObserver = new ResizeObserver(() => {
+    scheduleFit();
+  });
+  resizeObserver.observe(container);
+
+  // Refit again after layout and after fonts settle. We remeasure first so the
+  // terminal grid tracks the real glyph metrics rather than fallback-font math.
+  requestAnimationFrame(() => requestAnimationFrame(scheduleFit));
+  if (typeof document !== 'undefined' && 'fonts' in document) {
+    void document.fonts.ready
+      .then(() => {
+        term.renderer?.remeasureFont?.();
+        scheduleFit();
+      })
+      .catch(() => {});
+  }
 
   return {
     id,
     write: (data) => term.write(data),
-    resize: () => fit.fit(),
+    resize: () => fitToContainer(),
+    getSize: () => ({ cols: term.cols, rows: term.rows }),
     focus: () => term.focus(),
     dispose: () => {
-      fit.dispose();
+      disposed = true;
+      if (resizeFrame !== 0) {
+        cancelAnimationFrame(resizeFrame);
+      }
+      resizeObserver?.disconnect();
       term.dispose();
     },
     onData: (cb) => {

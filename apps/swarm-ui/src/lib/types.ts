@@ -94,6 +94,49 @@ export interface Lock {
   instance_id: string;
 }
 
+/**
+ * One row from the `context` table. Includes locks (`type === 'lock'`) plus
+ * `finding`, `warning`, `bug`, `note`, `todo`, etc. The Inspector renders
+ * these grouped by `type` so non-lock annotations are visible too.
+ */
+export interface Annotation {
+  id: string;
+  scope: string;
+  instance_id: string;
+  file: string;
+  type: string;
+  content: string;
+  created_at: number;
+}
+
+/**
+ * One row from the `events` audit log. Powers the Activity timeline; the
+ * `type` discriminator follows the `category.action` convention from
+ * `swarm-mcp/src/events.ts` (e.g. `task.cascade.unblocked`).
+ */
+export interface Event {
+  id: number;
+  scope: string;
+  type: string;
+  actor: string | null;
+  subject: string | null;
+  /** Raw JSON string from the DB. Parsers should `try { JSON.parse(...) }`. */
+  payload: string | null;
+  created_at: number;
+}
+
+/**
+ * One non-`ui/*` row from the `kv` table — coordination state agents write
+ * to share scope-level data (turn counters, status flags, queues...).
+ * `value` is the raw stored string; render layer pretty-prints if JSON.
+ */
+export interface KvEntry {
+  scope: string;
+  key: string;
+  value: string;
+  updated_at: number;
+}
+
 export interface PtySession {
   id: string;
   command: string;
@@ -114,6 +157,9 @@ export interface SwarmUpdate {
   tasks: Task[];
   messages: Message[];
   locks: Lock[];
+  annotations: Annotation[];
+  kv: KvEntry[];
+  events: Event[];
   ui_meta: Record<string, unknown> | null;
 }
 
@@ -125,47 +171,38 @@ export interface BindingState {
   resolved: [string, string][];
 }
 
-/** Returned by `agent_spawn` */
-export interface LaunchResult {
-  pty_id: string;
-  token: string;
-  /**
-   * Pre-created swarm instance id bound to the spawned PTY. The child
-   * adopts this row via `SWARM_MCP_INSTANCE_ID` on `swarm.register`.
-   */
-  instance_id: string;
-}
-
 /** Returned by `spawn_shell` */
 export interface ShellSpawnResult {
   pty_id: string;
   /**
-   * Present only for swarm-aware harness launches (claude/codex/opencode),
-   * which go through the same pre-create + adopt flow as `agent_spawn`.
+   * Present only for swarm-aware harness launches (claude/codex/opencode).
    * Plain shells have no swarm identity.
    */
   instance_id: string | null;
+  /**
+   * Echo of the swarm role, when one was selected. The UI can surface it, but
+   * role guidance itself comes from the explicit `swarm.register` response.
+   */
+  role: string | null;
 }
 
 /**
- * Returned by `respawn_instance`. Mirrors `LaunchResult` but also carries the
- * harness name (claude/codex/opencode) when the respawned instance was a
- * swarm-aware shell — the frontend auto-types this command into the new PTY
- * so ctrl-c drops back to a shell prompt instead of killing the node.
+ * Returned by `respawn_instance`. Carries the harness name
+ * (claude/codex/opencode) so the frontend can auto-type it into the new PTY,
+ * matching the launch ergonomics (ctrl-c returns to a shell prompt instead
+ * of killing the node).
  */
 export interface RespawnResult {
   pty_id: string;
   token: string;
   instance_id: string;
   harness: string | null;
+  role: string | null;
 }
 
-/** Returned by `get_role_presets` */
+/** Returned by `get_role_presets` — list of role names available in the picker. */
 export interface RolePresetSummary {
   role: string;
-  command: string;
-  args: string[];
-  default_label_tokens: string;
 }
 
 /** Payload on `pty://{id}/exit` events — Rust emits Option<i32> directly */
@@ -285,6 +322,7 @@ export interface TerminalHandle {
   id: string;
   write: (data: Uint8Array | string) => void;
   resize: (cols: number, rows: number) => void;
+  getSize: () => { cols: number; rows: number };
   focus: () => void;
   dispose: () => void;
   onData: (cb: (data: string) => void) => () => void;

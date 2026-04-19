@@ -1,6 +1,11 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { appearance } from '../stores/appearance';
+  import {
+    harnessAliases,
+    HARNESS_NAMES,
+    type HarnessName,
+  } from '../stores/harnessAliases';
 
   const dispatch = createEventDispatcher<{ close: void }>();
 
@@ -11,6 +16,16 @@
   function handleBackgroundOpacityInput(event: Event) {
     const target = event.currentTarget as HTMLInputElement;
     appearance.setBackgroundOpacity(Number(target.value) / 100);
+  }
+
+  function handleAliasInput(harness: HarnessName, event: Event) {
+    const target = event.currentTarget as HTMLInputElement;
+    harnessAliases.setAlias(harness, target.value);
+  }
+
+  function resetDefaults() {
+    appearance.reset();
+    harnessAliases.reset();
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
@@ -28,7 +43,7 @@
     <div class="settings-header">
       <div>
         <h2 id="settings-title">Settings</h2>
-        <p>Adjust appearance preferences for the swarm UI.</p>
+        <p>Adjust appearance and harness command preferences.</p>
       </div>
 
       <button type="button" class="close-btn" on:click={closeSettings} aria-label="Close settings">
@@ -60,10 +75,41 @@
           </div>
         </div>
       </section>
+
+      <section class="harness-section">
+        <h3>Harness Commands</h3>
+        <p class="section-hint">
+          Override the shell command used when launching each harness. Useful if
+          your binary lives under a different name (e.g. <code>claude</code> →
+          <code>clowd</code>).
+        </p>
+
+        {#each HARNESS_NAMES as harness (harness)}
+          <div class="setting-row">
+            <div class="setting-copy">
+              <label for={`settings-harness-${harness}`}>{harness}</label>
+              <p>Default: <code>{harness}</code></p>
+            </div>
+
+            <div class="setting-control alias-control">
+              <input
+                id={`settings-harness-${harness}`}
+                type="text"
+                spellcheck="false"
+                autocomplete="off"
+                autocapitalize="off"
+                placeholder={harness}
+                value={$harnessAliases[harness]}
+                on:input={(event) => handleAliasInput(harness, event)}
+              />
+            </div>
+          </div>
+        {/each}
+      </section>
     </div>
 
     <div class="settings-footer">
-      <button type="button" class="secondary-btn" on:click={() => appearance.reset()}>
+      <button type="button" class="secondary-btn" on:click={resetDefaults}>
         Reset Defaults
       </button>
       <button type="button" class="primary-btn" on:click={closeSettings}>
@@ -134,6 +180,44 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
+  }
+
+  .harness-section {
+    margin-top: 20px;
+  }
+
+  .section-hint {
+    margin: -4px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #8f94b2;
+  }
+
+  .section-hint code,
+  .setting-copy code {
+    font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(108, 112, 134, 0.22);
+    color: var(--terminal-fg, #c0caf5);
+  }
+
+  .alias-control input[type='text'] {
+    padding: 6px 10px;
+    font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    color: var(--terminal-fg, #c0caf5);
+    background: rgba(17, 17, 27, 0.65);
+    border: 1px solid var(--node-border, rgba(108, 112, 134, 0.44));
+    border-radius: 8px;
+    outline: none;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .alias-control input[type='text']:focus {
+    border-color: var(--status-pending, #89b4fa);
+    background: rgba(17, 17, 27, 0.82);
   }
 
   h3 {

@@ -20,6 +20,8 @@
   } from '@xyflow/svelte';
   import '@xyflow/svelte/dist/style.css';
   import { onMount, onDestroy } from 'svelte';
+  import { fly } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
 
   // Stores (Agent 3)
   import {
@@ -105,8 +107,10 @@
   const SIDEBAR_MIN = 280;
   const SIDEBAR_MAX = 900;
   const SIDEBAR_STORAGE_KEY = 'swarm-ui:sidebar-width';
+  const SIDEBAR_COLLAPSED_KEY = 'swarm-ui:sidebar-collapsed';
 
   let sidebarWidth = 320;
+  let sidebarCollapsed = false;
   let resizing = false;
 
   if (typeof window !== 'undefined') {
@@ -116,6 +120,22 @@
       if (Number.isFinite(parsed)) {
         sidebarWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, parsed));
       }
+    }
+    sidebarCollapsed =
+      window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+  }
+
+  // Width actually applied to the sidebar. The user-set `sidebarWidth` is
+  // preserved while collapsed so it restores to the same size on expand.
+  $: effectiveSidebarWidth = sidebarCollapsed ? 0 : sidebarWidth;
+
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(
+        SIDEBAR_COLLAPSED_KEY,
+        sidebarCollapsed ? '1' : '0',
+      );
     }
   }
 
@@ -281,6 +301,21 @@
 <div class="app-root">
   <!-- Canvas area -->
   <div class="canvas-area">
+    {#if sidebarCollapsed}
+      <button
+        type="button"
+        class="floating-expand"
+        on:click={toggleSidebar}
+        aria-label="Expand panel"
+        title="Expand panel"
+        transition:fly={{ x: 28, duration: 360, easing: cubicOut }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+      </button>
+    {/if}
+
     <SvelteFlow
       bind:nodes
       bind:edges
@@ -317,7 +352,8 @@
   <aside
     class="sidebar"
     class:resizing
-    style="width: {sidebarWidth}px"
+    class:collapsed={sidebarCollapsed}
+    style="width: {effectiveSidebarWidth}px"
   >
     <div
       class="resize-handle"
@@ -380,6 +416,17 @@
             </svg>
           </button>
         {/if}
+        <button
+          type="button"
+          class="icon-btn"
+          on:click={toggleSidebar}
+          aria-label="Collapse panel"
+          title="Collapse panel"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -412,11 +459,14 @@
     width: 100vw;
     height: 100vh;
     display: flex;
+    position: relative;
     background: transparent;
+    overflow: hidden;
   }
 
   .canvas-area {
     flex: 1;
+    width: 100%;
     position: relative;
     overflow: hidden;
   }
@@ -431,20 +481,51 @@
   }
 
   .sidebar {
-    position: relative;
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
     width: 320px;
-    border-left: 1px solid rgba(108, 112, 134, 0.25);
-    background: var(--panel-bg, rgba(30, 30, 46, 0.68));
-    backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.1);
-    -webkit-backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.1);
+    height: 100%;
+    box-sizing: border-box;
+    border-left: 1px solid rgba(108, 112, 134, 0.18);
+    background: var(--sidebar-bg, rgba(30, 30, 46, 0.20));
+    backdrop-filter: blur(var(--sidebar-blur, 40px)) saturate(1.4);
+    -webkit-backdrop-filter: blur(var(--sidebar-blur, 40px)) saturate(1.4);
     display: flex;
     flex-direction: column;
     overflow: hidden;
     flex-shrink: 0;
+    z-index: 30;
+    box-shadow: -10px 0 28px rgba(0, 0, 0, 0.18);
+    transition: width 460ms cubic-bezier(0.22, 1, 0.36, 1),
+      border-left-color 460ms ease;
   }
 
   .sidebar.resizing {
     user-select: none;
+    transition: none;
+  }
+
+  .sidebar.collapsed {
+    border-left-color: transparent;
+    pointer-events: none;
+  }
+
+  /* Inner content fade — asymmetric so it tucks under the width animation:
+     on collapse it fades out fast, on expand it fades in after a delay so
+     the panel has visibly started opening before content reappears. */
+  .tab-bar,
+  .tab-panels {
+    opacity: 1;
+    transition: opacity 200ms ease 100ms;
+  }
+
+  .sidebar.collapsed .tab-bar,
+  .sidebar.collapsed .tab-panels {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease 0ms;
   }
 
   .resize-handle {
@@ -462,6 +543,45 @@
   .resize-handle:hover,
   .sidebar.resizing .resize-handle {
     background: rgba(137, 180, 250, 0.35);
+  }
+
+  .sidebar.collapsed .resize-handle {
+    pointer-events: none;
+    display: none;
+  }
+
+  .floating-expand {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    z-index: 20;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border-radius: 8px;
+    border: 1px solid rgba(108, 112, 134, 0.35);
+    background: var(--panel-bg, rgba(30, 30, 46, 0.68));
+    backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.1);
+    -webkit-backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.1);
+    color: #a6adc8;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    transition: background 0.16s ease, color 0.16s ease,
+      border-color 0.16s ease, transform 0.16s ease;
+  }
+
+  .floating-expand:hover {
+    background: rgba(49, 50, 68, 0.92);
+    color: var(--terminal-fg, #c0caf5);
+    border-color: rgba(137, 180, 250, 0.55);
+    transform: translateX(-2px);
+  }
+
+  .floating-expand:active {
+    transform: translateX(0);
   }
 
   .tab-bar {

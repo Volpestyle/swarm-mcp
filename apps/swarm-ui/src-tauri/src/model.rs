@@ -183,6 +183,47 @@ pub struct Lock {
     pub instance_id: String,
 }
 
+/// One row from the `context` table — file-scoped notes agents leave for one
+/// another. Includes locks (`type = 'lock'`) plus findings, warnings, bugs,
+/// notes, and todos. The `Lock` shape above is kept as a thin derived view
+/// for code that only needs the lock-specific fields.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Annotation {
+    pub id: String,
+    pub scope: String,
+    pub instance_id: String,
+    pub file: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub content: String,
+    pub created_at: i64,
+}
+
+/// One row from the `events` audit log. Powers the Activity timeline.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Event {
+    pub id: i64,
+    pub scope: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub actor: Option<String>,
+    pub subject: Option<String>,
+    /// Raw JSON string from the DB. The frontend parses on demand.
+    pub payload: Option<String>,
+    pub created_at: i64,
+}
+
+/// A single non-`ui/*` row from the `kv` table — coordination state agents
+/// write to share scope-level data (turn counters, status flags, queues...).
+/// `value` is the raw stored string; the frontend pretty-prints if JSON.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KvEntry {
+    pub scope: String,
+    pub key: String,
+    pub value: String,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PtySession {
     pub id: String,
@@ -233,6 +274,17 @@ pub struct SwarmUpdate {
     pub messages: Vec<Message>,
     #[serde(default)]
     pub locks: Vec<Lock>,
+    /// All `context` rows including locks. The frontend groups by `type` to
+    /// surface findings/warnings/bugs/notes/todos alongside locks.
+    #[serde(default)]
+    pub annotations: Vec<Annotation>,
+    #[serde(default)]
+    pub kv: Vec<KvEntry>,
+    /// Last N events from the audit log — seeds the Activity timeline on
+    /// cold start. Live updates arrive via the `swarm:events:new` delta
+    /// event so we don't reship the entire ring buffer every poll.
+    #[serde(default)]
+    pub events: Vec<Event>,
     pub ui_meta: Option<Value>,
 }
 
