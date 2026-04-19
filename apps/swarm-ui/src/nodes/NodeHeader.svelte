@@ -19,6 +19,11 @@
   export let ptyId: string | null = null;
   export let launchToken: string | null = null;
   /**
+   * Optional friendly identifier set at launch time. Takes priority over the
+   * instance UUID prefix in the header label.
+   */
+  export let displayName: string | null = null;
+  /**
    * `false` while this node's instance row was UI-pre-created and the
    * child process inside the PTY hasn't yet called `swarm.register`. The
    * node is connectable (messages route via the known instance id) but
@@ -33,8 +38,8 @@
 
   // Determine the role class for badge styling
   $: roleClass = getRoleClass(role);
-  $: displayLabel = deriveDisplayLabel(instanceId, launchToken, ptyId);
-  $: truncatedCwd = truncatePath(cwd, 24);
+  $: displayLabel = deriveDisplayLabel(displayName, instanceId, launchToken, ptyId);
+  $: statusLabel = getStatusLabel(status);
   $: activeTaskCount = assignedTasks.filter(
     (t) => t.status === 'in_progress' || t.status === 'claimed' || t.status === 'open'
   ).length;
@@ -58,14 +63,26 @@
   let respawning = false;
 
   function deriveDisplayLabel(
+    name: string | null,
     instId: string | null,
     token: string | null,
     pty: string | null,
   ): string {
+    if (name) return name;
     if (instId) return instId.slice(0, 12);
     if (token) return 'Pending...';
     if (pty) return pty.slice(0, 8);
     return '—';
+  }
+
+  function getStatusLabel(s: InstanceStatus | 'pending'): string {
+    switch (s) {
+      case 'online': return 'Online';
+      case 'stale': return 'Stale';
+      case 'offline': return 'Offline';
+      case 'pending': return 'Connecting';
+      default: return 'Offline';
+    }
   }
 
   function getRoleClass(r: string): string {
@@ -77,17 +94,6 @@
     if (lower.includes('shell') || lower === '$shell') return 'shell';
     if (!r) return 'shell';
     return 'custom';
-  }
-
-  function truncatePath(path: string, maxLen: number): string {
-    if (!path) return '';
-    if (path.length <= maxLen) return path;
-    const parts = path.split('/');
-    // Show last 2 segments with ellipsis
-    if (parts.length > 2) {
-      return '.../' + parts.slice(-2).join('/');
-    }
-    return '...' + path.slice(-(maxLen - 3));
   }
 
   async function handleStop() {
@@ -123,7 +129,13 @@
 </script>
 
 <div class="node-header">
-  <span class="status-dot {status}"></span>
+  <!-- Decorative macOS-style traffic lights — mirrors the ghostty-web demo
+       chrome so the agent card reads as a terminal window at a glance. -->
+  <div class="traffic-lights" aria-hidden="true">
+    <span class="light red"></span>
+    <span class="light yellow"></span>
+    <span class="light green"></span>
+  </div>
 
   {#if role}
     <span class="role-badge {roleClass}">{role}</span>
@@ -133,8 +145,8 @@
     {displayLabel}
   </span>
 
-  {#if truncatedCwd}
-    <span class="node-cwd" title={cwd}>{truncatedCwd}</span>
+  {#if cwd}
+    <span class="node-cwd" title={cwd}>{cwd}</span>
   {/if}
 
   {#if showAdopting}
@@ -170,6 +182,13 @@
       {lockCount}
     </span>
   {/if}
+
+  <!-- Connection status on the right, matching the ghostty-web demo's
+       "● Connected" indicator. Status dot + text label together. -->
+  <div class="connection-status" title={instanceId ?? 'Pending'}>
+    <span class="connection-dot {status}"></span>
+    <span class="connection-text">{statusLabel}</span>
+  </div>
 
   <div class="node-controls">
     <button

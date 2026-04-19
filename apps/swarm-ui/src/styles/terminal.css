@@ -21,17 +21,23 @@
   --sidebar-blur: 40px;
 
   /* Terminal colors — must stay opaque; ghostty-web's canvas compositor
-     accumulates alpha paints, which ghosts prior frames on clear/selection. */
-  --terminal-bg: #181825;
-  --terminal-fg: #c0caf5;
-  --terminal-cursor: #c0caf5;
+     accumulates alpha paints, which ghosts prior frames on clear/selection.
+     Values match the ghostty-web demo (#1e1e1e / #d4d4d4). */
+  --terminal-bg: #1e1e1e;
+  --terminal-fg: #d4d4d4;
+  --terminal-cursor: #d4d4d4;
   --terminal-selection: #33467c;
 
-  /* Node chrome colors */
-  --node-bg: rgba(30, 30, 46, 0.76);
-  --node-border: rgba(108, 112, 134, 0.44);
+  /* Node chrome colors — tuned to match the ghostty-web demo window:
+     solid #1e1e1e terminal body, flat #2d2d2d title bar, #1a1a1a hairline. */
+  --node-bg: #1e1e1e;
+  --node-border: #1a1a1a;
   --node-border-selected: #89b4fa;
-  --node-header-bg: rgba(24, 24, 37, 0.82);
+  --node-header-bg: #2d2d2d;
+  --node-header-border: #1a1a1a;
+  --node-title-fg: #e5e5e5;
+  --node-status-muted: #888;
+  --node-status-muted-dot: #666;
   --surface-blur: 20px;
 
   /* Status dot colors */
@@ -62,11 +68,12 @@
   --badge-shell: #6c7086;
   --badge-custom: #f5c2e7;
 
-  /* Dimensions — defaults; actual size is driven by xyflow's NodeResizer */
+  /* Dimensions — defaults; actual size is driven by xyflow's NodeResizer.
+     12px corner radius matches the ghostty-web demo window. */
   --node-width: 800px;
   --node-min-height: 520px;
-  --node-header-height: 48px;
-  --node-border-radius: 10px;
+  --node-header-height: 44px;
+  --node-border-radius: 12px;
   --terminal-border-radius: 6px;
 }
 
@@ -99,14 +106,15 @@
   background: var(--node-bg);
   border: 1px solid var(--node-border);
   border-radius: var(--node-border-radius);
-  backdrop-filter: blur(var(--surface-blur)) saturate(1.15);
-  -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.15);
   /* overflow: hidden on the children (header + terminal-container) handles the
      rounded-corner clipping; the node itself must stay visible so NodeResizer's
      edge/corner handles don't get clipped. */
   display: flex;
   flex-direction: column;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  /* Beefy drop shadow from the ghostty-web demo — the cards need presence
+     against the xyflow canvas just like the demo's lone window does against
+     its gradient backdrop. */
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -117,7 +125,7 @@
 .terminal-node.selected {
   border-color: var(--node-border-selected);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-border-selected) 25%, transparent),
-              0 4px 12px rgba(0, 0, 0, 0.4);
+              0 20px 60px rgba(0, 0, 0, 0.55);
 }
 
 /* ---------------------------------------------------------------------------
@@ -125,122 +133,190 @@
  * --------------------------------------------------------------------------- */
 
 .node-header {
-  height: var(--node-header-height);
-  padding: 0 12px;
+  /* Flat title bar matching the ghostty-web demo — solid #2d2d2d,
+     12px 16px padding, 12px flex gap, system sans-serif.  */
+  min-height: var(--node-header-height);
+  padding: 12px 12px 12px 16px;
   background: var(--node-header-bg);
-  border-bottom: 1px solid var(--node-border);
+  border-bottom: 1px solid var(--node-header-border);
   border-radius: var(--node-border-radius) var(--node-border-radius) 0 0;
-  backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
-  -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   flex-shrink: 0;
   user-select: none;
   cursor: grab;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .node-header:active {
   cursor: grabbing;
 }
 
-/* Status indicator dot */
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+/* Selected: subtle accent tint on the flat surface — enough to tie into the
+   selected border without breaking the flat look. */
+.terminal-node.selected .node-header {
+  background: color-mix(in srgb, var(--node-border-selected) 7%, var(--node-header-bg));
+  border-bottom-color: color-mix(in srgb, var(--node-border-selected) 35%, var(--node-header-border));
+}
+
+/* macOS-style traffic lights — decorative chrome matching the ghostty-web
+   demo exactly (12px dots, 8px gap, same hex palette). Sits on the left
+   edge of the header so the card reads as a terminal window at a glance.
+   Not interactive: real stop/inspect/focus controls live in .node-controls
+   on the right. */
+.traffic-lights {
+  display: flex;
+  gap: 8px;
   flex-shrink: 0;
 }
 
-.status-dot.online {
-  background: var(--status-online);
-  box-shadow: 0 0 6px var(--status-online);
+.traffic-lights .light {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
 }
 
-.status-dot.stale {
+.traffic-lights .light.red {
+  background: #ff5f56;
+}
+
+.traffic-lights .light.yellow {
+  background: #ffbd2e;
+}
+
+.traffic-lights .light.green {
+  background: #27c93f;
+}
+
+/* Connection status on the right — matches the ghostty-web demo exactly:
+   auto-margin push, 11px muted text, 6px gap, 6px dot, green when online. */
+.connection-status {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--node-status-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.connection-text {
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+}
+
+.connection-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--node-status-muted-dot);
+  flex-shrink: 0;
+}
+
+.connection-dot.online {
+  background: #27c93f;
+}
+
+.connection-dot.stale {
   background: var(--status-stale);
-  box-shadow: 0 0 6px var(--status-stale);
 }
 
-.status-dot.offline {
-  background: var(--status-offline);
+.connection-dot.offline {
+  background: var(--node-status-muted-dot);
 }
 
-.status-dot.pending {
+.connection-dot.pending {
   background: var(--status-pending);
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
 @keyframes pulse-dot {
-  0%, 100% { opacity: 1; box-shadow: 0 0 4px var(--status-pending); }
-  50% { opacity: 0.4; box-shadow: 0 0 8px var(--status-pending); }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
-/* Role badge (colored pill) */
+/* Role badge — outlined tag with subtle tinted fill. Minimal, no uppercase. */
 .role-badge {
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   flex-shrink: 0;
+  border: 1px solid transparent;
+  line-height: 1.5;
 }
 
-.role-badge.planner { background: color-mix(in srgb, var(--badge-planner) 20%, transparent); color: var(--badge-planner); }
-.role-badge.implementer { background: color-mix(in srgb, var(--badge-implementer) 20%, transparent); color: var(--badge-implementer); }
-.role-badge.reviewer { background: color-mix(in srgb, var(--badge-reviewer) 20%, transparent); color: var(--badge-reviewer); }
-.role-badge.researcher { background: color-mix(in srgb, var(--badge-researcher) 20%, transparent); color: var(--badge-researcher); }
-.role-badge.shell { background: color-mix(in srgb, var(--badge-shell) 20%, transparent); color: var(--badge-shell); }
-.role-badge.custom { background: color-mix(in srgb, var(--badge-custom) 20%, transparent); color: var(--badge-custom); }
+.role-badge.planner      { color: var(--badge-planner);      background: color-mix(in srgb, var(--badge-planner) 7%, transparent);      border-color: color-mix(in srgb, var(--badge-planner) 28%, transparent); }
+.role-badge.implementer  { color: var(--badge-implementer);  background: color-mix(in srgb, var(--badge-implementer) 7%, transparent);  border-color: color-mix(in srgb, var(--badge-implementer) 28%, transparent); }
+.role-badge.reviewer     { color: var(--badge-reviewer);     background: color-mix(in srgb, var(--badge-reviewer) 7%, transparent);     border-color: color-mix(in srgb, var(--badge-reviewer) 28%, transparent); }
+.role-badge.researcher   { color: var(--badge-researcher);   background: color-mix(in srgb, var(--badge-researcher) 7%, transparent);   border-color: color-mix(in srgb, var(--badge-researcher) 28%, transparent); }
+.role-badge.shell        { color: var(--badge-shell);        background: color-mix(in srgb, var(--badge-shell) 10%, transparent);       border-color: color-mix(in srgb, var(--badge-shell) 32%, transparent); }
+.role-badge.custom       { color: var(--badge-custom);       background: color-mix(in srgb, var(--badge-custom) 7%, transparent);       border-color: color-mix(in srgb, var(--badge-custom) 28%, transparent); }
 
-/* Instance ID / label */
+/* Title label matching the ghostty-web demo — same sans-serif, 13px,
+   #e5e5e5, 0.3px letter-spacing. Displayname/instance ID both read cleanly
+   in the system font at this size; pure hex is rare enough that the
+   monospace trade-off isn't worth losing the demo match. */
 .node-label {
   font-size: 13px;
   font-weight: 500;
-  color: var(--terminal-fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--node-title-fg);
+  letter-spacing: 0.3px;
   white-space: nowrap;
-  flex: 1;
-  min-width: 0;
+  flex: 0 0 auto;
 }
 
-/* CWD path */
+/* CWD path — hugs the right side via auto margin so it sits next to the
+   badges/controls. Shrinks first (with ellipsis) on narrow nodes so the
+   instance label stays intact. direction:rtl + unicode-bidi:plaintext
+   truncates from the *start* of the path so the trailing segment (usually
+   the project dir) stays visible — e.g. `…ystyle/swarm-test`. */
 .node-cwd {
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: #6c7086;
+  color: var(--node-status-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 140px;
+  letter-spacing: 0.01em;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
 }
 
-/* Active task count badge */
+/* Active task count badge — outlined to match role badge */
 .task-count-badge {
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 600;
-  background: color-mix(in srgb, var(--edge-task-in-progress) 20%, transparent);
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1.55;
+  background: color-mix(in srgb, var(--edge-task-in-progress) 7%, transparent);
   color: var(--edge-task-in-progress);
+  border: 1px solid color-mix(in srgb, var(--edge-task-in-progress) 28%, transparent);
   flex-shrink: 0;
 }
 
 /* Lock badge: surfaces context.lock_acquired state at a glance so the user
-   can see who holds locks without opening the Inspector. Matches
-   .task-count-badge dimensions. */
+   can see who holds locks without opening the Inspector. */
 .lock-badge {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 1px 6px 1px 5px;
-  border-radius: 8px;
-  font-size: 10px;
-  font-weight: 600;
-  background: color-mix(in srgb, var(--status-stale) 18%, transparent);
+  padding: 0 6px 0 5px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1.55;
+  background: color-mix(in srgb, var(--status-stale) 7%, transparent);
   color: var(--status-stale);
-  border: 1px solid color-mix(in srgb, var(--status-stale) 30%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-stale) 28%, transparent);
   flex-shrink: 0;
 }
 
@@ -253,14 +329,16 @@
    sent to this node are queued in swarm.db but won't be consumed until the
    child adopts. */
 .adopting-badge {
-  padding: 1px 6px;
-  border-radius: 8px;
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  background: color-mix(in srgb, var(--status-pending) 18%, transparent);
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1.6;
+  background: color-mix(in srgb, var(--status-pending) 7%, transparent);
   color: var(--status-pending);
-  border: 1px solid color-mix(in srgb, var(--status-pending) 35%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-pending) 30%, transparent);
   flex-shrink: 0;
   animation: pulse-dot 1.8s ease-in-out infinite;
 }
@@ -269,13 +347,14 @@
 .node-controls {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   flex-shrink: 0;
+  margin-left: 2px;
 }
 
 .node-controls button {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border: none;
   background: transparent;
   color: #6c7086;
@@ -289,13 +368,18 @@
 }
 
 .node-controls button:hover {
-  background: color-mix(in srgb, var(--terminal-fg) 10%, transparent);
+  background: color-mix(in srgb, var(--terminal-fg) 8%, transparent);
   color: var(--terminal-fg);
 }
 
 .node-controls button.stop:hover {
-  background: color-mix(in srgb, var(--edge-task-failed) 15%, transparent);
+  background: color-mix(in srgb, var(--edge-task-failed) 12%, transparent);
   color: var(--edge-task-failed);
+}
+
+.node-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ---------------------------------------------------------------------------
@@ -314,6 +398,29 @@
   cursor: text;
 }
 
+.terminal-suspended {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(137, 180, 250, 0.08), transparent 55%),
+    linear-gradient(180deg, rgba(17, 17, 27, 0.92), rgba(24, 24, 37, 0.96));
+  border-radius: 0 0 var(--terminal-border-radius) var(--terminal-border-radius);
+}
+
+.terminal-suspended-chip {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--node-border-selected) 35%, transparent);
+  background: color-mix(in srgb, var(--node-border-selected) 12%, transparent);
+  color: color-mix(in srgb, var(--terminal-fg) 90%, transparent);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .terminal-container,
 .terminal-container * {
   pointer-events: auto;
@@ -323,7 +430,7 @@
    render. We deliberately do NOT force width/height on its root — forcing
    100% stretches the canvas bitmap and distorts glyphs when the container
    size and the grid size get out of sync. The ResizeObserver in
-   TerminalNode.svelte keeps the grid in step with the container. */
+   `createTerminal()` keeps the grid in step with the container. */
 
 /* xterm.js specific overrides */
 .terminal-container .xterm {

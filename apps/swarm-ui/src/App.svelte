@@ -19,6 +19,7 @@
     type NodeTypes,
   } from '@xyflow/svelte';
   import '@xyflow/svelte/dist/style.css';
+  import { invoke } from '@tauri-apps/api/core';
   import { onMount, onDestroy } from 'svelte';
   import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
@@ -31,6 +32,8 @@
     tasks,
     messages,
     locks,
+    savedLayout,
+    activeScope,
   } from './stores/swarm';
   import {
     ptySessions,
@@ -41,7 +44,7 @@
 
   // Graph builder (Agent 3)
   import { buildGraph } from './lib/graph';
-  import type { XYFlowNode, XYFlowEdge } from './lib/types';
+  import type { Position, XYFlowNode, XYFlowEdge } from './lib/types';
 
   // Custom node types (Agent 4)
   import TerminalNode from './nodes/TerminalNode.svelte';
@@ -54,6 +57,9 @@
   import Launcher from './panels/Launcher.svelte';
   import SettingsModal from './panels/SettingsModal.svelte';
   import SwarmStatus from './panels/SwarmStatus.svelte';
+  import FullscreenWorkspace from './panels/FullscreenWorkspace.svelte';
+  import { workspaceOverlayActive } from './lib/workspaceOverlay';
+  import { disposeAllTerminalSurfaces } from './lib/terminalSurface';
 
   // Styles
   import './styles/terminal.css';
@@ -91,6 +97,77 @@
   let selectedEdge: XYFlowEdge | null = null;
   let hasSelection = false;
   let showSettings = false;
+  let layoutSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // -------------------------------------------------------------------
+  // Fullscreen workspace state
+  //
+  // The graph stays mounted underneath the immersive overlay, but terminals no
+  // longer remount between node and fullscreen. `TerminalPane` now leases a
+  // persistent per-PTY surface that can move between anchors, so the app only
+  // needs to decide when graph nodes should yield their terminal body to the
+  // overlay.
+  // -------------------------------------------------------------------
+  type WorkspaceStage = 'closed' | 'opening' | 'open' | 'closing';
+
+  let workspaceStage: WorkspaceStage = 'closed';
+  let workspaceInitialNodeId: string | null = null;
+  $: workspaceActive = workspaceStage !== 'closed';
+  $: workspaceOverlayStage = workspaceStage === 'closed' ? 'opening' : workspaceStage;
+  // Keep graph terminals mounted during `opening` so the overlay can steal the
+  // already-live PTY surface directly out of the node anchor. Once the
+  // fullscreen shell is fully open we yield the graph nodes; during `closing`
+  // they remount first so the live surface can move back before the overlay
+  // fades away.
+  $: workspaceOverlayActive.set(
+    workspaceStage === 'open',
+  );
+
+  function nodeHasPty(nodeId: string | null | undefined): nodeId is string {
+    if (!nodeId) return false;
+    return (
+      nodes.find((node) => node.id === nodeId)?.data?.ptySession != null
+    );
+  }
+
+  function findPtyNodeIdFromTarget(target: EventTarget | null): string | null {
+    if (!(target instanceof Element)) return null;
+    const nodeId = target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId;
+    return nodeHasPty(nodeId) ? nodeId : null;
+  }
+
+  function resolveFullscreenTargetId(event: KeyboardEvent): string | null {
+    if (nodeHasPty(selectedNodeId)) return selectedNodeId;
+
+    return (
+      findPtyNodeIdFromTarget(event.target) ??
+      findPtyNodeIdFromTarget(document.activeElement)
+    );
+  }
+
+  function openWorkspace(nodeId: string): void {
+    if (workspaceStage !== 'closed') return;
+    workspaceInitialNodeId = nodeId;
+    workspaceStage = 'opening';
+  }
+
+  function handleWorkspaceOpen() {
+    if (workspaceStage === 'opening') {
+      workspaceStage = 'open';
+    }
+  }
+
+  function handleWorkspaceClose(
+    event: CustomEvent<{ returnNodeId: string | null }>,
+  ) {
+    if (workspaceStage === 'closing' || workspaceStage === 'closed') return;
+    workspaceStage = 'closing';
+  }
+
+  function handleWorkspaceClosed() {
+    workspaceStage = 'closed';
+    workspaceInitialNodeId = null;
+  }
 
   // Right-panel tab state. Auto-switches to 'inspect' when a node/edge is
   // selected and back to 'launch' when selection clears. Users can still
@@ -174,11 +251,16 @@
       $messages,
       $locks,
       $bindings,
+      $savedLayout,
     ),
+    $savedLayout,
   );
 
-  function applyBuild(built: { nodes: XYFlowNode[]; edges: XYFlowEdge[] }) {
-    nodes = mergeNodes(nodes, built.nodes);
+  function applyBuild(
+    built: { nodes: XYFlowNode[]; edges: XYFlowEdge[] },
+    persistedLayout: Record<string, Position>,
+  ) {
+    nodes = mergeNodes(nodes, built.nodes, persistedLayout);
     edges = mergeEdges(edges, built.edges);
   }
 
@@ -188,12 +270,20 @@
    * selected, dragging, measured, width/height) survive the rebuild. New
    * nodes use their initial grid position from buildGraph; removed ones drop.
    */
-  function mergeNodes(existing: XYFlowNode[], next: XYFlowNode[]): XYFlowNode[] {
+  function mergeNodes(
+    existing: XYFlowNode[],
+    next: XYFlowNode[],
+    persistedLayout: Record<string, Position>,
+  ): XYFlowNode[] {
     const byId = new Map(existing.map((n) => [n.id, n]));
     return next.map((fresh) => {
       const prev = byId.get(fresh.id);
       if (!prev) return fresh;
-      return { ...prev, data: fresh.data };
+      const merged = { ...prev, data: fresh.data };
+      if (persistedLayout[fresh.id]) {
+        merged.position = fresh.position;
+      }
+      return merged;
     });
   }
 
@@ -218,6 +308,7 @@
     : null;
   $: hasSelection = selectedNode !== null || selectedEdge !== null;
   $: activeTab = hasSelection ? 'inspect' : 'launch';
+  $: syncPersistedLayout($activeScope, nodes, $savedLayout);
 
   // -------------------------------------------------------------------
   // Lifecycle
@@ -228,6 +319,11 @@
   });
 
   onDestroy(() => {
+    if (layoutSaveTimer) {
+      clearTimeout(layoutSaveTimer);
+      layoutSaveTimer = null;
+    }
+    disposeAllTerminalSurfaces();
     destroySwarmStore();
     destroyPtyStore();
   });
@@ -256,6 +352,80 @@
     selectedEdgeId = null;
   }
 
+  function currentLayoutSnapshot(nodeList: XYFlowNode[]): Record<string, Position> {
+    const next: Record<string, Position> = {};
+    for (const node of nodeList) {
+      const x = node.position?.x;
+      const y = node.position?.y;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      next[node.id] = { x, y };
+    }
+    return next;
+  }
+
+  function layoutsEqual(
+    left: Record<string, Position>,
+    right: Record<string, Position>,
+  ): boolean {
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    if (leftKeys.length !== rightKeys.length) return false;
+
+    for (let i = 0; i < leftKeys.length; i += 1) {
+      const key = leftKeys[i];
+      if (key !== rightKeys[i]) return false;
+      if (left[key]?.x !== right[key]?.x) return false;
+      if (left[key]?.y !== right[key]?.y) return false;
+    }
+
+    return true;
+  }
+
+  function syncPersistedLayout(
+    scope: string | null,
+    nodeList: XYFlowNode[],
+    persistedLayout: Record<string, Position>,
+  ): void {
+    if (!scope) {
+      if (layoutSaveTimer) {
+        clearTimeout(layoutSaveTimer);
+        layoutSaveTimer = null;
+      }
+      return;
+    }
+
+    const nextLayout = currentLayoutSnapshot(nodeList);
+    if (Object.keys(nextLayout).length === 0) return;
+
+    if (layoutsEqual(nextLayout, persistedLayout)) {
+      if (layoutSaveTimer) {
+        clearTimeout(layoutSaveTimer);
+        layoutSaveTimer = null;
+      }
+      return;
+    }
+
+    if (layoutSaveTimer) clearTimeout(layoutSaveTimer);
+    layoutSaveTimer = setTimeout(() => {
+      void persistLayout(scope, nextLayout);
+      layoutSaveTimer = null;
+    }, 150);
+  }
+
+  async function persistLayout(
+    scope: string,
+    nodesById: Record<string, Position>,
+  ): Promise<void> {
+    try {
+      await invoke('ui_set_layout', {
+        scope,
+        layout: { nodes: nodesById },
+      });
+    } catch (err) {
+      console.warn('[layout] failed to persist layout:', err);
+    }
+  }
+
   function openSettings() {
     showSettings = true;
   }
@@ -265,7 +435,27 @@
   }
 
   function handleWindowKeydown(event: KeyboardEvent) {
-    if ((event.metaKey || event.ctrlKey) && event.key === ',') {
+    const meta = event.metaKey || event.ctrlKey;
+
+    if (workspaceStage === 'closed' && !event.defaultPrevented && !event.repeat && !event.isComposing) {
+      const wantsFullscreen =
+        meta &&
+        event.shiftKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'f';
+
+      if (wantsFullscreen) {
+        const nodeId = resolveFullscreenTargetId(event);
+        if (nodeId) {
+          event.preventDefault();
+          event.stopPropagation();
+          openWorkspace(nodeId);
+          return;
+        }
+      }
+    }
+
+    if (meta && event.key === ',') {
       event.preventDefault();
       showSettings = true;
       return;
@@ -296,9 +486,13 @@
   }
 </script>
 
-<svelte:window on:keydown={handleWindowKeydown} />
+<svelte:window on:keydown|capture={handleWindowKeydown} />
 
-<div class="app-root">
+  <div
+  class="app-root"
+  class:workspace-active={workspaceActive}
+  style="--sidebar-inset: {effectiveSidebarWidth}px; --sidebar-transition-duration: {resizing ? '0ms' : '460ms'};"
+>
   <!-- Canvas area -->
   <div class="canvas-area">
     {#if sidebarCollapsed}
@@ -443,6 +637,17 @@
   {#if showSettings}
     <SettingsModal on:close={closeSettings} />
   {/if}
+
+  {#if workspaceActive}
+    <FullscreenWorkspace
+      {nodes}
+      initialNodeId={workspaceInitialNodeId}
+      stage={workspaceOverlayStage}
+      on:opened={handleWorkspaceOpen}
+      on:close={handleWorkspaceClose}
+      on:closed={handleWorkspaceClosed}
+    />
+  {/if}
 </div>
 
 <style>
@@ -462,6 +667,11 @@
     position: relative;
     background: transparent;
     overflow: hidden;
+  }
+
+  .app-root.workspace-active .canvas-area,
+  .app-root.workspace-active .sidebar {
+    user-select: none;
   }
 
   .canvas-area {

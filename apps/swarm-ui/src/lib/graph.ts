@@ -153,6 +153,7 @@ function makeNode(
   const position = resolvePosition(nodeId, opts.savedLayout, opts.autoIndex);
   const label = deriveLabel(nodeType, instance, pty);
   const status = deriveStatus(nodeType, instance, pty);
+  const displayName = deriveDisplayName(instance);
 
   const data: SwarmNodeData = {
     nodeType,
@@ -163,6 +164,7 @@ function makeNode(
     locks: opts.locks,
     assignedTasks: opts.assignedTasks,
     requestedTasks: opts.requestedTasks,
+    displayName,
   };
 
   return {
@@ -170,10 +172,13 @@ function makeNode(
     type: 'terminal', // All nodes use the TerminalNode component (Agent 4)
     position,
     data,
-    // Default size; NodeResizer lets the user drag corners/edges to resize.
-    // Using `style` (instead of node.width/height) keeps xyflow from treating
-    // the size as measured-and-fixed, so the resize handles stay authoritative.
-    style: 'width: 760px; height: 620px;',
+    // Default size for freshly-created nodes. `mergeNodes` in App.svelte
+    // spreads the previous node over the freshly-built one, so NodeResizer-
+    // driven updates to width/height persist across reactive graph rebuilds.
+    // Keeping these as discrete numeric props (not a `style` string with
+    // hardcoded width/height) lets NodeResizer author the DOM size cleanly.
+    width: 760,
+    height: 620,
   };
 }
 
@@ -195,6 +200,17 @@ function deriveLabel(
     return pty.command.split('/').pop() ?? pty.command;
   }
   return nodeType;
+}
+
+function deriveDisplayName(instance: Instance | null): string | null {
+  if (!instance?.label) return null;
+  for (const token of instance.label.split(/\s+/)) {
+    if (token.startsWith('name:')) {
+      const value = token.slice('name:'.length);
+      if (value) return value;
+    }
+  }
+  return null;
 }
 
 function deriveStatus(

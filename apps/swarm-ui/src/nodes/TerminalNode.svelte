@@ -3,35 +3,22 @@
 
   XYFlow custom node component. Renders:
   - NodeHeader at top with role, status, controls
-  - ghostty-web/xterm.js terminal if PTY is present
+  - TerminalPane body when a PTY is present
   - Instance metadata card if no PTY (external instance)
-  
-  Terminal lifecycle:
-  - onMount: create terminal, subscribe to PTY data events, replay buffer
-  - ResizeObserver: detect container size changes -> pty_resize
-  - Terminal onData: user keyboard input -> writeToPty
-  - onDestroy: clean up terminal, unsubscribe from events
+
+  Fullscreen behavior is app-owned: App.svelte resolves Cmd/Ctrl+Shift+F
+  against the selected node (falling back to the focused terminal) and mounts
+  a FullscreenWorkspace overlay. This node doesn't own shortcut routing or
+  requestFullscreen itself — that would only scale the node DOM and block
+  tabs/splits.
 -->
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import { Handle, Position, NodeResizer, useSvelteFlow } from '@xyflow/svelte';
+  import { Handle, Position, NodeResizer } from '@xyflow/svelte';
   import type { SwarmNodeData } from '../lib/types';
-  import {
-    createTerminal,
-    destroyTerminal,
-    writeToTerminal,
-  } from '../lib/terminal';
-  import type { TerminalHandle } from '../lib/types';
   import { formatTimestamp } from '../lib/time';
-  import {
-    markPtyTerminalReady,
-    subscribeToPty,
-    subscribeToPtyExit,
-    writeToPty,
-    resizePty,
-    getPtyBuffer,
-  } from '../stores/pty';
+  import { workspaceOverlayActive } from '../lib/workspaceOverlay';
   import NodeHeader from './NodeHeader.svelte';
+  import TerminalPane from './TerminalPane.svelte';
   import '../styles/terminal.css';
 
   // XYFlow node props
@@ -39,16 +26,8 @@
   export let data: SwarmNodeData;
   export let selected: boolean = false;
 
-  // Terminal state
   let nodeElement: HTMLDivElement | null = null;
-  let terminalContainer: HTMLElement;
-  let terminalHandle: TerminalHandle | null = null;
-  let terminalInputUnlisten: (() => void) | null = null;
-  let dataUnlisten: (() => void) | null = null;
-  let exitUnlisten: (() => void) | null = null;
-  let exitCode: number | null = null;
-  let disposed = false;
-  const { updateNode } = useSvelteFlow();
+  let paneRef: TerminalPane | null = null;
 
   // Derived from data
   $: hasPty = data.ptySession !== null;
@@ -58,114 +37,8 @@
   $: instanceId = instance?.id ?? null;
   $: status = data.status;
   $: cwd = data.ptySession?.cwd ?? instance?.directory ?? '';
-
-  onMount(async () => {
-    if (!hasPty || !ptyId || !terminalContainer) return;
-    await initTerminal();
-  });
-
-  onDestroy(() => {
-    cleanupTerminal();
-  });
-
-  function snapNodeWidthToTerminalGrid(): void {
-    if (!nodeElement || !terminalContainer) return;
-
-    const canvas = terminalContainer.querySelector('canvas');
-    if (!(canvas instanceof HTMLCanvasElement)) return;
-
-    const containerStyle = window.getComputedStyle(terminalContainer);
-    const horizontalPadding =
-      (Number.parseFloat(containerStyle.paddingLeft) || 0) +
-      (Number.parseFloat(containerStyle.paddingRight) || 0);
-    const canvasWidth = canvas.getBoundingClientRect().width;
-    const remainder =
-      terminalContainer.clientWidth - horizontalPadding - canvasWidth;
-
-    if (!Number.isFinite(remainder) || remainder < 2) return;
-
-    const currentWidth = nodeElement.getBoundingClientRect().width;
-    const nextWidth = Math.round(currentWidth - remainder);
-    if (nextWidth < 360 || Math.abs(nextWidth - currentWidth) < 1) return;
-
-    updateNode(id, { width: nextWidth });
-  }
-
-  async function initTerminal() {
-    if (!terminalContainer || !ptyId) return;
-
-    const handle = await createTerminal(terminalContainer, {
-      fontSize: 13,
-    });
-
-    if (disposed) {
-      handle.dispose();
-      return;
-    }
-
-    terminalHandle = handle;
-    const boundPtyId = ptyId;
-
-    // Wire user keyboard input -> PTY stdin
-    const encoder = new TextEncoder();
-    terminalInputUnlisten = handle.onData((input: string) => {
-      void writeToPty(boundPtyId, encoder.encode(input));
-    });
-
-    // Replay ring-buffered output so reconnects/remounts keep scrollback
-    try {
-      const buffer = await getPtyBuffer(boundPtyId);
-      if (!disposed && buffer.length > 0) {
-        writeToTerminal(handle, buffer);
-      }
-    } catch (err) {
-      console.debug('[TerminalNode] buffer replay skipped:', err);
-    }
-
-    // Subscribe to live PTY output
-    try {
-      dataUnlisten = await subscribeToPty(boundPtyId, (bytes) => {
-        if (terminalHandle) writeToTerminal(terminalHandle, bytes);
-      });
-    } catch (err) {
-      console.error('[TerminalNode] failed to subscribe to PTY data:', err);
-    }
-
-    try {
-      exitUnlisten = await subscribeToPtyExit(boundPtyId, (code) => {
-        exitCode = code;
-      });
-    } catch (err) {
-      console.error('[TerminalNode] failed to subscribe to PTY exit:', err);
-    }
-
-    // ghostty-web's FitAddon (loaded inside createTerminal) observes the
-    // container and resizes the grid using the renderer's real charWidth /
-    // charHeight. We just forward the resulting size to the PTY.
-    handle.onResize(({ cols, rows }) => {
-      void resizePty(boundPtyId, cols, rows);
-    });
-
-    try {
-      const { cols, rows } = handle.getSize();
-      if (cols > 0 && rows > 0) {
-        await resizePty(boundPtyId, cols, rows);
-      }
-    } catch (err) {
-      console.debug('[TerminalNode] initial PTY resize skipped:', err);
-    } finally {
-      markPtyTerminalReady(boundPtyId);
-      requestAnimationFrame(() => {
-        snapNodeWidthToTerminalGrid();
-      });
-    }
-  }
-
-  function handleResizeEnd() {
-    requestAnimationFrame(() => {
-      snapNodeWidthToTerminalGrid();
-    });
-  }
+  $: displayName = data.displayName ?? null;
+  $: workspaceActive = $workspaceOverlayActive;
 
   function handleInspect() {
     nodeElement?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -173,11 +46,7 @@
 
   function handleFocus() {
     handleInspect();
-
-    const focusTarget = terminalContainer?.querySelector(
-      'textarea, .xterm-helper-textarea, [tabindex]'
-    ) as HTMLElement | null;
-    focusTarget?.focus();
+    paneRef?.focus();
   }
 
   function sideToPosition(side: string): Position {
@@ -187,26 +56,6 @@
       case 'bottom': return Position.Bottom;
       case 'left': return Position.Left;
       default: return Position.Right;
-    }
-  }
-
-  function cleanupTerminal() {
-    disposed = true;
-    if (terminalInputUnlisten) {
-      terminalInputUnlisten();
-      terminalInputUnlisten = null;
-    }
-    if (dataUnlisten) {
-      dataUnlisten();
-      dataUnlisten = null;
-    }
-    if (exitUnlisten) {
-      exitUnlisten();
-      exitUnlisten = null;
-    }
-    if (terminalHandle) {
-      destroyTerminal(terminalHandle);
-      terminalHandle = null;
     }
   }
 </script>
@@ -220,7 +69,6 @@
     isVisible={selected}
     lineClass="resize-line"
     handleClass="resize-handle"
-    onResizeEnd={handleResizeEnd}
   />
 
   <!-- Port handles on all four sides. The adaptive edge router picks
@@ -249,6 +97,7 @@
     {instanceId}
     {status}
     {cwd}
+    {displayName}
     nodeType={data.nodeType}
     assignedTasks={data.assignedTasks}
     locks={data.locks}
@@ -259,18 +108,14 @@
     on:focus={handleFocus}
   />
 
-  {#if hasPty}
-    <!-- Terminal view: nodrag/nopan/nowheel tell XYFlow to leave mouse/scroll
-         events alone so ghostty can handle clicks, selection, and scrollback -->
-    <div
-      class="terminal-container nodrag nopan nowheel"
-      bind:this={terminalContainer}
-    >
-      {#if exitCode !== null}
-        <div class="exit-overlay">
-          Process exited with code {exitCode}
-        </div>
-      {/if}
+  {#if hasPty && ptyId && !workspaceActive}
+    <TerminalPane
+      bind:this={paneRef}
+      {ptyId}
+    />
+  {:else if hasPty}
+    <div class="terminal-suspended">
+      <span class="terminal-suspended-chip">Immersive Workspace Active</span>
     </div>
   {:else if instance}
     <!-- Instance metadata card (no local PTY) -->
@@ -335,19 +180,3 @@
   {/if}
 
 </div>
-
-<style>
-  .exit-overlay {
-    position: absolute;
-    bottom: 8px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(0, 0, 0, 0.75);
-    color: var(--edge-task-cancelled, #6c7086);
-    padding: 4px 12px;
-    border-radius: 4px;
-    font-size: 11px;
-    pointer-events: none;
-    z-index: 5;
-  }
-</style>

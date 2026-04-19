@@ -253,6 +253,12 @@ export type SwarmNodeData = Record<string, unknown> & {
   assignedTasks: Task[];
   /** Tasks requested by this instance */
   requestedTasks: Task[];
+  /**
+   * Optional human-friendly identifier extracted from the swarm label's
+   * `name:<value>` token. When set, the node header shows this in place of
+   * the instance UUID prefix.
+   */
+  displayName: string | null;
 };
 
 /**
@@ -321,7 +327,7 @@ export interface TerminalTheme {
 export interface TerminalHandle {
   id: string;
   write: (data: Uint8Array | string) => void;
-  resize: (cols: number, rows: number) => void;
+  refit: () => void;
   getSize: () => { cols: number; rows: number };
   focus: () => void;
   dispose: () => void;

@@ -13,19 +13,21 @@
 import { init, Terminal } from 'ghostty-web';
 import type { TerminalHandle, TerminalOptions, TerminalTheme } from './types';
 
-const DEFAULT_FONT_SIZE = 13;
-const DEFAULT_FONT_FAMILY = "'JetBrains Mono', Menlo, Monaco, 'Cascadia Code', monospace";
+const DEFAULT_FONT_SIZE = 14;
+const DEFAULT_FONT_FAMILY = 'Monaco, Menlo, "Courier New", monospace';
 
-// Catppuccin Mocha. Background must be fully opaque — ghostty-web's canvas
-// renderer composites bg paints without clearing first, so any alpha < 1 causes
-// previous frames to ghost through (visible on `clear`, selection drops, etc).
+// Mix: ghostty-web demo bg/fg (#1e1e1e / #d4d4d4) over Catppuccin Mocha ANSI
+// palette — chrome matches the demo exactly while programs keep the richer
+// 16-color palette for syntax highlighting. Background must stay opaque:
+// ghostty-web's canvas compositor accumulates alpha paints, so values with
+// alpha < 1 ghost prior frames through on clear/selection.
 const DEFAULT_THEME: Required<TerminalTheme> = {
-  background: '#181825',
-  foreground: '#cdd6f4',
-  cursor: '#f5e0dc',
-  cursorAccent: '#1e1e2e',
+  background: '#1e1e1e',
+  foreground: '#d4d4d4',
+  cursor: '#d4d4d4',
+  cursorAccent: '#1e1e1e',
   selectionBackground: '#45475a',
-  selectionForeground: '#cdd6f4',
+  selectionForeground: '#d4d4d4',
   black: '#45475a',
   red: '#f38ba8',
   green: '#a6e3a1',
@@ -141,7 +143,7 @@ export async function createTerminal(
   return {
     id,
     write: (data) => term.write(data),
-    resize: () => fitToContainer(),
+    refit: () => fitToContainer(),
     getSize: () => ({ cols: term.cols, rows: term.rows }),
     focus: () => term.focus(),
     dispose: () => {
@@ -174,12 +176,8 @@ export function writeToTerminal(
   handle.write(data);
 }
 
-export function resizeTerminal(
-  handle: TerminalHandle,
-  cols: number,
-  rows: number,
-): void {
-  handle.resize(cols, rows);
+export function refitTerminal(handle: TerminalHandle): void {
+  handle.refit();
 }
 
 interface ResolvedOptions {
