@@ -1,0 +1,5 @@
+{
+  "class": "rate_limited",
+  "message": "too many requests",
+  "retry_after": 30
+}

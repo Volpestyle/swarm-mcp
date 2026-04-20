@@ -52,6 +52,7 @@
 
   // Custom node types (Agent 4)
   import TerminalNode from './nodes/TerminalNode.svelte';
+  import ViewportFocus from './nodes/ViewportFocus.svelte';
 
   // Custom edge types (Agent 4)
   import ConnectionEdge from './edges/ConnectionEdge.svelte';
@@ -59,15 +60,40 @@
   // Panels (Agent 4)
   import Inspector from './panels/Inspector.svelte';
   import Launcher from './panels/Launcher.svelte';
+  import MobileAccessModal from './panels/MobileAccessModal.svelte';
   import SettingsModal from './panels/SettingsModal.svelte';
   import SwarmStatus from './panels/SwarmStatus.svelte';
   import FullscreenWorkspace from './panels/FullscreenWorkspace.svelte';
   import CloseConfirmModal from './panels/CloseConfirmModal.svelte';
+  import { mergeEdges, mergeNodes } from './lib/app/graphState';
+  import { createLayoutPersistence } from './lib/app/layoutPersistence';
+  import {
+    applyEdgeSelection,
+    applyNodeSelection,
+    findNodeById,
+    orderedSelectableNodeIds,
+    resolveNodeTargetId,
+    resolveClosableNodeId,
+    resolveFullscreenTargetId,
+  } from './lib/app/selection';
+  import {
+    loadSidebarState,
+    persistSidebarCollapsed,
+    persistSidebarWidth,
+    resolveSidebarWidth,
+  } from './lib/app/sidebar';
   import { workspaceOverlayActive } from './lib/workspaceOverlay';
   import {
     disposeAllTerminalSurfaces,
     getTerminalSurface,
   } from './lib/terminalSurface';
+  import {
+    compactNodeIds,
+    pruneCompactNodeIds,
+    registerNodeWindowActions,
+    setCompactNodeScope,
+    toggleCompactNode,
+  } from './lib/app/nodeWindowState';
 
   // Styles
   import './styles/terminal.css';
@@ -104,11 +130,18 @@
   let selectedNode: XYFlowNode | null = null;
   let selectedEdge: XYFlowEdge | null = null;
   let hasSelection = false;
+  let showMobileAccess = false;
   let showSettings = false;
   let showCloseConfirm = false;
-  let layoutSaveTimer: ReturnType<typeof setTimeout> | null = null;
   let closeRequestUnlisten: UnlistenFn | null = null;
   let appWindow: ReturnType<typeof getCurrentWindow> | null = null;
+  let compactNodeIdsUnsubscribe: (() => void) | null = null;
+  let unregisterNodeWindowActions: (() => void) | null = null;
+  const layoutPersistence = createLayoutPersistence();
+  const COMPACT_NODE_WIDTH = 360;
+  const COMPACT_NODE_HEIGHT = 148;
+  const compactRestoreSizes = new Map<string, { width?: number; height?: number }>();
+  let compactNodeIdSet = new Set<string>();
 
   // -------------------------------------------------------------------
   // Fullscreen workspace state
@@ -139,45 +172,12 @@
     workspaceStage === 'open',
   );
 
-  function nodeHasPty(nodeId: string | null | undefined): nodeId is string {
-    if (!nodeId) return false;
-    return (
-      nodes.find((node) => node.id === nodeId)?.data?.ptySession != null
-    );
-  }
-
-  function findPtyNodeIdFromTarget(target: EventTarget | null): string | null {
-    if (!(target instanceof Element)) return null;
-    const nodeId = target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId;
-    return nodeHasPty(nodeId) ? nodeId : null;
-  }
-
-  function findNodeIdFromTarget(target: EventTarget | null): string | null {
-    if (!(target instanceof Element)) return null;
-    return target.closest<HTMLElement>('[data-node-id]')?.dataset.nodeId ?? null;
-  }
-
-  function findNodeById(nodeId: string | null | undefined): XYFlowNode | null {
-    if (!nodeId) return null;
-    return nodes.find((node) => node.id === nodeId) ?? null;
-  }
-
   function syncNodeSelection(selectedId: string | null): void {
-    nodes = nodes.map((node) => {
-      const nextSelected = selectedId !== null && node.id === selectedId;
-      return node.selected === nextSelected
-        ? node
-        : { ...node, selected: nextSelected };
-    });
+    nodes = applyNodeSelection(nodes, selectedId);
   }
 
   function syncEdgeSelection(selectedId: string | null): void {
-    edges = edges.map((edge) => {
-      const nextSelected = selectedId !== null && edge.id === selectedId;
-      return edge.selected === nextSelected
-        ? edge
-        : { ...edge, selected: nextSelected };
-    });
+    edges = applyEdgeSelection(edges, selectedId);
   }
 
   function setSelectedNode(nodeId: string | null): void {
@@ -201,25 +201,8 @@
     syncEdgeSelection(null);
   }
 
-  function orderedSelectableNodeIds(): string[] {
-    return nodes
-      .slice()
-      .sort((left, right) => {
-        const leftY = left.position?.y ?? 0;
-        const rightY = right.position?.y ?? 0;
-        if (leftY !== rightY) return leftY - rightY;
-
-        const leftX = left.position?.x ?? 0;
-        const rightX = right.position?.x ?? 0;
-        if (leftX !== rightX) return leftX - rightX;
-
-        return left.id.localeCompare(right.id);
-      })
-      .map((node) => node.id);
-  }
-
   function cycleSelectedNode(delta: number): void {
-    const ids = orderedSelectableNodeIds();
+    const ids = orderedSelectableNodeIds(nodes);
     if (ids.length === 0) return;
 
     const currentIndex = selectedNodeId ? ids.indexOf(selectedNodeId) : -1;
@@ -237,35 +220,15 @@
   }
 
   async function focusNodeTerminal(nodeId: string | null): Promise<void> {
-    const ptyId = findNodeById(nodeId)?.data?.ptySession?.id;
+    const ptyId = findNodeById(nodes, nodeId)?.data?.ptySession?.id;
     if (!ptyId) return;
 
     await tick();
     getTerminalSurface(ptyId).focus();
   }
 
-  function nodeCanBeClosed(node: XYFlowNode | null): boolean {
-    if (!node) return false;
-    const data = node.data;
-    if (data?.ptySession?.id) return true;
-    return (
-      data?.nodeType === 'instance' &&
-      (data?.instance?.status === 'offline' || data?.instance?.status === 'stale')
-    );
-  }
-
-  function resolveClosableNodeId(event: KeyboardEvent): string | null {
-    const fromTarget =
-      findNodeIdFromTarget(event.target) ??
-      findNodeIdFromTarget(document.activeElement);
-    if (nodeCanBeClosed(findNodeById(fromTarget))) return fromTarget;
-
-    if (nodeCanBeClosed(findNodeById(selectedNodeId))) return selectedNodeId;
-    return null;
-  }
-
   async function closeNodeById(nodeId: string): Promise<boolean> {
-    const node = findNodeById(nodeId);
+    const node = findNodeById(nodes, nodeId);
     if (!node) return false;
 
     try {
@@ -291,19 +254,70 @@
     return false;
   }
 
-  function resolveFullscreenTargetId(event: KeyboardEvent): string | null {
-    if (nodeHasPty(selectedNodeId)) return selectedNodeId;
-
-    return (
-      findPtyNodeIdFromTarget(event.target) ??
-      findPtyNodeIdFromTarget(document.activeElement)
-    );
-  }
-
   function openWorkspace(nodeId: string): void {
     if (workspaceStage !== 'closed') return;
     workspaceInitialNodeId = nodeId;
     workspaceStage = 'opening';
+  }
+
+  function applyCompactNodeGeometry(targetIds: Set<string> = compactNodeIdSet): void {
+    if (nodes.length === 0) {
+      compactRestoreSizes.clear();
+      return;
+    }
+
+    const liveNodeIds = new Set(nodes.map((node) => node.id));
+    for (const nodeId of compactRestoreSizes.keys()) {
+      if (!liveNodeIds.has(nodeId)) {
+        compactRestoreSizes.delete(nodeId);
+      }
+    }
+
+    let changed = false;
+    const nextNodes = nodes.map((node) => {
+      const isCompact = targetIds.has(node.id);
+      if (isCompact) {
+        if (!compactRestoreSizes.has(node.id)) {
+          compactRestoreSizes.set(node.id, {
+            width: node.width,
+            height: node.height,
+          });
+        }
+
+        if (node.width === COMPACT_NODE_WIDTH && node.height === COMPACT_NODE_HEIGHT) {
+          return node;
+        }
+
+        changed = true;
+        return {
+          ...node,
+          width: COMPACT_NODE_WIDTH,
+          height: COMPACT_NODE_HEIGHT,
+        };
+      }
+
+      const restore = compactRestoreSizes.get(node.id);
+      if (!restore) return node;
+
+      compactRestoreSizes.delete(node.id);
+      const nextWidth = restore.width ?? node.width;
+      const nextHeight = restore.height ?? node.height;
+
+      if (node.width === nextWidth && node.height === nextHeight) {
+        return node;
+      }
+
+      changed = true;
+      return {
+        ...node,
+        width: nextWidth,
+        height: nextHeight,
+      };
+    });
+
+    if (changed) {
+      nodes = nextNodes;
+    }
   }
 
   function handleWorkspaceOpen() {
@@ -345,26 +359,10 @@
   // clamped and persisted to localStorage so it survives reloads.
   // -------------------------------------------------------------------
 
-  const SIDEBAR_MIN = 280;
-  const SIDEBAR_MAX = 900;
-  const SIDEBAR_STORAGE_KEY = 'swarm-ui:sidebar-width';
-  const SIDEBAR_COLLAPSED_KEY = 'swarm-ui:sidebar-collapsed';
-
-  let sidebarWidth = 320;
-  let sidebarCollapsed = false;
+  const initialSidebarState = loadSidebarState();
+  let sidebarWidth = initialSidebarState.width;
+  let sidebarCollapsed = initialSidebarState.collapsed;
   let resizing = false;
-
-  if (typeof window !== 'undefined') {
-    const saved = window.localStorage.getItem(SIDEBAR_STORAGE_KEY);
-    if (saved) {
-      const parsed = Number.parseInt(saved, 10);
-      if (Number.isFinite(parsed)) {
-        sidebarWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, parsed));
-      }
-    }
-    sidebarCollapsed =
-      window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
-  }
 
   // Width actually applied to the sidebar. The user-set `sidebarWidth` is
   // preserved while collapsed so it restores to the same size on expand.
@@ -372,12 +370,7 @@
 
   function toggleSidebar() {
     sidebarCollapsed = !sidebarCollapsed;
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(
-        SIDEBAR_COLLAPSED_KEY,
-        sidebarCollapsed ? '1' : '0',
-      );
-    }
+    persistSidebarCollapsed(sidebarCollapsed);
   }
 
   function startSidebarResize(event: PointerEvent) {
@@ -389,8 +382,7 @@
 
   function onSidebarResize(event: PointerEvent) {
     if (!resizing) return;
-    const next = window.innerWidth - event.clientX;
-    sidebarWidth = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, next));
+    sidebarWidth = resolveSidebarWidth(window.innerWidth, event.clientX);
   }
 
   function endSidebarResize(event: PointerEvent) {
@@ -400,7 +392,7 @@
     if (target.hasPointerCapture(event.pointerId)) {
       target.releasePointerCapture(event.pointerId);
     }
-    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(Math.round(sidebarWidth)));
+    persistSidebarWidth(sidebarWidth);
   }
 
   // Reactive graph rebuild when any swarm store changes. The merge itself
@@ -425,42 +417,8 @@
     persistedLayout: Record<string, Position>,
   ) {
     nodes = mergeNodes(nodes, built.nodes, persistedLayout);
+    applyCompactNodeGeometry();
     edges = mergeEdges(edges, built.edges);
-  }
-
-  /**
-   * For each freshly-built node that already exists by id, overlay the new
-   * `data` on top of the previous entry so XYFlow-owned fields (position,
-   * selected, dragging, measured, width/height) survive the rebuild. New
-   * nodes use their initial grid position from buildGraph; removed ones drop.
-   */
-  function mergeNodes(
-    existing: XYFlowNode[],
-    next: XYFlowNode[],
-    persistedLayout: Record<string, Position>,
-  ): XYFlowNode[] {
-    const byId = new Map(existing.map((n) => [n.id, n]));
-    return next.map((fresh) => {
-      const prev = byId.get(fresh.id);
-      if (!prev) return fresh;
-      const merged = { ...prev, data: fresh.data };
-      if (persistedLayout[fresh.id]) {
-        merged.position = fresh.position;
-      }
-      return merged;
-    });
-  }
-
-  /** Preserve `selected` on edges; everything else is derived from state. */
-  function mergeEdges(existing: XYFlowEdge[], next: XYFlowEdge[]): XYFlowEdge[] {
-    const byId = new Map(existing.map((e) => [e.id, e]));
-    return next.map((fresh) => {
-      const prev = byId.get(fresh.id);
-      if (!prev) return fresh;
-      return prev.selected !== undefined
-        ? { ...fresh, selected: prev.selected }
-        : fresh;
-    });
   }
 
   // Look up selected node/edge objects for the inspector
@@ -472,7 +430,9 @@
     : null;
   $: hasSelection = selectedNode !== null || selectedEdge !== null;
   $: activeTab = hasSelection ? 'inspect' : 'launch';
-  $: syncPersistedLayout($activeScope, nodes, $savedLayout);
+  $: layoutPersistence.sync($activeScope, nodes, $savedLayout, persistLayout);
+  $: setCompactNodeScope($activeScope);
+  $: pruneCompactNodeIds(nodes.map((node) => node.id));
 
   // -------------------------------------------------------------------
   // Lifecycle
@@ -484,6 +444,13 @@
       event.preventDefault();
       requestAppClose();
     });
+    compactNodeIdsUnsubscribe = compactNodeIds.subscribe((value) => {
+      compactNodeIdSet = value;
+      applyCompactNodeGeometry(value);
+    });
+    unregisterNodeWindowActions = registerNodeWindowActions({
+      openWorkspace,
+    });
 
     await Promise.all([initSwarmStore(), initPtyStore()]);
   });
@@ -491,10 +458,11 @@
   onDestroy(() => {
     closeRequestUnlisten?.();
     closeRequestUnlisten = null;
-    if (layoutSaveTimer) {
-      clearTimeout(layoutSaveTimer);
-      layoutSaveTimer = null;
-    }
+    compactNodeIdsUnsubscribe?.();
+    compactNodeIdsUnsubscribe = null;
+    unregisterNodeWindowActions?.();
+    unregisterNodeWindowActions = null;
+    layoutPersistence.clear();
     disposeAllTerminalSurfaces();
     destroySwarmStore();
     destroyPtyStore();
@@ -520,66 +488,6 @@
     clearSelection();
   }
 
-  function currentLayoutSnapshot(nodeList: XYFlowNode[]): Record<string, Position> {
-    const next: Record<string, Position> = {};
-    for (const node of nodeList) {
-      const x = node.position?.x;
-      const y = node.position?.y;
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      next[node.id] = { x, y };
-    }
-    return next;
-  }
-
-  function layoutsEqual(
-    left: Record<string, Position>,
-    right: Record<string, Position>,
-  ): boolean {
-    const leftKeys = Object.keys(left).sort();
-    const rightKeys = Object.keys(right).sort();
-    if (leftKeys.length !== rightKeys.length) return false;
-
-    for (let i = 0; i < leftKeys.length; i += 1) {
-      const key = leftKeys[i];
-      if (key !== rightKeys[i]) return false;
-      if (left[key]?.x !== right[key]?.x) return false;
-      if (left[key]?.y !== right[key]?.y) return false;
-    }
-
-    return true;
-  }
-
-  function syncPersistedLayout(
-    scope: string | null,
-    nodeList: XYFlowNode[],
-    persistedLayout: Record<string, Position>,
-  ): void {
-    if (!scope) {
-      if (layoutSaveTimer) {
-        clearTimeout(layoutSaveTimer);
-        layoutSaveTimer = null;
-      }
-      return;
-    }
-
-    const nextLayout = currentLayoutSnapshot(nodeList);
-    if (Object.keys(nextLayout).length === 0) return;
-
-    if (layoutsEqual(nextLayout, persistedLayout)) {
-      if (layoutSaveTimer) {
-        clearTimeout(layoutSaveTimer);
-        layoutSaveTimer = null;
-      }
-      return;
-    }
-
-    if (layoutSaveTimer) clearTimeout(layoutSaveTimer);
-    layoutSaveTimer = setTimeout(() => {
-      void persistLayout(scope, nextLayout);
-      layoutSaveTimer = null;
-    }, 150);
-  }
-
   async function persistLayout(
     scope: string,
     nodesById: Record<string, Position>,
@@ -595,11 +503,21 @@
   }
 
   function openSettings() {
+    showMobileAccess = false;
     showSettings = true;
   }
 
   function closeSettings() {
     showSettings = false;
+  }
+
+  function openMobileAccess() {
+    showSettings = false;
+    showMobileAccess = true;
+  }
+
+  function closeMobileAccess() {
+    showMobileAccess = false;
   }
 
   async function triggerLaunchShortcut(): Promise<void> {
@@ -633,6 +551,7 @@
     if (showCloseConfirm) return;
 
     const meta = event.metaKey || event.ctrlKey;
+    const overlayOpen = showSettings || showMobileAccess;
 
     if (!event.defaultPrevented && !event.repeat && !event.isComposing) {
       const wantsLaunch =
@@ -641,7 +560,7 @@
         !event.altKey &&
         event.key.toLowerCase() === 'n';
 
-      if (wantsLaunch && !showSettings) {
+      if (wantsLaunch && !overlayOpen) {
         event.preventDefault();
         event.stopPropagation();
         void triggerLaunchShortcut();
@@ -655,7 +574,9 @@
         event.key.toLowerCase() === 'w';
 
       if (wantsClose && workspaceStage === 'closed') {
-        const nodeId = showSettings ? null : resolveClosableNodeId(event);
+        const nodeId = overlayOpen
+          ? null
+          : resolveClosableNodeId(event, nodes, selectedNodeId);
         event.preventDefault();
         event.stopPropagation();
         if (nodeId) {
@@ -673,7 +594,7 @@
           !event.altKey &&
           (event.key === ']' || event.key === '}' || event.code === 'BracketRight');
 
-        if (wantsCycleNext && !showSettings) {
+        if (wantsCycleNext && !overlayOpen) {
           event.preventDefault();
           event.stopPropagation();
           cycleSelectedNode(+1);
@@ -686,11 +607,27 @@
           !event.altKey &&
           (event.key === '[' || event.key === '{' || event.code === 'BracketLeft');
 
-        if (wantsCyclePrevious && !showSettings) {
+        if (wantsCyclePrevious && !overlayOpen) {
           event.preventDefault();
           event.stopPropagation();
           cycleSelectedNode(-1);
           return;
+        }
+
+        const wantsCompact =
+          meta &&
+          event.shiftKey &&
+          !event.altKey &&
+          event.key.toLowerCase() === 'm';
+
+        if (wantsCompact && !overlayOpen) {
+          const nodeId = resolveNodeTargetId(event, selectedNodeId);
+          if (nodeId) {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleCompactNode(nodeId);
+            return;
+          }
         }
 
         const wantsFullscreen =
@@ -700,7 +637,11 @@
           event.key.toLowerCase() === 'f';
 
         if (wantsFullscreen) {
-          const nodeId = resolveFullscreenTargetId(event);
+          const nodeId = resolveFullscreenTargetId(
+            event,
+            nodes,
+            selectedNodeId,
+          );
           if (nodeId) {
             event.preventDefault();
             event.stopPropagation();
@@ -713,14 +654,11 @@
 
     if (meta && event.key === ',') {
       event.preventDefault();
+      showMobileAccess = false;
       showSettings = true;
       return;
     }
 
-    if (event.key === 'Escape' && showSettings) {
-      event.preventDefault();
-      showSettings = false;
-    }
   }
 
   function miniMapNodeColor(node: { data?: { status?: string } }): string {
@@ -798,6 +736,7 @@
         maskColor="rgba(0, 0, 0, 0.7)"
         style="background: var(--node-header-bg); border: 1px solid var(--node-border); border-radius: 6px;"
       />
+      <ViewportFocus />
     </SvelteFlow>
 
     <!-- Status bar overlays the canvas bottom-center -->
@@ -846,6 +785,18 @@
       </div>
       <div class="tab-actions">
         {#if activeTab === 'launch'}
+          <button
+            type="button"
+            class="icon-btn"
+            on:click={openMobileAccess}
+            aria-label="Mobile Access"
+            title="Mobile Access"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="7" y="2.5" width="10" height="19" rx="2.5"/>
+              <path d="M11 18.5h2"/>
+            </svg>
+          </button>
           <button
             type="button"
             class="icon-btn"
@@ -898,6 +849,10 @@
 
   {#if showSettings}
     <SettingsModal on:close={closeSettings} />
+  {/if}
+
+  {#if showMobileAccess}
+    <MobileAccessModal on:close={closeMobileAccess} />
   {/if}
 
   {#if showCloseConfirm}

@@ -75,6 +75,16 @@ impl Binder {
         }
     }
 
+    pub fn replace_resolved(&self, resolved: Vec<(String, String)>) -> Result<(), String> {
+        let mut inner = self
+            .inner
+            .write()
+            .map_err(|_| "binder lock poisoned".to_owned())?;
+        inner.resolved.clear();
+        inner.resolved.extend(resolved);
+        Ok(())
+    }
+
     /// Attempts to match pending launch tokens against instance labels.
     ///
     /// Returns an empty list if the lock is poisoned. This is called from an

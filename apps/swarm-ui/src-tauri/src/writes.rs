@@ -18,12 +18,28 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
-    model::{GraphPosition, SavedLayout, INSTANCE_STALE_AFTER_SECS},
+    model::{GraphPosition, INSTANCE_STALE_AFTER_SECS, SavedLayout},
     swarm::swarm_db_path,
 };
 
 const PLANNER_OWNER_KEY: &str = "owner/planner";
 const UI_LAYOUT_KEY: &str = "ui/layout";
+const SWARM_DB_BOOTSTRAP_SQL: &str = include_str!("../../../../sql/swarm_db_bootstrap.sql");
+const SWARM_DB_FINALIZE_SQL: &str = include_str!("../../../../sql/swarm_db_finalize.sql");
+const COLUMN_MIGRATIONS: &[(&str, &str)] = &[
+    ("instances", "scope TEXT NOT NULL DEFAULT ''"),
+    ("instances", "root TEXT NOT NULL DEFAULT ''"),
+    ("instances", "file_root TEXT NOT NULL DEFAULT ''"),
+    ("instances", "adopted INTEGER NOT NULL DEFAULT 1"),
+    ("messages", "scope TEXT NOT NULL DEFAULT ''"),
+    ("tasks", "scope TEXT NOT NULL DEFAULT ''"),
+    ("tasks", "changed_at INTEGER NOT NULL DEFAULT 0"),
+    ("tasks", "priority INTEGER NOT NULL DEFAULT 0"),
+    ("tasks", "depends_on TEXT"),
+    ("tasks", "idempotency_key TEXT"),
+    ("tasks", "parent_task_id TEXT"),
+    ("context", "scope TEXT NOT NULL DEFAULT ''"),
+];
 
 fn now_secs() -> i64 {
     let secs = std::time::SystemTime::now()
@@ -121,6 +137,38 @@ fn add_column_if_missing(conn: &Connection, table: &str, spec: &str) -> Result<(
 
     conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {spec}"), [])
         .map_err(|err| format!("failed to add {table}.{name}: {err}"))?;
+    Ok(())
+}
+
+fn rebuild_kv_table(conn: &Connection) -> Result<(), String> {
+    if !table_exists(conn, "kv")? || column_exists(conn, "kv", "scope")? {
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE kv_next (
+          scope TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          PRIMARY KEY (scope, key)
+        );
+        INSERT INTO kv_next (scope, key, value, updated_at)
+        SELECT '', key, value, updated_at
+        FROM kv;
+        DROP TABLE kv;
+        ALTER TABLE kv_next RENAME TO kv;
+        "#,
+    )
+    .map_err(|err| format!("failed to rebuild kv table: {err}"))?;
+    Ok(())
+}
+
+fn ensure_columns(conn: &Connection) -> Result<(), String> {
+    for (table, spec) in COLUMN_MIGRATIONS {
+        add_column_if_missing(conn, table, spec)?;
+    }
     Ok(())
 }
 
@@ -338,7 +386,10 @@ fn active_planner(
     Ok(row.filter(|(_, label)| has_role(label.as_deref(), "planner")))
 }
 
-fn next_planner(conn: &Connection, scope: &str) -> Result<Option<(String, Option<String>)>, String> {
+fn next_planner(
+    conn: &Connection,
+    scope: &str,
+) -> Result<Option<(String, Option<String>)>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, label FROM instances WHERE scope = ? ORDER BY registered_at ASC, id ASC",
@@ -438,189 +489,14 @@ fn dependency_state(
 }
 
 fn ensure_schema(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch(
-        r#"
-        PRAGMA journal_mode = WAL;
-        PRAGMA auto_vacuum = INCREMENTAL;
-
-        CREATE TABLE IF NOT EXISTS instances (
-          id TEXT PRIMARY KEY,
-          scope TEXT NOT NULL,
-          directory TEXT NOT NULL,
-          root TEXT NOT NULL,
-          file_root TEXT NOT NULL DEFAULT '',
-          pid INTEGER NOT NULL,
-          label TEXT,
-          registered_at INTEGER NOT NULL DEFAULT (unixepoch()),
-          heartbeat INTEGER NOT NULL DEFAULT (unixepoch()),
-          adopted INTEGER NOT NULL DEFAULT 1
-        );
-
-        CREATE TABLE IF NOT EXISTS messages (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          scope TEXT NOT NULL DEFAULT '',
-          sender TEXT NOT NULL,
-          recipient TEXT,
-          content TEXT NOT NULL,
-          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-          read INTEGER NOT NULL DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS tasks (
-          id TEXT PRIMARY KEY,
-          scope TEXT NOT NULL DEFAULT '',
-          type TEXT NOT NULL,
-          title TEXT NOT NULL,
-          description TEXT,
-          requester TEXT NOT NULL,
-          assignee TEXT,
-          status TEXT NOT NULL DEFAULT 'open',
-          files TEXT,
-          result TEXT,
-          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-          updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-          changed_at INTEGER NOT NULL DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS context (
-          id TEXT PRIMARY KEY,
-          scope TEXT NOT NULL DEFAULT '',
-          instance_id TEXT NOT NULL,
-          file TEXT NOT NULL,
-          type TEXT NOT NULL,
-          content TEXT NOT NULL,
-          created_at INTEGER NOT NULL DEFAULT (unixepoch())
-        );
-
-        CREATE TABLE IF NOT EXISTS events (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          scope TEXT NOT NULL,
-          type TEXT NOT NULL,
-          actor TEXT,
-          subject TEXT,
-          payload TEXT,
-          created_at INTEGER NOT NULL DEFAULT (unixepoch())
-        );
-
-        CREATE TABLE IF NOT EXISTS kv (
-          scope TEXT NOT NULL,
-          key TEXT NOT NULL,
-          value TEXT NOT NULL,
-          updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-          PRIMARY KEY (scope, key)
-        );
-
-        CREATE TABLE IF NOT EXISTS kv_scope_updates (
-          scope TEXT PRIMARY KEY,
-          changed_at INTEGER NOT NULL DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS ui_commands (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          scope TEXT NOT NULL,
-          created_by TEXT,
-          kind TEXT NOT NULL,
-          payload TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'pending',
-          claimed_by TEXT,
-          result TEXT,
-          error TEXT,
-          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-          started_at INTEGER,
-          completed_at INTEGER
-        );
-        "#,
-    )
+    conn.execute_batch(SWARM_DB_BOOTSTRAP_SQL)
     .map_err(|err| format!("failed to bootstrap schema: {err}"))?;
 
-    add_column_if_missing(conn, "instances", "scope TEXT NOT NULL DEFAULT ''")?;
-    add_column_if_missing(conn, "instances", "root TEXT NOT NULL DEFAULT ''")?;
-    add_column_if_missing(conn, "instances", "file_root TEXT NOT NULL DEFAULT ''")?;
-    add_column_if_missing(conn, "instances", "adopted INTEGER NOT NULL DEFAULT 1")?;
-    add_column_if_missing(conn, "messages", "scope TEXT NOT NULL DEFAULT ''")?;
-    add_column_if_missing(conn, "tasks", "scope TEXT NOT NULL DEFAULT ''")?;
-    add_column_if_missing(conn, "tasks", "changed_at INTEGER NOT NULL DEFAULT 0")?;
-    add_column_if_missing(conn, "tasks", "priority INTEGER NOT NULL DEFAULT 0")?;
-    add_column_if_missing(conn, "tasks", "depends_on TEXT")?;
-    add_column_if_missing(conn, "tasks", "idempotency_key TEXT")?;
-    add_column_if_missing(conn, "tasks", "parent_task_id TEXT")?;
-    add_column_if_missing(conn, "context", "scope TEXT NOT NULL DEFAULT ''")?;
+    ensure_columns(conn)?;
+    rebuild_kv_table(conn)?;
 
-    conn.execute(
-        r#"
-        INSERT INTO kv_scope_updates (scope, changed_at)
-        SELECT scope, MAX(updated_at) * 1000
-        FROM kv
-        GROUP BY scope
-        ON CONFLICT(scope) DO NOTHING
-        "#,
-        [],
-    )
-    .map_err(|err| format!("failed to seed kv_scope_updates: {err}"))?;
-
-    conn.execute("UPDATE instances SET scope = directory WHERE scope = ''", [])
-        .map_err(|err| format!("failed to backfill instances.scope: {err}"))?;
-    conn.execute("UPDATE instances SET root = directory WHERE root = ''", [])
-        .map_err(|err| format!("failed to backfill instances.root: {err}"))?;
-    conn.execute(
-        "UPDATE instances SET file_root = directory WHERE file_root = ''",
-        [],
-    )
-    .map_err(|err| format!("failed to backfill instances.file_root: {err}"))?;
-    conn.execute(
-        "UPDATE tasks SET changed_at = updated_at * 1000 WHERE changed_at = 0",
-        [],
-    )
-    .map_err(|err| format!("failed to backfill tasks.changed_at: {err}"))?;
-
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS messages_scope_recipient_read_idx ON messages(scope, recipient, read, id)",
-        [],
-    )
-    .map_err(|err| format!("failed to create messages index: {err}"))?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS instances_scope_idx ON instances(scope)",
-        [],
-    )
-    .map_err(|err| format!("failed to create instances index: {err}"))?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS tasks_scope_status_idx ON tasks(scope, status)",
-        [],
-    )
-    .map_err(|err| format!("failed to create tasks status index: {err}"))?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS tasks_scope_changed_at_idx ON tasks(scope, changed_at)",
-        [],
-    )
-    .map_err(|err| format!("failed to create tasks changed_at index: {err}"))?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS context_scope_file_idx ON context(scope, file)",
-        [],
-    )
-    .map_err(|err| format!("failed to create context index: {err}"))?;
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS context_lock_idx ON context(scope, file) WHERE type = 'lock'",
-        [],
-    )
-    .map_err(|err| format!("failed to create context lock index: {err}"))?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS events_scope_id_idx ON events(scope, id)",
-        [],
-    )
-    .map_err(|err| format!("failed to create events index: {err}"))?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS ui_commands_scope_status_id_idx ON ui_commands(scope, status, id)",
-        [],
-    )
-    .map_err(|err| format!("failed to create ui_commands index: {err}"))?;
-
-    if table_exists(conn, "tasks")? {
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS tasks_idempotency_key_idx ON tasks(scope, idempotency_key) WHERE idempotency_key IS NOT NULL",
-            [],
-        )
-        .map_err(|err| format!("failed to create idempotency index: {err}"))?;
-    }
+    conn.execute_batch(SWARM_DB_FINALIZE_SQL)
+        .map_err(|err| format!("failed to finalize schema: {err}"))?;
 
     Ok(())
 }
@@ -700,7 +576,14 @@ pub fn create_pending_instance(
     conn.execute(
         "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted)
          VALUES (?, ?, ?, ?, ?, 0, ?, 0)",
-        params![row.id, row.scope, row.directory, row.root, row.file_root, label],
+        params![
+            row.id,
+            row.scope,
+            row.directory,
+            row.root,
+            row.file_root,
+            label
+        ],
     )
     .map_err(|err| format!("failed to pre-create instance row: {err}"))?;
 
@@ -779,11 +662,8 @@ pub fn deregister_instance(conn: &Connection, instance_id: &str) -> Result<(), S
     )
     .map_err(|err| format!("failed to drop queued messages: {err}"))?;
 
-    tx.execute(
-        "DELETE FROM instances WHERE id = ?",
-        params![instance_id],
-    )
-    .map_err(|err| format!("failed to delete instance row: {err}"))?;
+    tx.execute("DELETE FROM instances WHERE id = ?", params![instance_id])
+        .map_err(|err| format!("failed to delete instance row: {err}"))?;
 
     tx.execute(
         "INSERT INTO events (scope, type, actor, subject, payload) VALUES (?, 'instance.deregistered', ?, ?, ?)",
@@ -1151,10 +1031,8 @@ mod tests {
     use super::*;
     use rusqlite::Connection;
 
-    /// Initialize a tmp `SQLite` with the subset of schema we need to test writes.
-    /// Mirrors the DDL emitted by `src/db.ts` for the `messages` and
-    /// `instances` tables.
-    fn init_schema(conn: &Connection) {
+    /// Minimal legacy schema used only to verify migration behavior.
+    fn init_legacy_schema(conn: &Connection) {
         conn.execute_batch(
             "
             CREATE TABLE instances (
@@ -1210,7 +1088,7 @@ mod tests {
     #[test]
     fn ensure_adopted_column_adds_missing_column() {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn);
+        init_legacy_schema(&conn);
 
         ensure_adopted_column(&conn).unwrap();
 
@@ -1230,8 +1108,7 @@ mod tests {
     #[test]
     fn create_pending_instance_inserts_unadopted_row() {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn);
-        ensure_adopted_column(&conn).unwrap();
+        ensure_schema(&conn).unwrap();
 
         let pending = create_pending_instance(
             &conn,
@@ -1261,8 +1138,7 @@ mod tests {
     #[test]
     fn heartbeat_unadopted_only_touches_unadopted_rows() {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn);
-        ensure_adopted_column(&conn).unwrap();
+        ensure_schema(&conn).unwrap();
 
         // Insert an already-adopted row with a known heartbeat.
         conn.execute(
@@ -1300,8 +1176,7 @@ mod tests {
     #[test]
     fn delete_unadopted_leaves_adopted_rows_alone() {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn);
-        ensure_adopted_column(&conn).unwrap();
+        ensure_schema(&conn).unwrap();
 
         let pending = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
         conn.execute(
@@ -1330,8 +1205,7 @@ mod tests {
     #[test]
     fn deregister_instance_cascades_cleanup() {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn);
-        ensure_adopted_column(&conn).unwrap();
+        ensure_schema(&conn).unwrap();
 
         // Set up an instance with a lock, a claimed task, a blocked task,
         // and an incoming message. All of these should disappear/be
@@ -1370,32 +1244,48 @@ mod tests {
         deregister_instance(&conn, "inst").unwrap();
 
         let instance_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM instances WHERE id = 'inst'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM instances WHERE id = 'inst'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(instance_count, 0);
 
         let lock_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM context WHERE instance_id = 'inst'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM context WHERE instance_id = 'inst'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(lock_count, 0);
 
         let msg_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM messages WHERE recipient = 'inst'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE recipient = 'inst'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(msg_count, 0);
 
         let (t1_status, t1_assignee): (String, Option<String>) = conn
-            .query_row("SELECT status, assignee FROM tasks WHERE id = 't1'", [], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
+            .query_row(
+                "SELECT status, assignee FROM tasks WHERE id = 't1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .unwrap();
         assert_eq!(t1_status, "open", "claimed task should be released to open");
         assert_eq!(t1_assignee, None);
 
         let (t2_status, t2_assignee): (String, Option<String>) = conn
-            .query_row("SELECT status, assignee FROM tasks WHERE id = 't2'", [], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
+            .query_row(
+                "SELECT status, assignee FROM tasks WHERE id = 't2'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .unwrap();
         assert_eq!(t2_status, "blocked", "blocked task keeps status");
         assert_eq!(t2_assignee, None, "blocked task assignee cleared");
@@ -1404,8 +1294,7 @@ mod tests {
     #[test]
     fn sweep_unadopted_orphans_removes_only_unadopted() {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn);
-        ensure_adopted_column(&conn).unwrap();
+        ensure_schema(&conn).unwrap();
 
         // Two stale orphans + one adopted instance.
         let orphan_a = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
@@ -1443,8 +1332,7 @@ mod tests {
     #[test]
     fn sweep_unadopted_orphans_keeps_recent_placeholders() {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn);
-        ensure_adopted_column(&conn).unwrap();
+        ensure_schema(&conn).unwrap();
 
         let recent = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
 
@@ -1464,18 +1352,23 @@ mod tests {
     #[test]
     fn instance_adoption_state_reports_states() {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn);
-        ensure_adopted_column(&conn).unwrap();
+        ensure_schema(&conn).unwrap();
 
         let pending = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
-        assert_eq!(instance_adoption_state(&conn, &pending.id).unwrap(), Some(false));
+        assert_eq!(
+            instance_adoption_state(&conn, &pending.id).unwrap(),
+            Some(false)
+        );
 
         conn.execute(
             "UPDATE instances SET adopted = 1 WHERE id = ?",
             params![pending.id],
         )
         .unwrap();
-        assert_eq!(instance_adoption_state(&conn, &pending.id).unwrap(), Some(true));
+        assert_eq!(
+            instance_adoption_state(&conn, &pending.id).unwrap(),
+            Some(true)
+        );
 
         assert_eq!(instance_adoption_state(&conn, "missing").unwrap(), None);
     }
@@ -1483,8 +1376,7 @@ mod tests {
     #[test]
     fn deregister_instance_refreshes_planner_owner() {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn);
-        ensure_adopted_column(&conn).unwrap();
+        ensure_schema(&conn).unwrap();
 
         conn.execute(
             "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted)
@@ -1522,8 +1414,7 @@ mod tests {
     #[test]
     fn unassign_task_releases_claimed_work() {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn);
-        ensure_adopted_column(&conn).unwrap();
+        ensure_schema(&conn).unwrap();
 
         conn.execute(
             "INSERT INTO tasks (id, scope, type, title, requester, assignee, status)
@@ -1549,8 +1440,7 @@ mod tests {
     #[test]
     fn remove_task_dependency_recomputes_blocked_and_approval_required_tasks() {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn);
-        ensure_adopted_column(&conn).unwrap();
+        ensure_schema(&conn).unwrap();
 
         conn.execute(
             "INSERT INTO tasks (id, scope, type, title, requester, status)

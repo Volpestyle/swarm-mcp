@@ -1,6 +1,6 @@
-import { writable, type Readable } from 'svelte/store';
+import { get, writable, type Readable } from 'svelte/store';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import type { TerminalHandle } from './types';
+import type { PtySession, TerminalHandle } from './types';
 import {
   createTerminal,
   destroyTerminal,
@@ -8,6 +8,11 @@ import {
   writeToTerminal,
 } from './terminal';
 import {
+  LOCAL_PTY_LEASE_HOLDER,
+  getPtySessionSnapshot,
+  isMobileControlledSession,
+  ptySessions,
+  requestPtyLease,
   getPtyBuffer,
   markPtyTerminalReady,
   resizePty,
@@ -49,8 +54,16 @@ class TerminalSurface {
   private inputUnlisten: (() => void) | null = null;
   private dataUnlisten: UnlistenFn | null = null;
   private exitUnlisten: UnlistenFn | null = null;
+  private sessionUnlisten: (() => void) | null = null;
+  private focusInListener: (() => void) | null = null;
   private attachedAnchor: HTMLElement | null = null;
   private exitCodeValue: number | null = null;
+  private currentSession: PtySession | null = null;
+  private mobileControlled = false;
+  private suppressResizeSync = false;
+  private reclaimingDesktopControl = false;
+  private leaseRequestPromise: Promise<void> | null = null;
+  private lastDesktopSize: { cols: number; rows: number } | null = null;
   private disposed = false;
 
   constructor(
@@ -114,9 +127,15 @@ class TerminalSurface {
     this.inputUnlisten?.();
     this.dataUnlisten?.();
     this.exitUnlisten?.();
+    this.sessionUnlisten?.();
     this.inputUnlisten = null;
     this.dataUnlisten = null;
     this.exitUnlisten = null;
+    this.sessionUnlisten = null;
+    if (this.focusInListener) {
+      this.host.removeEventListener('focusin', this.focusInListener, true);
+      this.focusInListener = null;
+    }
 
     if (this.host.parentElement) {
       this.host.parentElement.removeChild(this.host);
@@ -148,21 +167,30 @@ class TerminalSurface {
       const encoder = new TextEncoder();
 
       this.inputUnlisten = handle.onData((input: string) => {
-        void writeToPty(this.ptyId, encoder.encode(input));
+        void this.forwardInput(input, encoder);
       });
 
       handle.onResize(({ cols, rows }) => {
-        void resizePty(this.ptyId, cols, rows);
+        if (this.suppressResizeSync) return;
+        if (!this.mobileControlled) {
+          this.lastDesktopSize = { cols, rows };
+        }
+        void this.syncViewportToPty();
       });
 
-      try {
-        const { cols, rows } = handle.getSize();
-        if (cols > 0 && rows > 0) {
-          void resizePty(this.ptyId, cols, rows);
-        }
-      } catch (err) {
-        console.debug('[terminalSurface] initial PTY resize skipped:', err);
+      if (!this.sessionUnlisten) {
+        this.sessionUnlisten = ptySessions.subscribe((sessions) => {
+          this.handleSessionUpdate(sessions.get(this.ptyId) ?? null);
+        });
       }
+
+      this.handleSessionUpdate(this.currentSession ?? getPtySessionSnapshot(this.ptyId));
+      void this.syncViewportToPty();
+      this.focusInListener = () => {
+        if (this.mobileControlled) return;
+        void this.syncViewportToPty();
+      };
+      this.host.addEventListener('focusin', this.focusInListener, true);
 
       const [buffer, dataListener, exitListener] = await Promise.all([
         getPtyBuffer(this.ptyId).catch((err) => {
@@ -209,7 +237,12 @@ class TerminalSurface {
 
   private refit(): void {
     if (!this.handle) return;
+    if (this.mobileControlled && this.currentSession) {
+      this.applyRemoteViewport(this.currentSession);
+      return;
+    }
     refitTerminal(this.handle);
+    void this.syncViewportToPty();
   }
 
   private release(anchor: HTMLElement): void {
@@ -238,6 +271,117 @@ class TerminalSurface {
 
     this.refit();
     await nextAnimationFrame();
+  }
+
+  private async forwardInput(
+    input: string,
+    encoder: TextEncoder,
+  ): Promise<void> {
+    if (this.mobileControlled) return;
+    await this.ensureDesktopLease();
+    await writeToPty(this.ptyId, encoder.encode(input));
+  }
+
+  private handleSessionUpdate(session: PtySession | null): void {
+    const wasMobileControlled = this.mobileControlled;
+
+    this.currentSession = session;
+    this.mobileControlled = isMobileControlledSession(session);
+    this.host.classList.toggle('mobile-controlled-view', this.mobileControlled);
+
+    if (!this.handle || !session) {
+      return;
+    }
+
+    if (this.mobileControlled) {
+      if (!wasMobileControlled) {
+        this.lastDesktopSize = this.handle.getSize();
+      }
+      this.applyRemoteViewport(session);
+      return;
+    }
+
+    if (wasMobileControlled) {
+      void this.restoreDesktopControl();
+    }
+  }
+
+  private applyRemoteViewport(session: PtySession): void {
+    if (!this.handle) return;
+    this.withSuppressedResize(() => {
+      this.handle?.setViewportSize(session.cols, session.rows);
+    });
+  }
+
+  private async restoreDesktopControl(): Promise<void> {
+    if (!this.handle || this.reclaimingDesktopControl) return;
+    this.reclaimingDesktopControl = true;
+    try {
+      await this.ensureDesktopLease();
+
+      if (this.lastDesktopSize) {
+        const { cols, rows } = this.lastDesktopSize;
+        this.withSuppressedResize(() => {
+          this.handle?.setViewportSize(cols, rows);
+        });
+        await resizePty(this.ptyId, cols, rows);
+        await nextAnimationFrame();
+        await nextAnimationFrame();
+      }
+
+      if (!this.mobileControlled) {
+        this.withSuppressedResize(() => {
+          this.handle?.clearViewportSize();
+        });
+      }
+    } catch (err) {
+      console.warn('[terminalSurface] failed to restore desktop control:', err);
+    } finally {
+      this.reclaimingDesktopControl = false;
+    }
+  }
+
+  private withSuppressedResize(action: () => void): void {
+    this.suppressResizeSync = true;
+    try {
+      action();
+    } finally {
+      queueMicrotask(() => {
+        this.suppressResizeSync = false;
+      });
+    }
+  }
+
+  private async ensureDesktopLease(): Promise<void> {
+    const session = this.currentSession ?? get(ptySessions).get(this.ptyId) ?? null;
+    if (this.mobileControlled || isMobileControlledSession(session)) return;
+    if (session?.lease?.holder === LOCAL_PTY_LEASE_HOLDER) return;
+    if (!this.leaseRequestPromise) {
+      this.leaseRequestPromise = requestPtyLease(this.ptyId)
+        .catch((err) => {
+          throw err;
+        })
+        .finally(() => {
+          this.leaseRequestPromise = null;
+        });
+    }
+    await this.leaseRequestPromise;
+  }
+
+  private async syncViewportToPty(): Promise<void> {
+    if (!this.handle) return;
+    if (this.mobileControlled || this.suppressResizeSync) return;
+
+    try {
+      await this.ensureDesktopLease();
+      const { cols, rows } = this.handle.getSize();
+      if (cols > 0 && rows > 0) {
+        this.lastDesktopSize = { cols, rows };
+        await resizePty(this.ptyId, cols, rows);
+      }
+    } catch (err) {
+      console.debug('[terminalSurface] PTY resize skipped:', err);
+    }
   }
 }
 

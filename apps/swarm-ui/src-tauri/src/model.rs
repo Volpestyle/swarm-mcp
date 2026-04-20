@@ -2,6 +2,11 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use swarm_protocol::state::{INSTANCE_OFFLINE_AFTER_SECS, INSTANCE_STALE_AFTER_SECS};
+pub use swarm_protocol::{
+    Annotation, Event, Instance, InstanceStatus, KvEntry, Lease, Lock, Message, Task, TaskStatus,
+    TaskType,
+};
 
 // ---------------------------------------------------------------------------
 // AppError — typed error for Tauri IPC commands
@@ -51,181 +56,6 @@ impl Serialize for AppError {
     }
 }
 
-pub const INSTANCE_STALE_AFTER_SECS: i64 = 30;
-pub const INSTANCE_OFFLINE_AFTER_SECS: i64 = 60;
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum InstanceStatus {
-    Online,
-    Stale,
-    Offline,
-}
-
-impl InstanceStatus {
-    #[must_use]
-    pub fn from_heartbeat(now: i64, heartbeat: i64) -> Self {
-        let age = now.saturating_sub(heartbeat);
-        if age <= INSTANCE_STALE_AFTER_SECS {
-            Self::Online
-        } else if age <= INSTANCE_OFFLINE_AFTER_SECS {
-            Self::Stale
-        } else {
-            Self::Offline
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskStatus {
-    Open,
-    Claimed,
-    InProgress,
-    Done,
-    Failed,
-    Cancelled,
-    Blocked,
-    ApprovalRequired,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskType {
-    Review,
-    Implement,
-    Fix,
-    Test,
-    Research,
-    Other,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum NodeType {
-    Instance,
-    Pty,
-    Bound,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum EdgeType {
-    Message,
-    Task,
-    Dependency,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Instance {
-    pub id: String,
-    pub scope: String,
-    pub directory: String,
-    pub root: String,
-    pub file_root: String,
-    pub pid: i64,
-    pub label: Option<String>,
-    pub registered_at: i64,
-    pub heartbeat: i64,
-    pub status: InstanceStatus,
-    /// `true` once the child process inside the PTY has called
-    /// `swarm.register` and taken over the instance row. `false` while the row
-    /// is still a UI-owned placeholder waiting for adoption.
-    #[serde(default = "default_adopted")]
-    pub adopted: bool,
-}
-
-#[allow(clippy::missing_const_for_fn)]
-fn default_adopted() -> bool {
-    // Rows created by the MCP register path before adoption existed are
-    // treated as adopted; only UI pre-created rows have adopted=0.
-    true
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Task {
-    pub id: String,
-    pub scope: String,
-    #[serde(rename = "type")]
-    pub type_: TaskType,
-    pub title: String,
-    pub description: Option<String>,
-    pub requester: String,
-    pub assignee: Option<String>,
-    pub status: TaskStatus,
-    #[serde(default)]
-    pub files: Vec<String>,
-    pub result: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub changed_at: i64,
-    pub priority: i64,
-    #[serde(default)]
-    pub depends_on: Vec<String>,
-    pub parent_task_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Message {
-    pub id: i64,
-    pub scope: String,
-    pub sender: String,
-    pub recipient: Option<String>,
-    pub content: String,
-    pub created_at: i64,
-    pub read: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Lock {
-    pub scope: String,
-    pub file: String,
-    pub instance_id: String,
-}
-
-/// One row from the `context` table — file-scoped notes agents leave for one
-/// another. Includes locks (`type = 'lock'`) plus findings, warnings, bugs,
-/// notes, and todos. The `Lock` shape above is kept as a thin derived view
-/// for code that only needs the lock-specific fields.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Annotation {
-    pub id: String,
-    pub scope: String,
-    pub instance_id: String,
-    pub file: String,
-    #[serde(rename = "type")]
-    pub type_: String,
-    pub content: String,
-    pub created_at: i64,
-}
-
-/// One row from the `events` audit log. Powers the Activity timeline.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Event {
-    pub id: i64,
-    pub scope: String,
-    #[serde(rename = "type")]
-    pub type_: String,
-    pub actor: Option<String>,
-    pub subject: Option<String>,
-    /// Raw JSON string from the DB. The frontend parses on demand.
-    pub payload: Option<String>,
-    pub created_at: i64,
-}
-
-/// A single non-`ui/*` row from the `kv` table — coordination state agents
-/// write to share scope-level data (turn counters, status flags, queues...).
-/// `value` is the raw stored string; the frontend pretty-prints if JSON.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct KvEntry {
-    pub scope: String,
-    pub key: String,
-    pub value: String,
-    pub updated_at: i64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PtySession {
     pub id: String,
@@ -235,9 +65,11 @@ pub struct PtySession {
     pub exit_code: Option<i32>,
     pub bound_instance_id: Option<String>,
     pub launch_token: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+    pub lease: Option<Lease>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GraphPosition {
     pub x: f64,
@@ -248,28 +80,6 @@ pub struct GraphPosition {
 pub struct SavedLayout {
     #[serde(default)]
     pub nodes: HashMap<String, GraphPosition>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct GraphNode {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub node_type: NodeType,
-    pub instance: Option<Instance>,
-    pub pty_session: Option<PtySession>,
-    pub position: Option<GraphPosition>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct GraphEdge {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub edge_type: EdgeType,
-    pub source: String,
-    pub target: String,
-    pub metadata: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

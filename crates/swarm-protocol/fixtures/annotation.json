@@ -1,0 +1,9 @@
+{
+  "id": "note-12",
+  "scope": "swarm-mcp",
+  "instance_id": "inst-abc-123",
+  "file": "apps/swarm-server/src/pair.rs",
+  "type": "finding",
+  "content": "Token entropy should come from OsRng, not rand::thread_rng.",
+  "created_at": 1745000200
+}

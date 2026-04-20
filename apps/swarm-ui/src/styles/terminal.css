@@ -33,6 +33,7 @@
   --node-bg: #1e1e1e;
   --node-border: #1a1a1a;
   --node-border-selected: #89b4fa;
+  --node-border-mobile: #f9e2af;
   --node-header-bg: #2d2d2d;
   --node-header-border: #1a1a1a;
   --node-title-fg: #e5e5e5;
@@ -118,6 +119,10 @@
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+.terminal-node.compact {
+  min-height: 148px;
+}
+
 .terminal-node:hover {
   border-color: color-mix(in srgb, var(--node-border-selected) 50%, transparent);
 }
@@ -126,6 +131,23 @@
   border-color: var(--node-border-selected);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-border-selected) 25%, transparent),
               0 20px 60px rgba(0, 0, 0, 0.55);
+}
+
+.terminal-node.mobile-controlled {
+  border-color: color-mix(in srgb, var(--node-border-mobile) 70%, var(--node-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-border-mobile) 18%, transparent),
+              0 20px 60px rgba(0, 0, 0, 0.55);
+}
+
+.terminal-node.mobile-controlled .node-header {
+  background: color-mix(in srgb, var(--node-border-mobile) 10%, var(--node-header-bg));
+  border-bottom-color: color-mix(in srgb, var(--node-border-mobile) 30%, var(--node-header-border));
+}
+
+.terminal-node.mobile-controlled.selected {
+  border-color: color-mix(in srgb, var(--node-border-mobile) 78%, var(--node-border-selected));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-border-mobile) 26%, transparent),
+              0 20px 60px rgba(0, 0, 0, 0.58);
 }
 
 /* ---------------------------------------------------------------------------
@@ -161,11 +183,8 @@
   border-bottom-color: color-mix(in srgb, var(--node-border-selected) 35%, var(--node-header-border));
 }
 
-/* macOS-style traffic lights — decorative chrome matching the ghostty-web
-   demo exactly (12px dots, 8px gap, same hex palette). Sits on the left
-   edge of the header so the card reads as a terminal window at a glance.
-   Not interactive: real stop/inspect/focus controls live in .node-controls
-   on the right. */
+/* macOS-style traffic lights — interactive node controls that mirror the
+   native chrome affordance while still reading as part of the card header. */
 .traffic-lights {
   display: flex;
   gap: 8px;
@@ -176,6 +195,27 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
+  padding: 0;
+  border: none;
+  appearance: none;
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.14s ease, box-shadow 0.14s ease, opacity 0.14s ease;
+}
+
+.traffic-lights .light:hover:not(:disabled) {
+  transform: scale(1.08);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+}
+
+.traffic-lights .light:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(137, 180, 250, 0.8);
+}
+
+.traffic-lights .light:disabled {
+  cursor: default;
+  opacity: 0.4;
 }
 
 .traffic-lights .light.red {
@@ -184,6 +224,10 @@
 
 .traffic-lights .light.yellow {
   background: #ffbd2e;
+}
+
+.traffic-lights .light.yellow.active {
+  box-shadow: 0 0 0 2px rgba(255, 189, 46, 0.35);
 }
 
 .traffic-lights .light.green {
@@ -255,6 +299,25 @@
 .role-badge.researcher   { color: var(--badge-researcher);   background: color-mix(in srgb, var(--badge-researcher) 7%, transparent);   border-color: color-mix(in srgb, var(--badge-researcher) 28%, transparent); }
 .role-badge.shell        { color: var(--badge-shell);        background: color-mix(in srgb, var(--badge-shell) 10%, transparent);       border-color: color-mix(in srgb, var(--badge-shell) 32%, transparent); }
 .role-badge.custom       { color: var(--badge-custom);       background: color-mix(in srgb, var(--badge-custom) 7%, transparent);       border-color: color-mix(in srgb, var(--badge-custom) 28%, transparent); }
+
+.mobile-lease-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--node-border-mobile);
+  background: color-mix(in srgb, var(--node-border-mobile) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--node-border-mobile) 32%, transparent);
+  flex-shrink: 0;
+}
+
+.mobile-lease-icon {
+  display: block;
+}
 
 /* Title label matching the ghostty-web demo — same sans-serif, 13px,
    #e5e5e5, 0.3px letter-spacing. Displayname/instance ID both read cleanly
@@ -424,6 +487,107 @@
 .terminal-container,
 .terminal-container * {
   pointer-events: auto;
+}
+
+.terminal-compact-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 16px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(137, 180, 250, 0.12), transparent 38%),
+    linear-gradient(180deg, rgba(18, 18, 28, 0.98), rgba(24, 24, 37, 0.94));
+  border-radius: 0 0 var(--terminal-border-radius) var(--terminal-border-radius);
+}
+
+.compact-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.compact-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #bac2de;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.compact-pill.status.online {
+  color: #a6e3a1;
+  border-color: color-mix(in srgb, #a6e3a1 35%, transparent);
+  background: color-mix(in srgb, #a6e3a1 10%, transparent);
+}
+
+.compact-pill.status.pending {
+  color: #89b4fa;
+  border-color: color-mix(in srgb, #89b4fa 35%, transparent);
+  background: color-mix(in srgb, #89b4fa 10%, transparent);
+}
+
+.compact-pill.status.stale {
+  color: #f9e2af;
+  border-color: color-mix(in srgb, #f9e2af 35%, transparent);
+  background: color-mix(in srgb, #f9e2af 10%, transparent);
+}
+
+.compact-pill.status.offline {
+  color: #bac2de;
+  border-color: color-mix(in srgb, #bac2de 24%, transparent);
+  background: color-mix(in srgb, #bac2de 8%, transparent);
+}
+
+.compact-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.compact-stat {
+  min-width: 0;
+  padding: 10px 10px 9px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.compact-stat-label {
+  display: block;
+  margin-bottom: 4px;
+  color: #7f849c;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.compact-stat-value {
+  display: block;
+  color: #e6e9ef;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-detail {
+  color: #a6adc8;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ghostty-web sizes its own canvas based on the (cols, rows) it's told to

@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "type": "delta.table",
+  "table": "kv",
+  "cursor": {
+    "at": 1745000050,
+    "id": "swarm-mcp\u001freview/next_turn"
+  },
+  "upserts": [
+    {
+      "scope": "swarm-mcp",
+      "key": "review/next_turn",
+      "value": "inst-coordinator-1",
+      "updated_at": 1745000050
+    }
+  ],
+  "removes": [
+    {
+      "scope": "swarm-mcp",
+      "key": "review/prev_turn"
+    }
+  ]
+}

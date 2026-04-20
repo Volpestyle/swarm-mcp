@@ -1,0 +1,9 @@
+{
+  "id": 891,
+  "scope": "swarm-mcp",
+  "type": "task.claimed",
+  "actor": "inst-abc-123",
+  "subject": "task-7",
+  "payload": "{\"previous_assignee\":null}",
+  "created_at": 1745000120
+}

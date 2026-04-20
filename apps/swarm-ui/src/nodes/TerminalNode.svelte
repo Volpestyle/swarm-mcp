@@ -17,6 +17,11 @@
   import type { SwarmNodeData } from '../lib/types';
   import { formatTimestamp } from '../lib/time';
   import { workspaceOverlayActive } from '../lib/workspaceOverlay';
+  import {
+    compactNodeIds,
+    requestNodeWorkspace,
+    toggleCompactNode,
+  } from '../lib/app/nodeWindowState';
   import NodeHeader from './NodeHeader.svelte';
   import TerminalPane from './TerminalPane.svelte';
   import '../styles/terminal.css';
@@ -38,7 +43,22 @@
   $: status = data.status;
   $: cwd = data.ptySession?.cwd ?? instance?.directory ?? '';
   $: displayName = data.displayName ?? null;
+  $: mobileControlled = Boolean(data.mobileControlled);
+  $: mobileLeaseHolder = typeof data.mobileLeaseHolder === 'string'
+    ? data.mobileLeaseHolder
+    : null;
+  $: compact = $compactNodeIds.has(id);
   $: workspaceActive = $workspaceOverlayActive;
+  $: compactKindLabel = data.nodeType === 'bound'
+    ? 'Agent'
+    : data.nodeType === 'instance'
+      ? 'External'
+      : 'Shell';
+  $: compactActivityLabel = instance
+    ? formatTimestamp(instance.heartbeat ?? instance.registered_at)
+    : formatTimestamp(data.ptySession?.started_at ?? null);
+  $: compactDetail = cwd || data.ptySession?.command || instance?.label || '--';
+  $: compactStatusLabel = status.charAt(0).toUpperCase() + status.slice(1);
 
   function handleInspect() {
     nodeElement?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -46,7 +66,22 @@
 
   function handleFocus() {
     handleInspect();
+    if (compact && ptyId) {
+      requestNodeWorkspace(id);
+      return;
+    }
     paneRef?.focus();
+  }
+
+  function handleCompact() {
+    handleInspect();
+    toggleCompactNode(id);
+  }
+
+  function handleFullscreen() {
+    if (!ptyId) return;
+    handleInspect();
+    requestNodeWorkspace(id);
   }
 
   function sideToPosition(side: string): Position {
@@ -60,13 +95,20 @@
   }
 </script>
 
-<div bind:this={nodeElement} class="terminal-node" class:selected data-node-id={id}>
+<div
+  bind:this={nodeElement}
+  class="terminal-node"
+  class:selected
+  class:compact
+  class:mobile-controlled={mobileControlled}
+  data-node-id={id}
+>
   <!-- Resize handles on all four corners + edges. Only visible when the node
        is selected so they don't clutter the canvas. -->
   <NodeResizer
     minWidth={360}
     minHeight={260}
-    isVisible={selected}
+    isVisible={selected && !mobileControlled && !compact}
     lineClass="resize-line"
     handleClass="resize-handle"
   />
@@ -104,11 +146,45 @@
     ptyId={ptyId}
     launchToken={data.ptySession?.launch_token ?? null}
     adopted={instance?.adopted ?? true}
+    {mobileControlled}
+    {compact}
+    mobileLeaseHolder={mobileLeaseHolder}
     on:inspect={handleInspect}
     on:focus={handleFocus}
+    on:compact={handleCompact}
+    on:fullscreen={handleFullscreen}
   />
 
-  {#if hasPty && ptyId && !workspaceActive}
+  {#if compact}
+    <div class="terminal-compact-card">
+      <div class="compact-summary-row">
+        <span class="compact-pill">{compactKindLabel}</span>
+        <span class="compact-pill status {status}">{compactStatusLabel}</span>
+        {#if mobileControlled}
+          <span class="compact-pill">Mobile</span>
+        {/if}
+      </div>
+
+      <div class="compact-stats">
+        <div class="compact-stat">
+          <span class="compact-stat-label">Tasks</span>
+          <span class="compact-stat-value">{data.assignedTasks.length}</span>
+        </div>
+        <div class="compact-stat">
+          <span class="compact-stat-label">Locks</span>
+          <span class="compact-stat-value">{data.locks.length}</span>
+        </div>
+        <div class="compact-stat">
+          <span class="compact-stat-label">{instance ? 'Heartbeat' : 'Started'}</span>
+          <span class="compact-stat-value">{compactActivityLabel}</span>
+        </div>
+      </div>
+
+      <div class="compact-detail" title={compactDetail}>
+        {compactDetail}
+      </div>
+    </div>
+  {:else if hasPty && ptyId && !workspaceActive}
     <TerminalPane
       bind:this={paneRef}
       {ptyId}

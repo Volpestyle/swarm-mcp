@@ -8,10 +8,9 @@ pub const MESSAGES_APPENDED: &str = "swarm:messages:new";
 /// (lock badges, edge flashes) without re-shipping the full event window.
 pub const EVENTS_APPENDED: &str = "swarm:events:new";
 pub const PTY_CREATED: &str = "pty:created";
+pub const PTY_UPDATED: &str = "pty:updated";
 pub const PTY_CLOSED: &str = "pty:closed";
 pub const BIND_RESOLVED: &str = "bind:resolved";
-#[allow(dead_code)]
-pub const BIND_UNRESOLVED: &str = "bind:unresolved";
 
 /// Emitted when a PTY bound to a swarm instance ends (child exit or manual
 /// close). Payload: `{ pty_id, instance_id }`. The main.rs listener uses this

@@ -1,0 +1,33 @@
+{
+  "v": 1,
+  "type": "subscribe",
+  "scope": "swarm-mcp",
+  "cursors": {
+    "messages": 42,
+    "events": 891,
+    "instances": {
+      "at": 1745000020,
+      "id": "inst-abc-123"
+    },
+    "tasks": {
+      "at": 1745000120,
+      "id": "task-7"
+    },
+    "locks": {
+      "at": 1745000200,
+      "id": "swarm-mcp\u001fapps/swarm-server/src/pair.rs"
+    },
+    "annotations": {
+      "at": 1745000200,
+      "id": "note-12"
+    },
+    "kv": {
+      "at": 1745000050,
+      "id": "swarm-mcp\u001freview/next_turn"
+    },
+    "ptys": {
+      "at": 1745000010,
+      "id": "pty-9f3a"
+    }
+  }
+}

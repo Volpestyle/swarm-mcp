@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "pty_id": "pty-9f3a",
+  "lease": {
+    "holder": "local:swarm-ui",
+    "acquired_at": 1745000015,
+    "generation": 3
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "id": 42,
+  "scope": "swarm-mcp",
+  "sender": "inst-abc-123",
+  "recipient": "inst-coordinator-1",
+  "content": "Finished pairing handler, ready for review",
+  "created_at": 1745000150,
+  "read": false
+}

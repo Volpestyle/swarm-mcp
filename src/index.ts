@@ -60,6 +60,10 @@ function respond(text: string) {
   };
 }
 
+function respondJson(value: unknown) {
+  return respond(JSON.stringify(value, null, 2));
+}
+
 function resource<T>(text: T, uri: string) {
   return {
     contents: [
@@ -85,6 +89,72 @@ function prompt(text: string) {
     ],
   };
 }
+
+type ToolShape = Record<string, z.ZodTypeAny>;
+
+function registeredTool<Shape extends ToolShape>(
+  name: string,
+  description: string,
+  shape: Shape,
+  handler: (args: z.infer<z.ZodObject<Shape>>) => Promise<unknown> | unknown,
+) {
+  server.tool(
+    name,
+    description,
+    shape,
+    (async (args: z.infer<z.ZodObject<Shape>>) => {
+      if (!instance) return missing();
+      return handler(args);
+    }) as any,
+  );
+}
+
+const taskTypeSchema = z.enum(tasks.TASK_TYPES);
+const taskStatusSchema = z.enum(tasks.TASK_STATUSES);
+const taskCreateShape = {
+  type: taskTypeSchema.describe("Type of task"),
+  title: z.string().describe("Short title for the task"),
+  description: z
+    .string()
+    .optional()
+    .describe("Detailed description of what needs to be done"),
+  files: z.array(z.string()).optional().describe("Relevant file paths"),
+  assignee: z
+    .string()
+    .optional()
+    .describe("Specific instance ID to assign to, or omit for any taker"),
+  priority: z
+    .number()
+    .int()
+    .optional()
+    .default(0)
+    .describe(
+      "Priority level. Higher = more urgent. Default 0. Agents claim highest-priority open tasks first.",
+    ),
+  depends_on: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Task IDs this task depends on. Task stays blocked until all dependencies reach done.",
+    ),
+  idempotency_key: z
+    .string()
+    .optional()
+    .describe(
+      "Unique key to prevent duplicate task creation. If a task with this key exists, returns the existing task.",
+    ),
+  parent_task_id: z
+    .string()
+    .optional()
+    .describe("Optional parent task ID for tree-structured work tracking."),
+  approval_required: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      "If true, task starts in approval_required status and must be approved before work begins.",
+    ),
+} satisfies ToolShape;
 
 function resolveFileInput(file: string) {
   if (!instance) return filepath("", file);
@@ -460,7 +530,7 @@ server.tool(
   },
 );
 
-server.tool(
+registeredTool(
   "send_message",
   "Send a message to a specific instance by ID.",
   {
@@ -468,10 +538,10 @@ server.tool(
     content: z.string().describe("The message content"),
   },
   async ({ recipient, content }) => {
-    if (!instance) return missing();
+    const current = instance!;
 
     const target = registry.get(recipient);
-    if (!target || target.scope !== instance.scope) {
+    if (!target || target.scope !== current.scope) {
       return {
         content: [
           {
@@ -482,29 +552,29 @@ server.tool(
       };
     }
 
-    if (target.id === instance.id) {
+    if (target.id === current.id) {
       return {
         content: [{ type: "text", text: "Cannot send a message to yourself" }],
       };
     }
 
-    messages.send(instance.id, instance.scope, recipient, content);
+    messages.send(current.id, current.scope, recipient, content);
     return respond(`Message sent to ${recipient}`);
   },
 );
 
-server.tool(
+registeredTool(
   "broadcast",
   "Send a message to all other active instances in this swarm scope.",
   { content: z.string().describe("The message content to broadcast") },
   async ({ content }) => {
-    if (!instance) return missing();
-    const count = messages.broadcast(instance.id, instance.scope, content);
+    const current = instance!;
+    const count = messages.broadcast(current.id, current.scope, content);
     return respond(`Broadcast sent to ${count} instance(s)`);
   },
 );
 
-server.tool(
+registeredTool(
   "poll_messages",
   "Check for new incoming messages. Returns unread messages and marks them as read.",
   {
@@ -518,61 +588,15 @@ server.tool(
       .describe("Max messages to return"),
   },
   async ({ limit }) => {
-    if (!instance) return missing();
-    const rows = messages.poll(instance.id, instance.scope, limit);
-    return respond(JSON.stringify(rows, null, 2));
+    const current = instance!;
+    return respondJson(messages.poll(current.id, current.scope, limit));
   },
 );
 
-server.tool(
+registeredTool(
   "request_task",
   "Create a task for another instance, or leave it open for any instance in this scope.",
-  {
-    type: z
-      .enum(["review", "implement", "fix", "test", "research", "other"])
-      .describe("Type of task"),
-    title: z.string().describe("Short title for the task"),
-    description: z
-      .string()
-      .optional()
-      .describe("Detailed description of what needs to be done"),
-    files: z.array(z.string()).optional().describe("Relevant file paths"),
-    assignee: z
-      .string()
-      .optional()
-      .describe("Specific instance ID to assign to, or omit for any taker"),
-    priority: z
-      .number()
-      .int()
-      .optional()
-      .default(0)
-      .describe(
-        "Priority level. Higher = more urgent. Default 0. Agents claim highest-priority open tasks first.",
-      ),
-    depends_on: z
-      .array(z.string())
-      .optional()
-      .describe(
-        "Task IDs this task depends on. Task stays blocked until all dependencies reach done.",
-      ),
-    idempotency_key: z
-      .string()
-      .optional()
-      .describe(
-        "Unique key to prevent duplicate task creation. If a task with this key exists, returns the existing task.",
-      ),
-    parent_task_id: z
-      .string()
-      .optional()
-      .describe("Optional parent task ID for tree-structured work tracking."),
-    approval_required: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
-        "If true, task starts in approval_required status and must be approved before work begins.",
-      ),
-  },
+  taskCreateShape,
   async ({
     type,
     title,
@@ -585,11 +609,11 @@ server.tool(
     parent_task_id,
     approval_required,
   }) => {
-    if (!instance) return missing();
+    const current = instance!;
 
     if (assignee) {
       const target = registry.get(assignee);
-      if (!target || target.scope !== instance.scope) {
+      if (!target || target.scope !== current.scope) {
         return {
           content: [
             {
@@ -601,7 +625,7 @@ server.tool(
       }
     }
 
-    const result = tasks.request(instance.id, instance.scope, type, title, {
+    const result = tasks.request(current.id, current.scope, type, title, {
       description,
       files: files?.map((item) => resolveFileInput(item)),
       assignee,
@@ -617,74 +641,41 @@ server.tool(
     }
 
     // Auto-notify only for newly-created tasks assigned to another session.
-    if (assignee && !result.existing && assignee !== instance.id) {
+    if (assignee && !result.existing && assignee !== current.id) {
       const statusNote =
         result.status !== "claimed"
           ? ` (currently ${result.status} — will be claimable when ready)`
           : "";
       messages.send(
-        instance.id,
-        instance.scope,
+        current.id,
+        current.scope,
         assignee,
         `[auto] New ${type} task assigned to you: "${title}" (task_id: ${result.id})${statusNote}. Claim it with claim_task if not auto-claimed.`,
       );
     }
 
-    return respond(
-      JSON.stringify({
-        task_id: result.id,
-        status: result.status,
-        ...(result.existing ? { existing: true } : {}),
-      }),
-    );
+    return respondJson({
+      task_id: result.id,
+      status: result.status,
+      ...(result.existing ? { existing: true } : {}),
+    });
   },
 );
 
-server.tool(
+registeredTool(
   "request_task_batch",
   "Create multiple tasks atomically in a single transaction. Supports $N references (1-indexed) for dependencies between tasks in the batch. Rolls back entirely on validation failure.",
   {
     tasks: z
       .array(
-        z.object({
-          type: z
-            .enum(["review", "implement", "fix", "test", "research", "other"])
-            .describe("Type of task"),
-          title: z.string().describe("Short title for the task"),
-          description: z
-            .string()
-            .optional()
-            .describe("Detailed description"),
-          files: z.array(z.string()).optional().describe("Relevant file paths"),
-          assignee: z.string().optional().describe("Instance ID to assign to"),
-          priority: z.number().int().optional().default(0).describe("Priority level"),
-          depends_on: z
-            .array(z.string())
-            .optional()
-            .describe(
-              "Task IDs or $N refs (1-indexed, no forward refs). Example: [\"$1\", \"$2\"] depends on the 1st and 2nd tasks in this batch.",
-            ),
-          idempotency_key: z
-            .string()
-            .optional()
-            .describe("Prevents duplicate creation on retry"),
-          parent_task_id: z
-            .string()
-            .optional()
-            .describe("Parent task ID or $N ref"),
-          approval_required: z
-            .boolean()
-            .optional()
-            .default(false)
-            .describe("If true, task requires approval before work begins"),
-        }),
+        z.object(taskCreateShape),
       )
       .min(1)
       .max(50)
       .describe("Array of task specifications. $N references are 1-indexed positional refs within this array."),
   },
   async ({ tasks: taskSpecs }) => {
-    if (!instance) return missing();
+    const current = instance!;
 
     // Resolve file paths
     const resolved = taskSpecs.map((spec) => ({
@@ -693,19 +684,17 @@ server.tool(
     }));
 
     const result = tasks.requestBatch(
-      instance.id,
-      instance.scope,
+      current.id,
+      current.scope,
       resolved,
       (assigneeId) => {
         const target = registry.get(assigneeId);
-        return !!target && target.scope === instance!.scope;
+        return !!target && target.scope === current.scope;
       },
     );
 
     if ("error" in result) {
-      return {
-        content: [{ type: "text", text: JSON.stringify(result) }],
-      };
+      return respondJson(result);
     }
 
     // Send auto-notifications grouped by assignee
@@ -724,116 +713,111 @@ server.tool(
       }
     }
     for (const [assignee, taskList] of notifs) {
-      if (assignee !== instance.id) {
+      if (assignee !== current.id) {
         messages.send(
-          instance.id,
-          instance.scope,
+          current.id,
+          current.scope,
           assignee,
           `[auto] ${taskList.length} task(s) assigned to you: ${taskList.join(", ")}. Claim open tasks with claim_task.`,
         );
       }
     }
 
-    return respond(JSON.stringify(result, null, 2));
+    return respondJson(result);
   },
 );
 
-server.tool(
+registeredTool(
   "claim_task",
   "Claim an open task to work on it.",
   { task_id: z.string().describe("The task ID to claim") },
   async ({ task_id }) => {
-    if (!instance) return missing();
-    const result = tasks.claim(task_id, instance.scope, instance.id);
-    return respond(JSON.stringify(result));
+    const current = instance!;
+    return respondJson(tasks.claim(task_id, current.scope, current.id));
   },
 );
 
-server.tool(
+registeredTool(
   "update_task",
   "Update a task's status and optionally attach a result.",
   {
     task_id: z.string().describe("The task ID"),
-    status: z
-      .enum(["in_progress", "done", "failed", "cancelled"])
-      .describe("New status"),
+    status: z.enum(["in_progress", "done", "failed", "cancelled"]).describe("New status"),
     result: z.string().optional().describe("Result or summary of work done"),
   },
   async ({ task_id, status, result }) => {
-    if (!instance) return missing();
+    const current = instance!;
     const next = tasks.update(
       task_id,
-      instance.scope,
-      instance.id,
+      current.scope,
+      current.id,
       status,
       result,
     );
 
     // Auto-notify the requester when a task reaches a terminal state
     if ("ok" in next && (status === "done" || status === "failed")) {
-      const task = tasks.get(task_id, instance.scope);
-      if (task && typeof task.requester === "string" && task.requester !== instance.id) {
+      const task = tasks.get(task_id, current.scope);
+      if (task && typeof task.requester === "string" && task.requester !== current.id) {
         messages.send(
-          instance.id,
-          instance.scope,
+          current.id,
+          current.scope,
           task.requester,
           `[auto] Task "${task.title}" (${task_id}) is now ${status}.${result ? ` Result: ${result}` : ""}`,
         );
       }
     }
 
-    return respond(JSON.stringify(next));
+    return respondJson(next);
   },
 );
 
-server.tool(
+registeredTool(
   "approve_task",
   "Approve a task in approval_required status. Transitions to open/claimed (or blocked if deps unmet).",
   { task_id: z.string().describe("The task ID to approve") },
   async ({ task_id }) => {
-    if (!instance) return missing();
-    const result = tasks.approve(task_id, instance.scope);
+    const current = instance!;
+    const result = tasks.approve(task_id, current.scope);
 
     // Auto-notify the assignee if task became claimed
     if ("ok" in result && result.status === "claimed") {
-      const task = tasks.get(task_id, instance.scope);
+      const task = tasks.get(task_id, current.scope);
       if (
         task &&
         typeof task.assignee === "string" &&
-        task.assignee !== instance.id
+        task.assignee !== current.id
       ) {
         messages.send(
-          instance.id,
-          instance.scope,
+          current.id,
+          current.scope,
           task.assignee,
           `[auto] Task "${task.title}" (${task_id}) has been approved and is now claimed by you.`,
         );
       }
     }
 
-    return respond(JSON.stringify(result));
+    return respondJson(result);
   },
 );
 
-server.tool(
+registeredTool(
   "get_task",
   "Get full details of a specific task in this swarm scope.",
   { task_id: z.string().describe("The task ID") },
   async ({ task_id }) => {
-    if (!instance) return missing();
-    const task = tasks.get(task_id, instance.scope);
+    const current = instance!;
+    const task = tasks.get(task_id, current.scope);
     if (!task) return { content: [{ type: "text", text: "Task not found" }] };
-    return { content: [{ type: "text", text: JSON.stringify(task, null, 2) }] };
+    return respondJson(task);
   },
 );
 
-server.tool(
+registeredTool(
   "list_tasks",
   "List tasks in this swarm scope, optionally filtered by status, assignee, or requester.",
   {
-    status: z
-      .enum(["open", "claimed", "in_progress", "done", "failed", "cancelled", "blocked", "approval_required"])
-      .optional(),
+    status: taskStatusSchema.optional(),
     assignee: z.string().optional().describe("Filter by assignee instance ID"),
     requester: z
       .string()
@@ -841,23 +825,14 @@ server.tool(
       .describe("Filter by requester instance ID"),
   },
   async ({ status, assignee, requester }) => {
-    if (!instance) return missing();
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            tasks.list(instance.scope, { status, assignee, requester }),
-            null,
-            2,
-          ),
-        },
-      ],
-    };
+    const current = instance!;
+    return respondJson(
+      tasks.list(current.scope, { status, assignee, requester }),
+    );
   },
 );
 
-server.tool(
+registeredTool(
   "annotate",
   "Share a finding, warning, or note about a file with all instances in this scope.",
   {
@@ -868,19 +843,19 @@ server.tool(
     content: z.string().describe("The annotation content"),
   },
   async ({ file, type, content }) => {
-    if (!instance) return missing();
+    const current = instance!;
     const id = context.annotate(
-      instance.id,
-      instance.scope,
+      current.id,
+      current.scope,
       resolveFileInput(file),
       type,
       content,
     );
-    return respond(JSON.stringify({ annotation_id: id }));
+    return respondJson({ annotation_id: id });
   },
 );
 
-server.tool(
+registeredTool(
   "lock_file",
   "Announce that you are actively working on a file. Other instances should avoid editing it.",
   {
@@ -888,77 +863,68 @@ server.tool(
     reason: z.string().optional().describe("Why you're locking it"),
   },
   async ({ file, reason }) => {
-    if (!instance) return missing();
+    const current = instance!;
     const path = resolveFileInput(file);
     const result = context.lock(
-      instance.id,
-      instance.scope,
+      current.id,
+      current.scope,
       path,
       reason ?? "actively editing",
     );
-    return respond(JSON.stringify(result));
+    return respondJson(result);
   },
 );
 
-server.tool(
+registeredTool(
   "unlock_file",
   "Release a file lock so other instances can edit it.",
   { file: z.string().describe("File path to unlock") },
   async ({ file }) => {
-    if (!instance) return missing();
-    context.clearLocks(instance.id, instance.scope, resolveFileInput(file));
+    const current = instance!;
+    context.clearLocks(current.id, current.scope, resolveFileInput(file));
     return respond(`Unlocked ${file}`);
   },
 );
 
-server.tool(
+registeredTool(
   "check_file",
   "Check if a file has any annotations, locks, or warnings from other instances in this scope.",
   { file: z.string().describe("File path to check") },
   async ({ file }) => {
-    if (!instance) return missing();
-    const rows = context.lookup(instance.scope, resolveFileInput(file));
+    const current = instance!;
+    const rows = context.lookup(current.scope, resolveFileInput(file));
     if (!rows.length)
       return {
         content: [{ type: "text", text: "No annotations for this file" }],
       };
-    return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] };
+    return respondJson(rows);
   },
 );
 
-server.tool(
+registeredTool(
   "search_context",
   "Search all shared annotations in this scope by file path or content.",
   {
     query: z.string().describe("Search term (matches file paths and content)"),
   },
   async ({ query }) => {
-    if (!instance) return missing();
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(context.search(instance.scope, query), null, 2),
-        },
-      ],
-    };
+    return respondJson(context.search(instance!.scope, query));
   },
 );
 
-server.tool(
+registeredTool(
   "kv_get",
   "Get a value from the shared key-value store for this scope.",
   { key: z.string().describe("The key to look up") },
   async ({ key }) => {
-    if (!instance) return missing();
-    const row = kv.get(instance.scope, key);
+    const row = kv.get(instance!.scope, key);
     if (!row)
       return { content: [{ type: "text", text: `Key \"${key}\" not found` }] };
-    return { content: [{ type: "text", text: JSON.stringify(row) }] };
+    return respondJson(row);
   },
 );
 
-server.tool(
+registeredTool(
   "kv_set",
   "Set a value in the shared key-value store for this scope.",
   {
@@ -968,13 +934,12 @@ server.tool(
       .describe("The value to store (use JSON for complex data)"),
   },
   async ({ key, value }) => {
-    if (!instance) return missing();
-    kv.set(instance.scope, key, value, instance.id);
+    kv.set(instance!.scope, key, value, instance!.id);
     return respond(`Set \"${key}\"`);
   },
 );
 
-server.tool(
+registeredTool(
   "kv_append",
   "Atomically append a value to a JSON array in the KV store. Creates the key with [value] if it doesn't exist. If the existing value is not an array, wraps it in one first.",
   {
@@ -984,7 +949,6 @@ server.tool(
       .describe("The value to append (must be valid JSON)"),
   },
   async ({ key, value }) => {
-    if (!instance) return missing();
     try {
       JSON.parse(value);
     } catch {
@@ -992,38 +956,29 @@ server.tool(
         content: [{ type: "text", text: "Value must be valid JSON" }],
       };
     }
-    const length = kv.append(instance.scope, key, value, instance.id);
+    const length = kv.append(instance!.scope, key, value, instance!.id);
     return respond(`Appended to \"${key}\" (${length} items)`);
   },
 );
 
-server.tool(
+registeredTool(
   "kv_delete",
   "Delete a key from the shared key-value store for this scope.",
   { key: z.string().describe("The key to delete") },
   async ({ key }) => {
-    if (!instance) return missing();
-    kv.del(instance.scope, key, instance.id);
+    kv.del(instance!.scope, key, instance!.id);
     return respond(`Deleted \"${key}\"`);
   },
 );
 
-server.tool(
+registeredTool(
   "kv_list",
   "List keys in the shared key-value store for this scope, optionally filtered by prefix.",
   {
     prefix: z.string().optional().describe("Optional key prefix to filter by"),
   },
   async ({ prefix }) => {
-    if (!instance) return missing();
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(kv.keys(instance.scope, prefix), null, 2),
-        },
-      ],
-    };
+    return respondJson(kv.keys(instance!.scope, prefix));
   },
 );
 

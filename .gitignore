@@ -1,6 +1,9 @@
 node_modules/
 dist/
+target/
+crates/*/target/
 apps/swarm-ui/src-tauri/target/
+apps/swarm-server/target/
 nvim.log
 *.db
 *.db-wal

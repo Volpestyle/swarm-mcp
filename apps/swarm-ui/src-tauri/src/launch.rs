@@ -1,18 +1,19 @@
-use std::collections::{HashMap, HashSet};
-use std::env;
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
 use dirs::config_dir;
 use serde::{Deserialize, Serialize};
+use swarm_protocol::PROTOCOL_VERSION;
+use swarm_protocol::rpc::SpawnPtyRequest;
 use tauri::{AppHandle, Emitter, Runtime, State};
-use uuid::Uuid;
 
 use crate::bind::Binder;
+use crate::daemon;
 use crate::events::BIND_RESOLVED;
 use crate::model::{AppError, InstanceStatus};
-use crate::pty::{PtyCreateRequest, PtyManager};
-use crate::writes;
+use crate::pty::PtyManager;
+use crate::swarm::get_swarm_state;
 
 const DEFAULT_ROLES: &[&str] = &["planner", "implementer", "reviewer", "researcher"];
 
@@ -35,7 +36,7 @@ pub struct ShellSpawnResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct RespawnResult {
     pub pty_id: String,
-    pub token: String,
+    pub token: Option<String>,
     pub instance_id: String,
     /// Set when the respawn booted a swarm-aware harness shell. The frontend
     /// auto-types this command into the shell's stdin after spawn so the
@@ -99,10 +100,6 @@ fn config_dir_path() -> Option<PathBuf> {
     config_dir().map(|path| path.join("swarm-ui"))
 }
 
-fn shell_path() -> String {
-    env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_owned())
-}
-
 fn validate_harness_name(harness: Option<&str>) -> Result<Option<&str>, AppError> {
     let Some(harness) = harness.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
@@ -158,14 +155,6 @@ fn validate_name(name: Option<&str>) -> Result<Option<String>, AppError> {
     Ok(Some(name.to_owned()))
 }
 
-fn instance_status_from_heartbeat(heartbeat: i64) -> InstanceStatus {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_secs()).unwrap_or(i64::MAX))
-        .unwrap_or_default();
-    InstanceStatus::from_heartbeat(now, heartbeat)
-}
-
 fn instance_status_label(status: InstanceStatus) -> &'static str {
     match status {
         InstanceStatus::Online => "online",
@@ -177,7 +166,6 @@ fn instance_status_label(status: InstanceStatus) -> &'static str {
 fn build_label(
     role: Option<&str>,
     name: Option<&str>,
-    token: &str,
     preset_label_tokens: &str,
     extra_label_tokens: Option<&str>,
 ) -> String {
@@ -198,17 +186,12 @@ fn build_label(
     if let Some(role) = role {
         push_tokens(&format!("role:{role}"));
     }
-    push_tokens(&format!("launch:{token}"));
     push_tokens(preset_label_tokens);
     if let Some(extra_label_tokens) = extra_label_tokens {
         push_tokens(extra_label_tokens);
     }
 
     ordered.join(" ")
-}
-
-fn launch_token() -> String {
-    Uuid::new_v4().simple().to_string()[..8].to_owned()
 }
 
 fn validate_working_dir(dir: &str) -> Result<(), AppError> {
@@ -249,8 +232,8 @@ pub fn get_role_presets(launch_config: State<'_, LaunchConfig>) -> Vec<RolePrese
 /// role-specific bootstrap text. Without a harness, `role` is ignored —
 /// there's no MCP server to adopt the row.
 #[tauri::command]
-#[allow(clippy::unused_async, clippy::too_many_arguments)]
-pub async fn spawn_shell(
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_shell(
     app_handle: AppHandle,
     pty_manager: State<'_, PtyManager>,
     binder: State<'_, Binder>,
@@ -291,91 +274,60 @@ pub(crate) fn spawn_shell_impl<R: Runtime>(
 ) -> Result<ShellSpawnResult, AppError> {
     validate_working_dir(&cwd)?;
 
-    let shell = shell_path();
     let harness_cmd = validate_harness_name(harness.as_deref())?;
     let validated_role = validate_role(role.as_deref(), launch_config)?;
     let validated_name = validate_name(name.as_deref())?;
-    let display_command = harness_cmd.map_or_else(|| shell.clone(), str::to_owned);
-
-    let mut env = HashMap::new();
-    let mut response_role: Option<String> = None;
-    let instance_id = if let Some(harness_name) = harness_cmd {
-        let token = launch_token();
-        let label_string = build_label(
-            validated_role.as_deref(),
-            validated_name.as_deref(),
-            &token,
-            &format!("provider:{harness_name}"),
-            label.as_deref(),
-        );
-
-        let conn = writes::open_rw().map_err(AppError::Operation)?;
-        writes::ensure_adopted_column(&conn).map_err(AppError::Operation)?;
-        let pending = writes::create_pending_instance(
-            &conn,
-            &cwd,
-            scope.as_deref(),
-            Some(&label_string),
-            None,
-        )
-        .map_err(AppError::Operation)?;
-        drop(conn);
-
-        env.insert("SWARM_MCP_INSTANCE_ID".to_owned(), pending.id.clone());
-        env.insert("SWARM_MCP_SCOPE".to_owned(), pending.scope.clone());
-        env.insert("SWARM_MCP_LABEL".to_owned(), label_string);
-        env.insert("SWARM_UI_LAUNCH_TOKEN".to_owned(), token);
-        env.insert(
-            "SWARM_UI_ROLE".to_owned(),
-            validated_role
-                .clone()
-                .unwrap_or_else(|| harness_name.to_owned()),
-        );
-        response_role = validated_role;
-        Some(pending.id)
-    } else {
-        None
+    let harness_name = harness_cmd.unwrap_or("shell").to_owned();
+    let provider_label_tokens =
+        (harness_name != "shell").then(|| format!("provider:{harness_name}"));
+    let request = SpawnPtyRequest {
+        v: PROTOCOL_VERSION,
+        cwd,
+        harness: harness_name.clone(),
+        role: validated_role.clone(),
+        scope,
+        label: (harness_cmd.is_some()
+            || validated_role.is_some()
+            || validated_name.is_some()
+            || label.is_some())
+        .then(|| {
+            build_label(
+                validated_role.as_deref(),
+                validated_name.as_deref(),
+                provider_label_tokens.as_deref().unwrap_or(""),
+                label.as_deref(),
+            )
+        })
+        .filter(|value| !value.trim().is_empty()),
+        name: validated_name,
+        instance_id: None,
+        cols: None,
+        rows: None,
     };
 
-    let pty_id = match pty_manager.create_session(
-        app_handle,
-        PtyCreateRequest {
-            command: shell,
-            args: Vec::new(),
-            cwd,
-            env,
-            display_command: Some(display_command),
-        },
-    ) {
-        Ok(id) => id,
-        Err(err) => {
-            if let Some(id) = instance_id.as_deref() {
-                let _ = writes::open_rw().and_then(|rollback_conn| {
-                    writes::delete_unadopted_instance(&rollback_conn, id).map(|_| ())
-                });
-            }
-            return Err(err);
-        }
-    };
+    let response =
+        tauri::async_runtime::block_on(daemon::spawn_pty(&request)).map_err(AppError::Operation)?;
+    pty_manager
+        .upsert_session(app_handle, response.pty.clone())
+        .map_err(AppError::Internal)?;
 
-    if let Some(id) = instance_id.as_deref() {
-        pty_manager.set_bound_instance(&pty_id, id)?;
+    if let Some(id) = response.pty.bound_instance_id.as_deref() {
         binder
-            .bind_immediate(id, &pty_id)
+            .bind_immediate(id, &response.pty.id)
             .map_err(AppError::Internal)?;
         let _ = app_handle.emit(
             BIND_RESOLVED,
             serde_json::json!({
                 "instance_id": id,
-                "pty_id": pty_id,
+                "pty_id": response.pty.id,
             }),
         );
     }
 
     Ok(ShellSpawnResult {
-        pty_id,
-        instance_id,
-        role: response_role,
+        pty_id: response.pty.id,
+        instance_id: response.pty.bound_instance_id,
+        role: validated_role,
     })
 }
 
@@ -393,8 +345,7 @@ fn parse_harness_from_label(label: Option<&str>) -> Option<String> {
             return Some(provider.to_owned());
         }
     }
-    parse_role_from_label(Some(label))
-        .filter(|candidate| is_harness_shell_role(candidate))
+    parse_role_from_label(Some(label)).filter(|candidate| is_harness_shell_role(candidate))
 }
 
 /// Extract `role:X` from a label token list.
@@ -435,14 +386,13 @@ pub async fn respawn_instance(
         )));
     }
 
-    let conn = writes::open_rw().map_err(AppError::Operation)?;
-    writes::ensure_adopted_column(&conn).map_err(AppError::Operation)?;
-    let existing = writes::load_instance_info(&conn, trimmed)
-        .map_err(AppError::Operation)?
+    let existing = get_swarm_state()?
+        .instances
+        .into_iter()
+        .find(|instance| instance.id == trimmed)
         .ok_or_else(|| AppError::NotFound(format!("instance {trimmed} not found")))?;
-    drop(conn);
 
-    let status = instance_status_from_heartbeat(existing.heartbeat);
+    let status = existing.status;
     if status == InstanceStatus::Online {
         return Err(AppError::Validation(format!(
             "instance {trimmed} is still {} and cannot be respawned",
@@ -460,48 +410,40 @@ pub async fn respawn_instance(
     let role = parse_role_from_label(existing.label.as_deref())
         .filter(|candidate| !is_harness_shell_role(candidate));
 
-    let token = launch_token();
-    let mut env: HashMap<String, String> = HashMap::new();
-    env.insert("SWARM_MCP_INSTANCE_ID".to_owned(), existing.id.clone());
-    env.insert("SWARM_MCP_SCOPE".to_owned(), existing.scope.clone());
-    if let Some(label) = existing.label.clone() {
-        env.insert("SWARM_MCP_LABEL".to_owned(), label);
-    }
-    env.insert("SWARM_UI_LAUNCH_TOKEN".to_owned(), token.clone());
-    env.insert(
-        "SWARM_UI_ROLE".to_owned(),
-        role.clone().unwrap_or_else(|| harness.clone()),
-    );
+    let request = SpawnPtyRequest {
+        v: PROTOCOL_VERSION,
+        cwd: existing.directory.clone(),
+        harness: harness.clone(),
+        role: role.clone(),
+        scope: Some(existing.scope.clone()),
+        label: existing.label.clone(),
+        name: None,
+        instance_id: Some(existing.id.clone()),
+        cols: None,
+        rows: None,
+    };
+    let response = daemon::spawn_pty(&request)
+        .await
+        .map_err(AppError::Operation)?;
+    pty_manager
+        .upsert_session(&app_handle, response.pty.clone())
+        .map_err(AppError::Internal)?;
 
-    let pty_id = pty_manager.create_session(
-        &app_handle,
-        PtyCreateRequest {
-            command: shell_path(),
-            args: Vec::new(),
-            cwd: existing.directory.clone(),
-            env,
-            display_command: Some(harness.clone()),
-        },
-    )?;
-
-    pty_manager.set_launch_token(&pty_id, &token)?;
-    pty_manager.set_bound_instance(&pty_id, &existing.id)?;
     binder
-        .bind_immediate(&existing.id, &pty_id)
+        .bind_immediate(&existing.id, &response.pty.id)
         .map_err(AppError::Internal)?;
 
     let _ = app_handle.emit(
         BIND_RESOLVED,
         serde_json::json!({
-            "token": token,
             "instance_id": existing.id,
-            "pty_id": pty_id,
+            "pty_id": response.pty.id,
         }),
     );
 
     Ok(RespawnResult {
-        pty_id,
-        token,
+        pty_id: response.pty.id,
+        token: None,
         instance_id: existing.id,
         harness: Some(harness),
         role,
@@ -513,10 +455,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_label_includes_role_and_token() {
-        let label = build_label(Some("planner"), None, "abc", "provider:oc", None);
+    fn build_label_includes_role_and_provider() {
+        let label = build_label(Some("planner"), None, "provider:oc", None);
         assert!(label.contains("role:planner"));
-        assert!(label.contains("launch:abc"));
         assert!(label.contains("provider:oc"));
     }
 
@@ -525,7 +466,6 @@ mod tests {
         let label = build_label(
             Some("planner"),
             None,
-            "abc",
             "provider:oc",
             Some("provider:oc extra:tag"),
         );
@@ -535,14 +475,14 @@ mod tests {
 
     #[test]
     fn build_label_without_role() {
-        let label = build_label(None, None, "abc", "provider:oc", None);
+        let label = build_label(None, None, "provider:oc", None);
         assert!(!label.contains("role:"));
-        assert!(label.contains("launch:abc"));
+        assert!(label.contains("provider:oc"));
     }
 
     #[test]
     fn build_label_includes_name_token() {
-        let label = build_label(Some("planner"), Some("scout"), "abc", "provider:oc", None);
+        let label = build_label(Some("planner"), Some("scout"), "provider:oc", None);
         assert!(label.contains("name:scout"));
         assert!(label.contains("role:planner"));
     }

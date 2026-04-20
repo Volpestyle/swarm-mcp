@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "token": "tok_01HF8Z9KQ3N4M5P6R7S8T9V0W1",
+  "cert_fingerprint": "sha256:89AB4E2C7F9D1E3B6A8C0D2E4F5A7B9C1D3E5F7A9B1C3D5E7F9A1B3C5D7E9F0A",
+  "device_id": "dev-01HF8Z9KQ3",
+  "scopes": [
+    "swarm-mcp"
+  ]
+}

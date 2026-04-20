@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "dev": "node ../../scripts/generate-ui-protocol-types.mjs && vite",
+    "build": "node ../../scripts/generate-ui-protocol-types.mjs && vite build",
+    "check": "node ../../scripts/generate-ui-protocol-types.mjs && svelte-check --tsconfig ./tsconfig.json",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -17,11 +17,13 @@
     "dompurify": "^3.4.0",
     "ghostty-web": "^0.4.0",
     "marked": "^18.0.1",
+    "qrcode": "^1.5.4",
     "svelte": "^5.0.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tauri-apps/cli": "^2.0.0",
+    "@types/qrcode": "^1.5.6",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "svelte-check": "^4.0.0",

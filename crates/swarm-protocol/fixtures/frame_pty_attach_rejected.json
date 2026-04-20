@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "type": "pty.attach_rejected",
+  "pty_id": "pty-9f3a",
+  "earliest_seq": 2048,
+  "reason": "requested seq is older than ring buffer retention"
+}

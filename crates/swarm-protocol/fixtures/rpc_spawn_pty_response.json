@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "pty": {
+    "id": "pty-9f3a",
+    "command": "claude",
+    "cwd": "/Users/james/code/swarm-mcp",
+    "started_at": 1745000010,
+    "exit_code": null,
+    "bound_instance_id": "inst-abc-123",
+    "cols": 120,
+    "rows": 40,
+    "lease": {
+      "holder": "local:swarm-ui",
+      "acquired_at": 1745000015,
+      "generation": 3
+    }
+  }
+}

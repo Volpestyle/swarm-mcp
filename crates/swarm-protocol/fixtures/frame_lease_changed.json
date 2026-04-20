@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "lease.changed",
+  "pty_id": "pty-9f3a",
+  "lease": {
+    "holder": "device:dev-01HF8Z9KQ3",
+    "acquired_at": 1745000500,
+    "generation": 4
+  },
+  "at": 1745000500
+}
