@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "cwd": "/Users/james/code/swarm-mcp",
+  "harness": "claude",
+  "role": "reviewer",
+  "scope": "swarm-mcp",
+  "label": null,
+  "name": "reviewer-2",
+  "instance_id": null,
+  "cols": 120,
+  "rows": 40
+}

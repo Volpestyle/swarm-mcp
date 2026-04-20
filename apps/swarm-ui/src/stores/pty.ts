@@ -26,6 +26,7 @@ import { resolveHarnessCommand } from './harnessAliases';
 
 const HARNESS_AUTOTYPE_MIN_DELAY_MS = 200;
 const PTY_READY_TIMEOUT_MS = 1500;
+export const LOCAL_PTY_LEASE_HOLDER = 'local:swarm-ui';
 
 type ReadyGate = {
   ready: boolean;
@@ -116,6 +117,20 @@ function patchSession(id: string, patch: Partial<PtySession>): void {
     next.set(id, { ...current, ...patch });
     return next;
   });
+}
+
+export function isMobileLeaseHolder(holder: string | null | undefined): boolean {
+  return typeof holder === 'string' && holder.startsWith('device:');
+}
+
+export function isMobileControlledSession(
+  session: PtySession | null | undefined,
+): boolean {
+  return isMobileLeaseHolder(session?.lease?.holder);
+}
+
+export function getPtySessionSnapshot(id: string): PtySession | null {
+  return get(ptySessions).get(id) ?? null;
 }
 
 function addPendingBinding(token: string, ptyId: string): void {
@@ -254,6 +269,7 @@ export async function subscribeToPtyExit(
 // ---------------------------------------------------------------------------
 
 let ptyCreatedUnlisten: UnlistenFn | null = null;
+let ptyUpdatedUnlisten: UnlistenFn | null = null;
 let ptyClosedUnlisten: UnlistenFn | null = null;
 let bindResolvedUnlisten: UnlistenFn | null = null;
 let bindUnresolvedUnlisten: UnlistenFn | null = null;
@@ -282,6 +298,11 @@ export async function initPtyStore(): Promise<void> {
 
   // Listen for PTY creation events
   ptyCreatedUnlisten = await listen<PtySession>('pty:created', (event) => {
+    upsertSession(event.payload);
+  });
+
+  // Listen for PTY metadata updates pushed from the daemon snapshot watcher.
+  ptyUpdatedUnlisten = await listen<PtySession>('pty:updated', (event) => {
     upsertSession(event.payload);
   });
 
@@ -363,11 +384,13 @@ export async function initPtyStore(): Promise<void> {
  */
 export function destroyPtyStore(): void {
   ptyCreatedUnlisten?.();
+  ptyUpdatedUnlisten?.();
   ptyClosedUnlisten?.();
   bindResolvedUnlisten?.();
   bindUnresolvedUnlisten?.();
   ptyBoundExitUnlisten?.();
   ptyCreatedUnlisten = null;
+  ptyUpdatedUnlisten = null;
   ptyClosedUnlisten = null;
   bindResolvedUnlisten = null;
   bindUnresolvedUnlisten = null;
@@ -395,6 +418,23 @@ export async function resizePty(
   rows: number,
 ): Promise<void> {
   await invoke('pty_resize', { id, cols, rows });
+}
+
+/**
+ * Ask the daemon to make this desktop UI the interactive lease holder.
+ */
+export async function requestPtyLease(
+  id: string,
+  takeover: boolean = false,
+): Promise<void> {
+  await invoke('pty_request_lease', { id, takeover });
+}
+
+/**
+ * Release the desktop UI's interactive lease for a PTY.
+ */
+export async function releasePtyLease(id: string): Promise<void> {
+  await invoke('pty_release_lease', { id });
 }
 
 /**
@@ -475,6 +515,9 @@ export async function spawnShell(
     exit_code: null,
     bound_instance_id: result.instance_id,
     launch_token: null,
+    cols: 120,
+    rows: 40,
+    lease: null,
   };
 
   upsertSession(session);
@@ -523,6 +566,9 @@ export async function respawnInstance(instanceId: string): Promise<RespawnResult
     exit_code: null,
     bound_instance_id: result.instance_id,
     launch_token: result.token,
+    cols: 120,
+    rows: 40,
+    lease: null,
   };
 
   upsertSession(session);
@@ -554,4 +600,55 @@ export async function deregisterInstance(instanceId: string): Promise<void> {
     pending: state.pending,
     resolved: state.resolved.filter(([id]) => id !== instanceId),
   }));
+}
+
+/**
+ * Bulk-deregister every stale/offline instance in the supplied set (usually
+ * the caller's scope-filtered offline list). For instances still bound to a
+ * live PTY in this session (the common ADOPTING-but-offline case: the
+ * harness is running but never called `swarm.register`), close the PTY
+ * first — the server's pty-exit handler deletes the unadopted row
+ * automatically. Pure instance-only rows (no PTY, ghosted from a prior
+ * session) are cleaned up via the backend bulk sweep. Returns the number
+ * of rows removed.
+ */
+export async function deregisterOfflineInstances(
+  offlineInstanceIds: Iterable<string>,
+  scope: string | null = null,
+): Promise<number> {
+  const targetIds = new Set(offlineInstanceIds);
+  const resolvedByInstance = new Map(get(bindings).resolved);
+  const ptyMap = get(ptySessions);
+
+  let removed = 0;
+
+  for (const instanceId of targetIds) {
+    const ptyId = resolvedByInstance.get(instanceId);
+    if (!ptyId) continue;
+
+    const pty = ptyMap.get(ptyId);
+    if (!pty || pty.exit_code !== null) continue;
+
+    // Live PTY bound to an instance the user wants gone. Closing the PTY
+    // is the only safe path: the exit handler on the server deletes the
+    // unadopted row, drops the lease, and emits pty:closed so the node
+    // disappears from the graph.
+    try {
+      await closePty(ptyId);
+      removed += 1;
+    } catch (err) {
+      console.warn('[pty] failed to close PTY during offline sweep:', err);
+    }
+  }
+
+  try {
+    removed += await invoke<number>('ui_deregister_offline_instances', {
+      scope: scope ?? null,
+    });
+  } catch (err) {
+    console.error('[pty] bulk deregister failed:', err);
+    throw err;
+  }
+
+  return removed;
 }

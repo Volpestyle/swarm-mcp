@@ -12,6 +12,15 @@ export type TaskType =
   | "research"
   | "other";
 
+export const TASK_TYPES = [
+  "review",
+  "implement",
+  "fix",
+  "test",
+  "research",
+  "other",
+] as const;
+
 export type TaskStatus =
   | "open"
   | "claimed"
@@ -21,6 +30,17 @@ export type TaskStatus =
   | "cancelled"
   | "blocked"
   | "approval_required";
+
+export const TASK_STATUSES = [
+  "open",
+  "claimed",
+  "in_progress",
+  "done",
+  "failed",
+  "cancelled",
+  "blocked",
+  "approval_required",
+] as const;
 
 type TaskRow = {
   id: string;
@@ -33,6 +53,27 @@ type TaskRow = {
   priority: number;
   idempotency_key: string | null;
   parent_task_id: string | null;
+};
+
+type TaskRelationFields = Pick<RequestOpts, "depends_on" | "parent_task_id">;
+type TaskCreationFields = {
+  id: string;
+  scope: string;
+  requester: string;
+  type: TaskType;
+  title: string;
+  description: string | null;
+  assignee: string | null;
+  files: string[] | null;
+  priority: number;
+  depends_on: string[] | null;
+  idempotency_key: string | null;
+  parent_task_id: string | null;
+  approval_required: boolean;
+};
+type PreparedTaskInsert = TaskCreationFields & {
+  status: TaskStatus;
+  result: string | null;
 };
 
 export interface RequestOpts {
@@ -196,6 +237,94 @@ function initialState(scope: string, opts: RequestOpts) {
   return { status: opts.assignee ? ("claimed" as TaskStatus) : ("open" as TaskStatus), result: null };
 }
 
+function findExistingTask(scope: string, idempotency_key?: string) {
+  if (!idempotency_key) return null;
+  return db
+    .query(
+      "SELECT id, status FROM tasks WHERE scope = ? AND idempotency_key = ?",
+    )
+    .get(scope, idempotency_key) as {
+    id: string;
+    status: TaskStatus;
+  } | null;
+}
+
+function validateTaskRelations(scope: string, relations: TaskRelationFields) {
+  if (relations.depends_on?.length) {
+    for (const depId of relations.depends_on) {
+      const dep = db
+        .query("SELECT id FROM tasks WHERE id = ? AND scope = ?")
+        .get(depId, scope);
+      if (!dep) return `Dependency task ${depId} not found in scope`;
+    }
+  }
+
+  if (!relations.parent_task_id) return null;
+  const parent = db
+    .query("SELECT id FROM tasks WHERE id = ? AND scope = ?")
+    .get(relations.parent_task_id, scope);
+  if (!parent) {
+    return `Parent task ${relations.parent_task_id} not found in scope`;
+  }
+  return null;
+}
+
+function prepareTaskInsert(fields: TaskCreationFields): PreparedTaskInsert {
+  const state = initialState(fields.scope, {
+    assignee: fields.assignee ?? undefined,
+    depends_on: fields.depends_on ?? undefined,
+    approval_required: fields.approval_required,
+  });
+
+  return {
+    ...fields,
+    status: state.status,
+    result: state.result,
+  };
+}
+
+function insertPreparedTask(
+  task: PreparedTaskInsert,
+  extraPayload: Record<string, unknown> = {},
+) {
+  db.run(
+    `INSERT INTO tasks (id, scope, type, title, description, requester, assignee, files, status, priority, depends_on, idempotency_key, parent_task_id, result, changed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      task.id,
+      task.scope,
+      task.type,
+      task.title,
+      task.description,
+      task.requester,
+      task.assignee,
+      task.files ? JSON.stringify(task.files) : null,
+      task.status,
+      task.priority,
+      task.depends_on?.length ? JSON.stringify(task.depends_on) : null,
+      task.idempotency_key,
+      task.parent_task_id,
+      task.result,
+      stamp(),
+    ],
+  );
+  emit({
+    scope: task.scope,
+    type: "task.created",
+    actor: task.requester,
+    subject: task.id,
+    payload: {
+      task_type: task.type,
+      title: task.title,
+      status: task.status,
+      assignee: task.assignee,
+      parent_task_id: task.parent_task_id,
+      depends_on: task.depends_on,
+      ...extraPayload,
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -210,81 +339,32 @@ export function request(
   prune();
 
   // Idempotency: return existing task if key matches
-  if (opts.idempotency_key) {
-    const existing = db
-      .query(
-        "SELECT id, status FROM tasks WHERE scope = ? AND idempotency_key = ?",
-      )
-      .get(scope, opts.idempotency_key) as {
-      id: string;
-      status: TaskStatus;
-    } | null;
-    if (existing)
-      return { id: existing.id, status: existing.status, existing: true };
+  const existing = findExistingTask(scope, opts.idempotency_key);
+  if (existing) {
+    return { id: existing.id, status: existing.status, existing: true };
   }
 
-  // Validate dependency IDs exist
-  if (opts.depends_on?.length) {
-    for (const depId of opts.depends_on) {
-      const dep = db
-        .query("SELECT id FROM tasks WHERE id = ? AND scope = ?")
-        .get(depId, scope);
-      if (!dep) return { error: `Dependency task ${depId} not found in scope` };
-    }
-  }
+  const relationError = validateTaskRelations(scope, opts);
+  if (relationError) return { error: relationError };
 
-  // Validate parent task exists
-  if (opts.parent_task_id) {
-    const parent = db
-      .query("SELECT id FROM tasks WHERE id = ? AND scope = ?")
-      .get(opts.parent_task_id, scope);
-    if (!parent)
-      return {
-        error: `Parent task ${opts.parent_task_id} not found in scope`,
-      };
-  }
-
-  const state = initialState(scope, opts);
-
-  const id = randomUUID();
-
-  db.run(
-    `INSERT INTO tasks (id, scope, type, title, description, requester, assignee, files, status, priority, depends_on, idempotency_key, parent_task_id, result, changed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      scope,
-      type,
-      title,
-      opts.description ?? null,
-      requester,
-      opts.assignee ?? null,
-      opts.files ? JSON.stringify(opts.files) : null,
-      state.status,
-      opts.priority ?? 0,
-      opts.depends_on?.length ? JSON.stringify(opts.depends_on) : null,
-      opts.idempotency_key ?? null,
-      opts.parent_task_id ?? null,
-      state.result,
-      stamp(),
-    ],
-  );
-  emit({
+  const prepared = prepareTaskInsert({
+    id: randomUUID(),
     scope,
-    type: "task.created",
-    actor: requester,
-    subject: id,
-    payload: {
-      task_type: type,
-      title,
-      status: state.status,
-      assignee: opts.assignee ?? null,
-      parent_task_id: opts.parent_task_id ?? null,
-      depends_on: opts.depends_on ?? null,
-    },
+    requester,
+    type,
+    title,
+    description: opts.description ?? null,
+    assignee: opts.assignee ?? null,
+    files: opts.files ?? null,
+    priority: opts.priority ?? 0,
+    depends_on: opts.depends_on ?? null,
+    idempotency_key: opts.idempotency_key ?? null,
+    parent_task_id: opts.parent_task_id ?? null,
+    approval_required: opts.approval_required ?? false,
   });
 
-  return { id, status: state.status };
+  insertPreparedTask(prepared);
+  return { id: prepared.id, status: prepared.status };
 }
 
 export function claim(id: string, scope: string, assignee: string) {
@@ -532,14 +612,10 @@ export function requestBatch(
 
   for (let i = 0; i < specs.length; i++) {
     const spec = specs[i];
-    if (spec.idempotency_key) {
-      const existing = db
-        .query("SELECT id, status FROM tasks WHERE scope = ? AND idempotency_key = ?")
-        .get(scope, spec.idempotency_key) as { id: string; status: TaskStatus } | null;
-      if (existing) {
-        resolved.push({ id: existing.id, status: existing.status, isNew: false });
-        continue;
-      }
+    const existing = findExistingTask(scope, spec.idempotency_key);
+    if (existing) {
+      resolved.push({ id: existing.id, status: existing.status, isNew: false });
+      continue;
     }
     resolved.push({ id: randomUUID(), status: "open", isNew: true }); // status computed later
   }
@@ -647,50 +723,24 @@ export function requestBatch(
       const deps = resolvedSpecs[i].depends_on;
       const parentId = resolvedSpecs[i].parent_task_id;
 
-      // Compute initial status
-      const state = initialState(scope, {
-        ...spec,
-        depends_on: deps ?? undefined,
-      });
-
-      resolved[i].status = state.status;
-
-      db.run(
-        `INSERT INTO tasks (id, scope, type, title, description, requester, assignee, files, status, priority, depends_on, idempotency_key, parent_task_id, result, changed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          resolved[i].id,
-          scope,
-          spec.type,
-          spec.title,
-          spec.description ?? null,
-          requester,
-          spec.assignee ?? null,
-          spec.files ? JSON.stringify(spec.files) : null,
-          state.status,
-          spec.priority ?? 0,
-          deps ? JSON.stringify(deps) : null,
-          spec.idempotency_key ?? null,
-          parentId,
-          state.result,
-          stamp(),
-        ],
-      );
-      emit({
+      const prepared = prepareTaskInsert({
+        id: resolved[i].id,
         scope,
-        type: "task.created",
-        actor: requester,
-        subject: resolved[i].id,
-        payload: {
-          task_type: spec.type,
-          title: spec.title,
-          status: state.status,
-          assignee: spec.assignee ?? null,
-          parent_task_id: parentId,
-          depends_on: deps,
-          batch_index: i,
-        },
+        requester,
+        type: spec.type,
+        title: spec.title,
+        description: spec.description ?? null,
+        assignee: spec.assignee ?? null,
+        files: spec.files ?? null,
+        priority: spec.priority ?? 0,
+        depends_on: deps,
+        idempotency_key: spec.idempotency_key ?? null,
+        parent_task_id: parentId,
+        approval_required: spec.approval_required ?? false,
       });
+
+      resolved[i].status = prepared.status;
+      insertPreparedTask(prepared, { batch_index: i });
     }
   });
   tx();

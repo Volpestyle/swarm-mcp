@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "type": "error",
+  "class": "version_mismatch",
+  "message": "client too old",
+  "request_id": "req-abc"
+}

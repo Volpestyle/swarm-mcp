@@ -138,7 +138,8 @@ fn execute_command<R: Runtime>(
         "send_prompt" => {
             let payload: SendPromptPayload = serde_json::from_str(&record.payload)
                 .map_err(|err| format!("invalid send_prompt payload: {err}"))?;
-            let (pty_id, node_id) = resolve_prompt_target(app_handle, &record.scope, &payload.target)?;
+            let (pty_id, node_id) =
+                resolve_prompt_target(app_handle, &record.scope, &payload.target)?;
             let mut data = payload.text.into_bytes();
             if payload.enter.unwrap_or(true) {
                 data.push(b'\n');
@@ -217,9 +218,7 @@ fn current_node_ids_for_scope<R: Runtime>(
     instances.sort_unstable_by(|left, right| left.id.cmp(&right.id));
 
     let manager = app_handle.state::<PtyManager>();
-    let mut sessions = manager
-        .sessions_snapshot()
-        .map_err(|err| err.to_string())?;
+    let mut sessions = manager.sessions_snapshot().map_err(|err| err.to_string())?;
     sessions.sort_unstable_by(|left, right| left.id.cmp(&right.id));
 
     let binding = app_handle.state::<Binder>().snapshot();
@@ -249,7 +248,10 @@ fn current_node_ids_for_scope<R: Runtime>(
             continue;
         }
         if let Some(bound_instance_id) = session.bound_instance_id.as_deref() {
-            if !instances.iter().any(|instance| instance.id == bound_instance_id) {
+            if !instances
+                .iter()
+                .any(|instance| instance.id == bound_instance_id)
+            {
                 continue;
             }
         }
@@ -283,7 +285,9 @@ fn resolve_prompt_target<R: Runtime>(
     }
 
     match find_instance(target, &snapshot.instances, scope)? {
-        Some(instance) => resolve_instance_prompt(&instance.id, &snapshot.instances, scope, &binder),
+        Some(instance) => {
+            resolve_instance_prompt(&instance.id, &snapshot.instances, scope, &binder)
+        }
         None => resolve_pty_prompt(target, &snapshot.instances, scope, &sessions),
     }
 }
@@ -340,8 +344,8 @@ fn resolve_pty_prompt(
     scope: &str,
     sessions: &[PtySession],
 ) -> Result<(String, String), String> {
-    let session = find_pty(pty_ref, sessions)?
-        .ok_or_else(|| format!("no PTY matches {pty_ref:?}"))?;
+    let session =
+        find_pty(pty_ref, sessions)?.ok_or_else(|| format!("no PTY matches {pty_ref:?}"))?;
     let node_id = match session.bound_instance_id.as_deref() {
         Some(instance_id) => {
             let instance = instances
@@ -387,8 +391,8 @@ fn resolve_pty_node(
     scope: &str,
     sessions: &[PtySession],
 ) -> Result<String, String> {
-    let session = find_pty(pty_ref, sessions)?
-        .ok_or_else(|| format!("no PTY matches {pty_ref:?}"))?;
+    let session =
+        find_pty(pty_ref, sessions)?.ok_or_else(|| format!("no PTY matches {pty_ref:?}"))?;
     if let Some(instance_id) = session.bound_instance_id.as_deref() {
         let instance = instances
             .iter()
@@ -451,7 +455,12 @@ fn find_instance<'a>(
     let label = scoped
         .iter()
         .copied()
-        .filter(|instance| instance.label.as_deref().is_some_and(|label| label.contains(raw)))
+        .filter(|instance| {
+            instance
+                .label
+                .as_deref()
+                .is_some_and(|label| label.contains(raw))
+        })
         .collect::<Vec<_>>();
     match label.len() {
         1 => Ok(label.into_iter().next()),

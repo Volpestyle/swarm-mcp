@@ -1,140 +1,50 @@
 // =============================================================================
-// types.ts — TypeScript types mirroring Rust models (Agent 1: model.rs)
+// types.ts — UI-specific TypeScript types
 //
-// These types represent the serialized shapes emitted by the Tauri backend.
-// Field names use snake_case to match Rust serde output directly.
+// Shared swarm protocol types are generated from `crates/swarm-protocol` into
+// `./generated/protocol.ts`. This file keeps only the frontend-specific graph,
+// terminal, and UI payload types layered on top of that shared model.
 // =============================================================================
 
 import type { Edge as FlowEdge, Node as FlowNode } from '@xyflow/svelte';
+import type {
+  Annotation,
+  Event,
+  Instance,
+  InstanceStatus,
+  KvEntry,
+  Lock,
+  Message,
+  Task,
+  TaskStatus,
+  TaskType,
+} from './generated/protocol';
+
+export type {
+  Annotation,
+  Event,
+  Instance,
+  InstanceStatus,
+  KvEntry,
+  Lock,
+  Message,
+  Task,
+  TaskStatus,
+  TaskType,
+} from './generated/protocol';
 
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
 
-/** Derived from heartbeat freshness: online <= 30s, stale 30-60s, offline > 60s */
-export type InstanceStatus = 'online' | 'stale' | 'offline';
-
-export type TaskStatus =
-  | 'open'
-  | 'claimed'
-  | 'in_progress'
-  | 'done'
-  | 'failed'
-  | 'cancelled'
-  | 'blocked'
-  | 'approval_required';
-
-export type TaskType =
-  | 'review'
-  | 'implement'
-  | 'fix'
-  | 'test'
-  | 'research'
-  | 'other';
-
 export type NodeType = 'instance' | 'pty' | 'bound';
 
 export type EdgeType = 'connection';
 
-// ---------------------------------------------------------------------------
-// Data models  (match Rust Serialize output 1:1)
-// ---------------------------------------------------------------------------
-
-export interface Instance {
-  id: string;
-  scope: string;
-  directory: string;
-  root: string;
-  file_root: string;
-  pid: number;
-  label: string | null;
-  registered_at: number;
-  heartbeat: number;
-  status: InstanceStatus;
-  /**
-   * `true` once the child process inside the PTY has called `swarm.register`
-   * and taken over the instance row. `false` while the row is still a
-   * UI-owned placeholder waiting for adoption.
-   */
-  adopted: boolean;
-}
-
-export interface Task {
-  id: string;
-  scope: string;
-  type: TaskType;
-  title: string;
-  description: string | null;
-  requester: string;
-  assignee: string | null;
-  status: TaskStatus;
-  files: string[];
-  result: string | null;
-  created_at: number;
-  updated_at: number;
-  changed_at: number;
-  priority: number;
-  depends_on: string[];
-  parent_task_id: string | null;
-}
-
-export interface Message {
-  id: number;
-  scope: string;
-  sender: string;
-  recipient: string | null;
-  content: string;
-  created_at: number;
-  read: boolean;
-}
-
-export interface Lock {
-  scope: string;
-  file: string;
-  instance_id: string;
-}
-
-/**
- * One row from the `context` table. Includes locks (`type === 'lock'`) plus
- * `finding`, `warning`, `bug`, `note`, `todo`, etc. The Inspector renders
- * these grouped by `type` so non-lock annotations are visible too.
- */
-export interface Annotation {
-  id: string;
-  scope: string;
-  instance_id: string;
-  file: string;
-  type: string;
-  content: string;
-  created_at: number;
-}
-
-/**
- * One row from the `events` audit log. Powers the Activity timeline; the
- * `type` discriminator follows the `category.action` convention from
- * `swarm-mcp/src/events.ts` (e.g. `task.cascade.unblocked`).
- */
-export interface Event {
-  id: number;
-  scope: string;
-  type: string;
-  actor: string | null;
-  subject: string | null;
-  /** Raw JSON string from the DB. Parsers should `try { JSON.parse(...) }`. */
-  payload: string | null;
-  created_at: number;
-}
-
-/**
- * One non-`ui/*` row from the `kv` table — coordination state agents write
- * to share scope-level data (turn counters, status flags, queues...).
- * `value` is the raw stored string; render layer pretty-prints if JSON.
- */
-export interface KvEntry {
-  scope: string;
-  key: string;
-  value: string;
-  updated_at: number;
+export interface PtyLease {
+  holder: string;
+  acquired_at: number;
+  generation: number;
 }
 
 export interface PtySession {
@@ -145,6 +55,28 @@ export interface PtySession {
   exit_code: number | null;
   bound_instance_id: string | null;
   launch_token: string | null;
+  cols: number;
+  rows: number;
+  lease: PtyLease | null;
+}
+
+export interface DeviceInfo {
+  device_id: string;
+  device_name: string;
+  platform: string | null;
+  created_at: number;
+  last_seen_at: number;
+  revoked_at: number | null;
+}
+
+export interface PairingSessionInfo {
+  session_id: string;
+  host: string;
+  port: number;
+  cert_fingerprint: string;
+  code: string;
+  pairing_secret: string;
+  expires_at: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +126,7 @@ export interface ShellSpawnResult {
  */
 export interface RespawnResult {
   pty_id: string;
-  token: string;
+  token: string | null;
   instance_id: string;
   harness: string | null;
   role: string | null;
@@ -259,6 +191,10 @@ export type SwarmNodeData = Record<string, unknown> & {
    * the instance UUID prefix.
    */
   displayName: string | null;
+  /** True when a paired mobile device currently owns this PTY's interactive lease. */
+  mobileControlled: boolean;
+  /** Lease holder string such as `local:swarm-ui` or `device:abc123`. */
+  mobileLeaseHolder: string | null;
 };
 
 /**
@@ -329,6 +265,8 @@ export interface TerminalHandle {
   write: (data: Uint8Array | string) => void;
   refit: () => void;
   getSize: () => { cols: number; rows: number };
+  setViewportSize: (cols: number, rows: number) => void;
+  clearViewportSize: () => void;
   focus: () => void;
   dispose: () => void;
   onData: (cb: (data: string) => void) => () => void;

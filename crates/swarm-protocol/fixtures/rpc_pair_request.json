@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "code": "482913",
+  "device_name": "James's iPhone",
+  "device_id": "vendor-1D2E3F-4A5B",
+  "platform": "iphone",
+  "pairing_secret": "pair-secret",
+  "client_nonce": "d9f8d28d4bb541b2a1cf5a7a8170a611"
+}

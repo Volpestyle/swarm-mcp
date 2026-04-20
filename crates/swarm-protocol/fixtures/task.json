@@ -1,0 +1,22 @@
+{
+  "id": "task-7",
+  "scope": "swarm-mcp",
+  "type": "implement",
+  "title": "Add swarm-server pairing endpoint",
+  "description": "HTTPS POST /pair, validates code, issues token.",
+  "requester": "inst-coordinator-1",
+  "assignee": "inst-abc-123",
+  "status": "in_progress",
+  "files": [
+    "apps/swarm-server/src/pair.rs"
+  ],
+  "result": null,
+  "created_at": 1745000000,
+  "updated_at": 1745000120,
+  "changed_at": 1745000120,
+  "priority": 5,
+  "depends_on": [
+    "task-6"
+  ],
+  "parent_task_id": null
+}

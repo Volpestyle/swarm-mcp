@@ -35,10 +35,7 @@ fn instance_status_label(status: InstanceStatus) -> &'static str {
 /// ConnectionEdge. Both ids must be non-empty; no scope check — the UI
 /// shows any pair in the current snapshot so the user decides.
 #[tauri::command]
-pub fn ui_clear_messages(
-    instance_a: String,
-    instance_b: String,
-) -> Result<usize, AppError> {
+pub fn ui_clear_messages(instance_a: String, instance_b: String) -> Result<usize, AppError> {
     let a = instance_a.trim();
     let b = instance_b.trim();
     if a.is_empty() || b.is_empty() {
@@ -80,9 +77,7 @@ pub fn ui_remove_dependency(
     let dependent = dependent_task_id.trim();
     let dependency = dependency_task_id.trim();
     if dependent.is_empty() || dependency.is_empty() {
-        return Err(AppError::Validation(
-            "both task ids are required".into(),
-        ));
+        return Err(AppError::Validation("both task ids are required".into()));
     }
     if dependent == dependency {
         return Err(AppError::Validation(
@@ -137,6 +132,58 @@ pub fn ui_deregister_instance(
 
     binder.unbind(trimmed);
     Ok(())
+}
+
+/// Bulk-delete every instance row whose heartbeat has aged past the "stale"
+/// threshold, optionally restricted to one scope. Lets the user one-click
+/// clean up a pile of adopting-but-dead nodes instead of trashing each row
+/// individually. Live PTYs still bound to an instance are skipped so the
+/// user doesn't lose a node they can still interact with.
+#[tauri::command]
+pub fn ui_deregister_offline_instances(
+    binder: State<'_, Binder>,
+    scope: Option<String>,
+) -> Result<usize, AppError> {
+    let scope_filter = scope
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let conn = writes::open_rw().map_err(AppError::Operation)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or_default();
+    let stale_cutoff = now.saturating_sub(crate::model::INSTANCE_STALE_AFTER_SECS);
+
+    let mut stmt = conn
+        .prepare("SELECT id, scope FROM instances WHERE heartbeat < ?")
+        .map_err(|err| AppError::Operation(format!("failed to query offline instances: {err}")))?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map([stale_cutoff], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|err| AppError::Operation(format!("failed to enumerate offline instances: {err}")))?
+        .collect::<Result<_, _>>()
+        .map_err(|err| AppError::Operation(format!("failed to read offline instance row: {err}")))?;
+    drop(stmt);
+
+    let mut removed = 0usize;
+    for (id, row_scope) in rows {
+        if let Some(target) = scope_filter {
+            if row_scope != target {
+                continue;
+            }
+        }
+        if binder.resolved_pty_for(&id).is_some() {
+            continue;
+        }
+        writes::deregister_instance(&conn, &id).map_err(AppError::Operation)?;
+        binder.unbind(&id);
+        removed += 1;
+    }
+
+    Ok(removed)
 }
 
 /// Persist the graph layout for one swarm scope under the shared `ui/layout`

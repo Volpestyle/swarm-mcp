@@ -1,62 +1,22 @@
-use std::collections::{HashMap, VecDeque};
-use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex, RwLock};
-use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use swarm_protocol::PtyInfo;
+use swarm_protocol::cursors::PtySeq;
+use swarm_protocol::frames::{FramePayload, PtyAttachFrame, PtyAttachRejectedFrame};
+use tauri::async_runtime::JoinHandle;
 use tauri::{AppHandle, Emitter, Runtime, State};
-use uuid::Uuid;
 
-use crate::events::{pty_data_event, pty_exit_event, PTY_BOUND_EXIT, PTY_CLOSED, PTY_CREATED};
+use crate::daemon;
+use crate::events::{
+    PTY_BOUND_EXIT, PTY_CLOSED, PTY_CREATED, PTY_UPDATED, pty_data_event, pty_exit_event,
+};
 use crate::model::{AppError, PtySession};
 
 const BUFFER_CAPACITY: usize = 2 * 1024 * 1024;
-const COALESCE_WINDOW: Duration = Duration::from_millis(16);
-const DEFAULT_COLS: u16 = 120;
-const DEFAULT_ROWS: u16 = 36;
-const EXIT_SESSION_RETENTION: Duration = Duration::from_secs(10);
-
-type SessionMap = Arc<RwLock<HashMap<String, Arc<PtyHandle>>>>;
-
-fn validate_cwd(cwd: &str) -> Result<(), AppError> {
-    if cwd.is_empty() {
-        return Err(AppError::Validation("cwd must not be empty".into()));
-    }
-    let path = std::path::Path::new(cwd);
-    if !path.is_absolute() {
-        return Err(AppError::Validation("cwd must be an absolute path".into()));
-    }
-    if !path.is_dir() {
-        return Err(AppError::Validation(format!(
-            "cwd is not a directory: {cwd}"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_command(command: &str) -> Result<(), AppError> {
-    if command.trim().is_empty() {
-        return Err(AppError::Validation("command must not be empty".into()));
-    }
-    Ok(())
-}
-
-#[derive(Debug, Clone)]
-pub struct PtyCreateRequest {
-    pub command: String,
-    pub args: Vec<String>,
-    pub cwd: String,
-    pub env: HashMap<String, String>,
-    pub display_command: Option<String>,
-}
-
-enum ReaderEvent {
-    Data(Vec<u8>),
-    Exit(Option<i32>),
-}
+const STREAM_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(Default)]
 struct ByteRingBuffer {
@@ -89,57 +49,25 @@ impl ByteRingBuffer {
     }
 }
 
-pub struct PtyHandle {
-    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
-    child: Mutex<Option<Box<dyn Child + Send>>>,
-    writer: Mutex<Option<Box<dyn Write + Send>>>,
+struct PtyHandle {
     session: Mutex<PtySession>,
     buffer: Mutex<ByteRingBuffer>,
+    last_seq: Mutex<Option<PtySeq>>,
+    exit_emitted: AtomicBool,
     closed: AtomicBool,
+    stream_task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl PtyHandle {
-    fn new(
-        id: String,
-        command: String,
-        cwd: String,
-        master: Box<dyn MasterPty + Send>,
-        child: Box<dyn Child + Send>,
-        writer: Box<dyn Write + Send>,
-    ) -> Self {
+    fn new(session: PtySession) -> Self {
         Self {
-            master: Mutex::new(Some(master)),
-            child: Mutex::new(Some(child)),
-            writer: Mutex::new(Some(writer)),
-            session: Mutex::new(PtySession {
-                id,
-                command,
-                cwd,
-                started_at: now_millis(),
-                exit_code: None,
-                bound_instance_id: None,
-                launch_token: None,
-            }),
+            session: Mutex::new(session),
             buffer: Mutex::new(ByteRingBuffer::default()),
+            last_seq: Mutex::new(None),
+            exit_emitted: AtomicBool::new(false),
             closed: AtomicBool::new(false),
+            stream_task: Mutex::new(None),
         }
-    }
-
-    /// Appends output data to the ring buffer.
-    ///
-    /// Silently drops data if the lock is poisoned. This is called from a
-    /// background reader thread where error propagation is not possible, and
-    /// a poisoned lock indicates the session is already in a broken state.
-    fn append_output(&self, chunk: &[u8]) {
-        if let Ok(mut buffer) = self.buffer.lock() {
-            buffer.append(chunk);
-        }
-    }
-
-    fn buffer_snapshot(&self) -> Vec<u8> {
-        self.buffer
-            .lock()
-            .map_or_else(|_| Vec::new(), |buffer| buffer.snapshot())
     }
 
     fn session_snapshot(&self) -> Result<PtySession, String> {
@@ -149,47 +77,133 @@ impl PtyHandle {
             .map_err(|_| "PTY session lock poisoned".to_owned())
     }
 
-    /// Records the exit code.
-    ///
-    /// Silently ignores a poisoned session lock since this is called from a
-    /// background thread after the child process has already exited.
-    fn set_exit_code(&self, exit_code: Option<i32>) {
-        if let Ok(mut session) = self.session.lock() {
-            session.exit_code = exit_code;
+    fn update_from_info(
+        &self,
+        info: &PtyInfo,
+    ) -> Result<(Option<Option<i32>>, Option<PtySession>), String> {
+        let mut session = self
+            .session
+            .lock()
+            .map_err(|_| "PTY session lock poisoned".to_owned())?;
+        let before = session.clone();
+        let prior_exit = session.exit_code;
+        session.command = info.command.clone();
+        session.cwd = info.cwd.clone();
+        session.started_at = info.started_at;
+        session.exit_code = info.exit_code;
+        session.bound_instance_id = info.bound_instance_id.clone();
+        session.launch_token = None;
+        session.cols = info.cols;
+        session.rows = info.rows;
+        session.lease = info.lease.clone();
+
+        let exit_change = (prior_exit != info.exit_code).then_some(info.exit_code);
+        let snapshot = (*session != before).then(|| session.clone());
+        Ok((exit_change, snapshot))
+    }
+
+    fn set_exit_code(&self, exit_code: Option<i32>) -> Result<(), String> {
+        self.session
+            .lock()
+            .map_err(|_| "PTY session lock poisoned".to_owned())?
+            .exit_code = exit_code;
+        Ok(())
+    }
+
+    fn emit_exit_once<R: Runtime>(&self, app_handle: &AppHandle<R>, exit_code: Option<i32>) {
+        if self.exit_emitted.swap(true, Ordering::AcqRel) {
+            return;
+        }
+
+        if let Ok(session) = self.session.lock() {
+            let _ = app_handle.emit(&pty_exit_event(&session.id), exit_code);
+            if let Some(instance_id) = session.bound_instance_id.clone() {
+                let _ = app_handle.emit(
+                    PTY_BOUND_EXIT,
+                    serde_json::json!({
+                        "pty_id": session.id,
+                        "instance_id": instance_id,
+                    }),
+                );
+            }
         }
     }
 
-    fn begin_cleanup(&self) -> bool {
-        !self.closed.swap(true, Ordering::AcqRel)
-    }
-
-    fn set_launch_token(&self, token: &str) -> Result<(), String> {
-        self.session
-            .lock()
-            .map_err(|_| "PTY session lock poisoned".to_owned())?
-            .launch_token = Some(token.to_owned());
-        Ok(())
-    }
-
-    fn set_bound_instance(&self, instance_id: &str) -> Result<(), String> {
-        self.session
-            .lock()
-            .map_err(|_| "PTY session lock poisoned".to_owned())?
-            .bound_instance_id = Some(instance_id.to_owned());
-        Ok(())
-    }
-
-    fn take_bound_instance(&self) -> Option<(String, String)> {
-        let Ok(mut session) = self.session.lock() else {
-            return None;
+    fn append_output<R: Runtime>(
+        &self,
+        app_handle: &AppHandle<R>,
+        pty_id: &str,
+        seq: PtySeq,
+        data: Vec<u8>,
+    ) -> Result<(), String> {
+        let should_emit = {
+            let mut last_seq = self
+                .last_seq
+                .lock()
+                .map_err(|_| "PTY replay cursor lock poisoned".to_owned())?;
+            if last_seq.is_some_and(|current| seq.value() <= current.value()) {
+                false
+            } else {
+                *last_seq = Some(seq);
+                true
+            }
         };
-        let instance_id = session.bound_instance_id.take()?;
-        Some((session.id.clone(), instance_id))
+
+        if !should_emit {
+            return Ok(());
+        }
+
+        self.buffer
+            .lock()
+            .map_err(|_| "PTY buffer lock poisoned".to_owned())?
+            .append(&data);
+        let _ = app_handle.emit(&pty_data_event(pty_id), data);
+        Ok(())
+    }
+
+    fn buffer_snapshot(&self) -> Result<Vec<u8>, String> {
+        self.buffer
+            .lock()
+            .map(|buffer| buffer.snapshot())
+            .map_err(|_| "PTY buffer lock poisoned".to_owned())
+    }
+
+    fn replay_cursor(&self) -> Option<PtySeq> {
+        self.last_seq.lock().ok().and_then(|cursor| *cursor)
+    }
+
+    fn reset_replay_cursor(&self, rejected: &PtyAttachRejectedFrame) {
+        if let Ok(mut cursor) = self.last_seq.lock() {
+            *cursor = rejected
+                .earliest_seq
+                .value()
+                .checked_sub(1)
+                .map(PtySeq::new);
+        }
+    }
+
+    fn set_stream_task(&self, task: JoinHandle<()>) {
+        if let Ok(mut slot) = self.stream_task.lock() {
+            *slot = Some(task);
+        }
+    }
+
+    fn abort_stream(&self) {
+        self.closed.store(true, Ordering::Release);
+        if let Ok(mut slot) = self.stream_task.lock() {
+            if let Some(task) = slot.take() {
+                task.abort();
+            }
+        }
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
     }
 }
 
 pub struct PtyManager {
-    sessions: SessionMap,
+    sessions: Arc<RwLock<HashMap<String, Arc<PtyHandle>>>>,
 }
 
 impl PtyManager {
@@ -200,93 +214,193 @@ impl PtyManager {
         }
     }
 
-    pub fn create_session<R: Runtime>(
+    /// Insert or update a single session without touching the rest of the
+    /// catalog. Spawns a stream task for freshly-inserted PTYs. Use this when
+    /// a single spawn just returned (`launch.rs`) — calling the full-snapshot
+    /// `sync_sessions` with a one-element vec would nuke every other PTY in
+    /// the manager because that path treats its input as the complete active
+    /// set.
+    pub fn upsert_session<R: Runtime + 'static>(
         &self,
         app_handle: &AppHandle<R>,
-        request: PtyCreateRequest,
-    ) -> Result<String, AppError> {
-        let PtyCreateRequest {
-            command,
-            args,
-            cwd,
-            mut env,
-            display_command,
-        } = request;
+        info: PtyInfo,
+    ) -> Result<(), String> {
+        let mut new_handle: Option<(PtySession, Arc<PtyHandle>)> = None;
+        {
+            let mut sessions = self
+                .sessions
+                .write()
+                .map_err(|_| "PTY manager lock poisoned".to_owned())?;
 
-        let id = Uuid::new_v4().to_string();
-        let display_command = display_command.unwrap_or_else(|| render_command(&command, &args));
-
-        env.insert("TERM".to_owned(), "xterm-256color".to_owned());
-
-        let pty_pair = native_pty_system()
-            .openpty(PtySize {
-                rows: DEFAULT_ROWS,
-                cols: DEFAULT_COLS,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|error| AppError::Operation(format!("failed to open PTY: {error}")))?;
-
-        let mut command_builder = CommandBuilder::new(&command);
-        for arg in &args {
-            command_builder.arg(arg);
-        }
-        command_builder.cwd(PathBuf::from(&cwd));
-        for (key, value) in &env {
-            command_builder.env(key, value);
+            if let Some(handle) = sessions.get(&info.id) {
+                let (exit_change, updated_session) = handle.update_from_info(&info)?;
+                if let Some(session) = updated_session {
+                    let _ = app_handle.emit(PTY_UPDATED, session);
+                }
+                if let Some(exit_code) = exit_change {
+                    handle.emit_exit_once(app_handle, exit_code);
+                }
+            } else {
+                let session = protocol_to_session(&info);
+                let handle = Arc::new(PtyHandle::new(session.clone()));
+                sessions.insert(info.id.clone(), handle.clone());
+                new_handle = Some((session, handle));
+            }
         }
 
-        let reader = pty_pair
-            .master
-            .try_clone_reader()
-            .map_err(|error| AppError::Operation(format!("failed to clone PTY reader: {error}")))?;
-        let writer = pty_pair
-            .master
-            .take_writer()
-            .map_err(|error| AppError::Operation(format!("failed to take PTY writer: {error}")))?;
-        let child = pty_pair
-            .slave
-            .spawn_command(command_builder)
-            .map_err(|error| AppError::Operation(format!("failed to spawn command: {error}")))?;
+        if let Some((session, handle)) = new_handle {
+            let _ = app_handle.emit(PTY_CREATED, session.clone());
+            self.spawn_stream_task(app_handle.clone(), session.id.clone(), handle);
+        }
 
-        let handle = Arc::new(PtyHandle::new(
-            id.clone(),
-            display_command,
-            cwd,
-            pty_pair.master,
-            child,
-            writer,
-        ));
-
-        self.sessions
-            .write()
-            .map_err(|_| AppError::Internal("PTY manager lock poisoned".into()))?
-            .insert(id.clone(), handle.clone());
-
-        spawn_output_threads(
-            app_handle.clone(),
-            id.clone(),
-            handle.clone(),
-            reader,
-            self.sessions.clone(),
-        );
-
-        let payload = handle.session_snapshot().map_err(AppError::Internal)?;
-        let _ = app_handle.emit(PTY_CREATED, payload);
-
-        Ok(id)
+        Ok(())
     }
 
-    pub fn set_launch_token(&self, pty_id: &str, token: &str) -> Result<(), AppError> {
-        let handle = self.session(pty_id)?;
-        handle.set_launch_token(token).map_err(AppError::Internal)
+    pub fn sync_sessions<R: Runtime + 'static>(
+        &self,
+        app_handle: &AppHandle<R>,
+        infos: Vec<PtyInfo>,
+    ) -> Result<(), String> {
+        let mut new_handles = Vec::new();
+        let active_ids = infos
+            .iter()
+            .map(|info| info.id.clone())
+            .collect::<HashSet<_>>();
+
+        {
+            let mut sessions = self
+                .sessions
+                .write()
+                .map_err(|_| "PTY manager lock poisoned".to_owned())?;
+
+            for info in &infos {
+                if let Some(handle) = sessions.get(&info.id) {
+                    let (exit_change, updated_session) = handle.update_from_info(info)?;
+                    if let Some(session) = updated_session {
+                        let _ = app_handle.emit(PTY_UPDATED, session);
+                    }
+                    if let Some(exit_code) = exit_change {
+                        handle.emit_exit_once(app_handle, exit_code);
+                    }
+                    continue;
+                }
+
+                let session = protocol_to_session(info);
+                let handle = Arc::new(PtyHandle::new(session.clone()));
+                sessions.insert(info.id.clone(), handle.clone());
+                new_handles.push((session, handle));
+            }
+
+            let removed = sessions
+                .keys()
+                .filter(|id| !active_ids.contains(*id))
+                .cloned()
+                .collect::<Vec<_>>();
+            for id in removed {
+                if let Some(handle) = sessions.remove(&id) {
+                    handle.abort_stream();
+                    let _ = app_handle.emit(PTY_CLOSED, id);
+                }
+            }
+        }
+
+        for (session, handle) in new_handles {
+            let _ = app_handle.emit(PTY_CREATED, session.clone());
+            self.spawn_stream_task(app_handle.clone(), session.id.clone(), handle);
+        }
+
+        Ok(())
     }
 
-    pub fn set_bound_instance(&self, pty_id: &str, instance_id: &str) -> Result<(), AppError> {
-        let handle = self.session(pty_id)?;
-        handle
-            .set_bound_instance(instance_id)
-            .map_err(AppError::Internal)
+    fn spawn_stream_task<R: Runtime + 'static>(
+        &self,
+        app_handle: AppHandle<R>,
+        pty_id: String,
+        handle: Arc<PtyHandle>,
+    ) {
+        let stream_handle = handle.clone();
+        let task = tauri::async_runtime::spawn(async move {
+            loop {
+                if stream_handle.is_closed() {
+                    return;
+                }
+
+                match daemon::open_stream().await {
+                    Ok(mut socket) => {
+                        if let Err(err) = daemon::subscribe(&mut socket).await {
+                            eprintln!(
+                                "[pty] failed to subscribe daemon stream for {pty_id}: {err}"
+                            );
+                            tokio::time::sleep(STREAM_RETRY_DELAY).await;
+                            continue;
+                        }
+                        if let Err(err) = daemon::send_frame(
+                            &mut socket,
+                            &swarm_protocol::Frame::new(FramePayload::PtyAttach(PtyAttachFrame {
+                                pty_id: pty_id.clone(),
+                                since_seq: stream_handle.replay_cursor(),
+                            })),
+                        )
+                        .await
+                        {
+                            eprintln!(
+                                "[pty] failed to attach daemon PTY stream for {pty_id}: {err}"
+                            );
+                            tokio::time::sleep(STREAM_RETRY_DELAY).await;
+                            continue;
+                        }
+
+                        loop {
+                            let frame = match daemon::read_frame(&mut socket).await {
+                                Ok(Some(frame)) => frame,
+                                Ok(None) => break,
+                                Err(err) => {
+                                    eprintln!("[pty] daemon PTY stream error for {pty_id}: {err}");
+                                    break;
+                                }
+                            };
+
+                            match frame.payload {
+                                FramePayload::PtyData(payload) if payload.pty_id == pty_id => {
+                                    let _ = stream_handle.append_output(
+                                        &app_handle,
+                                        &pty_id,
+                                        payload.seq,
+                                        payload.data,
+                                    );
+                                }
+                                FramePayload::PtyExit(payload) if payload.pty_id == pty_id => {
+                                    let _ = stream_handle.set_exit_code(payload.exit_code);
+                                    stream_handle.emit_exit_once(&app_handle, payload.exit_code);
+                                    break;
+                                }
+                                FramePayload::PtyAttachRejected(rejected)
+                                    if rejected.pty_id == pty_id =>
+                                {
+                                    stream_handle.reset_replay_cursor(&rejected);
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("[pty] failed to open daemon stream for {pty_id}: {err}");
+                    }
+                }
+
+                if stream_handle
+                    .session_snapshot()
+                    .ok()
+                    .is_some_and(|session| session.exit_code.is_some())
+                {
+                    return;
+                }
+
+                tokio::time::sleep(STREAM_RETRY_DELAY).await;
+            }
+        });
+        handle.set_stream_task(task);
     }
 
     pub fn sessions_snapshot(&self) -> Result<Vec<PtySession>, AppError> {
@@ -304,21 +418,22 @@ impl PtyManager {
     }
 
     pub fn write_input(&self, id: &str, data: &[u8]) -> Result<(), AppError> {
-        let handle = self.session(id)?;
-        let mut writer_slot = handle
-            .writer
-            .lock()
-            .map_err(|_| AppError::Internal("PTY writer lock poisoned".into()))?;
-        let writer = writer_slot
-            .as_mut()
-            .ok_or_else(|| AppError::Operation(format!("PTY session is closed: {id}")))?;
+        self.session(id)?;
+        tauri::async_runtime::block_on(daemon::write_pty(id, data.to_vec()))
+            .map_err(AppError::Operation)
+    }
 
-        writer
-            .write_all(data)
-            .map_err(|error| AppError::Operation(format!("failed to write to PTY: {error}")))?;
-        writer
-            .flush()
-            .map_err(|error| AppError::Operation(format!("failed to flush PTY input: {error}")))
+    pub fn request_lease(&self, id: &str, takeover: bool) -> Result<(), AppError> {
+        self.session(id)?;
+        tauri::async_runtime::block_on(daemon::request_pty_lease(id, takeover))
+            .map(|_| ())
+            .map_err(AppError::Operation)
+    }
+
+    pub fn release_lease(&self, id: &str) -> Result<(), AppError> {
+        self.session(id)?;
+        tauri::async_runtime::block_on(daemon::release_pty_lease(id))
+            .map_err(AppError::Operation)
     }
 
     fn session(&self, id: &str) -> Result<Arc<PtyHandle>, AppError> {
@@ -329,206 +444,21 @@ impl PtyManager {
             .cloned()
             .ok_or_else(|| AppError::NotFound(format!("unknown PTY session: {id}")))
     }
-
-    /// Removes a session from the map. Best-effort cleanup — a poisoned lock
-    /// is silently ignored since the session is already closed.
-    fn remove_session(&self, id: &str) {
-        if let Ok(mut sessions) = self.sessions.write() {
-            sessions.remove(id);
-        }
-    }
 }
 
-fn spawn_output_threads<R: Runtime + 'static>(
-    app_handle: AppHandle<R>,
-    id: String,
-    handle: Arc<PtyHandle>,
-    mut reader: Box<dyn Read + Send>,
-    sessions: SessionMap,
-) {
-    let (tx, rx) = mpsc::channel::<ReaderEvent>();
-
-    let reader_handle = handle.clone();
-    thread::spawn(move || {
-        let mut chunk = [0_u8; 4096];
-
-        loop {
-            match reader.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(read) => {
-                    if tx.send(ReaderEvent::Data(chunk[..read].to_vec())).is_err() {
-                        return;
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(_) => break,
-            }
-        }
-
-        let exit_code = capture_exit_code(&reader_handle);
-        let _ = tx.send(ReaderEvent::Exit(exit_code));
-    });
-
-    thread::spawn(move || {
-        let data_event = pty_data_event(&id);
-        let exit_event = pty_exit_event(&id);
-        let mut pending = Vec::new();
-
-        loop {
-            let event = if pending.is_empty() {
-                match rx.recv() {
-                    Ok(event) => event,
-                    Err(_) => break,
-                }
-            } else {
-                match rx.recv_timeout(COALESCE_WINDOW) {
-                    Ok(event) => event,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        flush_pending(&app_handle, &data_event, &handle, &mut pending);
-                        continue;
-                    }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                }
-            };
-
-            match event {
-                ReaderEvent::Data(bytes) => pending.extend(bytes),
-                ReaderEvent::Exit(exit_code) => {
-                    flush_pending(&app_handle, &data_event, &handle, &mut pending);
-                    handle.set_exit_code(exit_code);
-                    let _ = app_handle.emit(&exit_event, exit_code);
-                    emit_bound_exit_if_any(&app_handle, &handle);
-                    thread::sleep(EXIT_SESSION_RETENTION);
-                    cleanup_session(&app_handle, &sessions, &id, &handle);
-                    break;
-                }
-            }
-        }
-
-        if !pending.is_empty() {
-            flush_pending(&app_handle, &data_event, &handle, &mut pending);
-        }
-    });
-}
-
-/// Emit `pty:bound_exit` if this session had been bound to a swarm instance.
-///
-/// main.rs listens for this to tear down the binder mapping and delete any
-/// UI-owned placeholder row that was never adopted by the child process.
-fn emit_bound_exit_if_any<R: Runtime>(app_handle: &AppHandle<R>, handle: &Arc<PtyHandle>) {
-    if let Some((pty_id, instance_id)) = handle.take_bound_instance() {
-        let _ = app_handle.emit(
-            PTY_BOUND_EXIT,
-            serde_json::json!({ "pty_id": pty_id, "instance_id": instance_id }),
-        );
+fn protocol_to_session(info: &PtyInfo) -> PtySession {
+    PtySession {
+        id: info.id.clone(),
+        command: info.command.clone(),
+        cwd: info.cwd.clone(),
+        started_at: info.started_at,
+        exit_code: info.exit_code,
+        bound_instance_id: info.bound_instance_id.clone(),
+        launch_token: None,
+        cols: info.cols,
+        rows: info.rows,
+        lease: info.lease.clone(),
     }
-}
-
-fn cleanup_session(
-    app_handle: &AppHandle<impl Runtime>,
-    sessions: &SessionMap,
-    id: &str,
-    handle: &Arc<PtyHandle>,
-) {
-    if !handle.begin_cleanup() {
-        return;
-    }
-
-    if let Ok(mut writer) = handle.writer.lock() {
-        writer.take();
-    }
-    if let Ok(mut master) = handle.master.lock() {
-        master.take();
-    }
-    if let Ok(mut child) = handle.child.lock() {
-        child.take();
-    }
-    if let Ok(mut active_sessions) = sessions.write() {
-        active_sessions.remove(id);
-    }
-
-    let _ = app_handle.emit(PTY_CLOSED, id.to_owned());
-}
-
-fn flush_pending(
-    app_handle: &AppHandle<impl Runtime>,
-    event_name: &str,
-    handle: &Arc<PtyHandle>,
-    pending: &mut Vec<u8>,
-) {
-    if pending.is_empty() {
-        return;
-    }
-
-    handle.append_output(pending);
-    let payload = std::mem::take(pending);
-    let _ = app_handle.emit(event_name, payload);
-}
-
-fn capture_exit_code(handle: &Arc<PtyHandle>) -> Option<i32> {
-    let Ok(mut child_slot) = handle.child.lock() else {
-        return None;
-    };
-
-    let Some(child) = child_slot.as_mut() else {
-        return handle
-            .session_snapshot()
-            .ok()
-            .and_then(|session| session.exit_code);
-    };
-
-    match child.try_wait() {
-        Ok(Some(status)) => normalize_exit_code(status.exit_code()),
-        Ok(None) => child
-            .wait()
-            .ok()
-            .and_then(|status| normalize_exit_code(status.exit_code())),
-        Err(_) => None,
-    }
-}
-
-fn normalize_exit_code(exit_code: u32) -> Option<i32> {
-    i32::try_from(exit_code).ok()
-}
-
-fn render_command(command: &str, args: &[String]) -> String {
-    if args.is_empty() {
-        command.to_owned()
-    } else {
-        format!("{} {}", command, args.join(" "))
-    }
-}
-
-fn now_millis() -> i64 {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0_u128, |duration| duration.as_millis());
-    i64::try_from(millis).unwrap_or(i64::MAX)
-}
-
-// Async to move off the main thread (Tauri dispatches async commands on the async runtime).
-#[tauri::command]
-#[allow(clippy::unused_async)]
-pub async fn pty_create(
-    app_handle: AppHandle,
-    manager: State<'_, PtyManager>,
-    command: String,
-    args: Vec<String>,
-    cwd: String,
-    env: HashMap<String, String>,
-) -> Result<String, AppError> {
-    validate_command(&command)?;
-    validate_cwd(&cwd)?;
-    manager.create_session(
-        &app_handle,
-        PtyCreateRequest {
-            command,
-            args,
-            cwd,
-            env,
-            display_command: None,
-        },
-    )
 }
 
 #[tauri::command]
@@ -547,82 +477,29 @@ pub fn pty_resize(
     cols: u16,
     rows: u16,
 ) -> Result<(), AppError> {
-    let handle = manager.session(&id)?;
-    let mut master_slot = handle
-        .master
-        .lock()
-        .map_err(|_| AppError::Internal("PTY master lock poisoned".into()))?;
-    let master = master_slot
-        .as_mut()
-        .ok_or_else(|| AppError::Operation(format!("PTY session is closed: {id}")))?;
+    manager.session(&id)?;
+    tauri::async_runtime::block_on(daemon::resize_pty(&id, cols, rows)).map_err(AppError::Operation)
+}
 
-    master
-        .resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .map_err(|error| AppError::Operation(format!("failed to resize PTY: {error}")))
+#[tauri::command]
+pub fn pty_request_lease(
+    manager: State<'_, PtyManager>,
+    id: String,
+    takeover: bool,
+) -> Result<(), AppError> {
+    manager.request_lease(&id, takeover)
+}
+
+#[tauri::command]
+pub fn pty_release_lease(manager: State<'_, PtyManager>, id: String) -> Result<(), AppError> {
+    manager.release_lease(&id)
 }
 
 #[tauri::command]
 #[allow(clippy::unused_async)]
-pub async fn pty_close(
-    app_handle: AppHandle,
-    manager: State<'_, PtyManager>,
-    id: String,
-) -> Result<(), AppError> {
-    let handle = manager.session(&id)?;
-
-    if !handle.begin_cleanup() {
-        return Ok(());
-    }
-
-    handle
-        .writer
-        .lock()
-        .map_err(|_| AppError::Internal("PTY writer lock poisoned".into()))?
-        .take();
-    handle
-        .master
-        .lock()
-        .map_err(|_| AppError::Internal("PTY master lock poisoned".into()))?
-        .take();
-
-    let exit_code = {
-        let mut child_slot = handle
-            .child
-            .lock()
-            .map_err(|_| AppError::Internal("PTY child lock poisoned".into()))?;
-        match child_slot.take() {
-            Some(mut child) => {
-                match child.try_wait() {
-                    Ok(Some(status)) => normalize_exit_code(status.exit_code()),
-                    Ok(None) => {
-                        child.kill().map_err(|error| {
-                            AppError::Operation(format!(
-                                "failed to terminate PTY process: {error}"
-                            ))
-                        })?;
-                        child
-                            .wait()
-                            .ok()
-                            .and_then(|status| normalize_exit_code(status.exit_code()))
-                    }
-                    Err(_) => None,
-                }
-            }
-            None => None,
-        }
-    };
-
-    handle.set_exit_code(exit_code);
-    emit_bound_exit_if_any(&app_handle, &handle);
-    manager.remove_session(&id);
-    let _ = app_handle.emit(PTY_CLOSED, id);
-
-    Ok(())
+pub async fn pty_close(manager: State<'_, PtyManager>, id: String) -> Result<(), AppError> {
+    manager.session(&id)?;
+    daemon::close_pty(&id).await.map_err(AppError::Operation)
 }
 
 #[tauri::command]
@@ -631,97 +508,12 @@ pub fn pty_get_buffer(
     id: String,
 ) -> Result<tauri::ipc::Response, AppError> {
     let handle = manager.session(&id)?;
-    Ok(tauri::ipc::Response::new(handle.buffer_snapshot()))
+    Ok(tauri::ipc::Response::new(
+        handle.buffer_snapshot().map_err(AppError::Internal)?,
+    ))
 }
 
 #[tauri::command]
 pub fn get_pty_sessions(manager: State<'_, PtyManager>) -> Result<Vec<PtySession>, AppError> {
     manager.sessions_snapshot()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ring_buffer_appends_data() {
-        let mut buf = ByteRingBuffer::default();
-        buf.append(b"hello");
-        assert_eq!(buf.snapshot(), b"hello");
-    }
-
-    #[test]
-    fn ring_buffer_empty_snapshot() {
-        let buf = ByteRingBuffer::default();
-        assert!(buf.snapshot().is_empty());
-    }
-
-    #[test]
-    fn ring_buffer_respects_capacity() {
-        let mut buf = ByteRingBuffer::default();
-        let chunk = vec![0xAA; BUFFER_CAPACITY + 100];
-        buf.append(&chunk);
-        assert_eq!(buf.snapshot().len(), BUFFER_CAPACITY);
-    }
-
-    #[test]
-    fn ring_buffer_evicts_oldest_on_overflow() {
-        let mut buf = ByteRingBuffer::default();
-        let first = vec![1_u8; BUFFER_CAPACITY];
-        buf.append(&first);
-
-        buf.append(&[2, 3, 4]);
-        let snap = buf.snapshot();
-        assert_eq!(snap.len(), BUFFER_CAPACITY);
-        // Newest bytes are at the tail
-        assert_eq!(snap[snap.len() - 3..], [2, 3, 4]);
-        // Oldest bytes were evicted — first 3 bytes of the original fill are gone
-        assert_eq!(snap[0], 1);
-    }
-
-    #[test]
-    fn ring_buffer_large_single_chunk_keeps_tail() {
-        let mut buf = ByteRingBuffer::default();
-        buf.append(b"seed");
-
-        let mut big = vec![0_u8; BUFFER_CAPACITY + 50];
-        big[BUFFER_CAPACITY + 49] = 0xFF;
-        buf.append(&big);
-
-        let snap = buf.snapshot();
-        assert_eq!(snap.len(), BUFFER_CAPACITY);
-        assert_eq!(*snap.last().unwrap(), 0xFF);
-    }
-
-    #[test]
-    fn validate_command_rejects_empty() {
-        assert!(validate_command("").is_err());
-        assert!(validate_command("   ").is_err());
-    }
-
-    #[test]
-    fn validate_command_accepts_non_empty() {
-        assert!(validate_command("ls").is_ok());
-        assert!(validate_command("/bin/sh").is_ok());
-    }
-
-    #[test]
-    fn validate_cwd_rejects_empty() {
-        assert!(validate_cwd("").is_err());
-    }
-
-    #[test]
-    fn validate_cwd_rejects_relative_path() {
-        assert!(validate_cwd("relative/path").is_err());
-    }
-
-    #[test]
-    fn validate_cwd_rejects_nonexistent() {
-        assert!(validate_cwd("/nonexistent/path/that/should/not/exist").is_err());
-    }
-
-    #[test]
-    fn validate_cwd_accepts_tmp() {
-        assert!(validate_cwd("/tmp").is_ok());
-    }
 }

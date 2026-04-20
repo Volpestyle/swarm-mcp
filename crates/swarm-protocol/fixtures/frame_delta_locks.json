@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "type": "delta.table",
+  "table": "locks",
+  "cursor": {
+    "at": 1745000200,
+    "id": "swarm-mcp\u001fapps/swarm-server/src/pair.rs"
+  },
+  "upserts": [
+    {
+      "scope": "swarm-mcp",
+      "file": "apps/swarm-server/src/pair.rs",
+      "instance_id": "inst-abc-123"
+    }
+  ],
+  "removes": [
+    {
+      "scope": "swarm-mcp",
+      "file": "apps/swarm-server/src/bind.rs"
+    }
+  ]
+}

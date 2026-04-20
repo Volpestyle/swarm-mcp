@@ -1,0 +1,4 @@
+{
+  "class": "lease_conflict",
+  "message": "another device holds the lease"
+}

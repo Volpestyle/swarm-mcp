@@ -202,6 +202,24 @@ async function maybeWaitForUiCommand(
   return waitForUiCommand(id, Math.round(waitSeconds * 1000));
 }
 
+async function enqueueUiCommand(
+  scope: string,
+  kind: ui.UiCommandKind,
+  payload: Record<string, unknown>,
+  flags: Flags,
+  fallbackSeconds = DEFAULT_UI_WAIT_SECS,
+) {
+  const id = ui.enqueue(
+    scope,
+    kind,
+    payload,
+    resolveOptionalIdentity(scope, flags),
+  );
+  const row = await maybeWaitForUiCommand(id, flags, fallbackSeconds);
+  if (!row) throw new Error(`ui command ${id} disappeared`);
+  printUiCommand(row, flags.json);
+}
+
 // ---------------------------------------------------------------------------
 // Subcommands
 // ---------------------------------------------------------------------------
@@ -554,7 +572,7 @@ async function cmdUi(flags: Flags) {
       );
     }
     const scope = scopeFor(cwd, flags.scope);
-    const id = ui.enqueue(
+    return enqueueUiCommand(
       scope,
       "spawn_shell",
       {
@@ -563,11 +581,8 @@ async function cmdUi(flags: Flags) {
         role: flags.role ?? null,
         label: flags.label ?? null,
       },
-      resolveOptionalIdentity(scope, flags),
+      flags,
     );
-    const row = await maybeWaitForUiCommand(id, flags);
-    if (!row) throw new Error(`ui command ${id} disappeared`);
-    return printUiCommand(row, flags.json);
   }
 
   if (sub === "prompt") {
@@ -579,7 +594,7 @@ async function cmdUi(flags: Flags) {
     }
     if (!content) throw new Error("ui prompt requires content");
     const scope = resolveScope(flags);
-    const id = ui.enqueue(
+    return enqueueUiCommand(
       scope,
       "send_prompt",
       {
@@ -587,11 +602,8 @@ async function cmdUi(flags: Flags) {
         text: content,
         enter: flags.enter,
       },
-      resolveOptionalIdentity(scope, flags),
+      flags,
     );
-    const row = await maybeWaitForUiCommand(id, flags);
-    if (!row) throw new Error(`ui command ${id} disappeared`);
-    return printUiCommand(row, flags.json);
   }
 
   if (sub === "move") {
@@ -601,7 +613,7 @@ async function cmdUi(flags: Flags) {
       );
     }
     const scope = resolveScope(flags);
-    const id = ui.enqueue(
+    return enqueueUiCommand(
       scope,
       "move_node",
       {
@@ -609,26 +621,20 @@ async function cmdUi(flags: Flags) {
         x: flags.x,
         y: flags.y,
       },
-      resolveOptionalIdentity(scope, flags),
+      flags,
     );
-    const row = await maybeWaitForUiCommand(id, flags);
-    if (!row) throw new Error(`ui command ${id} disappeared`);
-    return printUiCommand(row, flags.json);
   }
 
   if (sub === "organize") {
     const scope = resolveScope(flags);
-    const id = ui.enqueue(
+    return enqueueUiCommand(
       scope,
       "organize_nodes",
       {
         kind: flags.kind ?? "grid",
       },
-      resolveOptionalIdentity(scope, flags),
+      flags,
     );
-    const row = await maybeWaitForUiCommand(id, flags);
-    if (!row) throw new Error(`ui command ${id} disappeared`);
-    return printUiCommand(row, flags.json);
   }
 
   throw new Error(`Unknown ui subcommand: ${sub}`);

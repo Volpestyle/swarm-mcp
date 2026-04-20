@@ -23,6 +23,9 @@
    * instance UUID prefix in the header label.
    */
   export let displayName: string | null = null;
+  export let mobileControlled: boolean = false;
+  export let mobileLeaseHolder: string | null = null;
+  export let compact: boolean = false;
   /**
    * `false` while this node's instance row was UI-pre-created and the
    * child process inside the PTY hasn't yet called `swarm.register`. The
@@ -34,6 +37,8 @@
   const dispatch = createEventDispatcher<{
     inspect: void;
     focus: void;
+    compact: void;
+    fullscreen: void;
   }>();
 
   // Determine the role class for badge styling
@@ -63,7 +68,12 @@
     nodeType === 'instance' &&
     instanceId !== null &&
     (status === 'offline' || status === 'stale');
+  $: canClose = Boolean(ptyId) || canRemoveInstance;
+  $: canFullscreen = Boolean(ptyId);
   let respawning = false;
+  $: mobileTooltip = mobileLeaseHolder
+    ? `Controlled from mobile (${mobileLeaseHolder})`
+    : 'Controlled from mobile';
 
   function deriveDisplayLabel(
     name: string | null,
@@ -129,15 +139,45 @@
       respawning = false;
     }
   }
+
+  async function handleTrafficClose() {
+    if (ptyId) {
+      await handleStop();
+      return;
+    }
+
+    if (canRemoveInstance) {
+      await handleRemoveInstance();
+    }
+  }
 </script>
 
 <div class="node-header">
-  <!-- Decorative macOS-style traffic lights — mirrors the ghostty-web demo
-       chrome so the agent card reads as a terminal window at a glance. -->
-  <div class="traffic-lights" aria-hidden="true">
-    <span class="light red"></span>
-    <span class="light yellow"></span>
-    <span class="light green"></span>
+  <div class="traffic-lights" role="group" aria-label="Window controls">
+    <button
+      type="button"
+      class="light red"
+      title={canClose ? 'Close agent window' : 'Close unavailable for this node'}
+      aria-label="Close agent window"
+      disabled={!canClose}
+      on:click|stopPropagation={handleTrafficClose}
+    ></button>
+    <button
+      type="button"
+      class="light yellow"
+      class:active={compact}
+      title={compact ? 'Expand card' : 'Compact card (Cmd/Ctrl+Shift+M)'}
+      aria-label={compact ? 'Expand card' : 'Compact card'}
+      on:click|stopPropagation={() => dispatch('compact')}
+    ></button>
+    <button
+      type="button"
+      class="light green"
+      title={canFullscreen ? 'Open immersive workspace (Cmd/Ctrl+Shift+F)' : 'Fullscreen unavailable for this node'}
+      aria-label="Open immersive workspace"
+      disabled={!canFullscreen}
+      on:click|stopPropagation={() => dispatch('fullscreen')}
+    ></button>
   </div>
 
   {#if role}
@@ -150,6 +190,27 @@
 
   {#if cwd}
     <span class="node-cwd" title={cwd}>{cwd}</span>
+  {/if}
+
+  {#if mobileControlled}
+    <span class="mobile-lease-badge" title={mobileTooltip}>
+      <svg
+        class="mobile-lease-icon"
+        width="11"
+        height="11"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="7" y="2" width="10" height="20" rx="2" ry="2"></rect>
+        <line x1="12" y1="18" x2="12.01" y2="18"></line>
+      </svg>
+      Mobile
+    </span>
   {/if}
 
   {#if showAdopting}

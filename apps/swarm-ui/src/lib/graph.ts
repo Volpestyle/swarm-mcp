@@ -154,6 +154,8 @@ function makeNode(
   const label = deriveLabel(nodeType, instance, pty);
   const status = deriveStatus(nodeType, instance, pty);
   const displayName = deriveDisplayName(instance);
+  const mobileControlled = isMobileControlledPty(pty);
+  const preferredSize = derivePreferredNodeSize(nodeType, pty);
 
   const data: SwarmNodeData = {
     nodeType,
@@ -165,6 +167,8 @@ function makeNode(
     assignedTasks: opts.assignedTasks,
     requestedTasks: opts.requestedTasks,
     displayName,
+    mobileControlled,
+    mobileLeaseHolder: pty?.lease?.holder ?? null,
   };
 
   return {
@@ -177,9 +181,33 @@ function makeNode(
     // driven updates to width/height persist across reactive graph rebuilds.
     // Keeping these as discrete numeric props (not a `style` string with
     // hardcoded width/height) lets NodeResizer author the DOM size cleanly.
-    width: 760,
-    height: 620,
+    width: preferredSize?.width ?? 760,
+    height: preferredSize?.height ?? 620,
   };
+}
+
+function isMobileControlledPty(pty: PtySession | null): boolean {
+  return typeof pty?.lease?.holder === 'string' && pty.lease.holder.startsWith('device:');
+}
+
+function derivePreferredNodeSize(
+  nodeType: 'instance' | 'pty' | 'bound',
+  pty: PtySession | null,
+): { width: number; height: number } | null {
+  if (!pty || nodeType === 'instance' || !isMobileControlledPty(pty)) {
+    return null;
+  }
+
+  // PTYs have one logical viewport. When a phone owns the lease, mirror that
+  // tighter geometry in the desktop graph so the card clearly reads as a
+  // mobile-shaped remote viewport instead of a desktop-sized terminal.
+  const width = clamp(Math.round(pty.cols * 9 + 56), 360, 520);
+  const height = clamp(Math.round(pty.rows * 18 + 92), 320, 820);
+  return { width, height };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function deriveLabel(

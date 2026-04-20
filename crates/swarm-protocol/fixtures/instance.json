@@ -1,0 +1,13 @@
+{
+  "id": "inst-abc-123",
+  "scope": "swarm-mcp",
+  "directory": "/Users/james/code/swarm-mcp",
+  "root": "/Users/james/code/swarm-mcp",
+  "file_root": "/Users/james/code/swarm-mcp",
+  "pid": 54321,
+  "label": "planner",
+  "registered_at": 1745000000,
+  "heartbeat": 1745000020,
+  "status": "online",
+  "adopted": true
+}

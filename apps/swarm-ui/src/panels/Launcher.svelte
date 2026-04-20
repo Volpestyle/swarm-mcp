@@ -18,6 +18,7 @@
     getRolePresets,
     unboundPtySessions,
   } from '../stores/pty';
+  import { requestNodeFocus } from '../lib/app/focus';
 
   // Persisted last-used values so users don't retype the same cwd every
   // launch. Keys are namespaced for future settings.
@@ -122,7 +123,7 @@
     loading = true;
     error = null;
     try {
-      await spawnShell(workingDir.trim(), {
+      const result = await spawnShell(workingDir.trim(), {
         harness: harness || undefined,
         // Without a harness there's no MCP server to adopt the role token,
         // so suppress role to avoid a confusing label on the orphan row.
@@ -141,6 +142,16 @@
       // Label and name are intentionally one-shot — set per-launch.
       label = '';
       name = '';
+
+      // Ask the canvas to pan to the new node so it doesn't get lost among
+      // the accumulated offline/adopting zombies. Matches the node id that
+      // graph.ts will emit: `bound:<id>` when the pre-created instance row
+      // comes back, else `pty:<id>` for plain shells with no swarm identity.
+      const focusNodeId = result.instance_id
+        ? `bound:${result.instance_id}`
+        : `pty:${result.pty_id}`;
+      requestNodeFocus(focusNodeId);
+
       return true;
     } catch (err) {
       error = `Failed to launch: ${err}`;

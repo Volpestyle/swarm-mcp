@@ -11,11 +11,14 @@
   import {
     activeScope,
     availableScopes,
+    instances,
     scopeSelection,
     setScopeSelection,
     swarmSummary,
   } from '../stores/swarm';
-  import { pendingPtyCount } from '../stores/pty';
+  import { deregisterOfflineInstances, pendingPtyCount } from '../stores/pty';
+
+  let clearingOffline = false;
 
   function handleScopeChange(event: Event): void {
     const target = event.currentTarget as HTMLSelectElement;
@@ -26,6 +29,28 @@
     if (!scope) return 'all scopes';
     const parts = scope.split(/[\\/]/).filter(Boolean);
     return parts[parts.length - 1] ?? scope;
+  }
+
+  async function handleClearOffline(): Promise<void> {
+    if (clearingOffline) return;
+    clearingOffline = true;
+    try {
+      // `instances` is already scope-filtered, so iterating it picks up only
+      // zombies the user can actually see. Passing the scope to the backend
+      // still narrows the SQL sweep to the same scope for the pure
+      // instance-only rows that have no live PTY in this session.
+      const targetIds: string[] = [];
+      for (const inst of $instances.values()) {
+        if (inst.status === 'offline' || inst.status === 'stale') {
+          targetIds.push(inst.id);
+        }
+      }
+      await deregisterOfflineInstances(targetIds, $activeScope);
+    } catch (err) {
+      console.error('[SwarmStatus] failed to clear offline instances:', err);
+    } finally {
+      clearingOffline = false;
+    }
   }
 </script>
 
@@ -57,6 +82,44 @@
     <span class="status-value">{$swarmSummary.stale}</span>
     <span class="status-label">stale</span>
   </div>
+
+  {#if $swarmSummary.offline + $swarmSummary.stale > 0}
+    <span class="divider">|</span>
+    <div class="status-group offline-group">
+      <span class="status-dot-inline offline"></span>
+      <span class="status-value">{$swarmSummary.offline}</span>
+      <span class="status-label">offline</span>
+      <button
+        class="clear-offline"
+        disabled={clearingOffline}
+        title={clearingOffline
+          ? 'Clearing…'
+          : 'Deregister every stale/offline instance in this scope'}
+        on:click={handleClearOffline}
+      >
+        <!-- Trash icon mirrored from NodeHeader so the visual intent is
+             consistent across per-node and bulk cleanup entry points. -->
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <polyline points="3 6 5 6 21 6" />
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+          <path d="M10 11v6" />
+          <path d="M14 11v6" />
+          <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+        </svg>
+        clear
+      </button>
+    </div>
+  {/if}
 
   <span class="divider">|</span>
 
@@ -195,7 +258,42 @@
     box-shadow: 0 0 4px var(--status-stale, #f9e2af);
   }
 
+  .status-dot-inline.offline {
+    background: var(--status-offline, #6c7086);
+  }
+
   .pending .status-value {
     color: var(--status-pending, #89b4fa);
+  }
+
+  .offline-group .status-value {
+    color: #9399b2;
+  }
+
+  .clear-offline {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 4px;
+    padding: 2px 6px;
+    border: 1px solid rgba(108, 112, 134, 0.3);
+    background: rgba(17, 17, 27, 0.42);
+    color: #a6adc8;
+    border-radius: 4px;
+    font: inherit;
+    font-size: 10.5px;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  }
+
+  .clear-offline:hover:not(:disabled) {
+    background: rgba(243, 139, 168, 0.14);
+    border-color: rgba(243, 139, 168, 0.5);
+    color: #f38ba8;
+  }
+
+  .clear-offline:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 </style>

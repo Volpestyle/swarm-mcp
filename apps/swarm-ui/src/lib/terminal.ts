@@ -85,9 +85,21 @@ export async function createTerminal(
   let disposed = false;
   let resizeFrame = 0;
   let resizeObserver: ResizeObserver | null = null;
+  let forcedViewport: { cols: number; rows: number } | null = null;
+
+  const applyViewport = (cols: number, rows: number) => {
+    if (cols !== term.cols || rows !== term.rows) {
+      term.resize(cols, rows);
+    }
+  };
 
   const fitToContainer = () => {
     if (disposed) return;
+
+    if (forcedViewport) {
+      applyViewport(forcedViewport.cols, forcedViewport.rows);
+      return;
+    }
 
     const element = term.element;
     const renderer = term.renderer;
@@ -107,9 +119,7 @@ export async function createTerminal(
 
     const cols = Math.max(2, Math.floor(usableWidth / metrics.width));
     const rows = Math.max(1, Math.floor(usableHeight / metrics.height));
-    if (cols !== term.cols || rows !== term.rows) {
-      term.resize(cols, rows);
-    }
+    applyViewport(cols, rows);
   };
 
   const scheduleFit = () => {
@@ -145,6 +155,14 @@ export async function createTerminal(
     write: (data) => term.write(data),
     refit: () => fitToContainer(),
     getSize: () => ({ cols: term.cols, rows: term.rows }),
+    setViewportSize: (cols, rows) => {
+      forcedViewport = { cols, rows };
+      fitToContainer();
+    },
+    clearViewportSize: () => {
+      forcedViewport = null;
+      fitToContainer();
+    },
     focus: () => term.focus(),
     dispose: () => {
       disposed = true;
