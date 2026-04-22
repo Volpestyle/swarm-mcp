@@ -16,9 +16,12 @@
     setScopeSelection,
     swarmSummary,
   } from '../stores/swarm';
-  import { deregisterOfflineInstances, pendingPtyCount } from '../stores/pty';
+  import { formatScopeLabel } from '../stores/startup';
+  import { deregisterOfflineInstances, killInstance, pendingPtyCount } from '../stores/pty';
+  import { confirm } from '../lib/confirm';
 
   let clearingOffline = false;
+  let killingAll = false;
 
   function handleScopeChange(event: Event): void {
     const target = event.currentTarget as HTMLSelectElement;
@@ -26,9 +29,7 @@
   }
 
   function shortScope(scope: string | null): string {
-    if (!scope) return 'all scopes';
-    const parts = scope.split(/[\\/]/).filter(Boolean);
-    return parts[parts.length - 1] ?? scope;
+    return formatScopeLabel(scope);
   }
 
   async function handleClearOffline(): Promise<void> {
@@ -52,6 +53,45 @@
       clearingOffline = false;
     }
   }
+
+  /**
+   * Kill every instance visible in the currently-selected scope — live,
+   * stale, or offline. Uses `killInstance` so externally-adopted Claudes
+   * are SIGTERM/SIGKILL'd via the recorded pid, not just dropped from the
+   * swarm row. Gated behind a confirm so accidental clicks don't nuke work.
+   *
+   * `$instances` is the scope-filtered map — walking it gives us exactly
+   * the nodes the user can see on the canvas right now.
+   */
+  async function handleKillAllInScope(): Promise<void> {
+    if (killingAll) return;
+    const targets = Array.from($instances.values());
+    if (targets.length === 0) return;
+    const scopeLabel = shortScope($activeScope);
+    const ok = await confirm({
+      title: 'Kill agents',
+      message: `Kill ${targets.length} agent${targets.length === 1 ? '' : 's'} in ${scopeLabel}? This SIGTERMs their processes and clears every row.`,
+      confirmLabel: 'Kill all',
+      danger: true,
+    });
+    if (!ok) return;
+    killingAll = true;
+    try {
+      // Serial rather than parallel: the backend kill path holds a rusqlite
+      // connection briefly per call, and a burst of parallel invokes would
+      // churn SQLITE_BUSY retries. Serial is fast enough for O(10) instances
+      // and avoids any lock-timeout surprises.
+      for (const inst of targets) {
+        try {
+          await killInstance(inst.id);
+        } catch (err) {
+          console.warn('[SwarmStatus] killInstance failed for', inst.id, err);
+        }
+      }
+    } finally {
+      killingAll = false;
+    }
+  }
 </script>
 
 <div class="swarm-status-bar">
@@ -73,6 +113,37 @@
     <span class="status-dot-inline online"></span>
     <span class="status-value">{$swarmSummary.active}</span>
     <span class="status-label">active</span>
+    {#if $instances.size > 0}
+      <button
+        class="kill-all"
+        disabled={killingAll}
+        title={killingAll
+          ? 'Killing…'
+          : `SIGTERM every agent in ${shortScope($activeScope)} and clear their rows`}
+        on:click={handleKillAllInScope}
+      >
+        <!-- Skull-ish glyph: circle + bones. Visually distinct from the
+             trash icon on the clear-offline button next to it so the
+             destructive intent doesn't blend in. -->
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M12 2a8 8 0 0 0-8 8v4a4 4 0 0 0 2 3.46V21a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-3.54A4 4 0 0 0 20 14v-4a8 8 0 0 0-8-8z"/>
+          <circle cx="9" cy="12" r="1.25"/>
+          <circle cx="15" cy="12" r="1.25"/>
+          <path d="M10 18h4"/>
+        </svg>
+        kill all
+      </button>
+    {/if}
   </div>
 
   <span class="divider">|</span>
@@ -293,6 +364,36 @@
   }
 
   .clear-offline:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .kill-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 6px;
+    padding: 2px 6px;
+    /* Borrow the danger palette from .clear-offline:hover so the idle state
+       already signals "this is destructive" — user said the existing red X
+       didn't read as a nuke button, so this one leans harder. */
+    border: 1px solid rgba(243, 139, 168, 0.45);
+    background: rgba(243, 139, 168, 0.08);
+    color: #f38ba8;
+    border-radius: 4px;
+    font: inherit;
+    font-size: 10.5px;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  }
+
+  .kill-all:hover:not(:disabled) {
+    background: rgba(243, 139, 168, 0.2);
+    border-color: rgba(243, 139, 168, 0.7);
+    color: #f5a1b6;
+  }
+
+  .kill-all:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }

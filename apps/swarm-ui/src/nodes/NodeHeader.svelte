@@ -6,7 +6,8 @@
 -->
 <script lang="ts">
   import type { Lock, NodeType, InstanceStatus, Task } from '../lib/types';
-  import { closePty, deregisterInstance, respawnInstance } from '../stores/pty';
+  import { closePty, deregisterInstance, killInstance, respawnInstance } from '../stores/pty';
+  import { confirm } from '../lib/confirm';
   import { createEventDispatcher } from 'svelte';
 
   export let role: string = '';
@@ -121,10 +122,28 @@
 
   async function handleRemoveInstance() {
     if (!instanceId) return;
+    // Prefer the PID-kill path for adopted external agents so the OS process
+    // is actually terminated, not just the swarm row removed. Falls back to
+    // plain deregister if the kill command is unavailable for any reason
+    // (older backend without ui_kill_instance registered, etc.) — that path
+    // at least clears the stale row. For unadopted placeholders (pid=0) the
+    // backend's killInstance is effectively a no-op that still deregisters.
+    const ok = await confirm({
+      title: 'Kill agent',
+      message: 'Kill this agent and remove it from the swarm?',
+      confirmLabel: 'Kill',
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await deregisterInstance(instanceId);
+      await killInstance(instanceId);
     } catch (err) {
-      console.error('[NodeHeader] failed to deregister instance:', err);
+      console.error('[NodeHeader] kill failed, falling back to deregister:', err);
+      try {
+        await deregisterInstance(instanceId);
+      } catch (innerErr) {
+        console.error('[NodeHeader] fallback deregister also failed:', innerErr);
+      }
     }
   }
 

@@ -15,6 +15,7 @@
     Background,
     Controls,
     MiniMap,
+    type Connection,
     type EdgeTypes,
     type NodeTypes,
   } from '@xyflow/svelte';
@@ -58,13 +59,16 @@
   import ConnectionEdge from './edges/ConnectionEdge.svelte';
 
   // Panels (Agent 4)
+  import ConversationPanel from './panels/ConversationPanel.svelte';
   import Inspector from './panels/Inspector.svelte';
   import Launcher from './panels/Launcher.svelte';
   import MobileAccessModal from './panels/MobileAccessModal.svelte';
   import SettingsModal from './panels/SettingsModal.svelte';
+  import StartupHome from './panels/StartupHome.svelte';
   import SwarmStatus from './panels/SwarmStatus.svelte';
   import FullscreenWorkspace from './panels/FullscreenWorkspace.svelte';
   import CloseConfirmModal from './panels/CloseConfirmModal.svelte';
+  import ConfirmModal from './panels/ConfirmModal.svelte';
   import { mergeEdges, mergeNodes } from './lib/app/graphState';
   import { createLayoutPersistence } from './lib/app/layoutPersistence';
   import {
@@ -124,6 +128,14 @@
   let nodes: XYFlowNode[] = [];
   let edges: XYFlowEdge[] = [];
 
+  // User-drawn edges created by dragging from one handle to another. These
+  // aren't backed by any backend message/task/dep yet — they're visual
+  // intent links. We track their IDs here so each `applyBuild()` can
+  // reattach them after the merge instead of having them wiped by the
+  // fresh-edges-win rebuild logic.
+  const userEdgeIds = new Set<string>();
+  let connectionActive = false;
+
   // Selection state
   let selectedNodeId: string | null = null;
   let selectedEdgeId: string | null = null;
@@ -133,6 +145,7 @@
   let showMobileAccess = false;
   let showSettings = false;
   let showCloseConfirm = false;
+  let appMode: 'home' | 'canvas' = 'home';
   let closeRequestUnlisten: UnlistenFn | null = null;
   let appWindow: ReturnType<typeof getCurrentWindow> | null = null;
   let compactNodeIdsUnsubscribe: (() => void) | null = null;
@@ -349,8 +362,9 @@
 
   // Right-panel tab state. Auto-switches to 'inspect' when a node/edge is
   // selected and back to 'launch' when selection clears. Users can still
-  // override by clicking a tab directly.
-  let activeTab: 'launch' | 'inspect' = 'launch';
+  // override by clicking a tab directly. 'chat' shows the cross-scope
+  // Conversation panel (operator broadcast + live message feed).
+  let activeTab: 'launch' | 'chat' | 'inspect' = 'launch';
 
   // -------------------------------------------------------------------
   // Resizable sidebar
@@ -418,7 +432,71 @@
   ) {
     nodes = mergeNodes(nodes, built.nodes, persistedLayout);
     applyCompactNodeGeometry();
-    edges = mergeEdges(edges, built.edges);
+    // Preserve user-drawn edges across rebuilds. We keep only those whose
+    // source and target nodes still exist — otherwise XYFlow will warn and
+    // the edge would render as a dangling path.
+    const liveNodeIds = new Set(nodes.map((node) => node.id));
+    const preservedUserEdges: XYFlowEdge[] = [];
+    for (const edge of edges) {
+      if (!userEdgeIds.has(edge.id)) continue;
+      if (!liveNodeIds.has(edge.source) || !liveNodeIds.has(edge.target)) {
+        userEdgeIds.delete(edge.id);
+        continue;
+      }
+      preservedUserEdges.push(edge);
+    }
+    edges = [...mergeEdges(edges, built.edges), ...preservedUserEdges];
+  }
+
+  // -------------------------------------------------------------------
+  // Drag-to-connect — form a link when the user drags from a source
+  // handle onto a target handle. While a drag is in-flight we toggle
+  // `connectionActive` so terminal.css can paint a glow on every node's
+  // handles, making valid drop targets obvious.
+  // -------------------------------------------------------------------
+
+  function handleConnectStart(): void {
+    connectionActive = true;
+  }
+
+  function handleConnectEnd(): void {
+    connectionActive = false;
+  }
+
+  function handleConnect(connection: Connection): void {
+    if (!connection.source || !connection.target) return;
+    if (connection.source === connection.target) return;
+
+    const id = `user:${connection.source}::${connection.target}:${Date.now()}`;
+    if (userEdgeIds.has(id)) return;
+    userEdgeIds.add(id);
+
+    const nextEdge: XYFlowEdge = {
+      id,
+      source: connection.source,
+      target: connection.target,
+      sourceHandle: connection.sourceHandle ?? undefined,
+      targetHandle: connection.targetHandle ?? undefined,
+      type: undefined, // fall back to XYFlow's default bezier edge
+      animated: true,
+      selectable: true,
+      data: undefined,
+      class: 'user-connection',
+    };
+
+    // Replace any existing user edge between the same pair (regardless of
+    // handle/direction) so repeated drags update rather than stacking lines.
+    edges = [
+      ...edges.filter((edge) => {
+        if (!userEdgeIds.has(edge.id)) return true;
+        const samePair =
+          (edge.source === connection.source && edge.target === connection.target) ||
+          (edge.source === connection.target && edge.target === connection.source);
+        if (samePair) userEdgeIds.delete(edge.id);
+        return !samePair;
+      }),
+      nextEdge,
+    ];
   }
 
   // Look up selected node/edge objects for the inspector
@@ -472,8 +550,19 @@
   // Event handlers
   // -------------------------------------------------------------------
 
-  function handleNodeClick({ node }: { node: { id: string } }) {
-    setSelectedNode(node.id);
+  function isInteractiveTarget(target: EventTarget | null): boolean {
+    return target instanceof HTMLElement
+      && Boolean(target.closest('button, input, textarea, select, a, [role="button"]'));
+  }
+
+  function handleNodeClick(event: { node: XYFlowNode; event?: MouseEvent | TouchEvent }) {
+    setSelectedNode(event.node.id);
+
+    if (workspaceStage !== 'closed') return;
+    if (!event.node.data?.ptySession?.id) return;
+    if (isInteractiveTarget(event.event?.target ?? null)) return;
+
+    void focusNodeTerminal(event.node.id);
   }
 
   function handleEdgeClick({ edge }: { edge: { id: string } }) {
@@ -505,6 +594,17 @@
   function openSettings() {
     showMobileAccess = false;
     showSettings = true;
+  }
+
+  function openHome() {
+    if (workspaceStage !== 'closed') return;
+    showMobileAccess = false;
+    showSettings = false;
+    appMode = 'home';
+  }
+
+  function enterCanvas() {
+    appMode = 'canvas';
   }
 
   function closeSettings() {
@@ -551,7 +651,7 @@
     if (showCloseConfirm) return;
 
     const meta = event.metaKey || event.ctrlKey;
-    const overlayOpen = showSettings || showMobileAccess;
+    const overlayOpen = showSettings || showMobileAccess || appMode === 'home';
 
     if (!event.defaultPrevented && !event.repeat && !event.isComposing) {
       const wantsLaunch =
@@ -588,6 +688,19 @@
       }
 
       if (workspaceStage === 'closed') {
+        const wantsHome =
+          meta &&
+          event.shiftKey &&
+          !event.altKey &&
+          event.key.toLowerCase() === 'h';
+
+        if (wantsHome) {
+          event.preventDefault();
+          event.stopPropagation();
+          openHome();
+          return;
+        }
+
         const wantsCycleNext =
           meta &&
           event.shiftKey &&
@@ -694,7 +807,24 @@
   style="--sidebar-inset: {effectiveSidebarWidth}px; --sidebar-transition-duration: {resizing ? '0ms' : '460ms'};"
 >
   <!-- Canvas area -->
-  <div class="canvas-area">
+  <div class="canvas-area" class:connection-active={connectionActive}>
+    {#if appMode === 'canvas'}
+      <button
+        type="button"
+        class="floating-home"
+        on:click={openHome}
+        aria-label="Back to Home"
+        aria-keyshortcuts="Meta+Shift+H Control+Shift+H"
+        title="Back to Home"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M19 12H5" />
+          <path d="M12 19l-7-7 7-7" />
+        </svg>
+        <span>Back</span>
+      </button>
+    {/if}
+
     {#if sidebarCollapsed}
       <button
         type="button"
@@ -719,6 +849,9 @@
       onnodeclick={handleNodeClick}
       onedgeclick={handleEdgeClick}
       onpaneclick={handlePaneClick}
+      onconnect={handleConnect}
+      onconnectstart={handleConnectStart}
+      onconnectend={handleConnectEnd}
       minZoom={0.2}
       maxZoom={2}
       defaultEdgeOptions={{ animated: false }}
@@ -775,6 +908,16 @@
         <button
           type="button"
           class="tab"
+          class:active={activeTab === 'chat'}
+          role="tab"
+          aria-selected={activeTab === 'chat'}
+          on:click={() => (activeTab = 'chat')}
+        >
+          Chat
+        </button>
+        <button
+          type="button"
+          class="tab"
           class:active={activeTab === 'inspect'}
           role="tab"
           aria-selected={activeTab === 'inspect'}
@@ -784,6 +927,20 @@
         </button>
       </div>
       <div class="tab-actions">
+        <button
+          type="button"
+          class="icon-btn"
+          class:active={appMode === 'home'}
+          on:click={openHome}
+          aria-label="Home"
+          aria-pressed={appMode === 'home'}
+          title="Home"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 10.5L12 3l9 7.5"/>
+            <path d="M5 9.75V21h14V9.75"/>
+          </svg>
+        </button>
         {#if activeTab === 'launch'}
           <button
             type="button"
@@ -841,6 +998,9 @@
       <div class="tab-panel" class:hidden={activeTab !== 'launch'}>
         <Launcher bind:this={launcherRef} />
       </div>
+      <div class="tab-panel" class:hidden={activeTab !== 'chat'}>
+        <ConversationPanel />
+      </div>
       <div class="tab-panel" class:hidden={activeTab !== 'inspect'}>
         <Inspector {selectedNode} {selectedEdge} />
       </div>
@@ -849,6 +1009,10 @@
 
   {#if showSettings}
     <SettingsModal on:close={closeSettings} />
+  {/if}
+
+  {#if appMode === 'home'}
+    <StartupHome on:enterCanvas={enterCanvas} on:openSettings={openSettings} />
   {/if}
 
   {#if showMobileAccess}
@@ -861,6 +1025,8 @@
       on:confirm={confirmAppClose}
     />
   {/if}
+
+  <ConfirmModal />
 
   {#if workspaceActive}
     <FullscreenWorkspace
@@ -1019,6 +1185,39 @@
     transform: translateX(0);
   }
 
+  .floating-home {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    z-index: 20;
+    height: 32px;
+    padding: 0 12px 0 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(108, 112, 134, 0.35);
+    background: var(--panel-bg, rgba(30, 30, 46, 0.68));
+    backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.1);
+    -webkit-backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.1);
+    color: #a6adc8;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    transition: background 0.16s ease, color 0.16s ease,
+      border-color 0.16s ease, transform 0.16s ease;
+  }
+
+  .floating-home:hover {
+    background: rgba(49, 50, 68, 0.92);
+    color: var(--terminal-fg, #c0caf5);
+    border-color: rgba(137, 180, 250, 0.55);
+    transform: translateY(-1px);
+  }
+
+  .floating-home:active {
+    transform: translateY(0);
+  }
+
   .tab-bar {
     display: flex;
     align-items: stretch;
@@ -1078,6 +1277,11 @@
 
   .icon-btn:hover {
     background: rgba(255, 255, 255, 0.05);
+    color: var(--terminal-fg, #c0caf5);
+  }
+
+  .icon-btn.active {
+    background: rgba(137, 180, 250, 0.12);
     color: var(--terminal-fg, #c0caf5);
   }
 
