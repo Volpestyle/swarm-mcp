@@ -15,7 +15,7 @@ use swarm_protocol::{
     Event, Frame, FramePayload, Message, PtyInfo, SwarmSnapshot as ProtocolSnapshot,
 };
 pub use swarm_state::swarm_db_path;
-use swarm_state::{RECENT_EVENT_LIMIT, RECENT_MESSAGE_LIMIT, open_swarm_db};
+use swarm_state::{RECENT_EVENT_LIMIT, RECENT_MESSAGE_LIMIT, load_snapshot, open_swarm_db};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::{
@@ -81,6 +81,11 @@ fn watcher_loop<R: Runtime>(
     on_update: Option<Arc<SwarmUpdateCallback>>,
 ) {
     let mut conn: Option<Connection> = None;
+    let mut daemon_snapshot_log = daemon::RetryLogThrottle::default();
+    let mut daemon_stream_log = daemon::RetryLogThrottle::default();
+    let mut daemon_subscribe_log = daemon::RetryLogThrottle::default();
+    let mut daemon_read_log = daemon::RetryLogThrottle::default();
+    let mut daemon_recovery_log = daemon::RetryLogThrottle::default();
 
     loop {
         if conn.is_none() {
@@ -99,10 +104,13 @@ fn watcher_loop<R: Runtime>(
 
         if let Err(err) = fetch_and_publish_state(&app_handle, conn.as_ref(), on_update.as_deref())
         {
-            eprintln!("[swarm] failed to fetch daemon snapshot: {err}");
+            daemon_snapshot_log.warn(|| format!("[swarm] failed to fetch daemon snapshot: {err}"));
+            recover_daemon("fetching daemon snapshot", &mut daemon_recovery_log);
             thread::sleep(POLL_INTERVAL);
             continue;
         }
+        daemon_snapshot_log.reset();
+        daemon_recovery_log.reset();
 
         let cursors = match read_state() {
             Ok(state) => state
@@ -116,9 +124,13 @@ fn watcher_loop<R: Runtime>(
             }
         };
         let mut socket = match tauri::async_runtime::block_on(daemon::open_stream()) {
-            Ok(socket) => socket,
+            Ok(socket) => {
+                daemon_stream_log.reset();
+                socket
+            }
             Err(err) => {
-                eprintln!("[swarm] failed to open daemon stream: {err}");
+                daemon_stream_log.warn(|| format!("[swarm] failed to open daemon stream: {err}"));
+                recover_daemon("opening daemon stream", &mut daemon_recovery_log);
                 thread::sleep(POLL_INTERVAL);
                 continue;
             }
@@ -126,16 +138,19 @@ fn watcher_loop<R: Runtime>(
         if let Err(err) =
             tauri::async_runtime::block_on(daemon::subscribe_with_cursors(&mut socket, cursors))
         {
-            eprintln!("[swarm] failed to subscribe daemon stream: {err}");
+            daemon_subscribe_log
+                .warn(|| format!("[swarm] failed to subscribe daemon stream: {err}"));
             thread::sleep(POLL_INTERVAL);
             continue;
         }
+        daemon_subscribe_log.reset();
 
         loop {
             match tauri::async_runtime::block_on(async {
                 tokio::time::timeout(POLL_INTERVAL, daemon::read_frame(&mut socket)).await
             }) {
                 Ok(Ok(Some(frame))) => {
+                    daemon_read_log.reset();
                     if let Err(err) =
                         apply_stream_frame(&app_handle, frame, conn.as_ref(), on_update.as_deref())
                     {
@@ -145,7 +160,7 @@ fn watcher_loop<R: Runtime>(
                 }
                 Ok(Ok(None)) => break,
                 Ok(Err(err)) => {
-                    eprintln!("[swarm] daemon stream read failed: {err}");
+                    daemon_read_log.warn(|| format!("[swarm] daemon stream read failed: {err}"));
                     break;
                 }
                 Err(_) => {
@@ -161,6 +176,12 @@ fn watcher_loop<R: Runtime>(
         }
 
         thread::sleep(POLL_INTERVAL);
+    }
+}
+
+fn recover_daemon(operation: &'static str, log: &mut daemon::RetryLogThrottle) {
+    if let Err(err) = daemon::ensure_running() {
+        log.warn(|| format!("[swarm] failed to recover swarm-server after {operation}: {err}"));
     }
 }
 
@@ -182,8 +203,10 @@ fn seed_initial_snapshot<R: Runtime>(
         }
     };
     sync_pty_and_binding_state(app_handle, &protocol_snapshot)?;
-    let snapshot = protocol_to_ui_update(
+    let local_truth = load_local_truth_snapshot(conn.as_ref(), &protocol_snapshot)?;
+    let snapshot = ui_update_from_snapshots(
         &protocol_snapshot,
+        local_truth.as_ref(),
         conn.as_ref().map_or(Ok(None), load_ui_meta)?,
     );
     publish_initial_snapshot(protocol_snapshot, snapshot)
@@ -205,8 +228,9 @@ fn fetch_and_publish_state<R: Runtime>(
 ) -> Result<(), String> {
     let current_protocol = tauri::async_runtime::block_on(daemon::fetch_state())?;
     sync_pty_and_binding_state(app_handle, &current_protocol)?;
+    let local_truth = load_local_truth_snapshot(conn, &current_protocol)?;
     let ui_meta = conn.map_or(Ok(None), load_ui_meta)?;
-    let snapshot = protocol_to_ui_update(&current_protocol, ui_meta);
+    let snapshot = ui_update_from_snapshots(&current_protocol, local_truth.as_ref(), ui_meta);
     publish_snapshot(current_protocol, snapshot, app_handle, on_update)
 }
 
@@ -262,7 +286,8 @@ fn apply_stream_frame<R: Runtime>(
     emit_frames(app_handle, std::slice::from_ref(&frame))?;
 
     let ui_meta = conn.map_or(Ok(None), load_ui_meta)?;
-    let snapshot = protocol_to_ui_update(&protocol, ui_meta);
+    let local_truth = load_local_truth_snapshot(conn, &protocol)?;
+    let snapshot = ui_update_from_snapshots(&protocol, local_truth.as_ref(), ui_meta);
     publish_snapshot(protocol, snapshot, app_handle, on_update)
 }
 
@@ -450,6 +475,22 @@ fn protocol_to_ui_update(protocol: &ProtocolSnapshot, ui_meta: Option<Value>) ->
         events: protocol.events.clone(),
         ui_meta,
     }
+}
+
+fn load_local_truth_snapshot(
+    conn: Option<&Connection>,
+    protocol_snapshot: &ProtocolSnapshot,
+) -> Result<Option<ProtocolSnapshot>, String> {
+    conn.map(|conn| load_snapshot(conn, &protocol_snapshot.ptys))
+        .transpose()
+}
+
+fn ui_update_from_snapshots(
+    protocol_snapshot: &ProtocolSnapshot,
+    local_truth: Option<&ProtocolSnapshot>,
+    ui_meta: Option<Value>,
+) -> SwarmUpdate {
+    protocol_to_ui_update(local_truth.unwrap_or(protocol_snapshot), ui_meta)
 }
 
 fn apply_delta_table(snapshot: &mut ProtocolSnapshot, delta: &DeltaTableFrame) -> bool {
@@ -742,4 +783,60 @@ fn write_state() -> Result<std::sync::RwLockWriteGuard<'static, WatcherState>, S
         .state
         .write()
         .map_err(|_| "swarm watcher state lock poisoned".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ui_update_from_snapshots;
+    use swarm_protocol::{Instance, InstanceStatus, SwarmSnapshot};
+
+    fn make_instance(id: &str) -> Instance {
+        Instance {
+            id: id.to_string(),
+            scope: "/Users/example/Desktop".to_string(),
+            directory: "/Users/example/Desktop".to_string(),
+            root: "/Users/example/Desktop".to_string(),
+            file_root: "/Users/example/Desktop".to_string(),
+            pid: 42,
+            label: Some("provider:claude role:planner".to_string()),
+            registered_at: 10,
+            heartbeat: 10,
+            status: InstanceStatus::Online,
+            adopted: true,
+        }
+    }
+
+    #[test]
+    fn ui_update_from_snapshots_prefers_local_db_truth_for_instances() {
+        let protocol_snapshot = SwarmSnapshot {
+            instances: vec![make_instance("stale-instance")],
+            server_time: 10,
+            ..SwarmSnapshot::default()
+        };
+        let local_truth = SwarmSnapshot {
+            server_time: 10,
+            ..SwarmSnapshot::default()
+        };
+
+        let update = ui_update_from_snapshots(&protocol_snapshot, Some(&local_truth), None);
+
+        assert!(
+            update.instances.is_empty(),
+            "local DB truth should clear stale protocol instances"
+        );
+    }
+
+    #[test]
+    fn ui_update_from_snapshots_falls_back_to_protocol_when_local_truth_missing() {
+        let protocol_snapshot = SwarmSnapshot {
+            instances: vec![make_instance("live-instance")],
+            server_time: 10,
+            ..SwarmSnapshot::default()
+        };
+
+        let update = ui_update_from_snapshots(&protocol_snapshot, None, None);
+
+        assert_eq!(update.instances.len(), 1);
+        assert_eq!(update.instances[0].id, "live-instance");
+    }
 }

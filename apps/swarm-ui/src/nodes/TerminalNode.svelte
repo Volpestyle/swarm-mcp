@@ -23,6 +23,7 @@
     toggleCompactNode,
   } from '../lib/app/nodeWindowState';
   import NodeHeader from './NodeHeader.svelte';
+  import NodePersonaTab from './NodePersonaTab.svelte';
   import TerminalPane from './TerminalPane.svelte';
   import '../styles/terminal.css';
 
@@ -133,6 +134,15 @@
       isConnectable={data.nodeType !== 'pty'}
     />
   {/each}
+
+  <!-- Persona chip floats above the top edge of the card. Bound to the
+       instance row so changes persist via ui_set_instance_label. -->
+  <NodePersonaTab
+    instance={instance ?? null}
+    ptySession={data.ptySession ?? null}
+    {role}
+    {displayName}
+  />
 
   <NodeHeader
     {role}

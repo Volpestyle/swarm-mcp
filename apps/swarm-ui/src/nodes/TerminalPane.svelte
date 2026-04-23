@@ -103,11 +103,23 @@
     if (!ptyId) return;
     getTerminalSurface(ptyId, { fontSize }).focus();
   }
+
+  function handlePointerDown(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    focus();
+  }
+
+  function handleWheel(): void {
+    focus();
+  }
 </script>
 
 <div
-  class="terminal-pane-anchor"
+  class="terminal-pane-anchor nodrag nopan nowheel"
   bind:this={container}
+  role="none"
+  on:pointerdown={handlePointerDown}
+  on:wheel={handleWheel}
 >
   {#if exitCode !== null}
     <div class="exit-overlay">

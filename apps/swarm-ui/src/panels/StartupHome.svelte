@@ -19,9 +19,10 @@
   } from '../stores/startup';
   import { agentProfiles } from '../stores/agentProfiles';
   import { setScopeSelection } from '../stores/swarm';
-  import { deregisterOfflineInstances, forceDeregisterInstance, killInstance, getRolePresets, respawnInstance } from '../stores/pty';
+  import { deregisterOfflineInstances, killInstance, getRolePresets, respawnInstance } from '../stores/pty';
   import { confirm } from '../lib/confirm';
   import { harnessAliases, HARNESS_NAMES } from '../stores/harnessAliases';
+  import frazierCodeTronUrl from '../assets/fraziercode-tron-2.jpg';
 
   type HomeSection = 'start' | 'sessions' | 'agents' | 'diagnostics' | 'dictionary' | 'about' | 'settings';
 
@@ -52,6 +53,25 @@
     { id: 'about', label: 'About', meta: 'What swarm, swarm-mcp, and swarm-ui are', icon: '◐' },
     { id: 'settings', label: 'Settings', meta: 'Theme, startup, and recovery controls', icon: '◌' },
   ];
+
+  function navAccent(section: HomeSection): string {
+    switch (section) {
+      case 'start':
+        return '#00ffb2';
+      case 'sessions':
+        return '#d8dde6';
+      case 'agents':
+        return '#b86bff';
+      case 'diagnostics':
+        return '#ffa94d';
+      case 'dictionary':
+        return '#ffffff';
+      case 'about':
+        return '#ffc16b';
+      case 'settings':
+        return '#8a94a0';
+    }
+  }
 
   let activeSection: HomeSection = 'start';
   let initializedSection = false;
@@ -324,17 +344,12 @@
    * `handleSessionAction` only reaches here for `cleanup_orphan` and
    * `remove` which are already user-initiated.
    *
-   * Falls back to `forceDeregisterInstance` if the kill command errors
-   * (e.g. older backend binary without ui_kill_instance registered) so
-   * the row still gets cleared from the UI.
+   * Do not fall back to force-deregister on kill failure. If the process
+   * could not be terminated, the row must stay visible so the operator can
+   * see that the session may still be alive.
    */
   async function tearDownSessionRow(session: RecoverySessionItem): Promise<void> {
-    try {
-      await killInstance(session.id);
-    } catch (err) {
-      console.warn('[StartupHome] killInstance failed, falling back to force-deregister:', err);
-      await forceDeregisterInstance(session.id);
-    }
+    await killInstance(session.id);
   }
 
   async function handleSessionAction(session: RecoverySessionItem): Promise<void> {
@@ -583,6 +598,7 @@
             <button
               class:active={activeSection === item.id}
               title={item.meta}
+              style={`--nav-accent: ${navAccent(item.id)}`}
               on:click={() => (activeSection = item.id)}
             >
               <span class="nav-icon" aria-hidden="true">{item.icon}</span>
@@ -605,6 +621,28 @@
     </aside>
 
     <section class="home-content">
+      {#if themeProfileId === 'tron-encom-os'}
+        <div class="encom-hero">
+          <img
+            class="encom-hero-art"
+            src={frazierCodeTronUrl}
+            alt="FrazierCode Agentic Tron concept art"
+          />
+          <div class="encom-hero-overlay">
+            <div class="encom-hero-bar">
+              <span class="encom-hero-title">ENCOM · COMMAND DECK</span>
+              <span class="encom-hero-sub">Tron Encom OS · swarm-ui</span>
+            </div>
+            <div class="encom-hero-meta">
+              <span class="encom-hero-cell"><em>SCOPE</em>{selectedDirectory || 'unset'}</span>
+              <span class="encom-hero-cell"><em>HARNESS</em>{harness || 'shell'}</span>
+              <span class="encom-hero-cell"><em>ROLE</em>{role || '—'}</span>
+              <span class="encom-hero-cell"><em>SESSIONS</em>{diagnostics.sessionCount}</span>
+            </div>
+          </div>
+        </div>
+      {/if}
+
       <div class="content-header">
         <h2>
           {#if activeSection === 'start'}
@@ -729,7 +767,7 @@
         <p class="hint-line">{startScopeDescription.subtitle}</p>
 
         <div class="footer-actions">
-          <button class="primary-btn primary-btn--large" type="button" on:click={handleStartFresh}>
+          <button class="primary-btn primary-btn--large primary-btn--start" type="button" on:click={handleStartFresh}>
             {startScopeDescription.title}
           </button>
           <button
@@ -2122,5 +2160,449 @@
     .header-actions {
       justify-content: flex-start;
     }
+  }
+
+  /* ── Tron Encom OS overrides ────────────────────────────────────────── */
+  .encom-hero {
+    display: none;
+  }
+
+  :global([data-theme="tron-encom-os"]) .encom-hero {
+    position: relative;
+    display: block;
+    min-height: 238px;
+    overflow: hidden;
+    padding: 0;
+    border: 1px solid var(--led-line, #d8dde6);
+    background: var(--bg-base, #000);
+    box-shadow:
+      0 0 0 1px var(--led-halo, rgba(255, 255, 255, 0.08)),
+      var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :global([data-theme="tron-encom-os"]) .encom-hero-art {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 44%;
+    filter: saturate(1.1) contrast(1.06) brightness(0.78);
+  }
+
+  :global([data-theme="tron-encom-os"]) .encom-hero-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 15px 16px;
+    background:
+      linear-gradient(90deg, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0.2) 54%, rgba(0, 0, 0, 0.62)),
+      linear-gradient(180deg, rgba(0, 0, 0, 0.7), transparent 48%, rgba(0, 0, 0, 0.76));
+  }
+
+  :global([data-theme="tron-encom-os"]) .encom-hero-bar {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--led-line-s, rgba(216, 221, 230, 0.45));
+  }
+
+  :global([data-theme="tron-encom-os"]) .encom-hero-title {
+    font-size: 13px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--accent, #ffffff);
+    text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
+  }
+
+  :global([data-theme="tron-encom-os"]) .encom-hero-sub {
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--fg-secondary, #8a94a0);
+  }
+
+  :global([data-theme="tron-encom-os"]) .encom-hero-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px;
+  }
+
+  :global([data-theme="tron-encom-os"]) .encom-hero-cell {
+    background: rgba(0, 0, 0, 0.42);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 8px;
+    border: 1px solid var(--led-line-s, rgba(216, 221, 230, 0.45));
+    font-size: 11px;
+    color: var(--fg-primary, #f5f7fa);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  :global([data-theme="tron-encom-os"]) .encom-hero-cell em {
+    font-style: normal;
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--fg-secondary, #8a94a0);
+  }
+
+  :global([data-theme="tron-encom-os"]) .home-overlay {
+    --home-neon-green: #00ffb2;
+    --home-neon-green-rgb: 0, 255, 178;
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 16% 16%, rgba(184, 107, 255, 0.075), transparent 30%),
+      radial-gradient(circle at 82% 18%, rgba(255, 58, 76, 0.06), transparent 28%),
+      radial-gradient(circle at 78% 82%, rgba(184, 107, 255, 0.04), transparent 34%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 32%),
+      var(--canvas-bg, var(--bg-base, #000));
+    backdrop-filter: blur(var(--surface-blur, 20px));
+    -webkit-backdrop-filter: blur(var(--surface-blur, 20px));
+  }
+
+  :global([data-theme="tron-encom-os"]) .home-overlay::before,
+  :global([data-theme="tron-encom-os"]) .home-overlay::after {
+    content: '';
+    position: absolute;
+    inset: -18%;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    z-index: 0;
+  }
+
+  :global([data-theme="tron-encom-os"]) .home-overlay::before {
+    background:
+      radial-gradient(circle at 18% 30%, rgba(184, 107, 255, 0.2), transparent 28%),
+      radial-gradient(circle at 74% 20%, rgba(255, 58, 76, 0.15), transparent 26%),
+      radial-gradient(circle at 58% 88%, rgba(184, 107, 255, 0.12), transparent 30%);
+    filter: blur(28px);
+    opacity: 0.62;
+    animation: encom-home-aurora 18s ease-in-out infinite alternate;
+  }
+
+  :global([data-theme="tron-encom-os"]) .home-overlay::after {
+    background:
+      radial-gradient(circle at 78% 68%, rgba(255, 58, 76, 0.18), transparent 30%),
+      radial-gradient(circle at 30% 72%, rgba(184, 107, 255, 0.13), transparent 34%);
+    filter: blur(36px);
+    opacity: 0.38;
+    animation: encom-home-aurora-secondary 23s ease-in-out infinite alternate;
+  }
+
+  :global([data-theme="tron-encom-os"]) .home-shell {
+    position: relative;
+    z-index: 1;
+  }
+
+  :global([data-theme="tron-encom-os"]) .home-nav,
+  :global([data-theme="tron-encom-os"]) .home-content {
+    border: 1px solid var(--led-line, #d8dde6);
+    border-radius: 0;
+    box-shadow:
+      0 0 0 1px var(--led-halo, rgba(255, 255, 255, 0.08)),
+      0 0 24px rgba(255, 255, 255, 0.06),
+      inset 0 0 24px rgba(216, 221, 230, 0.025);
+  }
+
+  :global([data-theme="tron-encom-os"]) .home-nav {
+    background:
+      linear-gradient(180deg, rgba(184, 107, 255, 0.055), transparent 22%),
+      linear-gradient(90deg, rgba(255, 58, 76, 0.035), transparent 72%),
+      var(--sidebar-bg, var(--bg-base, #000));
+    backdrop-filter: blur(var(--sidebar-blur, 38px));
+    -webkit-backdrop-filter: blur(var(--sidebar-blur, 38px));
+  }
+
+  :global([data-theme="tron-encom-os"]) .home-content {
+    background:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.035), transparent 34%),
+      radial-gradient(circle at 92% 8%, rgba(184, 107, 255, 0.055), transparent 24%),
+      radial-gradient(circle at 74% 94%, rgba(255, 58, 76, 0.035), transparent 24%),
+      var(--panel-bg, var(--bg-base, #000));
+    backdrop-filter: blur(var(--surface-blur, 20px));
+    -webkit-backdrop-filter: blur(var(--surface-blur, 20px));
+  }
+
+  :global([data-theme="tron-encom-os"]) .brand-block h1,
+  :global([data-theme="tron-encom-os"]) .content-header h2,
+  :global([data-theme="tron-encom-os"]) .panel-card h3,
+  :global([data-theme="tron-encom-os"]) .scope-card h3,
+  :global([data-theme="tron-encom-os"]) .empty-card h3 {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--accent, #ffffff);
+    text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
+    font-weight: 600;
+  }
+
+  :global([data-theme="tron-encom-os"]) .brand-block h1 { font-size: 14px; }
+  :global([data-theme="tron-encom-os"]) .content-header h2 { font-size: 13px; }
+  :global([data-theme="tron-encom-os"]) .panel-card h3,
+  :global([data-theme="tron-encom-os"]) .scope-card h3,
+  :global([data-theme="tron-encom-os"]) .empty-card h3 { font-size: 12px; }
+
+  :global([data-theme="tron-encom-os"]) .eyebrow,
+  :global([data-theme="tron-encom-os"]) .stat-label,
+  :global([data-theme="tron-encom-os"]) .header-chip,
+  :global([data-theme="tron-encom-os"]) .summary-item {
+    color: var(--fg-secondary, #8a94a0);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :global([data-theme="tron-encom-os"]) .panel-card,
+  :global([data-theme="tron-encom-os"]) .scope-card,
+  :global([data-theme="tron-encom-os"]) .empty-card {
+    border: 1px solid var(--led-line-s, rgba(216, 221, 230, 0.45));
+    border-radius: 0;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.006)),
+      var(--node-bg, var(--bg-base, #000));
+    box-shadow:
+      inset 0 0 18px rgba(216, 221, 230, 0.02),
+      0 0 16px rgba(255, 255, 255, 0.035);
+  }
+
+  :global([data-theme="tron-encom-os"]) .summary-strip {
+    border: 1px solid var(--led-line-s, rgba(216, 221, 230, 0.45));
+    background:
+      linear-gradient(90deg, rgba(184, 107, 255, 0.055), rgba(255, 58, 76, 0.025) 42%, transparent 70%),
+      var(--node-header-bg, transparent);
+    border-radius: 0;
+  }
+
+  :global([data-theme="tron-encom-os"]) .header-chip {
+    border-radius: 0;
+    border-color: color-mix(in srgb, var(--c-amber, #ffa94d) 62%, var(--led-line, #d8dde6));
+    background: color-mix(in srgb, var(--c-amber, #ffa94d) 8%, transparent);
+    color: color-mix(in srgb, var(--c-amber, #ffa94d) 72%, var(--fg-primary, #f5f7fa));
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    box-shadow: 0 0 12px rgba(255, 169, 77, 0.12);
+  }
+
+  :global([data-theme="tron-encom-os"]) .section-nav button {
+    --nav-accent-color: var(--nav-accent, var(--accent, #ffffff));
+    position: relative;
+    overflow: hidden;
+    border-radius: 0;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 11px;
+    color: var(--fg-secondary, #8a94a0);
+    border-left-color: color-mix(in srgb, var(--nav-accent-color) 18%, transparent);
+  }
+
+  :global([data-theme="tron-encom-os"]) .section-nav button::before {
+    content: '';
+    position: absolute;
+    inset: 5px auto 5px 0;
+    width: 2px;
+    background: var(--nav-accent-color);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--nav-accent-color) 56%, transparent);
+    opacity: 0;
+    transition: opacity 0.14s ease;
+  }
+
+  :global([data-theme="tron-encom-os"]) .section-nav .nav-icon {
+    color: color-mix(in srgb, var(--nav-accent-color) 78%, var(--fg-primary, #f5f7fa));
+    text-shadow: 0 0 7px color-mix(in srgb, var(--nav-accent-color) 34%, transparent);
+    opacity: 0.82;
+  }
+
+  :global([data-theme="tron-encom-os"]) .section-nav button:hover {
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--nav-accent-color) 12%, transparent), rgba(255, 255, 255, 0.018));
+    border-color: color-mix(in srgb, var(--nav-accent-color) 42%, var(--led-line-s, rgba(216, 221, 230, 0.45)));
+    color: var(--fg-primary, #f5f7fa);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--nav-accent-color) 12%, transparent);
+  }
+
+  :global([data-theme="tron-encom-os"]) .section-nav button.active {
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--nav-accent-color) 18%, transparent), rgba(255, 255, 255, 0.035));
+    border-color: color-mix(in srgb, var(--nav-accent-color) 70%, var(--led-line, #d8dde6));
+    color: var(--accent, #ffffff);
+    box-shadow:
+      0 0 14px color-mix(in srgb, var(--nav-accent-color) 22%, transparent),
+      inset 0 0 12px rgba(255, 255, 255, 0.035);
+  }
+
+  :global([data-theme="tron-encom-os"]) .section-nav button.active::before,
+  :global([data-theme="tron-encom-os"]) .section-nav button:hover::before {
+    opacity: 1;
+  }
+
+  :global([data-theme="tron-encom-os"]) .text-input,
+  :global([data-theme="tron-encom-os"]) input[type="text"],
+  :global([data-theme="tron-encom-os"]) select {
+    border: 1px solid var(--led-line, #d8dde6);
+    border-radius: 0;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
+      var(--node-header-bg, var(--bg-input, #02040a));
+    color: var(--fg-primary, #f5f7fa);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :global([data-theme="tron-encom-os"]) .text-input:focus,
+  :global([data-theme="tron-encom-os"]) input[type="text"]:focus,
+  :global([data-theme="tron-encom-os"]) select:focus {
+    border-color: color-mix(in srgb, var(--home-neon-green, #00ffb2) 74%, var(--led-line, #d8dde6));
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--home-neon-green, #00ffb2) 20%, transparent),
+      0 0 14px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.14);
+  }
+
+  :global([data-theme="tron-encom-os"]) .primary-btn,
+  :global([data-theme="tron-encom-os"]) .ghost-btn,
+  :global([data-theme="tron-encom-os"]) .inline-btn,
+  :global([data-theme="tron-encom-os"]) .icon-btn,
+  :global([data-theme="tron-encom-os"]) .chip {
+    border-radius: 0;
+    border: 1px solid var(--led-line, #d8dde6);
+    background: transparent;
+    color: var(--fg-primary, #f5f7fa);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 11px;
+  }
+
+  :global([data-theme="tron-encom-os"]) .primary-btn {
+    border-color: color-mix(in srgb, var(--home-neon-green, #00ffb2) 64%, var(--led-line, #d8dde6));
+    background: color-mix(in srgb, var(--home-neon-green, #00ffb2) 8%, transparent);
+    color: color-mix(in srgb, var(--home-neon-green, #00ffb2) 64%, var(--fg-primary, #f5f7fa));
+    box-shadow: 0 0 12px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.14);
+  }
+
+  :global([data-theme="tron-encom-os"]) .primary-btn--start {
+    border-color: var(--home-neon-green, #00ffb2);
+    background:
+      linear-gradient(90deg, rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.18), rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.055)),
+      rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.02);
+    color: #d8fff1;
+    text-shadow: 0 0 9px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.38);
+    box-shadow:
+      0 0 0 1px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.2),
+      0 0 18px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.32),
+      0 0 42px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.14),
+      inset 0 0 18px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.09);
+  }
+
+  :global([data-theme="tron-encom-os"]) .ghost-btn:not(.ghost-btn--danger) {
+    border-color: color-mix(in srgb, var(--c-amber, #ffa94d) 42%, var(--led-line, #d8dde6));
+    color: color-mix(in srgb, var(--c-amber, #ffa94d) 54%, var(--fg-primary, #f5f7fa));
+    background: color-mix(in srgb, var(--c-amber, #ffa94d) 4%, transparent);
+  }
+
+  :global([data-theme="tron-encom-os"]) .inline-btn,
+  :global([data-theme="tron-encom-os"]) .icon-btn,
+  :global([data-theme="tron-encom-os"]) .chip {
+    border-color: color-mix(in srgb, var(--led-line, #d8dde6) 72%, var(--fg-muted, #4a5260));
+    background: color-mix(in srgb, var(--accent-dim, #c8cfd8) 3%, transparent);
+  }
+
+  :global([data-theme="tron-encom-os"]) .primary-btn:hover,
+  :global([data-theme="tron-encom-os"]) .ghost-btn:hover,
+  :global([data-theme="tron-encom-os"]) .inline-btn:hover,
+  :global([data-theme="tron-encom-os"]) .icon-btn:hover,
+  :global([data-theme="tron-encom-os"]) .chip:hover {
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow:
+      0 0 10px rgba(255, 255, 255, 0.16),
+      inset 0 0 10px rgba(255, 255, 255, 0.04);
+  }
+
+  :global([data-theme="tron-encom-os"]) .primary-btn:hover {
+    border-color: var(--home-neon-green, #00ffb2);
+    box-shadow:
+      0 0 18px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.32),
+      inset 0 0 14px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.09);
+  }
+
+  :global([data-theme="tron-encom-os"]) .ghost-btn:not(.ghost-btn--danger):hover {
+    border-color: var(--c-amber, #ffa94d);
+    box-shadow:
+      0 0 16px rgba(255, 169, 77, 0.18),
+      inset 0 0 12px rgba(255, 169, 77, 0.055);
+  }
+
+  :global([data-theme="tron-encom-os"]) .status-chip {
+    border-radius: 0;
+    border: 1px solid var(--led-line-s, rgba(216, 221, 230, 0.45));
+    background: transparent;
+    color: var(--fg-secondary, #8a94a0);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :global([data-theme="tron-encom-os"]) .status-chip.muted {
+    border-color: color-mix(in srgb, var(--c-amber, #ffa94d) 38%, var(--led-line-s, rgba(216, 221, 230, 0.45)));
+    color: color-mix(in srgb, var(--c-amber, #ffa94d) 60%, var(--fg-secondary, #8a94a0));
+  }
+
+  :global([data-theme="tron-encom-os"]) .summary-item em {
+    color: color-mix(in srgb, var(--home-neon-green, #00ffb2) 58%, var(--fg-primary, #f5f7fa));
+    text-shadow: 0 0 8px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.22);
+  }
+
+  @keyframes encom-home-aurora {
+    0% {
+      transform: translate3d(-2%, -1%, 0) scale(1);
+      opacity: 0.52;
+    }
+    45% {
+      transform: translate3d(4%, 2%, 0) scale(1.05);
+      opacity: 0.68;
+    }
+    100% {
+      transform: translate3d(-1%, 5%, 0) scale(1.1);
+      opacity: 0.58;
+    }
+  }
+
+  @keyframes encom-home-aurora-secondary {
+    0% {
+      transform: translate3d(2%, 4%, 0) scale(1.04);
+      opacity: 0.3;
+    }
+    52% {
+      transform: translate3d(-4%, -2%, 0) scale(1.12);
+      opacity: 0.44;
+    }
+    100% {
+      transform: translate3d(3%, -5%, 0) scale(1.02);
+      opacity: 0.34;
+    }
+  }
+
+  :global([data-theme="tron-encom-os"]) .nav-footer {
+    border-top: 1px solid var(--led-line-s, rgba(216, 221, 230, 0.45));
+  }
+
+  :global([data-theme="tron-encom-os"]) .stat-value {
+    color: var(--accent, #ffffff);
+    text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :global([data-theme="tron-encom-os"]) .error-text {
+    color: var(--c-red, #ff3a4c);
   }
 </style>

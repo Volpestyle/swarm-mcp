@@ -17,7 +17,7 @@
     swarmSummary,
   } from '../stores/swarm';
   import { formatScopeLabel } from '../stores/startup';
-  import { deregisterOfflineInstances, killInstance, pendingPtyCount } from '../stores/pty';
+  import { deregisterOfflineInstances, killAllAgentSessions, pendingPtyCount } from '../stores/pty';
   import { confirm } from '../lib/confirm';
 
   let clearingOffline = false;
@@ -54,15 +54,6 @@
     }
   }
 
-  /**
-   * Kill every instance visible in the currently-selected scope — live,
-   * stale, or offline. Uses `killInstance` so externally-adopted Claudes
-   * are SIGTERM/SIGKILL'd via the recorded pid, not just dropped from the
-   * swarm row. Gated behind a confirm so accidental clicks don't nuke work.
-   *
-   * `$instances` is the scope-filtered map — walking it gives us exactly
-   * the nodes the user can see on the canvas right now.
-   */
   async function handleKillAllInScope(): Promise<void> {
     if (killingAll) return;
     const targets = Array.from($instances.values());
@@ -77,17 +68,9 @@
     if (!ok) return;
     killingAll = true;
     try {
-      // Serial rather than parallel: the backend kill path holds a rusqlite
-      // connection briefly per call, and a burst of parallel invokes would
-      // churn SQLITE_BUSY retries. Serial is fast enough for O(10) instances
-      // and avoids any lock-timeout surprises.
-      for (const inst of targets) {
-        try {
-          await killInstance(inst.id);
-        } catch (err) {
-          console.warn('[SwarmStatus] killInstance failed for', inst.id, err);
-        }
-      }
+      await killAllAgentSessions($activeScope);
+    } catch (err) {
+      console.error('[SwarmStatus] kill-all failed:', err);
     } finally {
       killingAll = false;
     }
@@ -126,8 +109,8 @@
              trash icon on the clear-offline button next to it so the
              destructive intent doesn't blend in. -->
         <svg
-          width="11"
-          height="11"
+          width="18"
+          height="18"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -371,9 +354,12 @@
   .kill-all {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
-    margin-left: 6px;
-    padding: 2px 6px;
+    justify-content: center;
+    gap: 7px;
+    margin-left: 8px;
+    min-width: 92px;
+    min-height: 40px;
+    padding: 6px 12px;
     /* Borrow the danger palette from .clear-offline:hover so the idle state
        already signals "this is destructive" — user said the existing red X
        didn't read as a nuke button, so this one leans harder. */
@@ -382,9 +368,17 @@
     color: #f38ba8;
     border-radius: 4px;
     font: inherit;
-    font-size: 10.5px;
+    font-size: 11px;
+    font-weight: 700;
     cursor: pointer;
     transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  }
+
+  .kill-all svg {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    filter: drop-shadow(0 0 5px rgba(243, 139, 168, 0.35));
   }
 
   .kill-all:hover:not(:disabled) {
@@ -396,5 +390,102 @@
   .kill-all:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* ── Tron Encom OS overrides ──────────────────────────────────────────
+     Pill chips become sharp white-LED HUD readouts; status bar background
+     goes pure black with hairline + halo. */
+  :global([data-theme="tron-encom-os"]) .swarm-status-bar {
+    background: var(--bg-base, #000);
+    border: 1px solid var(--led-line, #d8dde6);
+    border-radius: 0;
+    box-shadow:
+      0 0 0 1px var(--led-halo, rgba(255, 255, 255, 0.08)),
+      0 0 12px rgba(255, 255, 255, 0.18);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    color: var(--fg-secondary, #8a94a0);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 11px;
+  }
+
+  :global([data-theme="tron-encom-os"]) .status-value {
+    color: var(--accent, #ffffff);
+    text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
+  }
+
+  :global([data-theme="tron-encom-os"]) .status-label {
+    color: var(--fg-secondary, #8a94a0);
+  }
+
+  :global([data-theme="tron-encom-os"]) .divider {
+    color: var(--fg-muted, #4a5260);
+  }
+
+  :global([data-theme="tron-encom-os"]) .scope-chip {
+    border-radius: 0;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--led-line, #d8dde6);
+    color: var(--accent, #ffffff);
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.18);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  :global([data-theme="tron-encom-os"]) .scope-select {
+    border-radius: 0;
+    background: var(--bg-input, #02040a);
+    border: 1px solid var(--led-line, #d8dde6);
+    color: var(--fg-primary, #f5f7fa);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  :global([data-theme="tron-encom-os"]) .clear-offline,
+  :global([data-theme="tron-encom-os"]) .kill-all {
+    border-radius: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  :global([data-theme="tron-encom-os"]) .clear-offline {
+    background: transparent;
+    border-color: var(--led-line, #d8dde6);
+    color: var(--fg-primary, #f5f7fa);
+  }
+
+  :global([data-theme="tron-encom-os"]) .kill-all {
+    background: rgba(255, 58, 76, 0.12);
+    border-width: 2px;
+    border-color: var(--c-red, #ff3a4c);
+    color: var(--c-red, #ff3a4c);
+    box-shadow:
+      0 0 10px rgba(255, 58, 76, 0.34),
+      inset 0 0 0 1px rgba(255, 58, 76, 0.16);
+  }
+
+  :global([data-theme="tron-encom-os"]) .kill-all svg {
+    width: 19px;
+    height: 19px;
+    filter:
+      drop-shadow(0 0 5px rgba(255, 58, 76, 0.68))
+      drop-shadow(0 0 12px rgba(255, 58, 76, 0.28));
+  }
+
+  :global([data-theme="tron-encom-os"]) .status-value.done {
+    color: var(--c-tron, #c6ff3d);
+    text-shadow: 0 0 4px rgba(198, 255, 61, 0.5);
+  }
+
+  :global([data-theme="tron-encom-os"]) .status-value.failed {
+    color: var(--c-red, #ff3a4c);
+    text-shadow: 0 0 4px rgba(255, 58, 76, 0.5);
+  }
+
+  :global([data-theme="tron-encom-os"]) .status-dot-inline.online {
+    background: var(--accent, #ffffff);
+    box-shadow: 0 0 6px var(--accent, #ffffff);
   }
 </style>

@@ -95,6 +95,17 @@ pub fn build_launch_plan(
     let mut env = HashMap::new();
     env.insert("TERM".to_owned(), "xterm-256color".to_owned());
     env.insert("PATH".to_owned(), merged_path());
+    env.insert("SWARM_MCP_DIRECTORY".to_owned(), request.cwd.clone());
+    env.insert("SWARM_MCP_FILE_ROOT".to_owned(), request.cwd.clone());
+
+    if let Some(instance_id) = request
+        .instance_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        env.insert("SWARM_MCP_INSTANCE_ID".to_owned(), instance_id.to_owned());
+    }
 
     if let Some(scope) = request
         .scope
@@ -287,12 +298,34 @@ mod tests {
 
     #[test]
     fn launch_plan_for_harness_bootstraps_inside_shell() {
-        let plan = build_launch_plan(&request("codex"), &LaunchConfig::load()).unwrap();
+        let mut req = request("codex");
+        req.instance_id = Some("inst-123".to_owned());
+        let plan = build_launch_plan(&req, &LaunchConfig::load()).unwrap();
         assert_eq!(plan.display_command, "codex");
         assert_eq!(plan.bootstrap_command.as_deref(), Some("codex"));
         assert_eq!(
             plan.env.get("SWARM_SERVER_HARNESS").map(String::as_str),
             Some("codex")
+        );
+        assert_eq!(
+            plan.env.get("SWARM_MCP_INSTANCE_ID").map(String::as_str),
+            Some("inst-123")
+        );
+        assert_eq!(
+            plan.env.get("SWARM_MCP_DIRECTORY").map(String::as_str),
+            Some(req.cwd.as_str())
+        );
+        assert_eq!(
+            plan.env.get("SWARM_MCP_FILE_ROOT").map(String::as_str),
+            Some(req.cwd.as_str())
+        );
+        assert_eq!(
+            plan.env.get("SWARM_MCP_SCOPE").map(String::as_str),
+            Some("swarm-mcp")
+        );
+        assert_eq!(
+            plan.env.get("SWARM_MCP_LABEL").map(String::as_str),
+            Some("provider:codex")
         );
     }
 

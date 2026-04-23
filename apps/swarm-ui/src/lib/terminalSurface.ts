@@ -7,6 +7,7 @@ import {
   refitTerminal,
   writeToTerminal,
 } from './terminal';
+import { appearance } from '../stores/appearance';
 import {
   LOCAL_PTY_LEASE_HOLDER,
   getPtySessionSnapshot,
@@ -55,6 +56,7 @@ class TerminalSurface {
   private dataUnlisten: UnlistenFn | null = null;
   private exitUnlisten: UnlistenFn | null = null;
   private sessionUnlisten: (() => void) | null = null;
+  private appearanceUnlisten: (() => void) | null = null;
   private focusInListener: (() => void) | null = null;
   private attachedAnchor: HTMLElement | null = null;
   private exitCodeValue: number | null = null;
@@ -128,10 +130,12 @@ class TerminalSurface {
     this.dataUnlisten?.();
     this.exitUnlisten?.();
     this.sessionUnlisten?.();
+    this.appearanceUnlisten?.();
     this.inputUnlisten = null;
     this.dataUnlisten = null;
     this.exitUnlisten = null;
     this.sessionUnlisten = null;
+    this.appearanceUnlisten = null;
     if (this.focusInListener) {
       this.host.removeEventListener('focusin', this.focusInListener, true);
       this.focusInListener = null;
@@ -165,6 +169,10 @@ class TerminalSurface {
 
       this.handle = handle;
       const encoder = new TextEncoder();
+
+      this.appearanceUnlisten = appearance.subscribe((nextAppearance) => {
+        this.handle?.setTheme(nextAppearance.terminalTheme);
+      });
 
       this.inputUnlisten = handle.onData((input: string) => {
         void this.forwardInput(input, encoder);

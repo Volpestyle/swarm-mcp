@@ -166,4 +166,59 @@
     background: rgba(243, 139, 168, 0.3);
     color: #f5a1b6;
   }
+
+  /* ── Tron Encom OS overrides ────────────────────────────────────────── */
+  :global([data-theme="tron-encom-os"]) .modal {
+    background: var(--bg-base, #000);
+    border: 1px solid var(--led-line, #d8dde6);
+    border-radius: 0;
+    box-shadow:
+      0 0 0 1px var(--led-halo, rgba(255, 255, 255, 0.08)),
+      0 0 18px rgba(255, 255, 255, 0.18),
+      0 24px 60px rgba(0, 0, 0, 0.7);
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--fg-primary, #f5f7fa);
+  }
+
+  :global([data-theme="tron-encom-os"]) .title {
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-size: 12px;
+    color: var(--accent, #ffffff);
+    text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
+  }
+
+  :global([data-theme="tron-encom-os"]) .message {
+    color: var(--fg-secondary, #8a94a0);
+    font-size: 12px;
+  }
+
+  :global([data-theme="tron-encom-os"]) .actions button {
+    border-radius: 0;
+    background: transparent;
+    border: 1px solid var(--led-line, #d8dde6);
+    color: var(--fg-primary, #f5f7fa);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 11px;
+    padding: 6px 14px;
+  }
+
+  :global([data-theme="tron-encom-os"]) .actions button:hover {
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.18);
+  }
+
+  :global([data-theme="tron-encom-os"]) .actions button.confirm {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--accent, #ffffff);
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.18);
+  }
+
+  :global([data-theme="tron-encom-os"]) .actions button.confirm.danger {
+    background: rgba(255, 58, 76, 0.12);
+    border-color: var(--c-red, #ff3a4c);
+    color: var(--c-red, #ff3a4c);
+    box-shadow: 0 0 6px rgba(255, 58, 76, 0.3);
+  }
 </style>

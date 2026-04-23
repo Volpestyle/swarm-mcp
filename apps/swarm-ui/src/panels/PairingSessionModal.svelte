@@ -431,6 +431,111 @@
     transform: none;
   }
 
+  /* ── Tron Encom OS overrides ────────────────────────────────────────── */
+  :global([data-theme="tron-encom-os"]) .pairing-overlay {
+    background: rgba(0, 0, 0, 0.84);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :global([data-theme="tron-encom-os"]) .pairing-modal,
+  :global([data-theme="tron-encom-os"]) .qr-shell,
+  :global([data-theme="tron-encom-os"]) .manual-fallback {
+    border-radius: 0;
+    border-color: var(--led-line-soft, rgba(255, 255, 255, 0.18));
+  }
+
+  :global([data-theme="tron-encom-os"]) .pairing-modal {
+    border-color: var(--led-line, rgba(255, 255, 255, 0.5));
+    background: var(--bg-panel, #06090d);
+    box-shadow:
+      0 0 0 1px var(--led-halo, rgba(255, 255, 255, 0.08)),
+      var(--glow-soft, 0 0 16px rgba(255, 255, 255, 0.07));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :global([data-theme="tron-encom-os"]) .pairing-header h2,
+  :global([data-theme="tron-encom-os"]) .manual-fallback label,
+  :global([data-theme="tron-encom-os"]) .qr-expired strong {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--fg-primary, #f5f7fa);
+  }
+
+  :global([data-theme="tron-encom-os"]) .pairing-header p,
+  :global([data-theme="tron-encom-os"]) .expires-at,
+  :global([data-theme="tron-encom-os"]) .detail-copy,
+  :global([data-theme="tron-encom-os"]) .manual-fallback p,
+  :global([data-theme="tron-encom-os"]) .qr-expired span {
+    color: var(--fg-secondary, #a4afbb);
+  }
+
+  :global([data-theme="tron-encom-os"]) .qr-shell,
+  :global([data-theme="tron-encom-os"]) .manual-fallback {
+    background: var(--bg-elevated, #090d12);
+  }
+
+  :global([data-theme="tron-encom-os"]) .qr-art :global(svg) {
+    border-radius: 0;
+    background: #ffffff;
+  }
+
+  :global([data-theme="tron-encom-os"]) .qr-placeholder,
+  :global([data-theme="tron-encom-os"]) .qr-expired {
+    border-radius: 0;
+    background: color-mix(in srgb, var(--bg-base, #000) 92%, transparent);
+    border-color: var(--led-line-soft, rgba(255, 255, 255, 0.18));
+  }
+
+  :global([data-theme="tron-encom-os"]) .status-pill {
+    border-radius: 0;
+    border: 1px solid var(--led-line, rgba(255, 255, 255, 0.5));
+    background: var(--bg-base, #000);
+    color: var(--fg-primary, #f5f7fa);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  :global([data-theme="tron-encom-os"]) .status-pill.expired-pill {
+    border-color: var(--c-amber, #f5b83d);
+    color: var(--c-amber, #f5b83d);
+  }
+
+  :global([data-theme="tron-encom-os"]) .manual-fallback input,
+  :global([data-theme="tron-encom-os"]) .close-btn,
+  :global([data-theme="tron-encom-os"]) .primary-btn,
+  :global([data-theme="tron-encom-os"]) .secondary-btn {
+    border-radius: 0;
+    border-color: var(--led-line, rgba(255, 255, 255, 0.5));
+    background: var(--bg-base, #000);
+    color: var(--fg-primary, #f5f7fa);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :global([data-theme="tron-encom-os"]) .close-btn,
+  :global([data-theme="tron-encom-os"]) .primary-btn,
+  :global([data-theme="tron-encom-os"]) .secondary-btn {
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+
+  :global([data-theme="tron-encom-os"]) .primary-btn {
+    box-shadow: var(--glow-soft, 0 0 16px rgba(255, 255, 255, 0.07));
+  }
+
+  :global([data-theme="tron-encom-os"]) .close-btn:hover,
+  :global([data-theme="tron-encom-os"]) .secondary-btn:hover,
+  :global([data-theme="tron-encom-os"]) .primary-btn:hover {
+    box-shadow: var(--glow, 0 0 18px rgba(255, 255, 255, 0.12));
+  }
+
   @media (max-width: 720px) {
     .pairing-overlay {
       padding: 12px;

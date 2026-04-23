@@ -630,6 +630,124 @@
     transform: none;
   }
 
+  /* ── Tron Encom OS overrides ────────────────────────────────────────── */
+  :global([data-theme="tron-encom-os"]) .mobile-overlay {
+    background: rgba(0, 0, 0, 0.84);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :global([data-theme="tron-encom-os"]) .mobile-modal {
+    border-radius: 0;
+    border-color: var(--led-line, rgba(255, 255, 255, 0.5));
+    background: var(--bg-panel, #06090d);
+    box-shadow:
+      0 0 0 1px var(--led-halo, rgba(255, 255, 255, 0.08)),
+      var(--glow-soft, 0 0 16px rgba(255, 255, 255, 0.07));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :global([data-theme="tron-encom-os"]) .mobile-header,
+  :global([data-theme="tron-encom-os"]) .device-section,
+  :global([data-theme="tron-encom-os"]) .hero-card,
+  :global([data-theme="tron-encom-os"]) .empty-state,
+  :global([data-theme="tron-encom-os"]) .banner,
+  :global([data-theme="tron-encom-os"]) .device-card {
+    border-radius: 0;
+    border-color: var(--led-line-soft, rgba(255, 255, 255, 0.18));
+  }
+
+  :global([data-theme="tron-encom-os"]) .mobile-header h2,
+  :global([data-theme="tron-encom-os"]) .hero-copy h3,
+  :global([data-theme="tron-encom-os"]) .section-header h3,
+  :global([data-theme="tron-encom-os"]) .device-title-row h4,
+  :global([data-theme="tron-encom-os"]) .empty-state strong {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--fg-primary, #f5f7fa);
+  }
+
+  :global([data-theme="tron-encom-os"]) .mobile-header p,
+  :global([data-theme="tron-encom-os"]) .hero-copy p,
+  :global([data-theme="tron-encom-os"]) .section-header p,
+  :global([data-theme="tron-encom-os"]) .empty-state span,
+  :global([data-theme="tron-encom-os"]) .meta-grid span {
+    color: var(--fg-secondary, #a4afbb);
+  }
+
+  :global([data-theme="tron-encom-os"]) .hero-card,
+  :global([data-theme="tron-encom-os"]) .device-section,
+  :global([data-theme="tron-encom-os"]) .empty-state {
+    background: var(--bg-elevated, #090d12);
+  }
+
+  :global([data-theme="tron-encom-os"]) .banner {
+    background: color-mix(in srgb, var(--bg-elevated, #090d12) 88%, transparent);
+    color: var(--c-red, #ff6b6b);
+    border-color: color-mix(in srgb, var(--c-red, #ff6b6b) 42%, transparent);
+  }
+
+  :global([data-theme="tron-encom-os"]) .device-card {
+    background: var(--bg-base, #000);
+  }
+
+  :global([data-theme="tron-encom-os"]) .eyebrow,
+  :global([data-theme="tron-encom-os"]) .meta-label {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    letter-spacing: 0.18em;
+    color: var(--fg-secondary, #8a94a0);
+  }
+
+  :global([data-theme="tron-encom-os"]) .meta-grid strong {
+    color: var(--fg-primary, #f5f7fa);
+  }
+
+  :global([data-theme="tron-encom-os"]) .platform-pill,
+  :global([data-theme="tron-encom-os"]) .muted-pill {
+    border-radius: 0;
+    border: 1px solid var(--led-line-soft, rgba(255, 255, 255, 0.18));
+    background: var(--bg-base, #000);
+    color: var(--fg-secondary, #a4afbb);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  :global([data-theme="tron-encom-os"]) .close-btn,
+  :global([data-theme="tron-encom-os"]) .primary-btn,
+  :global([data-theme="tron-encom-os"]) .secondary-btn,
+  :global([data-theme="tron-encom-os"]) .danger-btn {
+    border-radius: 0;
+    border-color: var(--led-line, rgba(255, 255, 255, 0.5));
+    background: var(--bg-base, #000);
+    color: var(--fg-primary, #f5f7fa);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+
+  :global([data-theme="tron-encom-os"]) .primary-btn {
+    box-shadow: var(--glow-soft, 0 0 16px rgba(255, 255, 255, 0.07));
+  }
+
+  :global([data-theme="tron-encom-os"]) .danger-btn {
+    border-color: var(--c-red, #ff6b6b);
+    color: var(--c-red, #ff6b6b);
+  }
+
+  :global([data-theme="tron-encom-os"]) .close-btn:hover,
+  :global([data-theme="tron-encom-os"]) .primary-btn:hover,
+  :global([data-theme="tron-encom-os"]) .secondary-btn:hover,
+  :global([data-theme="tron-encom-os"]) .danger-btn:hover {
+    box-shadow: var(--glow, 0 0 18px rgba(255, 255, 255, 0.12));
+  }
+
   @media (max-width: 760px) {
     .mobile-overlay {
       padding: 12px;

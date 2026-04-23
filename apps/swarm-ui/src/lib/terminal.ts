@@ -11,7 +11,9 @@
 // =============================================================================
 
 import { init, Terminal } from 'ghostty-web';
+import { get } from 'svelte/store';
 import type { TerminalHandle, TerminalOptions, TerminalTheme } from './types';
+import { appearance } from '../stores/appearance';
 
 const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_FONT_FAMILY = 'Monaco, Menlo, "Courier New", monospace';
@@ -21,30 +23,7 @@ const DEFAULT_FONT_FAMILY = 'Monaco, Menlo, "Courier New", monospace';
 // 16-color palette for syntax highlighting. Background must stay opaque:
 // ghostty-web's canvas compositor accumulates alpha paints, so values with
 // alpha < 1 ghost prior frames through on clear/selection.
-const DEFAULT_THEME: Required<TerminalTheme> = {
-  background: '#1e1e1e',
-  foreground: '#d4d4d4',
-  cursor: '#d4d4d4',
-  cursorAccent: '#1e1e1e',
-  selectionBackground: '#45475a',
-  selectionForeground: '#d4d4d4',
-  black: '#45475a',
-  red: '#f38ba8',
-  green: '#a6e3a1',
-  yellow: '#f9e2af',
-  blue: '#89b4fa',
-  magenta: '#f5c2e7',
-  cyan: '#94e2d5',
-  white: '#bac2de',
-  brightBlack: '#585b70',
-  brightRed: '#f38ba8',
-  brightGreen: '#a6e3a1',
-  brightYellow: '#f9e2af',
-  brightBlue: '#89b4fa',
-  brightMagenta: '#f5c2e7',
-  brightCyan: '#94e2d5',
-  brightWhite: '#a6adc8',
-};
+const DEFAULT_THEME: Required<TerminalTheme> = get(appearance).terminalTheme;
 
 let handleCounter = 0;
 let initPromise: Promise<void> | null = null;
@@ -133,6 +112,13 @@ export async function createTerminal(
   term.open(container);
   fitToContainer();
 
+  const repaint = () => {
+    if (!term.renderer || !term.wasmTerm) {
+      return;
+    }
+    term.renderer.render(term.wasmTerm, true, term.viewportY, term);
+  };
+
   resizeObserver = new ResizeObserver(() => {
     scheduleFit();
   });
@@ -154,6 +140,13 @@ export async function createTerminal(
     id,
     write: (data) => term.write(data),
     refit: () => fitToContainer(),
+    setTheme: (theme) => {
+      if (!term.renderer) {
+        return;
+      }
+      term.renderer.setTheme({ ...DEFAULT_THEME, ...theme });
+      repaint();
+    },
     getSize: () => ({ cols: term.cols, rows: term.rows }),
     setViewportSize: (cols, rows) => {
       forcedViewport = { cols, rows };
@@ -205,9 +198,10 @@ interface ResolvedOptions {
 }
 
 function resolveOptions(options?: TerminalOptions): ResolvedOptions {
+  const activeTheme = get(appearance).terminalTheme;
   return {
     fontSize: options?.fontSize ?? DEFAULT_FONT_SIZE,
     fontFamily: options?.fontFamily ?? DEFAULT_FONT_FAMILY,
-    theme: { ...DEFAULT_THEME, ...options?.theme },
+    theme: { ...activeTheme, ...options?.theme },
   };
 }

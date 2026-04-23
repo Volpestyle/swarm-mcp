@@ -850,4 +850,116 @@
     color: #6c7086;
     font-size: 13px;
   }
+
+  /* ── Tron Encom OS overrides ────────────────────────────────────────── */
+  :global([data-theme="tron-encom-os"]) .workspace-backdrop {
+    background: rgba(0, 0, 0, 0.7);
+  }
+
+  :global([data-theme="tron-encom-os"]) .workspace-shell {
+    background: var(--bg-base, #000);
+    border: 1px solid var(--led-line, rgba(255, 255, 255, 0.5));
+    box-shadow:
+      0 0 0 1px var(--led-halo, rgba(255, 255, 255, 0.08)),
+      0 24px 60px rgba(0, 0, 0, 0.62),
+      var(--glow-soft, 0 0 16px rgba(255, 255, 255, 0.07));
+  }
+
+  :global([data-theme="tron-encom-os"]) .tab-strip {
+    padding: 8px 12px;
+    gap: 6px;
+    background: var(--bg-base, #000);
+    border-bottom: 1px solid var(--led-line, rgba(255, 255, 255, 0.5));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :global([data-theme="tron-encom-os"]) .tab {
+    border-radius: 0;
+    border-color: var(--led-line-soft, rgba(255, 255, 255, 0.18));
+    background: var(--bg-elevated, #090d12);
+    color: var(--fg-secondary, #a4afbb);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :global([data-theme="tron-encom-os"]) .tab:hover,
+  :global([data-theme="tron-encom-os"]) .tab.active,
+  :global([data-theme="tron-encom-os"]) .tab.active-a,
+  :global([data-theme="tron-encom-os"]) .tab.active-b {
+    border-color: var(--led-line, rgba(255, 255, 255, 0.5));
+    background: color-mix(in srgb, var(--bg-elevated, #090d12) 88%, white 8%);
+    color: var(--fg-primary, #f5f7fa);
+    box-shadow: var(--glow-soft, 0 0 16px rgba(255, 255, 255, 0.07));
+  }
+
+  :global([data-theme="tron-encom-os"]) .tab-role {
+    padding: 2px 7px;
+    border-radius: 0;
+    border: 1px solid var(--led-line-soft, rgba(255, 255, 255, 0.18));
+    background: transparent;
+    color: var(--fg-primary, #f5f7fa);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 9px;
+    letter-spacing: 0.14em;
+  }
+
+  :global([data-theme="tron-encom-os"]) .tab-id,
+  :global([data-theme="tron-encom-os"]) .pane-empty {
+    color: var(--fg-secondary, #8a94a0);
+  }
+
+  :global([data-theme="tron-encom-os"]) .pane-chip {
+    border-radius: 0;
+    border: 1px solid var(--led-line, rgba(255, 255, 255, 0.5));
+    background: var(--bg-base, #000);
+    color: var(--fg-primary, #f5f7fa);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :global([data-theme="tron-encom-os"]) .layout-btn {
+    border-radius: 0;
+    border-color: var(--led-line-soft, rgba(255, 255, 255, 0.18));
+    color: var(--fg-secondary, #8a94a0);
+  }
+
+  :global([data-theme="tron-encom-os"]) .layout-btn:hover:not([disabled]),
+  :global([data-theme="tron-encom-os"]) .layout-btn.enabled {
+    border-color: var(--led-line, rgba(255, 255, 255, 0.5));
+    background: var(--bg-elevated, #090d12);
+    color: var(--fg-primary, #f5f7fa);
+    box-shadow: var(--glow-soft, 0 0 16px rgba(255, 255, 255, 0.07));
+  }
+
+  :global([data-theme="tron-encom-os"]) .panes {
+    background: var(--led-line, rgba(255, 255, 255, 0.5));
+  }
+
+  :global([data-theme="tron-encom-os"]) .pane,
+  :global([data-theme="tron-encom-os"]) .pane-loading-shell {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 26%),
+      var(--bg-base, #000);
+  }
+
+  :global([data-theme="tron-encom-os"]) .workspace-shell.split .pane.focused {
+    outline-color: var(--accent, #f5f7fa);
+    box-shadow: inset 0 0 0 1px var(--led-halo-bright, rgba(255, 255, 255, 0.16));
+  }
+
+  :global([data-theme="tron-encom-os"]) .pane-loading-overlay {
+    border-radius: 0;
+    background: color-mix(in srgb, var(--bg-base, #000) 92%, transparent);
+    border-color: var(--led-line, rgba(255, 255, 255, 0.5));
+    color: var(--fg-primary, #f5f7fa);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :global([data-theme="tron-encom-os"]) .pane-inner :global(.terminal-container) {
+    background: var(--bg-base, #000);
+  }
 </style>

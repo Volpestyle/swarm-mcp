@@ -8,6 +8,10 @@
 -->
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
+  import anthropicLogoUrl from '../assets/anthropic-logo.png';
+  import openAiLogoUrl from '../assets/openai-old-logo.png';
+  import { deriveAgentIdentity } from '../lib/agentIdentity';
+  import { personaForInstance } from '../lib/persona';
   import type {
     Annotation,
     Event,
@@ -36,6 +40,20 @@
   $: inspectingNode = selectedNode !== null;
   $: inspectingEdge = selectedEdge !== null && selectedNode === null;
   $: nodeData = selectedNode?.data as SwarmNodeData | null;
+  $: nodeIdentity = nodeData
+    ? deriveAgentIdentity({
+        instance: nodeData.instance,
+        ptySession: nodeData.ptySession,
+        role: nodeData.label,
+        displayName: nodeData.displayName,
+      })
+    : null;
+  $: nodePersona = personaForInstance(nodeData?.instance ?? null);
+  $: nodeProviderLogo = nodeIdentity?.providerKind === 'anthropic'
+    ? anthropicLogoUrl
+    : nodeIdentity?.providerKind === 'openai'
+      ? openAiLogoUrl
+      : null;
 
   // Every edge is now a unified `connection` bundling messages, tasks, and
   // dependencies between the same unordered instance pair.
@@ -372,6 +390,38 @@
   <div class="inspector-body">
     {#if inspectingNode && nodeData}
       <!-- ===== Node Inspection ===== -->
+
+      {#if nodeIdentity}
+        <section class="agent-summary-card">
+          <div class="agent-avatar" aria-hidden="true">{nodePersona}</div>
+          <div class="agent-summary-copy">
+            <div class="agent-summary-topline">
+              <strong title={nodeIdentity.nameLabel}>{nodeIdentity.nameLabel}</strong>
+              <span class="agent-role-pill">{nodeIdentity.roleLabel}</span>
+            </div>
+            <div class="agent-model-line">
+              {#if nodeProviderLogo}
+                <span class="agent-provider-logo">
+                  <img src={nodeProviderLogo} alt={`${nodeIdentity.providerLabel} logo`} />
+                </span>
+              {:else}
+                <span class="agent-provider-initial" aria-hidden="true">
+                  {nodeIdentity.providerLabel.slice(0, 1)}
+                </span>
+              {/if}
+              <span title={`${nodeIdentity.providerLabel} ${nodeIdentity.modelLabel}`}>
+                {nodeIdentity.modelLabel}
+              </span>
+            </div>
+          </div>
+          <span
+            class="agent-status-light"
+            style:background={statusBadgeColor(nodeData.status)}
+            style:color={statusBadgeColor(nodeData.status)}
+            title={nodeData.status}
+          ></span>
+        </section>
+      {/if}
 
       <!-- Instance metadata -->
       {#if nodeData.instance}
@@ -811,6 +861,126 @@
 
   section.endpoints {
     margin-bottom: 12px;
+  }
+
+  .agent-summary-card {
+    position: relative;
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding: 12px;
+    border: 1px solid color-mix(in srgb, var(--node-border-selected, #89b4fa) 24%, transparent);
+    border-radius: 14px;
+    background:
+      radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--node-border-selected, #89b4fa) 18%, transparent), transparent 42%),
+      rgba(255, 255, 255, 0.035);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  }
+
+  .agent-avatar {
+    width: 58px;
+    height: 58px;
+    border-radius: 14px;
+    border: 1px solid color-mix(in srgb, var(--node-border-selected, #89b4fa) 32%, transparent);
+    background: rgba(0, 0, 0, 0.34);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    line-height: 1;
+  }
+
+  .agent-summary-copy {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .agent-summary-topline {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .agent-summary-topline strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--terminal-fg, #c0caf5);
+    font-size: 16px;
+    line-height: 1.05;
+  }
+
+  .agent-role-pill {
+    flex: 0 0 auto;
+    max-width: 112px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #a6adc8;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .agent-model-line {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: #a6adc8;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .agent-model-line > span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .agent-provider-logo,
+  .agent-provider-initial {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.9);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    flex: 0 0 auto;
+  }
+
+  .agent-provider-logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .agent-provider-initial {
+    background: color-mix(in srgb, var(--node-border-selected, #89b4fa) 18%, black);
+    color: var(--terminal-fg, #c0caf5);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .agent-status-light {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    box-shadow: 0 0 12px currentColor;
   }
 
   .section-head {
@@ -1359,5 +1529,108 @@
     padding: 0 8px 6px 8px;
     color: #6c7086;
     font-size: 10px;
+  }
+
+  /* ── Tron Encom OS overrides ──────────────────────────────────────────
+     White-LED hairlines, sharp corners, uppercase HUD type. The mock's
+     sidebar has manila-folder rows with status pills on the right; here
+     we keep the existing structure and re-skin the chrome. */
+  :global([data-theme="tron-encom-os"]) .inspector {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--fg-primary, #f5f7fa);
+  }
+
+  :global([data-theme="tron-encom-os"]) h4 {
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: var(--accent, #ffffff);
+    text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
+    border-bottom: 1px solid var(--led-line, #d8dde6);
+    padding-bottom: 6px;
+  }
+
+  :global([data-theme="tron-encom-os"]) .agent-summary-card {
+    border: 2px solid var(--led-line-x, #ffffff);
+    border-radius: 0;
+    background:
+      linear-gradient(90deg, rgba(255, 255, 255, 0.09), transparent 24%),
+      var(--bg-base, #000000);
+    box-shadow:
+      var(--led-halo, 0 0 14px rgba(255, 255, 255, 0.26)),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+
+  :global([data-theme="tron-encom-os"]) .agent-avatar {
+    border: 2px solid var(--led-line-x, #ffffff);
+    border-radius: 0;
+    background: var(--bg-base, #000000);
+    box-shadow:
+      inset 0 0 12px rgba(255, 255, 255, 0.08),
+      0 0 10px rgba(255, 255, 255, 0.34);
+  }
+
+  :global([data-theme="tron-encom-os"]) .agent-summary-topline strong {
+    color: var(--fg-primary, #f5f7fa);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-shadow: var(--glow, 0 0 8px rgba(255, 255, 255, 0.45));
+  }
+
+  :global([data-theme="tron-encom-os"]) .agent-role-pill,
+  :global([data-theme="tron-encom-os"]) .agent-model-line {
+    color: var(--fg-primary, #f5f7fa);
+    text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
+  }
+
+  :global([data-theme="tron-encom-os"]) .agent-provider-logo,
+  :global([data-theme="tron-encom-os"]) .agent-provider-initial {
+    border-radius: 0;
+    border-color: var(--led-line, #d8dde6);
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.26);
+  }
+
+  :global([data-theme="tron-encom-os"]) .delete-btn {
+    border-radius: 0;
+    background: rgba(255, 58, 76, 0.1);
+    border: 1px solid var(--c-red, #ff3a4c);
+    color: var(--c-red, #ff3a4c);
+    box-shadow: 0 0 4px rgba(255, 58, 76, 0.25);
+  }
+
+  :global([data-theme="tron-encom-os"]) .delete-btn:hover:not(:disabled) {
+    background: rgba(255, 58, 76, 0.18);
+  }
+
+  :global([data-theme="tron-encom-os"]) .error-banner {
+    border-radius: 0;
+    background: rgba(255, 58, 76, 0.1);
+    border: 1px solid var(--c-red, #ff3a4c);
+    color: var(--c-red, #ff3a4c);
+  }
+
+  :global([data-theme="tron-encom-os"]) .task-row {
+    border-bottom: 1px solid var(--led-line-s, rgba(216, 221, 230, 0.18));
+  }
+
+  :global([data-theme="tron-encom-os"]) .detail-label {
+    color: var(--fg-secondary, #8a94a0);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 10.5px;
+  }
+
+  :global([data-theme="tron-encom-os"]) input {
+    border-radius: 0;
+    background: var(--bg-input, #02040a);
+    border: 1px solid var(--led-line, #d8dde6);
+    color: var(--fg-primary, #f5f7fa);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :global([data-theme="tron-encom-os"]) button {
+    border-radius: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
   }
 </style>

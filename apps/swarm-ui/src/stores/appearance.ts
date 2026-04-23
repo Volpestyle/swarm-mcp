@@ -1,116 +1,180 @@
-import { writable } from 'svelte/store';
+import { derived } from 'svelte/store';
+import type { TerminalTheme, ThemeProfile, ThemeProfileId } from '../lib/types';
+import { getThemeProfile } from '../lib/themeProfiles';
+import { startupPreferences } from './startup';
 
-export interface AppearanceSettings {
+export interface AppearanceState {
+  themeProfileId: ThemeProfileId;
+  themeProfile: ThemeProfile;
   backgroundOpacity: number;
-}
-
-const STORAGE_KEY = 'swarm-ui.appearance';
-
-const DEFAULT_APPEARANCE: AppearanceSettings = {
-  backgroundOpacity: 0.68,
-};
-
-function clampBackgroundOpacity(value: number): number {
-  if (!Number.isFinite(value)) {
-    return DEFAULT_APPEARANCE.backgroundOpacity;
-  }
-
-  return Math.min(1, Math.max(0.25, value));
-}
-
-function normalizeAppearance(
-  value?: Partial<AppearanceSettings> | null,
-): AppearanceSettings {
-  return {
-    backgroundOpacity: clampBackgroundOpacity(
-      value?.backgroundOpacity ?? DEFAULT_APPEARANCE.backgroundOpacity,
-    ),
-  };
-}
-
-function loadAppearance(): AppearanceSettings {
-  if (typeof window === 'undefined') {
-    return DEFAULT_APPEARANCE;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return DEFAULT_APPEARANCE;
-    }
-
-    return normalizeAppearance(JSON.parse(raw) as Partial<AppearanceSettings>);
-  } catch {
-    return DEFAULT_APPEARANCE;
-  }
+  backgroundOpacityOverride: number | null;
+  terminalTheme: Required<TerminalTheme>;
 }
 
 function rgba(red: number, green: number, blue: number, alpha: number): string {
   return `rgba(${red}, ${green}, ${blue}, ${alpha.toFixed(3)})`;
 }
 
-function applyAppearance(settings: AppearanceSettings): void {
+function clampBackgroundOpacity(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+export function resolveAppearanceState(
+  themeProfileId: ThemeProfileId,
+  backgroundOpacityOverride: number | null,
+): AppearanceState {
+  const themeProfile = getThemeProfile(themeProfileId);
+  const backgroundOpacity = clampBackgroundOpacity(
+    backgroundOpacityOverride ?? themeProfile.appearance.defaultBackgroundOpacity,
+  );
+
+  return {
+    themeProfileId: themeProfile.id,
+    themeProfile,
+    backgroundOpacity,
+    backgroundOpacityOverride,
+    terminalTheme: themeProfile.terminal,
+  };
+}
+
+function applyAppearance(state: AppearanceState): void {
   if (typeof document === 'undefined') {
     return;
   }
 
   const root = document.documentElement;
-  const canvasOpacity = Math.min(0.18, settings.backgroundOpacity * 0.22);
-  const panelOpacity = Math.min(0.92, settings.backgroundOpacity);
-  const nodeOpacity = Math.min(0.96, settings.backgroundOpacity + 0.08);
-  const headerOpacity = Math.min(0.98, settings.backgroundOpacity + 0.14);
-  const terminalOpacity = Math.max(0.18, settings.backgroundOpacity - 0.10);
-  const borderOpacity = Math.min(0.60, Math.max(0.28, settings.backgroundOpacity * 0.65));
-  const surfaceBlur = settings.backgroundOpacity < 0.98 ? '20px' : '0px';
+  const palette = state.themeProfile.appearance;
+  // Tag <html> with the active theme id so CSS rules can scope per theme via
+  // [data-theme="tron-encom-os"]. This is what lets the Encom font, dotted
+  // grid, and sharp-corner overrides apply without affecting legacy themes.
+  root.dataset.theme = state.themeProfileId;
+  const isEncom = state.themeProfileId === 'tron-encom-os';
+  const canvasOpacity = isEncom
+    ? state.backgroundOpacity
+    : Math.min(0.18, 0.02 + state.backgroundOpacity * 0.16);
+  const panelOpacity = isEncom
+    ? Math.min(0.94, Math.max(0.02, 0.02 + state.backgroundOpacity * 0.92))
+    : Math.min(0.88, Math.max(0.1, 0.1 + state.backgroundOpacity * 0.78));
+  const nodeOpacity = isEncom
+    ? Math.min(0.94, Math.max(0.03, 0.03 + state.backgroundOpacity * 0.89))
+    : Math.min(0.9, Math.max(0.12, 0.12 + state.backgroundOpacity * 0.76));
+  const headerOpacity = isEncom
+    ? Math.min(0.96, Math.max(0.02, 0.02 + state.backgroundOpacity * 0.94))
+    : Math.min(0.92, Math.max(0.08, 0.08 + state.backgroundOpacity * 0.82));
+  const borderOpacity = isEncom
+    ? Math.min(0.74, Math.max(0.08, 0.08 + state.backgroundOpacity * 0.66))
+    : Math.min(0.62, Math.max(0.12, 0.12 + state.backgroundOpacity * 0.5));
+  const sidebarOpacity = isEncom
+    ? Math.min(0.82, Math.max(0.02, 0.02 + state.backgroundOpacity * 0.8))
+    : Math.min(0.56, Math.max(0.08, 0.08 + state.backgroundOpacity * 0.48));
+  const blurStrength = Math.round(24 + (1 - state.backgroundOpacity) * 18);
+  const surfaceBlur = state.backgroundOpacity < 0.99 ? `${blurStrength}px` : '0px';
+  const sidebarBlur = state.backgroundOpacity < 0.99 ? `${blurStrength + 14}px` : '0px';
 
-  // Sidebar reads as a translucent layer floating over the canvas — keep it
-  // noticeably more see-through than panels/modals so the graph is visible
-  // underneath. Stronger blur preserves text legibility at low alpha.
-  const sidebarOpacity = Math.min(0.35, Math.max(0.12, panelOpacity * 0.28));
-  const sidebarBlur = settings.backgroundOpacity < 0.98 ? '40px' : '0px';
-
-  root.style.setProperty('--canvas-bg', rgba(17, 17, 27, canvasOpacity));
-  root.style.setProperty('--panel-bg', rgba(30, 30, 46, panelOpacity));
-  root.style.setProperty('--sidebar-bg', rgba(30, 30, 46, sidebarOpacity));
+  root.style.setProperty('--canvas-bg', rgba(...palette.canvasRgb, canvasOpacity));
+  root.style.setProperty('--panel-bg', rgba(...palette.panelRgb, panelOpacity));
+  root.style.setProperty('--sidebar-bg', rgba(...palette.sidebarRgb, sidebarOpacity));
   root.style.setProperty('--sidebar-blur', sidebarBlur);
-  root.style.setProperty('--node-bg', rgba(30, 30, 46, nodeOpacity));
-  root.style.setProperty('--node-header-bg', rgba(24, 24, 37, headerOpacity));
-  root.style.setProperty('--terminal-bg', rgba(26, 27, 38, terminalOpacity));
-  root.style.setProperty('--node-border', rgba(108, 112, 134, borderOpacity));
+  root.style.setProperty('--node-bg', rgba(...palette.nodeRgb, nodeOpacity));
+  root.style.setProperty('--node-header-bg', rgba(...palette.nodeHeaderRgb, headerOpacity));
+  root.style.setProperty('--node-border', rgba(...palette.nodeBorderRgb, borderOpacity));
+  root.style.setProperty('--node-border-selected', palette.nodeBorderSelected);
+  root.style.setProperty('--node-border-mobile', palette.nodeBorderMobile);
+  root.style.setProperty('--node-title-fg', palette.nodeTitleFg);
+  root.style.setProperty('--node-status-muted', palette.nodeStatusMuted);
+  root.style.setProperty('--node-status-muted-dot', palette.nodeStatusMutedDot);
   root.style.setProperty('--surface-blur', surfaceBlur);
-}
 
-function createAppearanceStore() {
-  const initialValue = loadAppearance();
-  const { subscribe, set, update } = writable(initialValue);
+  root.style.setProperty('--terminal-bg', state.terminalTheme.background);
+  root.style.setProperty('--terminal-fg', state.terminalTheme.foreground);
+  root.style.setProperty('--terminal-cursor', state.terminalTheme.cursor);
+  root.style.setProperty('--terminal-selection', state.terminalTheme.selectionBackground);
 
-  if (typeof window !== 'undefined') {
-    applyAppearance(initialValue);
+  root.style.setProperty('--status-online', palette.statusOnline);
+  root.style.setProperty('--status-stale', palette.statusStale);
+  root.style.setProperty('--status-offline', palette.statusOffline);
+  root.style.setProperty('--status-pending', palette.statusPending);
 
-    subscribe((value) => {
-      const normalized = normalizeAppearance(value);
-      applyAppearance(normalized);
+  root.style.setProperty('--edge-task-open', palette.edgeTaskOpen);
+  root.style.setProperty('--edge-task-in-progress', palette.edgeTaskInProgress);
+  root.style.setProperty('--edge-task-done', palette.edgeTaskDone);
+  root.style.setProperty('--edge-task-failed', palette.edgeTaskFailed);
+  root.style.setProperty('--edge-task-cancelled', palette.edgeTaskCancelled);
+  root.style.setProperty('--edge-message', palette.edgeMessage);
+  root.style.setProperty('--edge-dep-blocked', palette.edgeDepBlocked);
+  root.style.setProperty('--edge-dep-satisfied', palette.edgeDepSatisfied);
 
-      try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-      } catch {
-        // Ignore persistence failures and keep the session-local appearance.
-      }
-    });
+  root.style.setProperty('--badge-planner', palette.badgePlanner);
+  root.style.setProperty('--badge-implementer', palette.badgeImplementer);
+  root.style.setProperty('--badge-reviewer', palette.badgeReviewer);
+  root.style.setProperty('--badge-researcher', palette.badgeResearcher);
+  root.style.setProperty('--badge-shell', palette.badgeShell);
+  root.style.setProperty('--badge-custom', palette.badgeCustom);
+
+  // Encom-only chrome tokens. Themes without a `chrome` block clear these so
+  // a stale value from a previous theme switch can't bleed into the legacy
+  // theme being switched into. The Encom-scoped CSS in app.css consumes these
+  // (--led-line, --led-halo, --glow, --bg-base, etc) under [data-theme].
+  const chrome = state.themeProfile.chrome;
+  if (chrome) {
+    root.style.setProperty('--led-line', chrome.ledLine);
+    root.style.setProperty('--led-line-s', chrome.ledLineSoft);
+    root.style.setProperty('--led-line-x', chrome.ledLineBright);
+    root.style.setProperty('--led-halo', chrome.ledHalo);
+    root.style.setProperty('--led-halo-x', chrome.ledHaloBright);
+    root.style.setProperty('--glow', chrome.glow);
+    root.style.setProperty('--glow-s', chrome.glowSoft);
+    root.style.setProperty('--bg-base', chrome.bgBase);
+    root.style.setProperty('--bg-panel', chrome.bgPanel);
+    root.style.setProperty('--bg-elevated', chrome.bgElevated);
+    root.style.setProperty('--bg-input', chrome.bgInput);
+    root.style.setProperty('--fg-primary', chrome.fgPrimary);
+    root.style.setProperty('--fg-secondary', chrome.fgSecondary);
+    root.style.setProperty('--fg-muted', chrome.fgMuted);
+    root.style.setProperty('--fg-dim', chrome.fgDim);
+    root.style.setProperty('--accent', chrome.accent);
+    root.style.setProperty('--accent-dim', chrome.accentDim);
+    root.style.setProperty('--c-amber', chrome.accentAmber);
+    root.style.setProperty('--c-red', chrome.accentRed);
+    root.style.setProperty('--c-violet', chrome.accentViolet);
+    root.style.setProperty('--c-tron', chrome.accentTron);
+    root.style.setProperty('--grid-color', chrome.gridColor);
+  } else {
+    // Clear so the next legacy theme doesn't inherit Encom values.
+    root.style.removeProperty('--led-line');
+    root.style.removeProperty('--led-line-s');
+    root.style.removeProperty('--led-line-x');
+    root.style.removeProperty('--led-halo');
+    root.style.removeProperty('--led-halo-x');
+    root.style.removeProperty('--glow');
+    root.style.removeProperty('--glow-s');
+    root.style.removeProperty('--bg-base');
+    root.style.removeProperty('--bg-panel');
+    root.style.removeProperty('--bg-elevated');
+    root.style.removeProperty('--bg-input');
+    root.style.removeProperty('--fg-primary');
+    root.style.removeProperty('--fg-secondary');
+    root.style.removeProperty('--fg-muted');
+    root.style.removeProperty('--fg-dim');
+    root.style.removeProperty('--accent');
+    root.style.removeProperty('--accent-dim');
+    root.style.removeProperty('--c-amber');
+    root.style.removeProperty('--c-red');
+    root.style.removeProperty('--c-violet');
+    root.style.removeProperty('--c-tron');
+    root.style.removeProperty('--grid-color');
   }
-
-  return {
-    subscribe,
-    setBackgroundOpacity(value: number) {
-      update((current) => ({
-        ...current,
-        backgroundOpacity: clampBackgroundOpacity(value),
-      }));
-    },
-    reset() {
-      set(DEFAULT_APPEARANCE);
-    },
-  };
 }
 
-export const appearance = createAppearanceStore();
+export const appearance = derived(startupPreferences, ($preferences) =>
+  resolveAppearanceState(
+    $preferences.themeProfileId,
+    $preferences.backgroundOpacityOverride,
+  ),
+);
+
+if (typeof window !== 'undefined') {
+  appearance.subscribe((value) => {
+    applyAppearance(value);
+  });
+}

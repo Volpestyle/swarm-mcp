@@ -490,7 +490,7 @@ fn dependency_state(
 
 fn ensure_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(SWARM_DB_BOOTSTRAP_SQL)
-    .map_err(|err| format!("failed to bootstrap schema: {err}"))?;
+        .map_err(|err| format!("failed to bootstrap schema: {err}"))?;
 
     ensure_columns(conn)?;
     rebuild_kv_table(conn)?;
@@ -588,6 +588,26 @@ pub fn create_pending_instance(
     .map_err(|err| format!("failed to pre-create instance row: {err}"))?;
 
     Ok(row)
+}
+
+/// Overwrite an instance's `label` column with the given string. Returns
+/// `true` if the row existed and was updated, `false` if no row matched
+/// `instance_id`. Used by `ui_set_instance_label` to persist the per-agent
+/// persona emoji in the existing comma-token label format
+/// (e.g. `name:foo role:planner persona:🦉`) — no schema migration needed
+/// since labels are already free-form strings.
+pub fn update_instance_label(
+    conn: &Connection,
+    instance_id: &str,
+    label: &str,
+) -> Result<bool, String> {
+    let updated = conn
+        .execute(
+            "UPDATE instances SET label = ? WHERE id = ?",
+            params![label, instance_id],
+        )
+        .map_err(|err| format!("failed to update instance label: {err}"))?;
+    Ok(updated > 0)
 }
 
 /// Refresh an unadopted instance's heartbeat. No-op if the row has already
@@ -757,6 +777,10 @@ pub struct InstanceInfo {
     pub label: Option<String>,
     pub heartbeat: i64,
     pub adopted: bool,
+    /// OS pid the instance row recorded at `swarm.register` time. `0` is the
+    /// placeholder used for UI-pre-created rows that haven't been adopted
+    /// yet — do NOT attempt to signal that pid.
+    pub pid: i64,
 }
 
 /// Read the subset of an instance row needed to respawn a PTY against it.
@@ -766,7 +790,7 @@ pub fn load_instance_info(
     instance_id: &str,
 ) -> Result<Option<InstanceInfo>, String> {
     conn.query_row(
-        "SELECT id, scope, directory, label, heartbeat, COALESCE(adopted, 1)
+        "SELECT id, scope, directory, label, heartbeat, COALESCE(adopted, 1), COALESCE(pid, 0)
          FROM instances
          WHERE id = ?",
         params![instance_id],
@@ -778,11 +802,84 @@ pub fn load_instance_info(
                 label: row.get(3)?,
                 heartbeat: row.get(4)?,
                 adopted: row.get::<_, i64>(5)? != 0,
+                pid: row.get::<_, i64>(6)?,
             })
         },
     )
     .optional()
     .map_err(|err| format!("failed to load instance info: {err}"))
+}
+
+/// Return every instance id currently registered in `scope`. Used by the
+/// Conversation panel's "Stop all" button (fan out SIGINT) and by the
+/// operator-broadcast helper. Mirrors `src/registry.ts::list` semantics.
+pub fn list_scope_instance_ids(conn: &Connection, scope: &str) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id FROM instances WHERE scope = ? ORDER BY registered_at ASC, id ASC")
+        .map_err(|err| format!("failed to prepare scope listing: {err}"))?;
+    let rows = stmt
+        .query_map([scope], |row| row.get::<_, String>(0))
+        .map_err(|err| format!("failed to query instances in scope: {err}"))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row.map_err(|err| format!("failed to read instance row: {err}"))?);
+    }
+    Ok(ids)
+}
+
+/// Write one message row per recipient in `scope`, with the operator as the
+/// sender. Mirrors `src/messages.ts::broadcast` exactly (one row per recipient,
+/// then a `message.broadcast` event) so the UI's ConnectionEdge animations and
+/// audit log treat operator sends the same as agent sends.
+///
+/// `sender_label` is the synthetic sender id (conventionally `"operator:<scope>"`
+/// or `"operator:user"`). Using a stable, reserved prefix keeps operator
+/// messages from colliding with any real instance id.
+///
+/// Returns the number of recipient rows inserted. Zero if the scope has no
+/// registered instances.
+pub fn broadcast_from_operator(
+    conn: &Connection,
+    scope: &str,
+    sender_label: &str,
+    content: &str,
+) -> Result<usize, String> {
+    let recipients = list_scope_instance_ids(conn, scope)?;
+    if recipients.is_empty() {
+        return Ok(0);
+    }
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("failed to begin operator-broadcast tx: {err}"))?;
+
+    for recipient in &recipients {
+        tx.execute(
+            "INSERT INTO messages (scope, sender, recipient, content) VALUES (?, ?, ?, ?)",
+            params![scope, sender_label, recipient, content],
+        )
+        .map_err(|err| format!("failed to insert operator broadcast row: {err}"))?;
+    }
+
+    tx.execute(
+        "INSERT INTO events (scope, type, actor, subject, payload) VALUES (?, 'message.broadcast', ?, NULL, ?)",
+        params![
+            scope,
+            sender_label,
+            json!({
+                "recipients": recipients.len(),
+                "length": content.len(),
+                "operator": true,
+            })
+            .to_string()
+        ],
+    )
+    .map_err(|err| format!("failed to record message.broadcast event: {err}"))?;
+
+    tx.commit()
+        .map_err(|err| format!("failed to commit operator-broadcast tx: {err}"))?;
+
+    Ok(recipients.len())
 }
 
 /// Returns whether the instance row has been adopted by the child process.

@@ -301,6 +301,7 @@ impl PtyService {
             master.take();
         }
 
+        let mut immediate_exit_code = None;
         if request.force {
             let mut child_slot = handle
                 .child
@@ -309,6 +310,25 @@ impl PtyService {
             if let Some(child) = child_slot.as_mut() {
                 let _ = child.kill();
             }
+            child_slot.take();
+            immediate_exit_code = Some(None);
+        } else {
+            let mut child_slot = handle
+                .child
+                .lock()
+                .map_err(|_| ServerError::internal("PTY child lock poisoned"))?;
+            if let Some(child) = child_slot.as_mut() {
+                if let Ok(Some(status)) = child.try_wait() {
+                    immediate_exit_code = Some(normalize_exit_code(status.exit_code()));
+                    child_slot.take();
+                }
+            } else {
+                immediate_exit_code = Some(None);
+            }
+        }
+
+        if let Some(exit_code) = immediate_exit_code {
+            self.finalize_dead_session(&request.pty_id, &handle, exit_code);
         }
 
         Ok(Ack::ok())
@@ -414,6 +434,8 @@ impl PtyService {
     }
 
     pub fn snapshot(&self) -> Result<PtyCatalogSnapshot, ServerError> {
+        self.reap_dead_sessions()?;
+
         let sessions = self
             .sessions
             .read()
@@ -536,6 +558,10 @@ impl PtyService {
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     }
                 };
+
+                if service_handle.cleaned_up.load(Ordering::Acquire) {
+                    break;
+                }
 
                 match event {
                     ReaderEvent::Data(bytes) => pending.extend(bytes),
@@ -754,6 +780,75 @@ impl PtyService {
             .get(pty_id)
             .cloned()
             .ok_or_else(|| ServerError::not_found(format!("unknown PTY session: {pty_id}")))
+    }
+
+    fn reap_dead_sessions(&self) -> Result<(), ServerError> {
+        let sessions = self
+            .sessions
+            .read()
+            .map_err(|_| ServerError::internal("PTY session map lock poisoned"))?
+            .iter()
+            .map(|(pty_id, handle)| (pty_id.clone(), handle.clone()))
+            .collect::<Vec<_>>();
+
+        for (pty_id, handle) in sessions {
+            if handle.cleaned_up.load(Ordering::Acquire) {
+                continue;
+            }
+
+            let exit_code = {
+                let mut child_slot = handle
+                    .child
+                    .lock()
+                    .map_err(|_| ServerError::internal("PTY child lock poisoned"))?;
+
+                match child_slot.as_mut() {
+                    Some(child) => match child.try_wait() {
+                        Ok(Some(status)) => {
+                            let exit_code = normalize_exit_code(status.exit_code());
+                            child_slot.take();
+                            Some(exit_code)
+                        }
+                        Ok(None) => None,
+                        Err(_) => None,
+                    },
+                    None if handle.shutdown_requested.load(Ordering::Acquire) => Some(None),
+                    None => None,
+                }
+            };
+
+            if let Some(exit_code) = exit_code {
+                self.finalize_dead_session(&pty_id, &handle, exit_code);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn finalize_dead_session(
+        &self,
+        pty_id: &str,
+        handle: &Arc<PtyHandle>,
+        exit_code: Option<i32>,
+    ) {
+        let at = now_millis();
+        if let Ok(mut state) = handle.state.lock() {
+            state.info.exit_code = exit_code;
+            state.exit_at = Some(at);
+        }
+        let _ = self.frames.send(Frame::new(FramePayload::PtyExit(PtyExitFrame {
+            pty_id: pty_id.to_owned(),
+            exit_code,
+            at,
+        })));
+        cleanup_session(
+            &self.sessions,
+            &self.frames,
+            &self.journal,
+            self.change_counter.as_ref(),
+            pty_id,
+            handle,
+        );
     }
 }
 
@@ -1045,6 +1140,84 @@ mod tests {
         };
         assert!(upserts.is_empty());
         assert_eq!(removes, vec!["pty-1".to_owned()]);
+    }
+
+    #[test]
+    fn force_close_reaps_session_immediately() {
+        let service = PtyService::new(PtyServiceConfig {
+            exit_retention: Duration::from_secs(30),
+            ..PtyServiceConfig::default()
+        });
+
+        let response = service
+            .spawn(spawn_request(), "local:swarm-ui")
+            .expect("spawn must work");
+
+        service
+            .close(
+                ClosePtyRequest {
+                    v: PROTOCOL_VERSION,
+                    pty_id: response.pty.id.clone(),
+                    force: true,
+                },
+                "local:swarm-ui",
+            )
+            .expect("force close must work");
+
+        let snapshot = service.snapshot().expect("snapshot must work");
+        assert!(
+            snapshot.rows.iter().all(|pty| pty.id != response.pty.id),
+            "force close should remove the PTY from the catalog immediately"
+        );
+    }
+
+    #[test]
+    fn snapshot_reaps_shutdown_zombie_without_child() {
+        let service = PtyService::default();
+        let pty_id = "pty-zombie".to_owned();
+        let info = PtyInfo {
+            id: pty_id.clone(),
+            command: "codex".to_owned(),
+            cwd: "/tmp".to_owned(),
+            started_at: 1,
+            exit_code: None,
+            bound_instance_id: None,
+            cols: 80,
+            rows: 24,
+            lease: Some(Lease {
+                holder: "local:swarm-ui".to_owned(),
+                acquired_at: 1,
+                generation: 1,
+            }),
+        };
+
+        let handle = Arc::new(PtyHandle {
+            master: Mutex::new(None),
+            child: Mutex::new(None),
+            writer: Mutex::new(None),
+            state: Mutex::new(SessionState {
+                info: info.clone(),
+                exit_at: None,
+                bootstrap_command: None,
+                catalog_cursor: ChangeCursor::new(1, "0001:pty-zombie"),
+                lease_state: LeaseState::new(info.lease.clone()),
+            }),
+            buffer: Mutex::new(ReplayBuffer::new(1024)),
+            shutdown_requested: AtomicBool::new(true),
+            cleaned_up: AtomicBool::new(false),
+        });
+
+        service
+            .sessions
+            .write()
+            .expect("session map lock must work")
+            .insert(pty_id.clone(), handle);
+
+        let snapshot = service.snapshot().expect("snapshot must work");
+        assert!(
+            snapshot.rows.iter().all(|pty| pty.id != pty_id),
+            "snapshot should reap shutdown PTYs that no longer have a child handle"
+        );
     }
 
     #[test]

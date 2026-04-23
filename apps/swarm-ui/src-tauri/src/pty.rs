@@ -320,6 +320,11 @@ impl PtyManager {
     ) {
         let stream_handle = handle.clone();
         let task = tauri::async_runtime::spawn(async move {
+            let mut open_stream_log = daemon::RetryLogThrottle::default();
+            let mut subscribe_log = daemon::RetryLogThrottle::default();
+            let mut attach_log = daemon::RetryLogThrottle::default();
+            let mut read_log = daemon::RetryLogThrottle::default();
+
             loop {
                 if stream_handle.is_closed() {
                     return;
@@ -327,13 +332,17 @@ impl PtyManager {
 
                 match daemon::open_stream().await {
                     Ok(mut socket) => {
+                        open_stream_log.reset();
                         if let Err(err) = daemon::subscribe(&mut socket).await {
-                            eprintln!(
-                                "[pty] failed to subscribe daemon stream for {pty_id}: {err}"
-                            );
+                            subscribe_log.warn(|| {
+                                format!(
+                                    "[pty] failed to subscribe daemon stream for {pty_id}: {err}"
+                                )
+                            });
                             tokio::time::sleep(STREAM_RETRY_DELAY).await;
                             continue;
                         }
+                        subscribe_log.reset();
                         if let Err(err) = daemon::send_frame(
                             &mut socket,
                             &swarm_protocol::Frame::new(FramePayload::PtyAttach(PtyAttachFrame {
@@ -343,19 +352,27 @@ impl PtyManager {
                         )
                         .await
                         {
-                            eprintln!(
-                                "[pty] failed to attach daemon PTY stream for {pty_id}: {err}"
-                            );
+                            attach_log.warn(|| {
+                                format!(
+                                    "[pty] failed to attach daemon PTY stream for {pty_id}: {err}"
+                                )
+                            });
                             tokio::time::sleep(STREAM_RETRY_DELAY).await;
                             continue;
                         }
+                        attach_log.reset();
 
                         loop {
                             let frame = match daemon::read_frame(&mut socket).await {
-                                Ok(Some(frame)) => frame,
+                                Ok(Some(frame)) => {
+                                    read_log.reset();
+                                    frame
+                                }
                                 Ok(None) => break,
                                 Err(err) => {
-                                    eprintln!("[pty] daemon PTY stream error for {pty_id}: {err}");
+                                    read_log.warn(|| {
+                                        format!("[pty] daemon PTY stream error for {pty_id}: {err}")
+                                    });
                                     break;
                                 }
                             };
@@ -385,7 +402,9 @@ impl PtyManager {
                         }
                     }
                     Err(err) => {
-                        eprintln!("[pty] failed to open daemon stream for {pty_id}: {err}");
+                        open_stream_log.warn(|| {
+                            format!("[pty] failed to open daemon stream for {pty_id}: {err}")
+                        });
                     }
                 }
 
@@ -432,8 +451,7 @@ impl PtyManager {
 
     pub fn release_lease(&self, id: &str) -> Result<(), AppError> {
         self.session(id)?;
-        tauri::async_runtime::block_on(daemon::release_pty_lease(id))
-            .map_err(AppError::Operation)
+        tauri::async_runtime::block_on(daemon::release_pty_lease(id)).map_err(AppError::Operation)
     }
 
     fn session(&self, id: &str) -> Result<Arc<PtyHandle>, AppError> {
@@ -499,7 +517,9 @@ pub fn pty_release_lease(manager: State<'_, PtyManager>, id: String) -> Result<(
 #[allow(clippy::unused_async)]
 pub async fn pty_close(manager: State<'_, PtyManager>, id: String) -> Result<(), AppError> {
     manager.session(&id)?;
-    daemon::close_pty(&id).await.map_err(AppError::Operation)
+    daemon::close_pty(&id, true)
+        .await
+        .map_err(AppError::Operation)
 }
 
 #[tauri::command]

@@ -6,6 +6,7 @@ pub mod mobile_access;
 pub mod model;
 pub mod pty;
 pub mod swarm;
+pub mod system_load;
 pub mod ui_commands;
 pub mod ui_control;
 pub mod writes;

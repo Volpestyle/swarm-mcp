@@ -30,17 +30,9 @@ import type {
 // ---------------------------------------------------------------------------
 
 const SCOPE_SELECTION_KEY = 'swarm-ui.scope-selection';
-const LAUNCHER_SCOPE_KEY = 'swarm-ui.launcher.scope';
-
 function loadStoredScopeSelection(): string {
   if (typeof localStorage === 'undefined') return 'auto';
   return localStorage.getItem(SCOPE_SELECTION_KEY) ?? 'auto';
-}
-
-function storedLauncherScope(): string | null {
-  if (typeof localStorage === 'undefined') return null;
-  const value = localStorage.getItem(LAUNCHER_SCOPE_KEY)?.trim();
-  return value ? value : null;
 }
 
 const rawInstances = writable<Map<string, Instance>>(new Map());
@@ -50,6 +42,9 @@ const rawLocks = writable<Lock[]>([]);
 const rawAnnotations = writable<Annotation[]>([]);
 const rawKvEntries = writable<KvEntry[]>([]);
 const rawEvents = writable<Event[]>([]);
+
+export const allInstances = rawInstances;
+export const allKvEntries = rawKvEntries;
 
 export const scopeSelection = writable<string>(loadStoredScopeSelection());
 if (typeof window !== 'undefined') {
@@ -71,6 +66,7 @@ export const availableScopes: Readable<string[]> = derived(
     rawAnnotations,
     rawKvEntries,
     rawEvents,
+    scopeSelection,
   ],
   ([
     $instances,
@@ -80,6 +76,7 @@ export const availableScopes: Readable<string[]> = derived(
     $annotations,
     $kvEntries,
     $events,
+    $selection,
   ]) => {
     const scopes = new Set<string>();
     for (const instance of $instances.values()) scopes.add(instance.scope);
@@ -89,6 +86,9 @@ export const availableScopes: Readable<string[]> = derived(
     for (const annotation of $annotations) scopes.add(annotation.scope);
     for (const entry of $kvEntries) scopes.add(entry.scope);
     for (const evt of $events) scopes.add(evt.scope);
+    if ($selection && $selection !== 'auto' && $selection !== 'all') {
+      scopes.add($selection);
+    }
     return [...scopes].filter(Boolean).sort();
   },
 );
@@ -98,11 +98,6 @@ export const activeScope: Readable<string | null> = derived(
   ([$selection, $scopes, $instances]) => {
     if ($selection === 'all') return null;
     if ($selection !== 'auto') return $selection;
-
-    const preferred = storedLauncherScope();
-    if (preferred && ($scopes.includes(preferred) || $scopes.length === 0)) {
-      return preferred;
-    }
 
     if ($scopes.length === 1) return $scopes[0] ?? null;
 

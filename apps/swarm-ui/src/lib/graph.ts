@@ -46,6 +46,7 @@ export function buildGraph(
   messages: Message[],
   locks: Lock[],
   bindings: BindingState,
+  activeScope: string | null,
   savedLayout?: Record<string, Position>,
 ): { nodes: XYFlowNode[]; edges: XYFlowEdge[] } {
   // Build lookup sets for binding resolution
@@ -72,6 +73,7 @@ export function buildGraph(
   // 1. Bound nodes (PTY + instance merged)
   for (const [instanceId, ptyId] of bindings.resolved) {
     const instance = instances.get(instanceId) ?? null;
+    if (!instance) continue;
     const pty = ptySessions.get(ptyId) ?? null;
     const nodeId = `bound:${instanceId}`;
 
@@ -101,7 +103,13 @@ export function buildGraph(
   // 3. Unbound PTY nodes (pending)
   for (const [id, pty] of ptySessions) {
     if (resolvedPtyIds.has(id)) continue;
-    if (pty.bound_instance_id && !instances.has(pty.bound_instance_id)) continue;
+    if (
+      pty.bound_instance_id &&
+      !instances.has(pty.bound_instance_id) &&
+      !ptyBelongsToScope(pty, activeScope)
+    ) {
+      continue;
+    }
     const nodeId = `pty:${id}`;
 
     nodes.push(makeNode(nodeId, 'pty', null, pty, {
@@ -129,6 +137,17 @@ export function buildGraph(
   edges.push(...buildConnectionEdges(messages, tasks, instanceToNodeId));
 
   return { nodes, edges };
+}
+
+function ptyBelongsToScope(pty: PtySession, activeScope: string | null): boolean {
+  if (!pty.bound_instance_id || activeScope === null) return true;
+  const scope = trimTrailingSlash(activeScope);
+  const cwd = trimTrailingSlash(pty.cwd);
+  return cwd === scope || cwd.startsWith(`${scope}/`);
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '') || '/';
 }
 
 // ---------------------------------------------------------------------------

@@ -1,10 +1,45 @@
-# swarm-mcp
+# swarm-mcp - experimental-frazier
 
 MCP server that lets multiple coding-agent sessions on the same machine discover each other and collaborate through a shared SQLite database.
 
 Each session spawns its own swarm-mcp server process via stdio. They all share one SQLite file at `~/.swarm-mcp/swarm.db` by default. No daemon needed.
 
 [GitHub](https://github.com/Volpestyle/swarm-mcp)
+
+![FrazierCode Agentic branch artwork](./docs/assets/fraziercode-tron-2.jpg)
+
+This README describes the `experimental-frazier` branch. The upstream `main` branch should stay the clean shared swarm-mcp foundation; this branch is the FrazierCode operator/UI experiment built on top of it.
+
+## What is different in this branch
+
+- **Desktop-first operator shell:** `swarm-ui` opens into a more guided home and graph workflow, with the Tron Encom OS visual profile, a top status strip, a right-side mode rail, overlay panels, compact node handling, and fullscreen terminal workspaces.
+- **Launch and agent profiles:** the launcher now supports saved agent profiles with working directory, scope, harness, role, mission/context/memory fields, custom launch command, and harness alias settings.
+- **Better graph navigation:** nodes can be inspected from the canvas, connection handles can create visual intent links, edges consolidate messages/tasks/dependencies, and the inspector gives a richer node/edge summary.
+- **Conversation and operator controls:** the branch adds a conversation feed, operator broadcast path, scoped Ctrl-C fan-out, and clearer kill/remove semantics so destructive UI actions target the real process path instead of only deleting a database row.
+- **Recovery and diagnostics:** startup recovery surfaces recent scopes/layouts, cleanup actions for stale or orphaned rows, and an Analyze tab that separates live swarm rows, detached helpers, OS process load, exact usage attribution, and estimated cost.
+- **Mobile/daemon plumbing:** the branch carries additional PTY catalog reconciliation, mobile pairing surfaces, daemon launch refinements, and backend commands needed by the richer UI.
+
+## How to navigate compared to main
+
+1. Run the desktop UI from `apps/swarm-ui` with `bunx tauri dev`.
+2. Start on **Home** to pick a recent directory/scope, recover a saved layout, or launch into a fresh canvas.
+3. Use the right mode rail: **Launch** for profiles and spawning, **Chat** for operator messages, **Inspect** for selected nodes/edges, **Analyze** for process/session cleanup, **Mobile** for pairing, and **Settings** for theme/harness/runtime preferences.
+4. Click a node or edge to open **Inspect**. Use node handle dots for visual connection intent; use real message/task tools for durable swarm coordination.
+5. If the graph looks wrong after kills or restarts, use **Analyze** and the Home cleanup actions before trusting the canvas. The live session database remains `~/.swarm-mcp/swarm.db`.
+
+## Upload hygiene for this branch
+
+- Live agent sessions, messages, tasks, and layouts are not committed; they live in `~/.swarm-mcp/swarm.db`, which is ignored by git.
+- Local operator notes such as `Agents.md`, `DEVNOTES.md`, and `docs/superpowers/` are ignored so personal paths and scratch planning docs do not ride along with branch uploads.
+- Branch artwork is committed in `docs/assets/` for GitHub and in `apps/swarm-ui/src/assets/` for the Startup/Home hero and FrazierCode/About panel.
+- OpenAI/Anthropic PNG logos and emoji personas are bundled with the app branch assets so cloned checkouts render the intended visual identity without extra assembly.
+- Any tests that need path-like fixtures should use generic sample paths, not a real user home directory.
+
+## Edge cases to keep in mind
+
+- The Analyze tab includes cost estimates from a local price catalog. Treat those as operational estimates, not billing truth, and refresh the catalog before relying on exact dollar values.
+- Build checks do not prove visual click-through. After pushing, still run the app and manually test Home, Launch, Inspect, Chat, Analyze, Settings, node kill, and stale cleanup.
+- GitHub branch selection matters: this README is intended for `experimental-frazier`, not upstream `main`.
 
 ---
 
@@ -64,6 +99,8 @@ Call the swarm `register` tool first to join the swarm.
 ### Further reading
 
 - [`docs/getting-started.md`](./docs/getting-started.md) -- beginner-friendly setup and verification walkthrough
+- [`docs/system-load-analyzer.md`](./docs/system-load-analyzer.md) -- operator guide for the Analyze tab, real kill paths, exact vs estimated usage, and rogue session cleanup
+- [`docs/system-load-analyzer-v2-plan.md`](./docs/system-load-analyzer-v2-plan.md) -- next-phase cross-platform plan for Linux and Windows support
 - [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) -- copy-paste coordination rules for any agent host (generalist)
 - [`docs/agents-planner.md`](./docs/agents-planner.md) -- drop-in AGENTS.md for planner sessions (plans work, reviews results)
 - [`docs/agents-implementer.md`](./docs/agents-implementer.md) -- drop-in AGENTS.md for implementer sessions (claims tasks, edits code)
@@ -313,6 +350,10 @@ The skill does not mount the MCP server for you. It assumes the `swarm` MCP tool
 **File locks are stuck.** Stale locks are cleared automatically when the owning instance's heartbeat expires (30s). If you need to clear them manually, delete the row from the `context` table in the SQLite database, or restart the stuck session.
 
 **Inspecting the database directly.** The database is a standard SQLite file at `~/.swarm-mcp/swarm.db`. You can open it with any SQLite client (`bun` itself, `sqlite3`, DB Browser for SQLite, etc.) to inspect instances, tasks, messages, and context.
+
+**The graph still shows dead nodes after kill-all.** The graph can drift if the frontend store misses row removals. When the canvas disagrees with the DB or OS process list, trust the OS scan and the `Analyze` tab first. See [`docs/system-load-analyzer.md`](./docs/system-load-analyzer.md).
+
+**There are no swarm rows, but tokens still seem to be burning.** That usually means detached helpers or terminal-backed agent sessions survived after their swarm rows were removed. Use the `Analyze` tab or inspect `ps`/`lsof` directly. See [`docs/system-load-analyzer.md`](./docs/system-load-analyzer.md).
 
 **Wrong absolute path in server command.** The `bun run` command needs an absolute path to `src/index.ts`. Relative paths may resolve differently depending on how the host launches the process.
 

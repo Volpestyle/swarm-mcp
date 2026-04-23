@@ -194,4 +194,75 @@
       width: 100%;
     }
   }
+
+  /* ── Tron Encom OS overrides ────────────────────────────────────────── */
+  :global([data-theme="tron-encom-os"]) .confirm-modal {
+    border: 1px solid var(--led-line, #d8dde6);
+    border-radius: 0;
+    background: var(--bg-base, #000);
+    box-shadow:
+      0 0 0 1px var(--led-halo, rgba(255, 255, 255, 0.08)),
+      0 0 18px rgba(255, 255, 255, 0.18),
+      0 24px 60px rgba(0, 0, 0, 0.7);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :global([data-theme="tron-encom-os"]) .confirm-header {
+    border-bottom: 1px solid var(--led-line, #d8dde6);
+  }
+
+  :global([data-theme="tron-encom-os"]) .confirm-footer {
+    border-top: 1px solid var(--led-line, #d8dde6);
+  }
+
+  :global([data-theme="tron-encom-os"]) .confirm-header h2 {
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-size: 13px;
+    color: var(--accent, #ffffff);
+    text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :global([data-theme="tron-encom-os"]) .confirm-body p {
+    color: var(--fg-primary, #f5f7fa);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+  }
+
+  :global([data-theme="tron-encom-os"]) .confirm-hint {
+    color: var(--fg-secondary, #8a94a0);
+  }
+
+  :global([data-theme="tron-encom-os"]) .secondary-btn,
+  :global([data-theme="tron-encom-os"]) .danger-btn {
+    border-radius: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  :global([data-theme="tron-encom-os"]) .secondary-btn {
+    background: transparent;
+    border: 1px solid var(--led-line, #d8dde6);
+    color: var(--fg-primary, #f5f7fa);
+  }
+
+  :global([data-theme="tron-encom-os"]) .secondary-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.18);
+  }
+
+  :global([data-theme="tron-encom-os"]) .danger-btn {
+    background: rgba(255, 58, 76, 0.12);
+    border-color: var(--c-red, #ff3a4c);
+    color: var(--c-red, #ff3a4c);
+    box-shadow: 0 0 6px rgba(255, 58, 76, 0.3);
+  }
+
+  :global([data-theme="tron-encom-os"]) .danger-btn:hover {
+    background: rgba(255, 58, 76, 0.22);
+  }
 </style>

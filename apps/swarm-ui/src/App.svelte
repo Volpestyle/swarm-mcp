@@ -24,8 +24,6 @@
   import type { UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount, onDestroy, tick } from 'svelte';
-  import { fly } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
 
   // Stores (Agent 3)
   import {
@@ -43,8 +41,8 @@
     bindings,
     initPtyStore,
     destroyPtyStore,
-    closePty,
-    deregisterInstance,
+    killInstance,
+    killPtySession,
   } from './stores/pty';
 
   // Graph builder (Agent 3)
@@ -59,13 +57,16 @@
   import ConnectionEdge from './edges/ConnectionEdge.svelte';
 
   // Panels (Agent 4)
+  import AnalyzePanel from './panels/AnalyzePanel.svelte';
   import ConversationPanel from './panels/ConversationPanel.svelte';
+  import FrazierCodePanel from './panels/FrazierCodePanel.svelte';
   import Inspector from './panels/Inspector.svelte';
   import Launcher from './panels/Launcher.svelte';
   import MobileAccessModal from './panels/MobileAccessModal.svelte';
   import SettingsModal from './panels/SettingsModal.svelte';
   import StartupHome from './panels/StartupHome.svelte';
   import SwarmStatus from './panels/SwarmStatus.svelte';
+  import TopStrip from './panels/TopStrip.svelte';
   import FullscreenWorkspace from './panels/FullscreenWorkspace.svelte';
   import CloseConfirmModal from './panels/CloseConfirmModal.svelte';
   import ConfirmModal from './panels/ConfirmModal.svelte';
@@ -81,10 +82,10 @@
     resolveFullscreenTargetId,
   } from './lib/app/selection';
   import {
+    clampSidebarWidth,
     loadSidebarState,
     persistSidebarCollapsed,
     persistSidebarWidth,
-    resolveSidebarWidth,
   } from './lib/app/sidebar';
   import { workspaceOverlayActive } from './lib/workspaceOverlay';
   import {
@@ -145,6 +146,7 @@
   let showMobileAccess = false;
   let showSettings = false;
   let showCloseConfirm = false;
+  let frazierCodeOpen = false;
   let appMode: 'home' | 'canvas' = 'home';
   let closeRequestUnlisten: UnlistenFn | null = null;
   let appWindow: ReturnType<typeof getCurrentWindow> | null = null;
@@ -246,18 +248,23 @@
 
     try {
       const ptyId = node.data?.ptySession?.id;
-      if (ptyId) {
-        await closePty(ptyId);
+      const instanceId = node.data?.instance?.id;
+      if (instanceId) {
+        await killInstance(instanceId);
         return true;
       }
 
-      const instanceId = node.data?.instance?.id;
+      if (ptyId) {
+        await killPtySession(ptyId);
+        return true;
+      }
+
       if (
         node.data?.nodeType === 'instance' &&
         (node.data?.instance?.status === 'offline' || node.data?.instance?.status === 'stale') &&
         instanceId
       ) {
-        await deregisterInstance(instanceId);
+        await killInstance(instanceId);
         return true;
       }
     } catch (err) {
@@ -360,53 +367,108 @@
     }
   }
 
-  // Right-panel tab state. Auto-switches to 'inspect' when a node/edge is
-  // selected and back to 'launch' when selection clears. Users can still
-  // override by clicking a tab directly. 'chat' shows the cross-scope
-  // Conversation panel (operator broadcast + live message feed).
+  // Canvas shell state — a thin persistent mode rail on the right and a
+  // floating surface that opens over the graph for Launch / Chat / Inspect.
   let activeTab: 'launch' | 'chat' | 'inspect' = 'launch';
-
-  // -------------------------------------------------------------------
-  // Resizable sidebar
-  //
-  // User drags the .resize-handle on the sidebar's left edge. Width is
-  // clamped and persisted to localStorage so it survives reloads.
-  // -------------------------------------------------------------------
-
+  let analyzeOverlayOpen = false;
   const initialSidebarState = loadSidebarState();
-  let sidebarWidth = initialSidebarState.width;
-  let sidebarCollapsed = initialSidebarState.collapsed;
-  let resizing = false;
+  const MODE_RAIL_WIDTH = 86;
+  const SHELL_SURFACE_GAP = 18;
+  const SHELL_SURFACE_MIN_WIDTH = 380;
+  let shellSurfaceWidth = Math.max(SHELL_SURFACE_MIN_WIDTH, initialSidebarState.width);
+  let shellSurfaceOpen = !initialSidebarState.collapsed;
+  let shellSurfaceResizing = false;
 
-  // Width actually applied to the sidebar. The user-set `sidebarWidth` is
-  // preserved while collapsed so it restores to the same size on expand.
-  $: effectiveSidebarWidth = sidebarCollapsed ? 0 : sidebarWidth;
+  $: shellSurfaceTitle = activeTab === 'launch'
+    ? 'Launch Deck'
+    : activeTab === 'chat'
+      ? 'Conversation Feed'
+      : 'Inspector';
+  $: shellSurfaceCopy = activeTab === 'launch'
+    ? 'Spawn agents and manage launch profiles.'
+    : activeTab === 'chat'
+      ? 'Live scope messages without leaving the canvas.'
+      : 'Selected node and edge details.';
+  $: shellSurfaceBadge = activeTab === 'launch'
+    ? 'spawn'
+    : activeTab === 'chat'
+      ? 'messages'
+      : hasSelection
+        ? 'selection live'
+        : 'selection idle';
 
-  function toggleSidebar() {
-    sidebarCollapsed = !sidebarCollapsed;
-    persistSidebarCollapsed(sidebarCollapsed);
+  function setShellSurfaceOpen(next: boolean): void {
+    shellSurfaceOpen = next;
+    persistSidebarCollapsed(!next);
   }
 
-  function startSidebarResize(event: PointerEvent) {
+  function toggleShellSurface(): void {
+    setShellSurfaceOpen(!shellSurfaceOpen);
+  }
+
+  function openShellTab(tab: 'launch' | 'chat' | 'inspect'): void {
+    activeTab = tab;
+    analyzeOverlayOpen = false;
+    frazierCodeOpen = false;
+    setShellSurfaceOpen(true);
+  }
+
+  function closeAnalyzeOverlay(): void {
+    analyzeOverlayOpen = false;
+  }
+
+  function toggleAnalyzeOverlay(): void {
+    analyzeOverlayOpen = !analyzeOverlayOpen;
+    if (analyzeOverlayOpen) {
+      frazierCodeOpen = false;
+      setShellSurfaceOpen(false);
+    }
+  }
+
+  function openFrazierCode(): void {
+    analyzeOverlayOpen = false;
+    showSettings = false;
+    showMobileAccess = false;
+    setShellSurfaceOpen(false);
+    frazierCodeOpen = true;
+  }
+
+  function closeFrazierCode(): void {
+    frazierCodeOpen = false;
+  }
+
+  // -------------------------------------------------------------------
+  // Resizable shell surface
+  //
+  // The floating shell keeps width persistence from the old sidebar, but the
+  // graph is no longer forced to give up the entire right edge.
+  // -------------------------------------------------------------------
+
+  function startShellSurfaceResize(event: PointerEvent) {
     event.preventDefault();
-    resizing = true;
+    shellSurfaceResizing = true;
     const target = event.currentTarget as HTMLElement;
     target.setPointerCapture(event.pointerId);
   }
 
-  function onSidebarResize(event: PointerEvent) {
-    if (!resizing) return;
-    sidebarWidth = resolveSidebarWidth(window.innerWidth, event.clientX);
+  function onShellSurfaceResize(event: PointerEvent) {
+    if (!shellSurfaceResizing) return;
+    const nextWidth =
+      window.innerWidth - event.clientX - MODE_RAIL_WIDTH - SHELL_SURFACE_GAP - 14;
+    shellSurfaceWidth = Math.max(
+      SHELL_SURFACE_MIN_WIDTH,
+      clampSidebarWidth(nextWidth),
+    );
   }
 
-  function endSidebarResize(event: PointerEvent) {
-    if (!resizing) return;
-    resizing = false;
+  function endShellSurfaceResize(event: PointerEvent) {
+    if (!shellSurfaceResizing) return;
+    shellSurfaceResizing = false;
     const target = event.currentTarget as HTMLElement;
     if (target.hasPointerCapture(event.pointerId)) {
       target.releasePointerCapture(event.pointerId);
     }
-    persistSidebarWidth(sidebarWidth);
+    persistSidebarWidth(shellSurfaceWidth);
   }
 
   // Reactive graph rebuild when any swarm store changes. The merge itself
@@ -421,6 +483,7 @@
       $messages,
       $locks,
       $bindings,
+      $activeScope,
       $savedLayout,
     ),
     $savedLayout,
@@ -507,7 +570,6 @@
     ? edges.find((e) => e.id === selectedEdgeId) ?? null
     : null;
   $: hasSelection = selectedNode !== null || selectedEdge !== null;
-  $: activeTab = hasSelection ? 'inspect' : 'launch';
   $: layoutPersistence.sync($activeScope, nodes, $savedLayout, persistLayout);
   $: setCompactNodeScope($activeScope);
   $: pruneCompactNodeIds(nodes.map((node) => node.id));
@@ -557,6 +619,7 @@
 
   function handleNodeClick(event: { node: XYFlowNode; event?: MouseEvent | TouchEvent }) {
     setSelectedNode(event.node.id);
+    openShellTab('inspect');
 
     if (workspaceStage !== 'closed') return;
     if (!event.node.data?.ptySession?.id) return;
@@ -567,14 +630,19 @@
 
   function handleEdgeClick({ edge }: { edge: { id: string } }) {
     setSelectedEdge(edge.id);
+    openShellTab('inspect');
   }
 
   function handlePaneClick() {
     clearSelection();
+    if (activeTab === 'inspect') {
+      activeTab = 'launch';
+    }
   }
 
   function handleInspectorClose() {
     clearSelection();
+    activeTab = 'launch';
   }
 
   async function persistLayout(
@@ -592,12 +660,16 @@
   }
 
   function openSettings() {
+    analyzeOverlayOpen = false;
+    frazierCodeOpen = false;
     showMobileAccess = false;
     showSettings = true;
   }
 
   function openHome() {
     if (workspaceStage !== 'closed') return;
+    analyzeOverlayOpen = false;
+    frazierCodeOpen = false;
     showMobileAccess = false;
     showSettings = false;
     appMode = 'home';
@@ -605,6 +677,9 @@
 
   function enterCanvas() {
     appMode = 'canvas';
+    analyzeOverlayOpen = false;
+    frazierCodeOpen = false;
+    setShellSurfaceOpen(true);
   }
 
   function closeSettings() {
@@ -612,6 +687,8 @@
   }
 
   function openMobileAccess() {
+    analyzeOverlayOpen = false;
+    frazierCodeOpen = false;
     showSettings = false;
     showMobileAccess = true;
   }
@@ -651,7 +728,7 @@
     if (showCloseConfirm) return;
 
     const meta = event.metaKey || event.ctrlKey;
-    const overlayOpen = showSettings || showMobileAccess || appMode === 'home';
+    const overlayOpen = showSettings || showMobileAccess || appMode === 'home' || analyzeOverlayOpen || frazierCodeOpen;
 
     if (!event.defaultPrevented && !event.repeat && !event.isComposing) {
       const wantsLaunch =
@@ -674,6 +751,18 @@
         event.key.toLowerCase() === 'w';
 
       if (wantsClose && workspaceStage === 'closed') {
+        if (analyzeOverlayOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAnalyzeOverlay();
+          return;
+        }
+        if (frazierCodeOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          closeFrazierCode();
+          return;
+        }
         const nodeId = overlayOpen
           ? null
           : resolveClosableNodeId(event, nodes, selectedNodeId);
@@ -767,6 +856,7 @@
 
     if (meta && event.key === ',') {
       event.preventDefault();
+      frazierCodeOpen = false;
       showMobileAccess = false;
       showSettings = true;
       return;
@@ -804,11 +894,12 @@
   <div
   class="app-root"
   class:workspace-active={workspaceActive}
-  style="--sidebar-inset: {effectiveSidebarWidth}px; --sidebar-transition-duration: {resizing ? '0ms' : '460ms'};"
+  style="--sidebar-inset: 0px; --sidebar-transition-duration: {shellSurfaceResizing ? '0ms' : '420ms'}; --mode-rail-width: {MODE_RAIL_WIDTH}px; --shell-surface-gap: {SHELL_SURFACE_GAP}px;"
 >
   <!-- Canvas area -->
-  <div class="canvas-area" class:connection-active={connectionActive}>
+  <div class="canvas-area" class:connection-active={connectionActive} class:has-strip={appMode === 'canvas'}>
     {#if appMode === 'canvas'}
+      <TopStrip />
       <button
         type="button"
         class="floating-home"
@@ -822,21 +913,6 @@
           <path d="M12 19l-7-7 7-7" />
         </svg>
         <span>Back</span>
-      </button>
-    {/if}
-
-    {#if sidebarCollapsed}
-      <button
-        type="button"
-        class="floating-expand"
-        on:click={toggleSidebar}
-        aria-label="Expand panel"
-        title="Expand panel"
-        transition:fly={{ x: 28, duration: 360, easing: cubicOut }}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="15 18 9 12 15 6"/>
-        </svg>
       </button>
     {/if}
 
@@ -874,138 +950,201 @@
 
     <!-- Status bar overlays the canvas bottom-center -->
     <SwarmStatus />
-  </div>
-
-  <!-- Sidebar -->
-  <aside
-    class="sidebar"
-    class:resizing
-    class:collapsed={sidebarCollapsed}
-    style="width: {effectiveSidebarWidth}px"
-  >
-    <div
-      class="resize-handle"
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Resize sidebar"
-      on:pointerdown={startSidebarResize}
-      on:pointermove={onSidebarResize}
-      on:pointerup={endSidebarResize}
-      on:pointercancel={endSidebarResize}
-    ></div>
-    <div class="tab-bar">
-      <div class="tabs" role="tablist">
-        <button
-          type="button"
-          class="tab"
-          class:active={activeTab === 'launch'}
-          role="tab"
-          aria-selected={activeTab === 'launch'}
-          on:click={() => (activeTab = 'launch')}
-        >
-          Launch
-        </button>
-        <button
-          type="button"
-          class="tab"
-          class:active={activeTab === 'chat'}
-          role="tab"
-          aria-selected={activeTab === 'chat'}
-          on:click={() => (activeTab = 'chat')}
-        >
-          Chat
-        </button>
-        <button
-          type="button"
-          class="tab"
-          class:active={activeTab === 'inspect'}
-          role="tab"
-          aria-selected={activeTab === 'inspect'}
-          on:click={() => (activeTab = 'inspect')}
-        >
-          Inspect
-        </button>
-      </div>
-      <div class="tab-actions">
-        <button
-          type="button"
-          class="icon-btn"
-          class:active={appMode === 'home'}
-          on:click={openHome}
-          aria-label="Home"
-          aria-pressed={appMode === 'home'}
-          title="Home"
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 10.5L12 3l9 7.5"/>
-            <path d="M5 9.75V21h14V9.75"/>
-          </svg>
-        </button>
-        {#if activeTab === 'launch'}
+    {#if appMode === 'canvas'}
+      <nav class="mode-rail" aria-label="Canvas surfaces">
+        <div class="mode-rail-group">
           <button
             type="button"
-            class="icon-btn"
+            class="mode-btn"
+            class:selected={activeTab === 'launch'}
+            class:open={activeTab === 'launch' && shellSurfaceOpen}
+            on:click={() => openShellTab('launch')}
+            title="Launch"
+            aria-pressed={activeTab === 'launch' && shellSurfaceOpen}
+          >
+            <svg class="mode-btn-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 5v14" />
+              <path d="M5 12h14" />
+            </svg>
+            <span class="mode-btn-label">Launch</span>
+          </button>
+
+          <button
+            type="button"
+            class="mode-btn"
+            class:selected={activeTab === 'chat'}
+            class:open={activeTab === 'chat' && shellSurfaceOpen}
+            on:click={() => openShellTab('chat')}
+            title="Chat"
+            aria-pressed={activeTab === 'chat' && shellSurfaceOpen}
+          >
+            <svg class="mode-btn-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            <span class="mode-btn-label">Chat</span>
+          </button>
+
+          <button
+            type="button"
+            class="mode-btn"
+            class:selected={activeTab === 'inspect'}
+            class:open={activeTab === 'inspect' && shellSurfaceOpen}
+            on:click={() => openShellTab('inspect')}
+            title="Inspect"
+            aria-pressed={activeTab === 'inspect' && shellSurfaceOpen}
+          >
+            <svg class="mode-btn-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m21 21-4.35-4.35" />
+            </svg>
+            <span class="mode-btn-label">Inspect</span>
+          </button>
+
+          <button
+            type="button"
+            class="mode-btn"
+            class:selected={analyzeOverlayOpen}
+            class:open={analyzeOverlayOpen}
+            on:click={toggleAnalyzeOverlay}
+            title="Analyze"
+            aria-pressed={analyzeOverlayOpen}
+          >
+            <svg class="mode-btn-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 19h16" />
+              <path d="M7 15V9" />
+              <path d="M12 15V5" />
+              <path d="M17 15v-3" />
+            </svg>
+            <span class="mode-btn-label">Analyze</span>
+          </button>
+        </div>
+
+        <div class="mode-rail-group mode-rail-group--bottom">
+          <button
+            type="button"
+            class="mode-btn mode-btn--utility"
             on:click={openMobileAccess}
-            aria-label="Mobile Access"
             title="Mobile Access"
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="7" y="2.5" width="10" height="19" rx="2.5"/>
-              <path d="M11 18.5h2"/>
+            <svg class="mode-btn-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+              <path d="M11 18.5h2" />
             </svg>
+            <span class="mode-btn-label">Mobile</span>
           </button>
+
           <button
             type="button"
-            class="icon-btn"
+            class="mode-btn mode-btn--utility"
             on:click={openSettings}
-            aria-label="Settings"
             title="Settings"
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            <svg class="mode-btn-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.36.23.77.35 1.19.35H21a2 2 0 0 1 0 4h-.09c-.42 0-.83.12-1.19.35z" />
             </svg>
+            <span class="mode-btn-label">Settings</span>
           </button>
-        {:else if hasSelection}
+
           <button
             type="button"
-            class="icon-btn"
-            on:click={handleInspectorClose}
-            aria-label="Clear selection"
-            title="Clear selection"
+            class="mode-btn mode-btn--utility mode-btn--frazier"
+            class:selected={frazierCodeOpen}
+            class:open={frazierCodeOpen}
+            on:click={openFrazierCode}
+            title="FrazierCode [Agentic]"
+            aria-pressed={frazierCodeOpen}
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
+            <svg class="mode-btn-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M8 4 3 12l5 8" />
+              <path d="M16 4l5 8-5 8" />
+              <path d="M10 15h4" />
+              <path d="M11 9h4" />
             </svg>
+            <span class="mode-btn-label mode-btn-label--stacked">
+              <span>Frazier</span>
+              <span>Code</span>
+              <span>[Agentic]</span>
+            </span>
           </button>
-        {/if}
-        <button
-          type="button"
-          class="icon-btn"
-          on:click={toggleSidebar}
-          aria-label="Collapse panel"
-          title="Collapse panel"
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="9 18 15 12 9 6"/>
-          </svg>
-        </button>
-      </div>
-    </div>
 
-    <div class="tab-panels">
-      <div class="tab-panel" class:hidden={activeTab !== 'launch'}>
-        <Launcher bind:this={launcherRef} />
-      </div>
-      <div class="tab-panel" class:hidden={activeTab !== 'chat'}>
-        <ConversationPanel />
-      </div>
-      <div class="tab-panel" class:hidden={activeTab !== 'inspect'}>
-        <Inspector {selectedNode} {selectedEdge} />
-      </div>
-    </div>
-  </aside>
+          <button
+            type="button"
+            class="mode-btn mode-btn--utility"
+            class:selected={shellSurfaceOpen}
+            on:click={toggleShellSurface}
+            title={shellSurfaceOpen ? 'Hide shell surface' : 'Show shell surface'}
+            aria-pressed={shellSurfaceOpen}
+          >
+            <svg class="mode-btn-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              {#if shellSurfaceOpen}
+                <path d="M15 18l-6-6 6-6" />
+              {:else}
+                <path d="M9 18l6-6-6-6" />
+              {/if}
+            </svg>
+            <span class="mode-btn-label">{shellSurfaceOpen ? 'Hide' : 'Show'}</span>
+          </button>
+        </div>
+      </nav>
+
+      <section
+        class="shell-surface"
+        class:open={shellSurfaceOpen}
+        class:resizing={shellSurfaceResizing}
+        style="width: {shellSurfaceWidth}px"
+        aria-hidden={!shellSurfaceOpen}
+      >
+        <div
+          class="surface-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize shell surface"
+          on:pointerdown={startShellSurfaceResize}
+          on:pointermove={onShellSurfaceResize}
+          on:pointerup={endShellSurfaceResize}
+          on:pointercancel={endShellSurfaceResize}
+        ></div>
+
+        <header class="surface-header">
+          <div class="surface-header-folder" aria-hidden="true">
+            <span class="surface-folder-mark">SWARM</span>
+          </div>
+          <div class="surface-header-copy">
+            <span class="surface-kicker">Graph Overlay</span>
+            <h2>{shellSurfaceTitle}</h2>
+            <p>{shellSurfaceCopy}</p>
+          </div>
+          <div class="surface-header-actions">
+            <span class="surface-badge">{shellSurfaceBadge}</span>
+            <button
+              type="button"
+              class="surface-action"
+              on:click={toggleShellSurface}
+              aria-label="Hide shell surface"
+              title="Hide shell surface"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="surface-body">
+          <div class="tab-panel" class:hidden={activeTab !== 'launch'}>
+            <Launcher bind:this={launcherRef} />
+          </div>
+          <div class="tab-panel" class:hidden={activeTab !== 'chat'}>
+            <ConversationPanel />
+          </div>
+          <div class="tab-panel" class:hidden={activeTab !== 'inspect'}>
+            <Inspector {selectedNode} {selectedEdge} />
+          </div>
+        </div>
+      </section>
+    {/if}
+  </div>
 
   {#if showSettings}
     <SettingsModal on:close={closeSettings} />
@@ -1027,6 +1166,10 @@
   {/if}
 
   <ConfirmModal />
+
+  <AnalyzePanel open={analyzeOverlayOpen} on:close={closeAnalyzeOverlay} />
+
+  <FrazierCodePanel open={frazierCodeOpen} on:close={closeFrazierCode} />
 
   {#if workspaceActive}
     <FullscreenWorkspace
@@ -1061,7 +1204,8 @@
   }
 
   .app-root.workspace-active .canvas-area,
-  .app-root.workspace-active .sidebar {
+  .app-root.workspace-active .mode-rail,
+  .app-root.workspace-active .shell-surface {
     user-select: none;
   }
 
@@ -1081,130 +1225,360 @@
     background: var(--canvas-bg);
   }
 
-  .sidebar {
+  .mode-rail {
     position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 320px;
-    height: 100%;
+    top: 44px;
+    right: 16px;
+    bottom: 108px;
+    width: var(--mode-rail-width, 68px);
+    padding: 12px 8px;
     box-sizing: border-box;
-    border-left: 1px solid rgba(108, 112, 134, 0.18);
-    background: var(--sidebar-bg, rgba(30, 30, 46, 0.20));
-    backdrop-filter: blur(var(--sidebar-blur, 40px)) saturate(1.4);
-    -webkit-backdrop-filter: blur(var(--sidebar-blur, 40px)) saturate(1.4);
+    border: 1px solid rgba(108, 112, 134, 0.18);
+    border-radius: 20px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 28%),
+      var(--sidebar-bg, rgba(30, 30, 46, 0.2));
+    backdrop-filter: blur(calc(var(--sidebar-blur, 40px) * 0.85)) saturate(1.22);
+    -webkit-backdrop-filter: blur(calc(var(--sidebar-blur, 40px) * 0.85)) saturate(1.22);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    z-index: 32;
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
+  }
+
+  .mode-rail-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .mode-rail-group--bottom {
+    margin-top: auto;
+  }
+
+  .mode-btn {
+    position: relative;
+    width: 100%;
+    min-height: 58px;
+    padding: 9px 8px 8px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: rgba(166, 173, 200, 0.82);
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    overflow: hidden;
+    transition:
+      transform 160ms ease,
+      background 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      box-shadow 160ms ease;
+  }
+
+  .mode-btn:hover {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--terminal-fg, #c0caf5);
+    border-color: rgba(137, 180, 250, 0.22);
+  }
+
+  .mode-btn:active {
+    transform: translateY(0);
+  }
+
+  .mode-btn.selected {
+    color: var(--terminal-fg, #c0caf5);
+  }
+
+  .mode-btn.open {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: var(--node-border, rgba(255, 255, 255, 0.2));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .mode-btn--utility {
+    min-height: 54px;
+  }
+
+  .mode-btn-icon,
+  .mode-btn-label {
+    position: relative;
+    z-index: 1;
+  }
+
+  .mode-btn-icon {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+  }
+
+  .mode-btn-label {
+    max-width: 100%;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.075em;
+    line-height: 1.15;
+    text-transform: uppercase;
+    white-space: nowrap;
+    text-align: center;
+  }
+
+  .mode-btn-label--stacked {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-size: 8px;
+    line-height: 1.05;
+    letter-spacing: 0.055em;
+    white-space: normal;
+  }
+
+  .mode-btn--frazier {
+    min-height: 68px;
+  }
+
+  .shell-surface {
+    position: absolute;
+    top: 44px;
+    right: calc(var(--mode-rail-width, 68px) + var(--shell-surface-gap, 18px) + 16px);
+    bottom: 108px;
+    max-width: calc(100vw - 144px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 24px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03) 18%, transparent),
+      var(--sidebar-bg, rgba(30, 30, 46, 0.2));
+    backdrop-filter: blur(calc(var(--sidebar-blur, 40px) + 4px)) saturate(1.2);
+    -webkit-backdrop-filter: blur(calc(var(--sidebar-blur, 40px) + 4px)) saturate(1.2);
+    box-shadow:
+      0 28px 80px rgba(0, 0, 0, 0.36),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    flex-shrink: 0;
-    z-index: 30;
-    box-shadow: -10px 0 28px rgba(0, 0, 0, 0.18);
-    transition: width 460ms cubic-bezier(0.22, 1, 0.36, 1),
-      border-left-color 460ms ease;
+    z-index: 31;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(calc(100% + 32px));
+    transition:
+      transform var(--sidebar-transition-duration, 420ms) cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 220ms ease,
+      box-shadow 220ms ease;
   }
 
-  .sidebar.resizing {
-    user-select: none;
+  .shell-surface.open {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(0);
+  }
+
+  .shell-surface.resizing {
     transition: none;
   }
 
-  .sidebar.collapsed {
-    border-left-color: transparent;
-    pointer-events: none;
-  }
-
-  /* Inner content fade — asymmetric so it tucks under the width animation:
-     on collapse it fades out fast, on expand it fades in after a delay so
-     the panel has visibly started opening before content reappears. */
-  .tab-bar,
-  .tab-panels {
-    opacity: 1;
-    transition: opacity 200ms ease 100ms;
-  }
-
-  .sidebar.collapsed .tab-bar,
-  .sidebar.collapsed .tab-panels {
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 200ms ease 0ms;
-  }
-
-  .resize-handle {
+  .surface-resize-handle {
     position: absolute;
     top: 0;
     bottom: 0;
-    left: -3px;
-    width: 6px;
+    left: -6px;
+    width: 12px;
     cursor: col-resize;
-    z-index: 10;
+    z-index: 6;
     background: transparent;
-    transition: background 0.12s ease;
   }
 
-  .resize-handle:hover,
-  .sidebar.resizing .resize-handle {
-    background: rgba(137, 180, 250, 0.35);
-  }
-
-  .sidebar.collapsed .resize-handle {
-    pointer-events: none;
-    display: none;
-  }
-
-  .floating-expand {
+  .surface-resize-handle::after {
+    content: '';
     position: absolute;
-    top: 14px;
-    right: 14px;
-    z-index: 20;
-    width: 30px;
-    height: 30px;
-    padding: 0;
-    border-radius: 8px;
-    border: 1px solid rgba(108, 112, 134, 0.35);
-    background: var(--panel-bg, rgba(30, 30, 46, 0.68));
-    backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.1);
-    -webkit-backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.1);
-    color: #a6adc8;
+    top: 28px;
+    bottom: 28px;
+    left: 5px;
+    width: 2px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    transition: background 120ms ease, box-shadow 120ms ease;
+  }
+
+  .surface-resize-handle:hover::after,
+  .shell-surface.resizing .surface-resize-handle::after {
+    background: rgba(137, 180, 250, 0.54);
+    box-shadow: 0 0 12px rgba(137, 180, 250, 0.35);
+  }
+
+  .surface-header {
+    display: grid;
+    grid-template-columns: 132px minmax(0, 1fr) auto;
+    grid-template-areas: "folder copy actions";
+    align-items: center;
+    column-gap: 14px;
+    row-gap: 0;
+    padding: 11px 14px 10px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    flex-shrink: 0;
+  }
+
+  .surface-header-folder {
+    grid-area: folder;
+    width: 132px;
+    min-width: 0;
+    height: 72px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background:
+      linear-gradient(135deg, rgba(255, 255, 255, 0.12), transparent 48%),
+      rgba(255, 255, 255, 0.035);
+    pointer-events: none;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+      0 0 18px rgba(137, 180, 250, 0.1);
+  }
+
+  .surface-folder-mark {
+    color: color-mix(in srgb, var(--terminal-fg, #c0caf5) 72%, transparent);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+  }
+
+  .surface-header-copy {
+    grid-area: copy;
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .surface-kicker {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(166, 173, 200, 0.78);
+  }
+
+  .surface-header-copy h2 {
+    margin: 0;
+    font-size: 19px;
+    line-height: 1.05;
+    font-weight: 700;
+    color: var(--terminal-fg, #c0caf5);
+  }
+
+  .surface-header-copy p {
+    margin: 0;
+    max-width: 100%;
+    font-size: 11.5px;
+    line-height: 1.28;
+    color: rgba(166, 173, 200, 0.86);
+  }
+
+  .surface-header-actions {
+    grid-area: actions;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    min-width: max-content;
+    align-self: end;
+  }
+
+  .surface-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--terminal-fg, #c0caf5);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  .surface-action {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: transparent;
+    color: rgba(166, 173, 200, 0.86);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-    transition: background 0.16s ease, color 0.16s ease,
-      border-color 0.16s ease, transform 0.16s ease;
+    transition:
+      background 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      transform 160ms ease;
   }
 
-  .floating-expand:hover {
-    background: rgba(49, 50, 68, 0.92);
+  .surface-action:hover {
+    background: rgba(255, 255, 255, 0.05);
     color: var(--terminal-fg, #c0caf5);
-    border-color: rgba(137, 180, 250, 0.55);
-    transform: translateX(-2px);
+    border-color: rgba(137, 180, 250, 0.4);
+    transform: translateX(-1px);
   }
 
-  .floating-expand:active {
-    transform: translateX(0);
+  .surface-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .tab-panel {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .tab-panel.hidden {
+    display: none;
   }
 
   .floating-home {
     position: absolute;
-    top: 14px;
+    top: 42px;
     left: 14px;
     z-index: 20;
-    height: 32px;
-    padding: 0 12px 0 10px;
+    height: 34px;
+    padding: 0 13px 0 11px;
     border-radius: 10px;
     border: 1px solid rgba(108, 112, 134, 0.35);
     background: var(--panel-bg, rgba(30, 30, 46, 0.68));
-    backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.1);
-    -webkit-backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.1);
+    backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.08);
+    -webkit-backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.08);
     color: #a6adc8;
     display: inline-flex;
     align-items: center;
     gap: 8px;
     cursor: pointer;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-    transition: background 0.16s ease, color 0.16s ease,
-      border-color 0.16s ease, transform 0.16s ease;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+    transition:
+      background 160ms ease,
+      color 160ms ease,
+      border-color 160ms ease,
+      transform 160ms ease;
   }
 
   .floating-home:hover {
@@ -1218,91 +1592,195 @@
     transform: translateY(0);
   }
 
-  .tab-bar {
-    display: flex;
-    align-items: stretch;
-    justify-content: space-between;
-    border-bottom: 1px solid rgba(108, 112, 134, 0.2);
-    padding: 0 8px 0 0;
-    flex-shrink: 0;
+  :global([data-theme="tron-encom-os"]) .mode-rail {
+    border-radius: 0;
+    border-color: var(--led-line-s, rgba(255, 255, 255, 0.35));
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 32%),
+      rgba(2, 4, 8, 0.38);
+    box-shadow:
+      var(--glow-s, 0 0 20px rgba(255, 255, 255, 0.12)),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.03);
   }
 
-  .tabs {
-    display: flex;
-    align-items: stretch;
-    gap: 0;
+  :global([data-theme="tron-encom-os"]) .mode-btn {
+    border-radius: 0;
+    color: var(--fg-secondary, #aab0bb);
   }
 
-  .tab {
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: #6c7086;
-    padding: 12px 14px;
-    font-size: 12px;
-    font-weight: 500;
-    font-family: inherit;
-    letter-spacing: 0.02em;
-    cursor: pointer;
-    transition: color 0.12s ease, border-color 0.12s ease;
+  :global([data-theme="tron-encom-os"]) .mode-btn:hover,
+  :global([data-theme="tron-encom-os"]) .mode-btn.open {
+    border-color: var(--led-line, rgba(255, 255, 255, 0.6));
+    background: rgba(255, 255, 255, 0.02);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+      0 0 14px var(--led-halo, rgba(255, 255, 255, 0.18));
+    color: var(--fg-primary, #eef3f7);
   }
 
-  .tab:hover {
-    color: #a6adc8;
+  :global([data-theme="tron-encom-os"]) .mode-btn--frazier {
+    color: color-mix(in srgb, #ffd94a 62%, var(--fg-secondary, #aab0bb));
   }
 
-  .tab.active {
-    color: var(--terminal-fg, #c0caf5);
-    border-bottom-color: #89b4fa;
+  :global([data-theme="tron-encom-os"]) .mode-btn--frazier:hover,
+  :global([data-theme="tron-encom-os"]) .mode-btn--frazier.open {
+    border-color: rgba(255, 217, 74, 0.68);
+    color: #ffe66d;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 217, 74, 0.08),
+      0 0 18px rgba(255, 166, 0, 0.24),
+      0 0 28px rgba(255, 255, 255, 0.11);
   }
 
-  .tab-actions {
-    display: flex;
-    align-items: center;
+  :global([data-theme="tron-encom-os"]) .mode-btn-label,
+  :global([data-theme="tron-encom-os"]) .surface-kicker,
+  :global([data-theme="tron-encom-os"]) .surface-badge {
+    font-family: var(--font-mono, 'JetBrains Mono', monospace);
+    letter-spacing: 0.12em;
   }
 
-  .icon-btn {
-    width: 24px;
-    height: 24px;
-    border: none;
-    background: transparent;
-    color: #6c7086;
-    border-radius: 4px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    transition: background 0.12s ease, color 0.12s ease;
+  :global([data-theme="tron-encom-os"]) .shell-surface {
+    border-radius: 0;
+    border-color: var(--led-line-s, rgba(255, 255, 255, 0.35));
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 20%),
+      rgba(2, 4, 8, 0.22);
+    backdrop-filter: blur(calc(var(--sidebar-blur, 40px) + 8px)) saturate(1.05);
+    -webkit-backdrop-filter: blur(calc(var(--sidebar-blur, 40px) + 8px)) saturate(1.05);
+    box-shadow:
+      var(--glow-s, 0 0 20px rgba(255, 255, 255, 0.12)),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+      0 22px 90px rgba(0, 0, 0, 0.5);
   }
 
-  .icon-btn:hover {
+  :global([data-theme="tron-encom-os"]) .surface-resize-handle::after {
+    background: var(--led-line-s, rgba(255, 255, 255, 0.35));
+  }
+
+  :global([data-theme="tron-encom-os"]) .surface-header {
+    border-bottom-color: var(--led-line-s, rgba(255, 255, 255, 0.35));
+  }
+
+  :global([data-theme="tron-encom-os"]) .surface-header-folder {
+    border-radius: 0;
+    border: 2px solid var(--led-line-s, rgba(255, 255, 255, 0.35));
+    background:
+      linear-gradient(90deg, rgba(255, 255, 255, 0.1), transparent 42%),
+      var(--bg-base, #000);
+    box-shadow:
+      var(--led-halo, 0 0 14px rgba(255, 255, 255, 0.18)),
+      inset 0 0 18px rgba(255, 255, 255, 0.04);
+  }
+
+  :global([data-theme="tron-encom-os"]) .surface-folder-mark {
+    color: var(--fg-primary, #eef3f7);
+    text-shadow:
+      0 0 8px rgba(255, 255, 255, 0.36),
+      0 0 18px rgba(255, 255, 255, 0.16);
+  }
+
+  :global([data-theme="tron-encom-os"]) .surface-header-copy h2 {
+    color: var(--fg-primary, #eef3f7);
+  }
+
+  :global([data-theme="tron-encom-os"]) .surface-header-copy p {
+    color: var(--fg-muted, #8b93a1);
+  }
+
+  :global([data-theme="tron-encom-os"]) .surface-badge,
+  :global([data-theme="tron-encom-os"]) .surface-action,
+  :global([data-theme="tron-encom-os"]) .floating-home {
+    border-radius: 0;
+    border-color: var(--led-line-s, rgba(255, 255, 255, 0.35));
+  }
+
+  :global([data-theme="tron-encom-os"]) .surface-badge {
+    background: rgba(255, 255, 255, 0.02);
+    color: var(--fg-primary, #eef3f7);
+    box-shadow: 0 0 10px var(--led-halo, rgba(255, 255, 255, 0.18));
+  }
+
+  :global([data-theme="tron-encom-os"]) .surface-action {
+    color: var(--fg-primary, #eef3f7);
+  }
+
+  :global([data-theme="tron-encom-os"]) .surface-action:hover {
     background: rgba(255, 255, 255, 0.05);
-    color: var(--terminal-fg, #c0caf5);
+    box-shadow: 0 0 10px var(--led-halo, rgba(255, 255, 255, 0.18));
   }
 
-  .icon-btn.active {
-    background: rgba(137, 180, 250, 0.12);
-    color: var(--terminal-fg, #c0caf5);
+  :global([data-theme="tron-encom-os"]) .floating-home {
+    background: rgba(2, 4, 8, 0.22);
+    color: var(--fg-primary, #eef3f7);
+    box-shadow:
+      var(--glow-s, 0 0 20px rgba(255, 255, 255, 0.12)),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.03);
   }
 
-  .tab-panels {
-    flex: 1;
-    position: relative;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
+  @media (max-width: 900px) {
+    .mode-rail {
+      top: auto;
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+      width: auto;
+      padding: 8px;
+      flex-direction: row;
+      align-items: stretch;
+      gap: 8px;
+    }
+
+    .mode-rail-group {
+      flex-direction: row;
+    }
+
+    .mode-rail-group--bottom {
+      margin-top: 0;
+      margin-left: auto;
+    }
+
+    .mode-btn {
+      width: 56px;
+      min-width: 56px;
+    }
+
+    .mode-btn-label {
+      display: none;
+    }
+
+    .shell-surface {
+      top: 52px;
+      right: 16px;
+      left: 16px;
+      bottom: 104px;
+      width: auto !important;
+      max-width: none;
+      border-radius: 20px;
+    }
+
+    .surface-resize-handle {
+      display: none;
+    }
   }
 
-  .tab-panel {
-    flex: 1;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
+  @media (max-width: 640px) {
+    .surface-header {
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "copy actions"
+        "folder folder";
+      align-items: flex-start;
+    }
 
-  .tab-panel.hidden {
-    display: none;
+    .surface-header-folder {
+      width: 132px;
+      min-width: 0;
+      height: 54px;
+    }
+
+    .surface-header-actions {
+      width: 100%;
+      justify-content: space-between;
+    }
   }
 </style>

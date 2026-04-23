@@ -532,13 +532,21 @@ async fn close_pty(
     State(state): State<EndpointState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
+    payload: Option<Json<ClosePtyRequest>>,
 ) -> Result<Response, Response> {
     let auth = authenticate_request(&state, &headers).await?;
     enforce_rate_limit(&state, &auth, "pty.close")?;
+    let force = match payload {
+        Some(Json(request)) => {
+            require_version(request.v)?;
+            request.force
+        }
+        None => false,
+    };
     let request = ClosePtyRequest {
         v: PROTOCOL_VERSION,
         pty_id: id,
-        force: false,
+        force,
     };
     let ack = state
         .app

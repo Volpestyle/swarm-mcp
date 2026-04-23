@@ -17,3 +17,54 @@ body,
 body {
   margin: 0;
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+   TRON ENCOM OS — root scope
+   Applied when appearance.ts sets `<html data-theme="tron-encom-os">`.
+   These rules layer on top of the standard CSS vars set by appearance.ts.
+   They are scoped so the four legacy themes are completely unaffected.
+   See `lib/themeProfiles.ts` for the chrome token values.
+   ──────────────────────────────────────────────────────────────────────── */
+
+[data-theme="tron-encom-os"] {
+  /* Sharp corners across the board (mock has zero radius). Components
+     reading --node-radius / --panel-radius pick this up automatically. */
+  --node-radius: 0px;
+  --panel-radius: 0px;
+  --button-radius: 0px;
+}
+
+[data-theme="tron-encom-os"] body {
+  background: var(--bg-base);
+  color: var(--fg-primary);
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Dotted radial-gradient grid behind everything. ::before keeps it
+   non-interactive and below all UI z-indexes. */
+[data-theme="tron-encom-os"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: radial-gradient(var(--grid-color) 1px, transparent 1.2px);
+  background-size: 26px 26px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* HUD type — uppercase, wide tracking. Use by adding the `.hud-label`
+   utility class on any chip/label that should read as a HUD readout. */
+[data-theme="tron-encom-os"] .hud-label {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  text-shadow: var(--glow-s);
+}

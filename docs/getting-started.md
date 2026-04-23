@@ -173,3 +173,5 @@ The minimum collaboration loop is:
 - Call `broadcast` or `update_task` when handing work off
 
 For troubleshooting tips, see the [Troubleshooting](../README.md#troubleshooting) section in the README.
+
+If you are using `swarm-ui`, the operator surface for machine-wide process inspection and real agent cleanup lives in [`docs/system-load-analyzer.md`](./system-load-analyzer.md).

@@ -15,17 +15,23 @@ import { writable, derived, get, type Readable } from 'svelte/store';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  KillResult,
+  KillSummary,
+  KillTarget,
   PtySession,
   BindingState,
   ShellSpawnResult,
   RespawnResult,
   PtyExitPayload,
   RolePresetSummary,
+  SystemLoadSnapshot,
 } from '../lib/types';
+import { reconcilePtyCatalog } from '../lib/ptyCatalog';
 import { resolveHarnessCommand } from './harnessAliases';
 
 const HARNESS_AUTOTYPE_MIN_DELAY_MS = 200;
 const PTY_READY_TIMEOUT_MS = 1500;
+const SWARM_BOOTSTRAP_DELAY_MS = 1400;
 export const LOCAL_PTY_LEASE_HOLDER = 'local:swarm-ui';
 
 type ReadyGate = {
@@ -73,17 +79,61 @@ async function waitForPtyTerminalReady(ptyId: string): Promise<void> {
   await Promise.race([gate.promise, delay(PTY_READY_TIMEOUT_MS)]);
 }
 
-async function autoTypeHarnessWhenReady(
+async function autoTypeCommandWhenReady(
   ptyId: string,
-  harness: string,
+  command: string,
 ): Promise<void> {
   await Promise.all([
     waitForPtyTerminalReady(ptyId),
     delay(HARNESS_AUTOTYPE_MIN_DELAY_MS),
   ]);
 
-  const aliased = resolveHarnessCommand(harness);
-  const encoded = new TextEncoder().encode(`${aliased}\n`);
+  const encoded = new TextEncoder().encode(`${command}\n`);
+  await writeToPty(ptyId, encoded);
+}
+
+function buildBootstrapPrompt(
+  cwd: string,
+  role: string | null,
+  bootstrapInstructions: string | null,
+): string {
+  const base =
+    `Use the swarm register tool with directory="${cwd}". ` +
+    'Then call whoami, list_instances, poll_messages, and list_tasks.';
+
+  const roleLine = role
+    ? role === 'planner'
+      ? ' You are the planner. Coordinate work through swarm tasks and use wait_for_activity when idle.'
+      : role === 'implementer'
+        ? ' You are the implementer. Claim appropriate tasks, execute them, and use wait_for_activity when idle.'
+        : role === 'reviewer'
+          ? ' You are the reviewer. Focus on review tasks and use wait_for_activity when idle.'
+          : role === 'researcher'
+            ? ' You are the researcher. Focus on research tasks and use wait_for_activity when idle.'
+            : ' Use wait_for_activity when idle.'
+    : ' Use wait_for_activity when idle.';
+
+  const extraInstructions = bootstrapInstructions?.trim();
+  if (!extraInstructions) {
+    return `${base}${roleLine}`;
+  }
+
+  return `${base}${roleLine}\nSaved launcher profile:\n${extraInstructions}`;
+}
+
+async function autoBootstrapHarnessWhenReady(
+  ptyId: string,
+  cwd: string,
+  role: string | null,
+  bootstrapInstructions: string | null,
+): Promise<void> {
+  await Promise.all([
+    waitForPtyTerminalReady(ptyId),
+    delay(HARNESS_AUTOTYPE_MIN_DELAY_MS + SWARM_BOOTSTRAP_DELAY_MS),
+  ]);
+
+  const prompt = buildBootstrapPrompt(cwd, role, bootstrapInstructions);
+  const encoded = new TextEncoder().encode(`${prompt}\n`);
   await writeToPty(ptyId, encoded);
 }
 
@@ -276,6 +326,37 @@ let bindUnresolvedUnlisten: UnlistenFn | null = null;
 let ptyBoundExitUnlisten: UnlistenFn | null = null;
 let initialized = false;
 
+async function fetchPtyCatalogSnapshot(): Promise<{
+  bindings: BindingState;
+  sessions: PtySession[];
+}> {
+  const [bindings, sessions] = await Promise.all([
+    invoke<BindingState>('get_binding_state'),
+    invoke<PtySession[]>('get_pty_sessions'),
+  ]);
+
+  return { bindings, sessions };
+}
+
+function applyPtyCatalogSnapshot(
+  nextBindings: BindingState,
+  nextSessions: PtySession[],
+): void {
+  const reconciled = reconcilePtyCatalog(get(ptySessions), nextBindings, nextSessions);
+
+  for (const removedPtyId of reconciled.removedPtyIds) {
+    clearPtyTerminalReady(removedPtyId);
+  }
+
+  bindings.set(reconciled.bindings);
+  ptySessions.set(reconciled.sessionMap);
+}
+
+export async function refreshPtyCatalog(): Promise<void> {
+  const snapshot = await fetchPtyCatalogSnapshot();
+  applyPtyCatalogSnapshot(snapshot.bindings, snapshot.sessions);
+}
+
 /**
  * Initialize PTY store event listeners.
  * Fetches current binding state and subscribes to lifecycle events.
@@ -283,18 +364,6 @@ let initialized = false;
 export async function initPtyStore(): Promise<void> {
   if (initialized) return;
   initialized = true;
-
-  try {
-    const [state, sessions] = await Promise.all([
-      invoke<BindingState>('get_binding_state'),
-      invoke<PtySession[]>('get_pty_sessions'),
-    ]);
-
-    bindings.set(state);
-    ptySessions.set(new Map(sessions.map((session) => [session.id, session])));
-  } catch (err) {
-    console.warn('[pty] failed to fetch initial PTY state:', err);
-  }
 
   // Listen for PTY creation events
   ptyCreatedUnlisten = await listen<PtySession>('pty:created', (event) => {
@@ -377,6 +446,12 @@ export async function initPtyStore(): Promise<void> {
     removeBindingForPty(pty_id);
     patchSession(pty_id, { bound_instance_id: null });
   });
+
+  try {
+    await refreshPtyCatalog();
+  } catch (err) {
+    console.warn('[pty] failed to fetch initial PTY state:', err);
+  }
 }
 
 /**
@@ -467,6 +542,11 @@ export async function getPtyBuffer(id: string): Promise<Uint8Array> {
 
 export interface SpawnShellOptions {
   harness?: string;
+  /**
+   * Optional profile-specific command typed into the shell instead of the
+   * global harness alias. Useful for per-agent wrappers or permission flags.
+   */
+  harnessCommand?: string;
   role?: string;
   scope?: string;
   label?: string;
@@ -476,6 +556,12 @@ export interface SpawnShellOptions {
    * instance UUID when absent.
    */
   name?: string;
+  /**
+   * Extra operator guidance appended to the auto-typed bootstrap prompt after
+   * the harness starts. Used for saved agent profiles and persona/context
+   * instructions without expanding the backend launch contract.
+   */
+  bootstrapInstructions?: string;
 }
 
 /**
@@ -493,10 +579,12 @@ export async function spawnShell(
   options: SpawnShellOptions = {},
 ): Promise<ShellSpawnResult> {
   const trimmedHarness = options.harness?.trim() || null;
+  const trimmedHarnessCommand = options.harnessCommand?.trim() || null;
   const trimmedRole = options.role?.trim() || null;
   const trimmedScope = options.scope?.trim() || null;
   const trimmedLabel = options.label?.trim() || null;
   const trimmedName = options.name?.trim() || null;
+  const trimmedBootstrapInstructions = options.bootstrapInstructions?.trim() || null;
 
   const result = await invoke<ShellSpawnResult>('spawn_shell', {
     cwd,
@@ -527,11 +615,22 @@ export async function spawnShell(
   }
 
   if (trimmedHarness) {
-    void autoTypeHarnessWhenReady(
+    const launchCommand = trimmedHarnessCommand || resolveHarnessCommand(trimmedHarness);
+
+    void autoTypeCommandWhenReady(
       result.pty_id,
-      trimmedHarness,
+      launchCommand,
     ).catch((err) => {
       console.warn('[pty] failed to auto-type harness into shell:', err);
+    });
+
+    void autoBootstrapHarnessWhenReady(
+      result.pty_id,
+      cwd,
+      trimmedRole,
+      trimmedBootstrapInstructions,
+    ).catch((err) => {
+      console.warn('[pty] failed to auto-bootstrap harness session:', err);
     });
   }
 
@@ -575,10 +674,10 @@ export async function respawnInstance(instanceId: string): Promise<RespawnResult
   resolveBinding(result.instance_id, result.pty_id);
 
   if (result.harness) {
-    void autoTypeHarnessWhenReady(
+    void autoTypeCommandWhenReady(
       result.pty_id,
-      result.harness,
-    ).catch((err) => {
+      resolveHarnessCommand(result.harness),
+    ).catch((err: unknown) => {
       console.warn('[pty] failed to auto-type harness on respawn:', err);
     });
   }
@@ -599,6 +698,125 @@ export async function deregisterInstance(instanceId: string): Promise<void> {
   bindings.update((state) => ({
     pending: state.pending,
     resolved: state.resolved.filter(([id]) => id !== instanceId),
+  }));
+}
+
+/**
+ * Kill the OS process for an instance, then deregister the row. This is the
+ * "red icon actually kills" path used by NodeHeader and ConversationPanel —
+ * sends SIGTERM to the pid recorded at `swarm.register` time, waits briefly,
+ * then SIGKILL if still alive. Unlike `deregisterInstance`, which only drops
+ * the swarm row, this tears down the underlying bun/claude/etc. process so
+ * externally-spawned agents stop burning tokens.
+ *
+ * Gate this with a confirm dialog — it's destructive.
+ */
+export async function killInstance(instanceId: string): Promise<void> {
+  await killSessionTree({
+    kind: 'bound_instance',
+    instance_id: instanceId,
+  });
+}
+
+export async function scanSystemLoad(
+  scope: string | null = null,
+): Promise<SystemLoadSnapshot> {
+  return await invoke<SystemLoadSnapshot>('ui_scan_system_load', { scope });
+}
+
+export async function killSessionTree(target: KillTarget): Promise<KillResult> {
+  const result = await invoke<KillResult>('ui_kill_session_tree', { target });
+  dropKilledBindings(result);
+  try {
+    await refreshPtyCatalog();
+  } catch (err) {
+    console.warn('[pty] failed to refresh PTY catalog after kill:', err);
+  }
+  return result;
+}
+
+export async function killAllAgentSessions(
+  scope: string | null = null,
+): Promise<KillSummary> {
+  const result = await invoke<KillSummary>('ui_kill_all_agent_sessions', { scope });
+  bindings.update((state) => ({
+    pending: state.pending.filter(([, ptyId]) => !result.closed_ptys.includes(ptyId)),
+    resolved: state.resolved.filter(
+      ([instanceId, ptyId]) =>
+        !result.deregistered_instances.includes(instanceId)
+        && !result.closed_ptys.includes(ptyId),
+    ),
+  }));
+  try {
+    await refreshPtyCatalog();
+  } catch (err) {
+    console.warn('[pty] failed to refresh PTY catalog after kill-all:', err);
+  }
+  return result;
+}
+
+export async function killPtySession(ptyId: string): Promise<KillResult> {
+  return await killSessionTree({
+    kind: 'orphan_pty_session',
+    pty_id: ptyId,
+  });
+}
+
+/**
+ * Broadcast an operator-authored message to every agent in `scope`. Writes one
+ * message row per recipient and emits a `message.broadcast` event so the
+ * ConnectionEdge animations pulse. Returns the number of recipients the message
+ * landed in. Zero means the scope is empty (no agents registered).
+ */
+export async function broadcastOperatorMessage(
+  scope: string,
+  content: string,
+): Promise<number> {
+  return await invoke<number>('ui_broadcast_message', { scope, content });
+}
+
+/**
+ * Fan out a Ctrl-C (soft interrupt) to every bound PTY in `scope`. Used by the
+ * Conversation panel's "Stop" button. Only PTYs owned by this UI session are
+ * signalled — externally adopted instances the UI never bound to are skipped.
+ * Returns the count of PTYs that received the interrupt.
+ */
+export async function sendScopeSigint(scope: string): Promise<number> {
+  return await invoke<number>('ui_send_sigint_scope', { scope });
+}
+
+/**
+ * Force-deregister an instance the user has explicitly told us to nuke.
+ *
+ * Unlike `deregisterInstance`, this bypasses the gentle policy checks the
+ * server applies to the standard path:
+ *   - The server best-effort closes any bound PTY (errors swallowed).
+ *   - The heartbeat status check is skipped (prev-session rows whose
+ *     heartbeat is still fresh from a server-side adopter can be removed).
+ *   - The binder mapping is unconditionally dropped server-side.
+ *
+ * Callers MUST gate this with a confirm dialog — the whole point is that
+ * it's a destructive override. The Home screen × button uses this so the
+ * user isn't trapped behind "still has a live PTY in this session" or
+ * "is online and cannot be removed yet" errors when they've already
+ * decided the row is gone.
+ */
+export async function forceDeregisterInstance(instanceId: string): Promise<void> {
+  await invoke('ui_force_deregister_instance', { instanceId });
+  bindings.update((state) => ({
+    pending: state.pending,
+    resolved: state.resolved.filter(([id]) => id !== instanceId),
+  }));
+}
+
+function dropKilledBindings(result: KillResult): void {
+  bindings.update((state) => ({
+    pending: state.pending.filter(([, ptyId]) => !result.closed_ptys.includes(ptyId)),
+    resolved: state.resolved.filter(
+      ([instanceId, ptyId]) =>
+        !result.deregistered_instances.includes(instanceId)
+        && !result.closed_ptys.includes(ptyId),
+    ),
   }));
 }
 
