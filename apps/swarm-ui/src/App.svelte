@@ -102,6 +102,7 @@
 
   // Styles
   import './styles/terminal.css';
+  import darkFolderAsset from './assets/dark-folder.png';
 
   // -------------------------------------------------------------------
   // Node and edge type registrations for SvelteFlow
@@ -1108,7 +1109,7 @@
 
         <header class="surface-header">
           <div class="surface-header-folder" aria-hidden="true">
-            <span class="surface-folder-mark">SWARM</span>
+            <img src={darkFolderAsset} alt="" />
           </div>
           <div class="surface-header-copy">
             <span class="surface-kicker">Graph Overlay</span>
@@ -1430,26 +1431,27 @@
     height: 72px;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     border-radius: 0;
-    overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    background:
-      linear-gradient(135deg, rgba(255, 255, 255, 0.12), transparent 48%),
-      rgba(255, 255, 255, 0.035);
+    overflow: visible;
+    border: 0;
+    background: transparent;
     pointer-events: none;
-    box-shadow:
-      inset 0 0 0 1px rgba(255, 255, 255, 0.035),
-      0 0 18px rgba(137, 180, 250, 0.1);
   }
 
-  .surface-folder-mark {
-    color: color-mix(in srgb, var(--terminal-fg, #c0caf5) 72%, transparent);
-    font-family: var(--font-mono, ui-monospace, monospace);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.28em;
-    text-transform: uppercase;
+  .surface-header-folder img {
+    width: 132px;
+    max-height: 76px;
+    height: auto;
+    object-fit: contain;
+    object-position: left center;
+    opacity: 0.96;
+    filter:
+      brightness(1.22)
+      contrast(1.08)
+      saturate(0.9)
+      drop-shadow(0 0 12px rgba(137, 180, 250, 0.18));
+    mix-blend-mode: screen;
   }
 
   .surface-header-copy {
@@ -1663,20 +1665,19 @@
 
   :global([data-theme="tron-encom-os"]) .surface-header-folder {
     border-radius: 0;
-    border: 2px solid var(--led-line-s, rgba(255, 255, 255, 0.35));
-    background:
-      linear-gradient(90deg, rgba(255, 255, 255, 0.1), transparent 42%),
-      var(--bg-base, #000);
-    box-shadow:
-      var(--led-halo, 0 0 14px rgba(255, 255, 255, 0.18)),
-      inset 0 0 18px rgba(255, 255, 255, 0.04);
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
   }
 
-  :global([data-theme="tron-encom-os"]) .surface-folder-mark {
-    color: var(--fg-primary, #eef3f7);
-    text-shadow:
-      0 0 8px rgba(255, 255, 255, 0.36),
-      0 0 18px rgba(255, 255, 255, 0.16);
+  :global([data-theme="tron-encom-os"]) .surface-header-folder img {
+    opacity: 1;
+    filter:
+      brightness(1.35)
+      contrast(1.08)
+      saturate(0.9)
+      drop-shadow(0 0 20px rgba(255, 255, 255, 0.36))
+      drop-shadow(0 0 38px rgba(255, 255, 255, 0.18));
   }
 
   :global([data-theme="tron-encom-os"]) .surface-header-copy h2 {

@@ -32,7 +32,7 @@ This README describes the `experimental-frazier` branch. The upstream `main` bra
 - Live agent sessions, messages, tasks, and layouts are not committed; they live in `~/.swarm-mcp/swarm.db`, which is ignored by git.
 - Local operator notes such as `Agents.md`, `DEVNOTES.md`, and `docs/superpowers/` are ignored so personal paths and scratch planning docs do not ride along with branch uploads.
 - Branch artwork is committed in `docs/assets/` for GitHub and in `apps/swarm-ui/src/assets/` for the Startup/Home hero and FrazierCode/About panel.
-- OpenAI/Anthropic PNG logos and emoji personas are bundled with the app branch assets so cloned checkouts render the intended visual identity without extra assembly.
+- OpenAI/Anthropic PNG logos, folder chrome art, and emoji personas are bundled with the app branch assets so cloned checkouts render the intended visual identity without extra assembly.
 - Any tests that need path-like fixtures should use generic sample paths, not a real user home directory.
 
 ## Edge cases to keep in mind
