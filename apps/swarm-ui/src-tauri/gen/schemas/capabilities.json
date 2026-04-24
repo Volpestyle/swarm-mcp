@@ -1,1 +1,0 @@
-{"default":{"identifier":"default","description":"Default desktop capability set for swarm-ui.","local":true,"windows":["main"],"permissions":["core:default","core:app:default","core:event:default","core:window:default"]}}
