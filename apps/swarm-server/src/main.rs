@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -422,12 +422,45 @@ async fn revoke(
     let mut db = state.app.auth_db.lock().await;
     expire_pairing_sessions(&mut db)?;
     revoke_device(&mut db, &auth.device_id, &request.device_id)?;
+    drop(db);
+    release_device_leases(&state.app.pty_service, &request.device_id);
 
     Ok(Json(RevokeResponse {
         v: PROTOCOL_VERSION,
         revoked: true,
     })
     .into_response())
+}
+
+fn release_device_leases(pty_service: &PtyService, device_id: &str) {
+    let holder = format!("device:{device_id}");
+    let snapshot = match pty_service.snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(err) => {
+            warn!(%err, %device_id, "failed to inspect PTY leases during device revoke");
+            return;
+        }
+    };
+
+    for pty in snapshot.rows {
+        let owns_current = pty
+            .lease
+            .as_ref()
+            .is_some_and(|lease| lease.holder == holder);
+
+        if let Err(err) = pty_service.release_lease(
+            ReleaseLeaseRequest {
+                v: PROTOCOL_VERSION,
+                pty_id: pty.id,
+            },
+            &holder,
+        ) {
+            if !owns_current && err.payload().class == ErrorClass::LeaseConflict {
+                continue;
+            }
+            warn!(%err, %device_id, "failed to release PTY lease during device revoke");
+        }
+    }
 }
 
 async fn state_snapshot(
@@ -535,20 +568,50 @@ async fn close_pty(
     State(state): State<EndpointState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
+    body: Bytes,
 ) -> Result<Response, Response> {
     let auth = authenticate_request(&state, &headers).await?;
     enforce_rate_limit(&state, &auth, "pty.close")?;
-    let request = ClosePtyRequest {
-        v: PROTOCOL_VERSION,
-        pty_id: id,
-        force: false,
-    };
+    let request = close_pty_request_from_body(id, body)?;
     let ack = state
         .app
         .pty_service
-        .close(request, &auth.lease_holder())
+        .close(request, &auth.lease_holder(), auth.local)
         .map_err(server_error_response)?;
     Ok(Json(ack).into_response())
+}
+
+fn close_pty_request_from_body(path_id: String, body: Bytes) -> Result<ClosePtyRequest, Response> {
+    if body.is_empty() {
+        return Ok(ClosePtyRequest {
+            v: PROTOCOL_VERSION,
+            pty_id: path_id,
+            force: false,
+        });
+    }
+
+    let request = serde_json::from_slice::<ClosePtyRequest>(&body).map_err(|err| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            ErrorPayload::new(
+                ErrorClass::Validation,
+                format!("invalid close request body: {err}"),
+            ),
+        )
+    })?;
+    require_version(request.v)?;
+
+    if request.pty_id != path_id {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            ErrorPayload::new(
+                ErrorClass::Validation,
+                "close request pty_id does not match URL path",
+            ),
+        ));
+    }
+
+    Ok(request)
 }
 
 async fn request_lease(
