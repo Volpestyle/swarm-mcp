@@ -43,6 +43,11 @@ function loadSql(asset: string) {
 
 const bootstrapSql = loadSql(bootstrapAsset);
 const finalizeSql = loadSql(finalizeAsset);
+const SWARM_DB_VERSION = (() => {
+  const match = bootstrapSql.match(/PRAGMA\s+user_version\s*=\s*(\d+)/i);
+  if (!match) throw new Error("swarm DB bootstrap SQL is missing PRAGMA user_version");
+  return Number(match[1]);
+})();
 
 export const db = {
   exec(sql: string) {
@@ -58,9 +63,6 @@ export const db = {
     return raw.transaction(fn);
   },
 };
-
-db.exec("PRAGMA busy_timeout = 3000");
-db.exec(bootstrapSql);
 
 const COLUMN_MIGRATIONS = [
   ["instances", "scope TEXT NOT NULL DEFAULT ''"],
@@ -100,6 +102,22 @@ function table(name: string) {
   return !!row;
 }
 
+function userVersion() {
+  const row = db.query("PRAGMA user_version").get() as
+    | { user_version: number }
+    | undefined;
+  return row?.user_version ?? 0;
+}
+
+function ensureCompatibleVersion() {
+  const live = userVersion();
+  if (live > SWARM_DB_VERSION) {
+    throw new Error(
+      `swarm.db schema version ${live} is newer than this MCP server supports (${SWARM_DB_VERSION})`,
+    );
+  }
+}
+
 function rebuildKv() {
   if (!table("kv")) return;
 
@@ -123,6 +141,11 @@ function rebuildKv() {
   db.exec("ALTER TABLE kv_next RENAME TO kv");
 }
 
+db.exec("PRAGMA busy_timeout = 3000");
+ensureCompatibleVersion();
+db.exec(bootstrapSql);
+
 for (const [tableName, spec] of COLUMN_MIGRATIONS) add(tableName, spec);
 rebuildKv();
 db.exec(finalizeSql);
+db.exec(`PRAGMA user_version = ${SWARM_DB_VERSION}`);

@@ -18,8 +18,8 @@ use hyper_util::rt::TokioIo;
 use hyper_util::service::TowerToHyperService;
 use rand::RngCore;
 use rcgen::generate_simple_self_signed;
-use rustls_pemfile as pemfile;
 use rusqlite::{Connection, OptionalExtension, params};
+use rustls_pemfile as pemfile;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -177,6 +177,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     cancel_active_pairing_sessions(&mut auth_db, None, "server_startup")
         .map_err(|response| std::io::Error::other(response_error_message(response)))?;
     expire_pairing_sessions(&mut auth_db)
+        .map_err(|response| std::io::Error::other(response_error_message(response)))?;
+    open_swarm_rw(&config.swarm_db_path)
+        .map(drop)
         .map_err(|response| std::io::Error::other(response_error_message(response)))?;
 
     let (broadcast_tx, _) = broadcast::channel(512);
@@ -1146,54 +1149,9 @@ fn open_swarm_rw(path: &Path) -> Result<Connection, Response> {
     })?;
     conn.busy_timeout(Duration::from_millis(3_000))
         .map_err(|err| internal_response(format!("failed to set swarm db busy timeout: {err}")))?;
-    ensure_instance_schema(&conn)?;
+    swarm_schema::ensure_schema(&conn)
+        .map_err(|err| internal_response(format!("failed to ensure swarm db schema: {err}")))?;
     Ok(conn)
-}
-
-fn ensure_instance_schema(conn: &Connection) -> Result<(), Response> {
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS instances (
-          id TEXT PRIMARY KEY,
-          scope TEXT NOT NULL,
-          directory TEXT NOT NULL,
-          root TEXT NOT NULL,
-          file_root TEXT NOT NULL DEFAULT '',
-          pid INTEGER NOT NULL,
-          label TEXT,
-          registered_at INTEGER NOT NULL DEFAULT (unixepoch()),
-          heartbeat INTEGER NOT NULL DEFAULT (unixepoch()),
-          adopted INTEGER NOT NULL DEFAULT 1
-        );
-        "#,
-    )
-    .map_err(|err| internal_response(format!("failed to ensure instances schema: {err}")))?;
-
-    let adopted_exists = conn
-        .prepare("PRAGMA table_info(instances)")
-        .and_then(|mut stmt| {
-            let mut rows = stmt.query([])?;
-            let mut found = false;
-            while let Some(row) = rows.next()? {
-                let name: String = row.get(1)?;
-                if name == "adopted" {
-                    found = true;
-                    break;
-                }
-            }
-            Ok(found)
-        })
-        .map_err(|err| internal_response(format!("failed to inspect instances schema: {err}")))?;
-
-    if !adopted_exists {
-        conn.execute(
-            "ALTER TABLE instances ADD COLUMN adopted INTEGER NOT NULL DEFAULT 1",
-            [],
-        )
-        .map_err(|err| internal_response(format!("failed to add instances.adopted: {err}")))?;
-    }
-
-    Ok(())
 }
 
 fn git_root(dir: &Path) -> PathBuf {
@@ -1340,12 +1298,8 @@ fn reclaim_offline_unadopted_instances(
     let conn = open_swarm_rw(path)?;
     let cutoff = now_secs().saturating_sub(swarm_protocol::state::INSTANCE_OFFLINE_AFTER_SECS);
     let mut stmt = conn
-        .prepare(
-            "SELECT id FROM instances WHERE COALESCE(adopted, 1) = 0 AND heartbeat < ?",
-        )
-        .map_err(|err| {
-            internal_response(format!("failed to query unadopted instances: {err}"))
-        })?;
+        .prepare("SELECT id FROM instances WHERE COALESCE(adopted, 1) = 0 AND heartbeat < ?")
+        .map_err(|err| internal_response(format!("failed to query unadopted instances: {err}")))?;
     let candidates: Vec<String> = stmt
         .query_map(params![cutoff], |row| row.get::<_, String>(0))
         .map_err(|err| {
@@ -1394,7 +1348,9 @@ async fn unadopted_instance_reclaimer(state: AppState) {
         match reclaim_offline_unadopted_instances(&state.config.swarm_db_path, &live_bound) {
             Ok(0) => {}
             Ok(deleted) => info!(deleted, "reclaimed unadopted instance rows"),
-            Err(response) => warn!(status = %response.status(), "unadopted instance reclaim failed"),
+            Err(response) => {
+                warn!(status = %response.status(), "unadopted instance reclaim failed")
+            }
         }
     }
 }
@@ -2507,6 +2463,34 @@ mod tests {
                 .expect("table lookup should succeed")
                 .is_some();
             assert!(exists, "{table} should exist after bootstrap");
+        }
+
+        drop(conn);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn swarm_db_bootstrap_is_shared_and_versioned() {
+        let path = test_db_path("swarm-db-schema");
+
+        let conn = open_swarm_rw(&path)
+            .unwrap_or_else(|response| panic!("swarm db bootstrap failed: {}", response.status()));
+
+        assert_eq!(
+            swarm_schema::user_version(&conn).expect("user_version should be readable"),
+            swarm_schema::SWARM_DB_VERSION
+        );
+        for table in swarm_schema::EXPECTED_TABLES {
+            let exists = conn
+                .query_row(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                    [*table],
+                    |_| Ok(()),
+                )
+                .optional()
+                .expect("table lookup should succeed")
+                .is_some();
+            assert!(exists, "{table} should exist after shared schema bootstrap");
         }
 
         drop(conn);

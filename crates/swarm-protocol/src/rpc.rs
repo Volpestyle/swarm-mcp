@@ -6,9 +6,9 @@
 //! - `POST   /auth/revoke`           → `RevokeRequest` → `RevokeResponse`
 //! - `GET    /auth/devices`          →                 → `DevicesResponse`
 //! - `POST   /auth/pairing-session`  → `CreatePairingSessionRequest`
-//!                                      → `CreatePairingSessionResponse`
+//!   → `CreatePairingSessionResponse`
 //! - `DELETE /auth/pairing-session/{id}`
-//!                                    →                 → `CancelPairingSessionResponse`
+//!   →                 → `CancelPairingSessionResponse`
 //! - `GET    /state?cursors=…`       →                 → `state::SwarmSnapshot`
 //! - `POST   /pty`                   → `SpawnPtyRequest` → `SpawnPtyResponse`
 //! - `POST   /pty/{id}/input`        → `WritePtyRequest` → `Ack`

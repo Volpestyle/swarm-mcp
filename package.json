@@ -14,12 +14,13 @@
   ],
   "scripts": {
     "start": "node dist/cli.js",
-    "build": "esbuild src/cli.ts src/index.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --packages=external --loader:.sql=text --banner:js='#!/usr/bin/env node'",
+    "generate:protocol": "node scripts/generate-protocol-types.mjs",
+    "build": "node scripts/generate-protocol-types.mjs && esbuild src/cli.ts src/index.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --packages=external --loader:.sql=text --banner:js='#!/usr/bin/env node'",
     "check:ui": "cd apps/swarm-ui && bun run check && bun run build",
     "test:server": "cargo test --manifest-path apps/swarm-server/Cargo.toml",
     "test:tauri": "cargo test --manifest-path apps/swarm-ui/src-tauri/Cargo.toml",
-    "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "typecheck": "node scripts/generate-protocol-types.mjs && tsc --noEmit",
+    "test": "node scripts/generate-protocol-types.mjs && bun test",
     "check": "bun run typecheck && bun run test && bun run build && bun run check:ui && bun run test:server && bun run test:tauri",
     "prepack": "bun run build"
   },

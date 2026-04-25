@@ -1,5 +1,6 @@
 PRAGMA journal_mode = WAL;
 PRAGMA auto_vacuum = INCREMENTAL;
+PRAGMA user_version = 1;
 
 CREATE TABLE IF NOT EXISTS instances (
   id TEXT PRIMARY KEY,
@@ -79,11 +80,14 @@ CREATE TABLE IF NOT EXISTS ui_commands (
   created_by TEXT,
   kind TEXT NOT NULL,
   payload TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'done', 'failed')),
   claimed_by TEXT,
   result TEXT,
   error TEXT,
   created_at INTEGER NOT NULL DEFAULT (unixepoch()),
   started_at INTEGER,
-  completed_at INTEGER
+  completed_at INTEGER,
+  CHECK (status = 'pending' OR claimed_by IS NOT NULL),
+  CHECK (status != 'pending' OR started_at IS NULL),
+  CHECK (status NOT IN ('done', 'failed') OR completed_at IS NOT NULL)
 );

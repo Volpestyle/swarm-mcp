@@ -4039,6 +4039,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "swarm-schema"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+]
+
+[[package]]
 name = "swarm-server"
 version = "0.1.0"
 dependencies = [
@@ -4059,6 +4066,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "swarm-protocol",
+ "swarm-schema",
  "swarm-state",
  "tokio",
  "tracing",
@@ -4076,6 +4084,7 @@ dependencies = [
  "rusqlite",
  "serde_json",
  "swarm-protocol",
+ "swarm-schema",
 ]
 
 [[package]]
@@ -4093,6 +4102,7 @@ dependencies = [
  "serde",
  "serde_json",
  "swarm-protocol",
+ "swarm-schema",
  "swarm-state",
  "tauri",
  "tauri-build",

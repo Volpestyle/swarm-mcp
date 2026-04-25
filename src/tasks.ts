@@ -1,46 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { db } from "./db";
 import { emit } from "./events";
+import {
+  TASK_STATUSES,
+  TASK_TYPES,
+  type TaskStatus,
+  type TaskType,
+} from "./generated/protocol";
 import { prune } from "./registry";
 import { stamp } from "./time";
 
-export type TaskType =
-  | "review"
-  | "implement"
-  | "fix"
-  | "test"
-  | "research"
-  | "other";
-
-export const TASK_TYPES = [
-  "review",
-  "implement",
-  "fix",
-  "test",
-  "research",
-  "other",
-] as const;
-
-export type TaskStatus =
-  | "open"
-  | "claimed"
-  | "in_progress"
-  | "done"
-  | "failed"
-  | "cancelled"
-  | "blocked"
-  | "approval_required";
-
-export const TASK_STATUSES = [
-  "open",
-  "claimed",
-  "in_progress",
-  "done",
-  "failed",
-  "cancelled",
-  "blocked",
-  "approval_required",
-] as const;
+export { TASK_STATUSES, TASK_TYPES, type TaskStatus, type TaskType };
 
 type TaskRow = {
   id: string;

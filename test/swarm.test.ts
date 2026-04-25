@@ -56,6 +56,13 @@ function regPlanner(name: string, scope: string) {
   );
 }
 
+describe("database schema", () => {
+  test("bootstrap stamps the shared schema version", () => {
+    const row = db.query("PRAGMA user_version").get() as { user_version: number };
+    expect(row.user_version).toBe(1);
+  });
+});
+
 describe("messages", () => {
   test("broadcast fans out per recipient and stays inside scope", () => {
     const a = reg("one", "scope-a");
