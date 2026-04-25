@@ -37,14 +37,13 @@ function printHelp() {
 Usage:
   swarm-mcp             Start the MCP server over stdio (default).
   swarm-mcp serve       Same as above.
-  swarm-mcp init        Install MCP config + skills into the current directory.
+  swarm-mcp init        Install MCP config + the swarm-mcp skill into the current directory.
   swarm-mcp help        Show this message.
 
 Init flags:
-  --force               Overwrite existing skills / commands.
+  --force               Overwrite existing skill files.
   --dir <path>          Install into <path> instead of the current directory.
-  --no-skills           Skip copying skills.
-  --no-commands         Skip copying slash commands.
+  --no-skills           Skip copying the skill.
 
 Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
   swarm-mcp inspect [--scope <path>] [--json]

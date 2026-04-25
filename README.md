@@ -68,8 +68,8 @@ Call the swarm `register` tool first to join the swarm.
 - [`docs/agents-planner.md`](./docs/agents-planner.md) -- drop-in AGENTS.md for planner sessions (plans work, reviews results)
 - [`docs/agents-implementer.md`](./docs/agents-implementer.md) -- drop-in AGENTS.md for implementer sessions (claims tasks, edits code)
 - [`docs/roles-and-teams.md`](./docs/roles-and-teams.md) -- role/team conventions, multi-team workflows, and handoff examples
-- [`docs/install-skill.md`](./docs/install-skill.md) -- host-specific install paths for the bundled skill
-- [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable skill source for hosts with skill ecosystems
+- [`docs/install-skill.md`](./docs/install-skill.md) -- host-specific install paths for the bundled single-skill workflow
+- [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable skill source with role references for hosts with skill ecosystems
 
 ---
 
@@ -294,9 +294,9 @@ If your host exposes MCP prompts, you can also use the built-in `swarm:protocol`
 
 ## Installable Skill
 
-This repo ships a reusable skill at [`skills/swarm-mcp`](./skills/swarm-mcp).
+This repo ships one reusable skill at [`skills/swarm-mcp`](./skills/swarm-mcp).
 
-Use it when your host supports installable `SKILL.md` workflows and you want agents to learn the swarm protocol more reliably. For install locations, see [`docs/install-skill.md`](./docs/install-skill.md).
+Use it when your host supports installable `SKILL.md` workflows and you want agents to learn the swarm protocol more reliably. Invoke role-specific workflows with `/swarm-mcp planner`, `/swarm-mcp implementer`, `/swarm-mcp reviewer`, or `/swarm-mcp researcher`. For install locations, see [`docs/install-skill.md`](./docs/install-skill.md).
 
 Use it in addition to minimal always-on instructions, not instead of them. The skill is a playbook; `AGENTS.md` is still the best place for ambient rules like "register early" and "check locks before editing."
 

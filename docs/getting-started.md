@@ -163,7 +163,7 @@ Once the MCP server is working, add a short coordination protocol to your host i
 
 For role/team conventions and multi-team workflows, see [`docs/roles-and-teams.md`](./roles-and-teams.md).
 
-If your host supports installable skills, see [`docs/install-skill.md`](./install-skill.md) to install the bundled swarm skill for stronger per-session guidance.
+If your host supports installable skills, see [`docs/install-skill.md`](./install-skill.md) to install the bundled `/swarm-mcp` skill for stronger per-session guidance. Use role arguments such as `/swarm-mcp planner` or `/swarm-mcp implementer` when starting specialized sessions.
 
 The minimum collaboration loop is:
 
