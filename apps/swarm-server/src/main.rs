@@ -1963,6 +1963,58 @@ fn expire_pairing_sessions(conn: &mut Connection) -> Result<(), Response> {
     Ok(())
 }
 
+fn active_device_ids_for_client(
+    tx: &rusqlite::Transaction<'_>,
+    client_device_id: &str,
+) -> Result<Vec<String>, Response> {
+    let mut stmt = tx
+        .prepare(
+            "SELECT id FROM devices
+             WHERE client_device_id = ? AND revoked_at IS NULL
+             ORDER BY last_seen_at DESC, created_at DESC, id DESC",
+        )
+        .map_err(|err| {
+            internal_response(format!("failed to prepare active-device query: {err}"))
+        })?;
+    let rows = stmt
+        .query_map([client_device_id], |row| row.get::<_, String>(0))
+        .map_err(|err| internal_response(format!("failed to query active devices: {err}")))?;
+
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(
+            row.map_err(|err| internal_response(format!("failed to decode active device: {err}")))?,
+        );
+    }
+    Ok(ids)
+}
+
+fn revoke_active_tokens_for_device(
+    tx: &rusqlite::Transaction<'_>,
+    device_id: &str,
+    now: i64,
+) -> Result<(), Response> {
+    tx.execute(
+        "UPDATE tokens SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL",
+        params![now, device_id],
+    )
+    .map_err(|err| internal_response(format!("failed to revoke previous device tokens: {err}")))?;
+    Ok(())
+}
+
+fn revoke_superseded_device(
+    tx: &rusqlite::Transaction<'_>,
+    device_id: &str,
+    now: i64,
+) -> Result<(), Response> {
+    tx.execute(
+        "UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+        params![now, device_id],
+    )
+    .map_err(|err| internal_response(format!("failed to revoke superseded device: {err}")))?;
+    revoke_active_tokens_for_device(tx, device_id, now)
+}
+
 fn consume_pairing_code_and_issue_token(
     conn: &mut Connection,
     fingerprint: &str,
@@ -1995,11 +2047,54 @@ fn consume_pairing_code_and_issue_token(
         ));
     };
 
-    let device_id = format!("dev-{}", &Uuid::new_v4().simple().to_string()[..12]);
     let token_id = Uuid::new_v4().to_string();
     let token = random_token();
     let scopes_json = serde_json::to_string(scopes)
         .map_err(|err| internal_response(format!("failed to encode scopes: {err}")))?;
+    let active_device_ids = active_device_ids_for_client(&tx, &request.device_id)?;
+    let superseded_device_ids = active_device_ids
+        .iter()
+        .skip(1)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let (device_id, reused_device) = if let Some(existing_device_id) = active_device_ids.first() {
+        tx.execute(
+            "UPDATE devices
+             SET device_name = ?, platform = ?, scopes = ?, last_seen_at = ?
+             WHERE id = ?",
+            params![
+                request.device_name,
+                request.platform.as_deref(),
+                &scopes_json,
+                now,
+                existing_device_id
+            ],
+        )
+        .map_err(|err| internal_response(format!("failed to update existing device: {err}")))?;
+        revoke_active_tokens_for_device(&tx, existing_device_id, now)?;
+        for stale_device_id in &superseded_device_ids {
+            revoke_superseded_device(&tx, stale_device_id, now)?;
+        }
+        (existing_device_id.clone(), true)
+    } else {
+        let device_id = format!("dev-{}", &Uuid::new_v4().simple().to_string()[..12]);
+        tx.execute(
+            "INSERT INTO devices (id, client_device_id, device_name, platform, scopes, created_at, last_seen_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            params![
+                device_id,
+                request.device_id,
+                request.device_name,
+                request.platform.as_deref(),
+                &scopes_json,
+                now,
+                now
+            ],
+        )
+        .map_err(|err| internal_response(format!("failed to insert device: {err}")))?;
+        (device_id, false)
+    };
 
     tx.execute(
         "UPDATE pairing_codes
@@ -2012,20 +2107,6 @@ fn consume_pairing_code_and_issue_token(
         params![now, request.code, request.pairing_secret],
     )
     .map_err(|err| internal_response(format!("failed to consume pairing code: {err}")))?;
-    tx.execute(
-        "INSERT INTO devices (id, client_device_id, device_name, platform, scopes, created_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
-        params![
-            device_id,
-            request.device_id,
-            request.device_name,
-            request.platform,
-            scopes_json,
-            now,
-            now
-        ],
-    )
-    .map_err(|err| internal_response(format!("failed to insert device: {err}")))?;
     tx.execute(
         "INSERT INTO tokens (id, device_id, token_hash, created_at, last_seen_at)
          VALUES (?, ?, ?, ?, ?)",
@@ -2043,6 +2124,8 @@ fn consume_pairing_code_and_issue_token(
                 "client_device_id": request.device_id,
                 "client_nonce": request.client_nonce,
                 "pairing_session_id": session_id,
+                "reused_device": reused_device,
+                "superseded_device_ids": superseded_device_ids,
             })
             .to_string(),
             now
@@ -2502,9 +2585,16 @@ mod tests {
         let mut conn = open_test_db("pair-rollback");
         let now = now_secs();
         conn.execute(
-            "INSERT INTO pairing_codes (code, cert_fingerprint, pairing_secret, created_at, expires_at, used_at)
-             VALUES (?, ?, ?, ?, ?, NULL)",
-            params!["123456", "fp-1", "pair-secret", now, now + 600],
+            "INSERT INTO pairing_codes (code, session_id, cert_fingerprint, pairing_secret, created_at, expires_at, used_at)
+             VALUES (?, ?, ?, ?, ?, ?, NULL)",
+            params![
+                "123456",
+                "sess-rollback",
+                "fp-1",
+                "pair-secret",
+                now,
+                now + 600
+            ],
         )
         .expect("pairing code insert should succeed");
         conn.execute_batch(
@@ -2556,6 +2646,97 @@ mod tests {
             0,
             "pairing audit insert should roll back",
         );
+    }
+
+    #[test]
+    fn pairing_reuses_active_client_device_and_rotates_token() {
+        let mut conn = open_test_db("pair-reuse-device");
+        let now = now_secs();
+        for (code, session_id, secret) in [
+            ("123456", "sess-1", "pair-secret-1"),
+            ("654321", "sess-2", "pair-secret-2"),
+        ] {
+            conn.execute(
+                "INSERT INTO pairing_codes (
+                   code, session_id, cert_fingerprint, pairing_secret, created_at, expires_at
+                 ) VALUES (?, ?, ?, ?, ?, ?)",
+                params![code, session_id, "fp-1", secret, now, now + 600],
+            )
+            .expect("pairing code insert should succeed");
+        }
+
+        let first = PairRequest {
+            v: PROTOCOL_VERSION,
+            code: "123456".into(),
+            device_name: "Test Phone".into(),
+            device_id: "ios-device-1".into(),
+            platform: Some("ios".into()),
+            pairing_secret: "pair-secret-1".into(),
+            client_nonce: "nonce-1".into(),
+        };
+        let (first_token, first_device_id) =
+            consume_pairing_code_and_issue_token(&mut conn, "fp-1", &first, &["scope-a".into()])
+                .expect("first pairing should succeed");
+
+        let second = PairRequest {
+            code: "654321".into(),
+            device_name: "Renamed Phone".into(),
+            pairing_secret: "pair-secret-2".into(),
+            client_nonce: "nonce-2".into(),
+            ..first
+        };
+        let (second_token, second_device_id) =
+            consume_pairing_code_and_issue_token(&mut conn, "fp-1", &second, &["scope-b".into()])
+                .expect("second pairing should succeed");
+
+        assert_ne!(
+            first_token, second_token,
+            "re-pairing should rotate the bearer token"
+        );
+        assert_eq!(
+            first_device_id, second_device_id,
+            "same client_device_id should reuse the active server device row"
+        );
+        assert_eq!(
+            count_rows(&conn, "devices"),
+            1,
+            "no duplicate active device row"
+        );
+        assert_eq!(
+            count_rows(&conn, "tokens"),
+            2,
+            "token history should be retained"
+        );
+
+        let active_tokens = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tokens WHERE device_id = ? AND revoked_at IS NULL",
+                [second_device_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("active token count should succeed");
+        assert_eq!(
+            active_tokens, 1,
+            "only the newest token should remain active"
+        );
+
+        let revoked_tokens = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tokens WHERE device_id = ? AND revoked_at IS NOT NULL",
+                [second_device_id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("revoked token count should succeed");
+        assert_eq!(revoked_tokens, 1, "previous token should be revoked");
+
+        let stored_name = conn
+            .query_row(
+                "SELECT device_name FROM devices WHERE id = ?",
+                [second_device_id.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("device name lookup should succeed");
+        assert_eq!(stored_name, "Renamed Phone");
     }
 
     #[test]
