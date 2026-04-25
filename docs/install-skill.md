@@ -24,6 +24,27 @@ Important boundary:
 - the skill does not install or mount the MCP server for you
 - configure the `swarm` MCP server first, then install the skill
 
+## Automated Project Setup
+
+When using the packaged CLI, `swarm-mcp init` can write a project-local MCP config and copy the bundled skill:
+
+```sh
+swarm-mcp init --dir /path/to/project
+```
+
+This writes:
+
+- `.mcp.json` with a `swarm` server entry that runs `npx -y swarm-mcp`
+- `.claude/skills/swarm-mcp` unless `--no-skills` is passed
+
+Useful flags:
+
+- `--force`: overwrite an existing copied skill
+- `--no-skills`: write only `.mcp.json`
+- `--dir <path>`: install into a project directory other than the current directory
+
+Use the manual sections below for global installs, non-Claude skill directories, or local-clone MCP configs.
+
 ## Skill Source
 
 Copy the skill folder as a unit:

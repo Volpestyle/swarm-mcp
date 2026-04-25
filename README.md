@@ -26,8 +26,8 @@ Add the server to your coding agent using that host's MCP config format. Bun is 
 ```toml
 [mcp_servers.swarm]
 command = "bun"
-args = ["run", "C:\\path\\to\\swarm-mcp\\src\\index.ts"]
-cwd = "C:\\path\\to\\swarm-mcp"
+args = ["run", "/path/to/swarm-mcp/src/index.ts"]
+cwd = "/path/to/swarm-mcp"
 ```
 
 ### opencode (`~/.config/opencode/opencode.json`)
@@ -69,7 +69,16 @@ Call the swarm `register` tool first to join the swarm.
 - [`docs/agents-implementer.md`](./docs/agents-implementer.md) -- drop-in AGENTS.md for implementer sessions (claims tasks, edits code)
 - [`docs/roles-and-teams.md`](./docs/roles-and-teams.md) -- role/team conventions, multi-team workflows, and handoff examples
 - [`docs/install-skill.md`](./docs/install-skill.md) -- host-specific install paths for the bundled single-skill workflow
+- [`docs/swarm-server.md`](./docs/swarm-server.md) -- Rust daemon for desktop UI, mobile pairing, PTY streaming, and LAN access
 - [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable skill source with role references for hosts with skill ecosystems
+
+---
+
+## MCP server vs swarm-server
+
+The TypeScript `swarm-mcp` process is the stdio MCP server used by coding-agent hosts. It is enough for local multi-agent coordination through tools, resources, prompts, and the shared SQLite database.
+
+The Rust `apps/swarm-server` daemon is a separate desktop/mobile control plane. It serves `swarm-ui` over a local Unix socket, exposes HTTPS/WSS on port 5444 for paired iOS/iPadOS clients, manages PTYs, and reads the same `swarm.db`. It is not required for the basic MCP setup above. See [`docs/swarm-server.md`](./docs/swarm-server.md).
 
 ---
 
@@ -126,6 +135,7 @@ The durable coordination state lives in the shared database, not in repeated per
 | Messages                         | 1 hour     |
 | Completed/failed/cancelled tasks | 24 hours   |
 | Non-lock context annotations     | 24 hours   |
+| Events                           | 24 hours   |
 
 When a session expires, stale claimed or in-progress tasks are released back to `open` and that session's file locks are removed.
 
@@ -182,6 +192,7 @@ Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are c
 | ----------- | ---------------------------------------------- |
 | `kv_get`    | Get a value by key.                            |
 | `kv_set`    | Set a key-value pair visible to all instances. |
+| `kv_append` | Atomically append a JSON value to a KV array.  |
 | `kv_delete` | Delete a key.                                  |
 | `kv_list`   | List keys, optionally filtered by prefix.      |
 
@@ -192,6 +203,15 @@ Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are c
 The same `swarm-mcp` binary exposes a non-MCP CLI that talks directly to `~/.swarm-mcp/swarm.db`. Use it from contexts that cannot speak MCP: shell scripts, helper scripts an agent invokes (e.g. a test harness or CLI referee), cron jobs, CI, an ad-hoc terminal for inspection/debugging, or to control a running `swarm-ui` app.
 
 Inside an MCP-enabled agent session, prefer the MCP tools for swarm coordination primitives (`register`, messages, tasks, locks, KV). The CLI is primarily for scripts, operator terminals, and the `swarm-ui` control surface.
+
+Setup helper:
+
+```sh
+swarm-mcp init --dir /path/to/project   # write .mcp.json and copy the bundled skill
+swarm-mcp init --no-skills              # write only the MCP config
+```
+
+`init` writes a project `.mcp.json` entry that runs `npx -y swarm-mcp` and, unless `--no-skills` is passed, copies `skills/swarm-mcp` into `.claude/skills/swarm-mcp`. Manual host-specific MCP configs are still useful when your host does not read `.mcp.json` or you want to run from a local clone.
 
 Inspection:
 
@@ -209,6 +229,7 @@ Writes (require identity — pass `--as <uuid | prefix | unique-label-substring>
 swarm-mcp send --to <who> "message text"
 swarm-mcp broadcast "status update"
 swarm-mcp kv set  <key> <value>
+swarm-mcp kv append <key> <json-value>
 swarm-mcp kv del  <key>
 swarm-mcp lock    <file> --note "why"
 swarm-mcp unlock  <file>
@@ -229,12 +250,13 @@ These commands enqueue work for a running `swarm-ui` app to claim and execute. I
 Notes:
 
 - `swarm-mcp ui spawn`, `ui prompt`, `ui move`, and `ui organize` wait up to 5 seconds by default for the desktop app to claim + complete the command. Pass `--wait 0` to return immediately after enqueue.
+- `ui spawn` accepts `--harness claude`, `--harness codex`, or `--harness opencode`; omit `--harness` for a plain shell.
 - Use `swarm-mcp ui list` and `swarm-mcp ui get <id>` to inspect queued, running, completed, or failed UI commands.
 - `--target` accepts `bound:<instance-id>`, `instance:<instance-id>`, `pty:<pty-id>`, or a bare instance / PTY reference. Bare instance refs resolve by full UUID, unique UUID prefix, or unique label substring in scope. Bare PTY refs resolve by full PTY id, unique PTY id prefix, or a unique substring of the PTY command.
 - `ui move` persists layout into the shared `ui/layout` KV entry for the target scope, so changes survive refreshes and can be driven from either the desktop UI or the CLI.
 - `ui organize` currently supports only `--kind grid`.
 
-Every subcommand accepts `--json` for machine-readable output. Run `swarm-mcp help` for the full list.
+State, write, and UI subcommands accept `--json` for machine-readable output where shown by `swarm-mcp help`.
 
 Canonical helper-script pattern — a harness the agent invokes to do validation + state update + handoff in one shot:
 
@@ -271,8 +293,8 @@ The server exposes MCP prompts. Some hosts surface them directly, while others o
 
 | Prompt | Purpose |
 | ------ | ------- |
-| `swarm:setup` | Guides the agent through registration: call `register`, `poll_messages`, `list_tasks`, then summarize swarm ID, active sessions, role labels, open tasks, and coordination risks. |
-| `swarm:protocol` | Applies the recommended coordination workflow for the session: check before editing, lock while editing, use `annotate` for findings, `broadcast` for updates, inspect `role:` labels when choosing collaborators. |
+| `setup` (often shown as `swarm:setup`) | Guides the agent through registration: call `register`, `poll_messages`, `list_tasks`, then summarize swarm ID, active sessions, role labels, open tasks, and coordination risks. |
+| `protocol` (often shown as `swarm:protocol`) | Applies the recommended coordination workflow for the session: check before editing, lock while editing, use `annotate` for findings, `broadcast` for updates, inspect `role:` labels when choosing collaborators. |
 
 ---
 
@@ -290,7 +312,7 @@ Pick the version that matches your workflow:
 
 For role/team conventions and multi-team workflows, see [`docs/roles-and-teams.md`](./docs/roles-and-teams.md).
 
-If your host exposes MCP prompts, you can also use the built-in `swarm:protocol` prompt to pull the workflow into a session on demand.
+If your host exposes MCP prompts, you can also use the built-in `protocol` prompt, often shown as `swarm:protocol`, to pull the workflow into a session on demand.
 
 ## Installable Skill
 

@@ -30,6 +30,8 @@ cd swarm-mcp
 bun install
 ```
 
+If you are using the packaged CLI instead of a local clone, `swarm-mcp init --dir /absolute/path/to/project` can write a project `.mcp.json` and copy the bundled skill. The manual host-specific config below is still the clearest path when you want to run directly from this checkout.
+
 ## 3. Add the MCP server to your coding agent
 
 Each host has its own MCP config format, but they should all point at the same server:
@@ -47,8 +49,8 @@ Add this to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.swarm]
 command = "bun"
-args = ["run", "C:\\absolute\\path\\to\\swarm-mcp\\src\\index.ts"]
-cwd = "C:\\absolute\\path\\to\\swarm-mcp"
+args = ["run", "/absolute/path/to/swarm-mcp/src/index.ts"]
+cwd = "/absolute/path/to/swarm-mcp"
 ```
 
 ### opencode
@@ -173,3 +175,7 @@ The minimum collaboration loop is:
 - Call `broadcast` or `update_task` when handing work off
 
 For troubleshooting tips, see the [Troubleshooting](../README.md#troubleshooting) section in the README.
+
+## Desktop and mobile access
+
+The setup above is only for the stdio MCP server. The desktop UI, PTY control, mobile pairing, and LAN streaming use the separate Rust `swarm-server` daemon. It is not required for basic MCP coordination. See [`docs/swarm-server.md`](./swarm-server.md) when you need `swarm-ui` or the iOS/iPadOS companion.

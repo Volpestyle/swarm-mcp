@@ -1,9 +1,10 @@
 # Swarm CLI
 
-The `swarm-mcp` CLI has two uses:
+The `swarm-mcp` CLI has three uses:
 
 1. Read/write shared swarm state from contexts that cannot speak MCP
 2. Control a running `swarm-ui` app through the `swarm-mcp ui ...` command family
+3. Install project-local MCP config and the bundled skill with `swarm-mcp init`
 
 Inside an MCP-enabled agent session, prefer the MCP tools for swarm coordination primitives — they are the primary, structured, notification-integrated interface. Reach for the CLI when you are writing a helper script, operating from a plain terminal, or the user explicitly wants to drive `swarm-ui` from the CLI.
 
@@ -20,6 +21,12 @@ The CLI talks to the same SQLite database as the MCP server. For state/coordinat
 If the work is happening inside the agent's own loop and there is an MCP equivalent, call the MCP tool directly. Do not shell out just to read or mutate swarm state.
 
 ## Subcommands
+
+Setup:
+
+| Command | Purpose |
+|--|--|
+| `swarm-mcp init [--dir P] [--force] [--no-skills]` | Write `.mcp.json` and copy `skills/swarm-mcp` into `.claude/skills/swarm-mcp` unless `--no-skills` is passed. |
 
 Read-only (no identity required):
 
@@ -45,7 +52,7 @@ Writes (require an identity):
 | `swarm-mcp lock <file> [--note "..."]` | Acquire an exclusive file lock. |
 | `swarm-mcp unlock <file>` | Release your file lock. |
 
-Every command accepts `--json` for machine-readable output.
+State, write, and UI commands accept `--json` for machine-readable output where supported by `swarm-mcp help`.
 
 Swarm UI control:
 
@@ -53,7 +60,7 @@ Swarm UI control:
 |--|--|
 | `swarm-mcp ui list [--scope P] [--status S] [--limit N]` | List queued/running/completed UI commands. |
 | `swarm-mcp ui get <id>` | Inspect one UI command, including result/error. |
-| `swarm-mcp ui spawn <cwd> [--harness H] [--role R] [--label L] [--scope P] [--wait N]` | Ask a running `swarm-ui` app to spawn a new PTY/node. |
+| `swarm-mcp ui spawn <cwd> [--harness H] [--role R] [--label L] [--scope P] [--wait N]` | Ask a running `swarm-ui` app to spawn a new PTY/node. Supported harness values are `claude`, `codex`, and `opencode`; omit `--harness` for a plain shell. |
 | `swarm-mcp ui prompt --target T <content...> [--no-enter] [--scope P] [--wait N]` | Forward input to a node's PTY. |
 | `swarm-mcp ui move --target T --x X --y Y [--scope P] [--wait N]` | Move a node and persist layout. |
 | `swarm-mcp ui organize [--kind grid] [--scope P] [--wait N]` | Auto-organize the scope's canvas layout. |
