@@ -5,6 +5,7 @@ import * as messages from "./messages";
 import * as registry from "./registry";
 import * as ui from "./ui";
 import { scope as scopeFor } from "./paths";
+import { SUBCOMMANDS, type Subcommand } from "./subcommands";
 
 type Flags = {
   positional: string[];
@@ -644,7 +645,7 @@ async function cmdUi(flags: Flags) {
 // Dispatcher
 // ---------------------------------------------------------------------------
 
-const HANDLERS: Record<string, (flags: Flags) => void | Promise<void>> = {
+const HANDLERS: Record<Subcommand, (flags: Flags) => void | Promise<void>> = {
   instances: cmdInstances,
   messages: cmdMessages,
   tasks: cmdTasks,
@@ -657,12 +658,10 @@ const HANDLERS: Record<string, (flags: Flags) => void | Promise<void>> = {
   inspect: cmdInspect,
   ui: cmdUi,
 };
+export { SUBCOMMANDS };
 
-export const SUBCOMMANDS = Object.keys(HANDLERS);
-
-export async function run(subcommand: string, argv: string[]) {
+export async function run(subcommand: Subcommand, argv: string[]) {
   const handler = HANDLERS[subcommand];
-  if (!handler) throw new Error(`Unknown subcommand: ${subcommand}`);
   // Drop stale instances before any read/write so the CLI sees the same world a live agent would.
   registry.prune();
   try {

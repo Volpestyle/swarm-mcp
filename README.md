@@ -61,15 +61,17 @@ Tool names are usually namespaced by the client using the server name. Depending
 
 Call the swarm `register` tool first to join the swarm.
 
-### Install the bundled skill
+### Install the bundled skills
 
-Mounting the MCP server makes the swarm tools available, but agents still benefit from the bundled `SKILL.md` to use them well. If your host supports installable skills (Claude Code, OpenCode, Codex with skills, etc.), install [`skills/swarm-mcp`](./skills/swarm-mcp) into your consumer project — symlink is recommended over copying so updates from `git pull` propagate automatically:
+Mounting the MCP server makes the swarm tools available, but agents still benefit from the bundled `SKILL.md` workflows. If your host supports installable skills (Claude Code, OpenCode, Codex with skills, etc.), install [`skills/swarm-mcp`](./skills/swarm-mcp) for coordination and [`skills/swarm-deepdive`](./skills/swarm-deepdive) for forensic inspection. Symlink is recommended over copying so updates from `git pull` propagate automatically:
 
 ```sh
 # In your consumer project root
 mkdir -p .agents/skills .claude/skills
 ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp .agents/skills/swarm-mcp
+ln -s /absolute/path/to/swarm-mcp/skills/swarm-deepdive .agents/skills/swarm-deepdive
 ln -s ../../.agents/skills/swarm-mcp .claude/skills/swarm-mcp
+ln -s ../../.agents/skills/swarm-deepdive .claude/skills/swarm-deepdive
 ```
 
 Or install globally for all projects:
@@ -77,9 +79,10 @@ Or install globally for all projects:
 ```sh
 mkdir -p ~/.claude/skills
 ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp ~/.claude/skills/swarm-mcp
+ln -s /absolute/path/to/swarm-mcp/skills/swarm-deepdive ~/.claude/skills/swarm-deepdive
 ```
 
-Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting role-specialized sessions. Full per-host install paths and copy-based alternatives live in [`docs/install-skill.md`](./docs/install-skill.md).
+Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting role-specialized sessions, or `/swarm-deepdive` for investigations. Full per-host install paths and copy-based alternatives live in [`docs/install-skill.md`](./docs/install-skill.md).
 
 ### Further reading
 
@@ -88,9 +91,10 @@ Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting 
 - [`docs/agents-planner.md`](./docs/agents-planner.md) -- drop-in AGENTS.md for planner sessions (plans work, reviews results)
 - [`docs/agents-implementer.md`](./docs/agents-implementer.md) -- drop-in AGENTS.md for implementer sessions (claims tasks, edits code)
 - [`docs/roles-and-teams.md`](./docs/roles-and-teams.md) -- role/team conventions, multi-team workflows, and handoff examples
-- [`docs/install-skill.md`](./docs/install-skill.md) -- host-specific install paths for the bundled single-skill workflow
+- [`docs/install-skill.md`](./docs/install-skill.md) -- host-specific install paths for the bundled skills
 - [`docs/swarm-server.md`](./docs/swarm-server.md) -- Rust daemon for desktop UI, mobile pairing, PTY streaming, and LAN access
-- [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable skill source with role references for hosts with skill ecosystems
+- [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable coordination skill source with role references
+- [`skills/swarm-deepdive`](./skills/swarm-deepdive) -- installable forensic inspection skill source
 
 ---
 
@@ -227,11 +231,11 @@ Inside an MCP-enabled agent session, prefer the MCP tools for swarm coordination
 Setup helper:
 
 ```sh
-swarm-mcp init --dir /path/to/project   # write .mcp.json and copy the bundled skill
+swarm-mcp init --dir /path/to/project   # write .mcp.json and copy the bundled skills
 swarm-mcp init --no-skills              # write only the MCP config
 ```
 
-`init` writes a project `.mcp.json` entry that runs `npx -y swarm-mcp` and, unless `--no-skills` is passed, copies `skills/swarm-mcp` into `.claude/skills/swarm-mcp`. Manual host-specific MCP configs are still useful when your host does not read `.mcp.json` or you want to run from a local clone.
+`init` writes a project `.mcp.json` entry that runs `npx -y swarm-mcp` and, unless `--no-skills` is passed, copies `skills/swarm-mcp` and `skills/swarm-deepdive` into `.claude/skills/`. Manual host-specific MCP configs are still useful when your host does not read `.mcp.json` or you want to run from a local clone.
 
 Inspection:
 
@@ -334,15 +338,15 @@ For role/team conventions and multi-team workflows, see [`docs/roles-and-teams.m
 
 If your host exposes MCP prompts, you can also use the built-in `protocol` prompt, often shown as `swarm:protocol`, to pull the workflow into a session on demand.
 
-## Installable Skill
+## Installable Skills
 
-This repo ships one reusable skill at [`skills/swarm-mcp`](./skills/swarm-mcp).
+This repo ships reusable skills at [`skills/swarm-mcp`](./skills/swarm-mcp) and [`skills/swarm-deepdive`](./skills/swarm-deepdive).
 
-Use it when your host supports installable `SKILL.md` workflows and you want agents to learn the swarm protocol more reliably. Invoke role-specific workflows with `/swarm-mcp planner`, `/swarm-mcp implementer`, `/swarm-mcp reviewer`, or `/swarm-mcp researcher`. For install locations, see [`docs/install-skill.md`](./docs/install-skill.md).
+Use `swarm-mcp` when your host supports installable `SKILL.md` workflows and you want agents to learn the swarm protocol more reliably. Invoke role-specific workflows with `/swarm-mcp planner`, `/swarm-mcp implementer`, `/swarm-mcp reviewer`, or `/swarm-mcp researcher`. Use `swarm-deepdive` for postmortems and direct `swarm.db`/server-log inspection. For install locations, see [`docs/install-skill.md`](./docs/install-skill.md).
 
-Use it in addition to minimal always-on instructions, not instead of them. The skill is a playbook; `AGENTS.md` is still the best place for ambient rules like "register early" and "check locks before editing."
+Use skills in addition to minimal always-on instructions, not instead of them. A skill is a playbook; `AGENTS.md` is still the best place for ambient rules like "register early" and "check locks before editing."
 
-The skill does not mount the MCP server for you. It assumes the `swarm` MCP tools are already available in the session and teaches the agent how to use them well.
+The skills do not mount the MCP server for you. They assume the `swarm` MCP tools are already available in the session.
 
 ---
 

@@ -1,5 +1,5 @@
 import { runInit } from "./init";
-import { run as runCmd, SUBCOMMANDS } from "./cmd";
+import { isSubcommand } from "./subcommands";
 
 const [, , subcommand, ...rest] = process.argv;
 
@@ -21,7 +21,8 @@ async function main() {
     return;
   }
 
-  if (SUBCOMMANDS.includes(subcommand)) {
+  if (isSubcommand(subcommand)) {
+    const { run: runCmd } = await import("./cmd");
     await runCmd(subcommand, rest);
     return;
   }
@@ -37,13 +38,13 @@ function printHelp() {
 Usage:
   swarm-mcp             Start the MCP server over stdio (default).
   swarm-mcp serve       Same as above.
-  swarm-mcp init        Install MCP config + the swarm-mcp skill into the current directory.
+  swarm-mcp init        Install MCP config + bundled skills into the current directory.
   swarm-mcp help        Show this message.
 
 Init flags:
   --force               Overwrite existing skill files.
   --dir <path>          Install into <path> instead of the current directory.
-  --no-skills           Skip copying the skill.
+  --no-skills           Skip copying skills.
 
 Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
   swarm-mcp inspect [--scope <path>] [--json]

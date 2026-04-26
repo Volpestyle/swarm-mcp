@@ -30,7 +30,7 @@ cd swarm-mcp
 bun install
 ```
 
-If you are using the packaged CLI instead of a local clone, `swarm-mcp init --dir /absolute/path/to/project` can write a project `.mcp.json` and copy the bundled skill. The manual host-specific config below is still the clearest path when you want to run directly from this checkout.
+If you are using the packaged CLI instead of a local clone, `swarm-mcp init --dir /absolute/path/to/project` can write a project `.mcp.json` and copy the bundled skills. The manual host-specific config below is still the clearest path when you want to run directly from this checkout.
 
 ## 3. Add the MCP server to your coding agent
 
@@ -90,17 +90,19 @@ Use the same command, args, and working directory in that host's MCP settings.
 
 Tool names may be rendered differently by each client. For the same `register` tool, one host may show `swarm_register` while another shows `mcp__swarm__register`.
 
-## 4. Install the bundled skill
+## 4. Install the bundled skills
 
-The MCP server provides the *tools*; the bundled skill teaches the agent how to use them well (registration sequencing, role workflows, lock discipline). Skip this step only if your host does not support installable skills.
+The MCP server provides the *tools*; the bundled skills teach agents how to use them well for coordination and forensic inspection. Skip this step only if your host does not support installable skills.
 
-The skill source is at `skills/swarm-mcp` in this repo. Symlink it into your consumer project so `git pull` updates propagate automatically:
+The skill sources are at `skills/swarm-mcp` and `skills/swarm-deepdive` in this repo. Symlink them into your consumer project so `git pull` updates propagate automatically:
 
 ```sh
 # Run from your consumer project root
 mkdir -p .agents/skills .claude/skills
 ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp .agents/skills/swarm-mcp
+ln -s /absolute/path/to/swarm-mcp/skills/swarm-deepdive .agents/skills/swarm-deepdive
 ln -s ../../.agents/skills/swarm-mcp .claude/skills/swarm-mcp
+ln -s ../../.agents/skills/swarm-deepdive .claude/skills/swarm-deepdive
 ```
 
 Or globally for every project:
@@ -108,6 +110,7 @@ Or globally for every project:
 ```sh
 mkdir -p ~/.claude/skills
 ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp ~/.claude/skills/swarm-mcp
+ln -s /absolute/path/to/swarm-mcp/skills/swarm-deepdive ~/.claude/skills/swarm-deepdive
 ```
 
 Per-host paths and a copy-based alternative are in [`docs/install-skill.md`](./install-skill.md).
