@@ -730,10 +730,22 @@ registeredTool(
 registeredTool(
   "claim_task",
   "Claim an open task to work on it.",
-  { task_id: z.string().describe("The task ID to claim") },
-  async ({ task_id }) => {
+  {
+    task_id: z.string().describe("The task ID to claim"),
+    ignore_unread_messages: z
+      .boolean()
+      .optional()
+      .describe(
+        "Set true only when intentionally claiming despite unread messages. Default false blocks claiming until poll_messages is called.",
+      ),
+  },
+  async ({ task_id, ignore_unread_messages }) => {
     const current = instance!;
-    return respondJson(tasks.claim(task_id, current.scope, current.id));
+    return respondJson(
+      tasks.claim(task_id, current.scope, current.id, {
+        ignoreUnreadMessages: ignore_unread_messages,
+      }),
+    );
   },
 );
 

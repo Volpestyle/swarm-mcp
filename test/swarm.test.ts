@@ -190,6 +190,40 @@ describe("tasks", () => {
     expect(tasks.get(id, assignee.scope)?.status).toBe("done");
   });
 
+  test("claiming open work is blocked until unread messages are polled", () => {
+    const planner = reg("planner", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const { id } = req(planner.id, planner.scope, "implement", "Build thing");
+
+    messages.send(planner.id, planner.scope, worker.id, "Stop and read context first");
+
+    expect(tasks.claim(id, worker.scope, worker.id)).toMatchObject({
+      error: expect.stringContaining("Unread messages pending (1)"),
+      unread_message_count: 1,
+      latest_message_sender: planner.id,
+    });
+    expect(tasks.get(id, worker.scope)).toMatchObject({
+      status: "open",
+      assignee: null,
+    });
+
+    expect(messages.poll(worker.id, worker.scope)).toHaveLength(1);
+    expect(tasks.claim(id, worker.scope, worker.id)).toEqual({ ok: true });
+  });
+
+  test("claiming can explicitly override the unread-message guard", () => {
+    const planner = reg("planner", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const { id } = req(planner.id, planner.scope, "implement", "Build thing");
+
+    messages.send(planner.id, planner.scope, worker.id, "Non-blocking note");
+
+    expect(
+      tasks.claim(id, worker.scope, worker.id, { ignoreUnreadMessages: true }),
+    ).toEqual({ ok: true });
+    expect(messages.peek(worker.id, worker.scope)).toHaveLength(1);
+  });
+
   test("stale assignees are released and their locks are removed", () => {
     const requester = reg("requester", "scope-a");
     const worker = reg("worker", "scope-a");

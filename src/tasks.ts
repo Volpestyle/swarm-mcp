@@ -72,11 +72,49 @@ export type TaskSnapshot = {
   approval_required: Array<Record<string, unknown>>;
 };
 
+export interface ClaimOpts {
+  ignoreUnreadMessages?: boolean;
+}
+
 function row(task: Record<string, unknown>) {
   if (typeof task.files === "string") task.files = JSON.parse(task.files);
   if (typeof task.depends_on === "string")
     task.depends_on = JSON.parse(task.depends_on);
   return task;
+}
+
+function unreadMessageGate(scope: string, recipient: string) {
+  const latest = db
+    .query(
+      `SELECT id, sender, created_at
+       FROM messages
+       WHERE scope = ? AND recipient = ? AND read = 0
+       ORDER BY id DESC
+       LIMIT 1`,
+    )
+    .get(scope, recipient) as
+    | { id: number; sender: string; created_at: number }
+    | null;
+
+  if (!latest) return null;
+
+  const count = db
+    .query(
+      `SELECT COUNT(*) as count
+       FROM messages
+       WHERE scope = ? AND recipient = ? AND read = 0`,
+    )
+    .get(scope, recipient) as { count: number };
+
+  return {
+    error:
+      `Unread messages pending (${count.count}). Call poll_messages before claiming new work, ` +
+      `or retry claim_task with ignore_unread_messages=true if you intentionally want to skip them. ` +
+      `Latest unread message: #${latest.id} from ${latest.sender}.`,
+    unread_message_count: count.count,
+    latest_message_id: latest.id,
+    latest_message_sender: latest.sender,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +375,26 @@ export function request(
   return { id: prepared.id, status: prepared.status };
 }
 
-export function claim(id: string, scope: string, assignee: string) {
+export function claim(
+  id: string,
+  scope: string,
+  assignee: string,
+  opts: ClaimOpts = {},
+) {
+  const before = db
+    .query("SELECT status, assignee FROM tasks WHERE id = ? AND scope = ?")
+    .get(id, scope) as { status: TaskStatus; assignee: string | null } | null;
+
+  if (!before) return { error: "Task not found" };
+  if (before.status !== "open" || before.assignee !== null) {
+    return { error: `Task is already ${before.status}` };
+  }
+
+  if (!opts.ignoreUnreadMessages) {
+    const gate = unreadMessageGate(scope, assignee);
+    if (gate) return gate;
+  }
+
   const result = db.run(
     `UPDATE tasks
      SET assignee = ?, status = 'claimed', updated_at = unixepoch(), changed_at = ?

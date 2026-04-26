@@ -45,6 +45,7 @@ When the role is unclear, do not invent one. Ask one short question or proceed a
 ## Task Features
 
 - **Priority**: Tasks have an integer `priority` field (higher = more urgent). `list_tasks` returns tasks sorted by priority. Claim the highest-priority open task first.
+- **Unread-message guard**: `claim_task` refuses to claim new open work while you have unread direct messages. Call `poll_messages` and handle corrections before retrying. Override only when intentionally ignoring those messages.
 - **Dependencies**: Tasks can have a `depends_on` field (array of task IDs). A task with unmet dependencies starts as `blocked` and auto-transitions to `open` when all deps complete. If a dependency fails, downstream tasks are auto-cancelled.
 - **Approval gates**: Tasks can be set to `approval_required` status. They remain gated until approved (transitions to `open`) or explicitly cancelled. Use this for true approval checkpoints, not routine code review.
 - **Idempotency**: Tasks can have an `idempotency_key` field that prevents duplicate creation on retry.

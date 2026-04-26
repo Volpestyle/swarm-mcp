@@ -33,14 +33,15 @@ Immediately after registering, call `poll_messages`, `list_tasks`, and `list_ins
 
 When you find a task to work on:
 
-1. `claim_task` immediately so no other session takes it.
-2. `update_task` to `in_progress`.
-3. `check_file` for every file you plan to edit -- look for locks, warnings, or annotations from other sessions.
-4. `lock_file` with a short reason before editing.
-5. Do the work.
-6. `annotate` important findings on files you touched -- things a reviewer or future session needs to know.
-7. `unlock_file` as soon as you are done editing.
-8. `update_task` to `done` with a structured result (see below).
+1. If `claim_task` reports unread messages, call `poll_messages` and act on planner corrections before retrying.
+2. `claim_task` promptly so no other session takes it.
+3. `update_task` to `in_progress`.
+4. `check_file` for every file you plan to edit -- look for locks, warnings, or annotations from other sessions.
+5. `lock_file` with a short reason before editing.
+6. Do the work.
+7. `annotate` important findings on files you touched -- things a reviewer or future session needs to know.
+8. `unlock_file` as soon as you are done editing.
+9. `update_task` to `done` with a structured result (see below).
 
 ### Structured results
 

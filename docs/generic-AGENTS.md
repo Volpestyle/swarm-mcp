@@ -39,7 +39,8 @@ Check `poll_messages` and `list_tasks` periodically, not just at startup.
 
 When you receive a task via `request_task`:
 
-- `claim_task` immediately so no other session takes it
+- If `claim_task` reports unread messages, call `poll_messages` and handle those messages before retrying
+- `claim_task` promptly so no other session takes it
 - Call `update_task` to `in_progress` when you start
 - Call `update_task` to `done` with a structured result when finished (see below), or `failed` with what went wrong
 - If the task requires follow-up, create a new `request_task` (e.g. the implementer sends a `review` task back to the planner)

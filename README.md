@@ -170,7 +170,7 @@ Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are c
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `request_task`       | Post a task (types: `review`, `implement`, `fix`, `test`, `research`, `other`). Use `review` for routine code review handoff. Supports `priority`, `depends_on`, `idempotency_key`, `parent_task_id`, and `approval_required`. |
 | `request_task_batch` | Create multiple tasks atomically in a single transaction. Supports `$N` references (1-indexed) for intra-batch dependencies. |
-| `claim_task`         | Claim an open task. Prevents double-claiming.                                                                             |
+| `claim_task`         | Claim an open task. Prevents double-claiming and blocks if you have unread messages until you call `poll_messages` (or explicitly override). |
 | `update_task`        | Update a claimed task to `in_progress`, `done`, `failed`, or `cancelled`. Attach a result when useful.                    |
 | `approve_task`       | Approve a task in `approval_required` status. Transitions to `open`/`claimed` (or `blocked` if deps unmet).               |
 | `get_task`           | Get full details of a task.                                                                                               |
