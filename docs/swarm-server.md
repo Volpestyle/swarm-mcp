@@ -20,11 +20,21 @@ The auth database is not the swarm coordination schema. It stores devices, beare
 From the repo root:
 
 ```sh
-cargo run --manifest-path apps/swarm-server/Cargo.toml
+bun run dev:server
 cargo test --manifest-path apps/swarm-server/Cargo.toml
 ```
 
-`swarm-ui` starts the daemon automatically when its local socket is unavailable. In debug builds it prefers:
+For desktop UI development, run the daemon and UI separately:
+
+```sh
+# Terminal 1
+bun run dev:server
+
+# Terminal 2
+bun run dev:ui
+```
+
+`bun run dev:ui` sets `SWARM_UI_MANAGE_DAEMON=0`, so stale or incompatible daemon processes are surfaced instead of being silently replaced by the UI. Managed startup remains available through `bun run dev:ui:managed`. In debug builds, managed startup prefers:
 
 1. `SWARM_SERVER_BIN` when set to an existing binary
 2. `cargo run --manifest-path apps/swarm-server/Cargo.toml`
@@ -39,6 +49,7 @@ Packaged builds look for a sibling `swarm-server` binary first, then fall back t
 | `SWARM_SERVER_PORT` | `5444` | HTTPS/WSS bind port on `0.0.0.0`. |
 | `SWARM_ENABLE_BONJOUR` | unset | Enables `_swarm._tcp` advertisement in debug builds. Release builds advertise by default. |
 | `SWARM_SERVER_BIN` | unset | Used by `swarm-ui` to launch a specific server binary. |
+| `SWARM_UI_MANAGE_DAEMON` | enabled | Set to `0`, `false`, `no`, or `off` to make `swarm-ui` require a separately-started daemon. |
 
 Server-owned files live under `~/.swarm-mcp/server/` by default:
 
