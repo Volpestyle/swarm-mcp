@@ -5,6 +5,7 @@ crates/*/target/
 apps/swarm-ui/src-tauri/target/
 apps/swarm-server/target/
 nvim.log
+excalidraw.log
 *.db
 *.db-wal
 *.db-shm
