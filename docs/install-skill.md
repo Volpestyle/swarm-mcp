@@ -45,6 +45,34 @@ Useful flags:
 
 Use the manual sections below for global installs, non-Claude skill directories, or local-clone MCP configs.
 
+## Symlink From A Local Clone (Recommended For Consumers)
+
+If you cloned this repo or vendor it under another project, prefer a symlink over a copy. A symlink keeps the skill single-sourced — when you `git pull` swarm-mcp, every consumer picks the update up automatically.
+
+The skill source lives at:
+
+```text
+/path/to/swarm-mcp/skills/swarm-mcp
+```
+
+Install into a consumer project (matches the convention this repo itself uses for its bundled skills, where `.claude/skills/<name>` is a symlink to `../../.agents/skills/<name>`):
+
+```sh
+# In the consumer project
+mkdir -p .agents/skills .claude/skills
+ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp .agents/skills/swarm-mcp
+ln -s ../../.agents/skills/swarm-mcp .claude/skills/swarm-mcp
+```
+
+Or globally for every project on the machine:
+
+```sh
+mkdir -p ~/.claude/skills
+ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp ~/.claude/skills/swarm-mcp
+```
+
+Most agent hosts follow symlinks transparently. If yours does not, fall back to the copy-based instructions below.
+
 ## Skill Source
 
 Copy the skill folder as a unit:

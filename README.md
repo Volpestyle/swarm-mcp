@@ -61,6 +61,26 @@ Tool names are usually namespaced by the client using the server name. Depending
 
 Call the swarm `register` tool first to join the swarm.
 
+### Install the bundled skill
+
+Mounting the MCP server makes the swarm tools available, but agents still benefit from the bundled `SKILL.md` to use them well. If your host supports installable skills (Claude Code, OpenCode, Codex with skills, etc.), install [`skills/swarm-mcp`](./skills/swarm-mcp) into your consumer project — symlink is recommended over copying so updates from `git pull` propagate automatically:
+
+```sh
+# In your consumer project root
+mkdir -p .agents/skills .claude/skills
+ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp .agents/skills/swarm-mcp
+ln -s ../../.agents/skills/swarm-mcp .claude/skills/swarm-mcp
+```
+
+Or install globally for all projects:
+
+```sh
+mkdir -p ~/.claude/skills
+ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp ~/.claude/skills/swarm-mcp
+```
+
+Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting role-specialized sessions. Full per-host install paths and copy-based alternatives live in [`docs/install-skill.md`](./docs/install-skill.md).
+
 ### Further reading
 
 - [`docs/getting-started.md`](./docs/getting-started.md) -- beginner-friendly setup and verification walkthrough

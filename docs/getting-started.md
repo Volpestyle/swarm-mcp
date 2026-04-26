@@ -90,11 +90,33 @@ Use the same command, args, and working directory in that host's MCP settings.
 
 Tool names may be rendered differently by each client. For the same `register` tool, one host may show `swarm_register` while another shows `mcp__swarm__register`.
 
-## 4. Restart your coding agent host
+## 4. Install the bundled skill
+
+The MCP server provides the *tools*; the bundled skill teaches the agent how to use them well (registration sequencing, role workflows, lock discipline). Skip this step only if your host does not support installable skills.
+
+The skill source is at `skills/swarm-mcp` in this repo. Symlink it into your consumer project so `git pull` updates propagate automatically:
+
+```sh
+# Run from your consumer project root
+mkdir -p .agents/skills .claude/skills
+ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp .agents/skills/swarm-mcp
+ln -s ../../.agents/skills/swarm-mcp .claude/skills/swarm-mcp
+```
+
+Or globally for every project:
+
+```sh
+mkdir -p ~/.claude/skills
+ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp ~/.claude/skills/swarm-mcp
+```
+
+Per-host paths and a copy-based alternative are in [`docs/install-skill.md`](./install-skill.md).
+
+## 5. Restart your coding agent host
 
 Most hosts only load MCP server changes at startup. Restart the application or start a fresh session after editing the MCP config.
 
-## 5. Open your first session and register
+## 6. Open your first session and register
 
 In your first coding-agent session, call the swarm server's `register` tool.
 
@@ -118,7 +140,7 @@ After that, call:
 
 At this point you should see only your own session.
 
-## 6. Open a second session and register again
+## 7. Open a second session and register again
 
 Open another session in the same host or a different host on the same machine, as long as it is also configured to use `swarm-mcp`.
 
@@ -133,7 +155,7 @@ If you do not, check:
 - Both sessions are pointing at the same database path
 - Both hosts actually loaded the MCP config change after restart
 
-## 7. Verify cross-agent communication
+## 8. Verify cross-agent communication
 
 From session A:
 
@@ -155,7 +177,7 @@ You can also test shared coordination tools:
 - `lock_file` while editing
 - `annotate` to leave shared notes on a file
 
-## 8. Add operating instructions and start collaborating
+## 9. Add operating instructions and start collaborating
 
 Once the MCP server is working, add a short coordination protocol to your host instructions or `AGENTS.md`:
 
