@@ -264,7 +264,7 @@ Canonical helper-script pattern — a harness the agent invokes to do validation
 // harness.mjs — run as `node harness.mjs <partner-id>` by an agent
 import { execFileSync } from "node:child_process";
 const me = process.env.SWARM_MCP_INSTANCE_ID;
-const scope = process.env.SWARM_SCOPE;
+const scope = process.env.SWARM_MCP_SCOPE;
 // ... validate and write artifacts ...
 execFileSync("swarm-mcp", ["kv", "set", "turn", JSON.stringify(next), "--scope", scope, "--as", me]);
 execFileSync("swarm-mcp", ["send", "--to", partner, "your turn", "--scope", scope, "--as", me]);

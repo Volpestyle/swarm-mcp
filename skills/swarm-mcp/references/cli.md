@@ -128,7 +128,7 @@ When you write a helper script that needs to participate in swarm coordination, 
 // harness.mjs — invoked by an agent with SWARM_MCP_INSTANCE_ID set
 import { execFileSync } from "node:child_process";
 
-const scope = process.env.SWARM_SCOPE;   // or compute it
+const scope = process.env.SWARM_MCP_SCOPE; // or compute it
 const me = process.env.SWARM_MCP_INSTANCE_ID;
 const partner = process.argv[2];
 
