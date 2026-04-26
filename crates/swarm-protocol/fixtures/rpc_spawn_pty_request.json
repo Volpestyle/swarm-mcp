@@ -8,5 +8,13 @@
   "name": "reviewer-2",
   "instance_id": null,
   "cols": 120,
-  "rows": 40
+  "rows": 40,
+  "args": [
+    "-p",
+    "review the pairing handler"
+  ],
+  "env": {
+    "SWARM_DB_PATH": "/Users/james/.swarm-mcp/swarm.db"
+  },
+  "initial_input": "status\n"
 }

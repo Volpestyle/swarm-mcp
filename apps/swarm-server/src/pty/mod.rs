@@ -183,14 +183,29 @@ impl PtyService {
             .master
             .try_clone_reader()
             .map_err(|_| ServerError::internal("failed to clone PTY reader"))?;
-        let writer = pty_pair
+        let mut writer = pty_pair
             .master
             .take_writer()
             .map_err(|_| ServerError::internal("failed to take PTY writer"))?;
-        let child = pty_pair
+        let mut child = pty_pair
             .slave
             .spawn_command(command_builder)
             .map_err(|_| ServerError::internal("failed to spawn PTY child"))?;
+
+        if let Some(initial_input) = plan
+            .initial_input
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            if writer
+                .write_all(initial_input.as_bytes())
+                .and_then(|_| writer.flush())
+                .is_err()
+            {
+                let _ = child.kill();
+                return Err(ServerError::internal("failed to write initial PTY input"));
+            }
+        }
 
         let handle = Arc::new(PtyHandle {
             master: Mutex::new(Some(pty_pair.master)),
@@ -831,12 +846,7 @@ impl PtyService {
         Ok(())
     }
 
-    fn finalize_dead_session(
-        &self,
-        pty_id: &str,
-        handle: &Arc<PtyHandle>,
-        exit_code: Option<i32>,
-    ) {
+    fn finalize_dead_session(&self, pty_id: &str, handle: &Arc<PtyHandle>, exit_code: Option<i32>) {
         if handle.cleaned_up.load(Ordering::Acquire) {
             return;
         }
@@ -853,11 +863,13 @@ impl PtyService {
         }
 
         if send_exit {
-            let _ = self.frames.send(Frame::new(FramePayload::PtyExit(PtyExitFrame {
-                pty_id: pty_id.to_owned(),
-                exit_code,
-                at,
-            })));
+            let _ = self
+                .frames
+                .send(Frame::new(FramePayload::PtyExit(PtyExitFrame {
+                    pty_id: pty_id.to_owned(),
+                    exit_code,
+                    at,
+                })));
         }
 
         cleanup_session(
@@ -1115,6 +1127,9 @@ mod tests {
             instance_id: None,
             cols: Some(80),
             rows: Some(24),
+            args: Vec::new(),
+            env: Default::default(),
+            initial_input: None,
         }
     }
 

@@ -255,7 +255,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn health() -> impl IntoResponse {
-    Json(json!({ "ok": true, "v": PROTOCOL_VERSION }))
+    Json(json!({
+        "ok": true,
+        "v": PROTOCOL_VERSION,
+        "capabilities": [
+            "pty.spawn.args",
+            "pty.spawn.env",
+            "pty.spawn.initial_input"
+        ]
+    }))
 }
 
 fn build_router(state: EndpointState) -> Router {

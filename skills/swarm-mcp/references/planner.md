@@ -29,6 +29,30 @@ The server maintains `owner/planner` automatically.
 - Use `idempotency_key` for crash-safe retries.
 - Avoid editing code yourself unless necessary.
 
+## Stranded Task Escalation
+
+Planner escalation is a request, not authority. You may ask the controller to spawn a worker for a stranded task, but the controller decides whether policy, permissions, resource caps, and context allow it.
+
+If you `request_task` and the task has not been claimed within about 30 seconds:
+
+1. Re-read the task with `get_task`. If it is `claimed`, `in_progress`, `done`, `failed`, or `cancelled`, do not escalate.
+2. Resolve the controller peer with `kv_get("clanky/controller")`.
+3. If the KV entry is missing or stale, call `list_instances(label_contains="origin:clanky role:planner")` and choose the active peer in this same scope.
+4. If no controller peer is found, annotate or checkpoint the task as waiting for capacity and continue your loop. Do not guess a recipient.
+5. Send the controller a versioned JSON message:
+
+```json
+{
+  "v": 1,
+  "kind": "spawn_request",
+  "taskId": "<task-id>",
+  "role": "implementation",
+  "reason": "Task unclaimed after 30s"
+}
+```
+
+Allowed `role` values are `implementation`, `review`, and `research`. Do not include `cwd`, `harness`, shell commands, or any other spawn parameter; the controller derives where and how to spawn from your own registered context. Continue your loop after sending the request. The controller may spawn a worker, decline, ask the operator, or do nothing if caps are exhausted.
+
 ## Task DAGs
 
 Prefer a task graph over manually staged batches.

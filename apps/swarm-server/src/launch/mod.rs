@@ -39,6 +39,7 @@ pub struct LaunchPlan {
     pub scope: Option<String>,
     pub label: Option<String>,
     pub name: Option<String>,
+    pub initial_input: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,6 +97,12 @@ pub fn build_launch_plan(
     env.insert("TERM".to_owned(), "xterm-256color".to_owned());
     env.insert("PATH".to_owned(), merged_path());
 
+    for (key, value) in &request.env {
+        if let Some((key, value)) = normalize_env_pair(key, value)? {
+            env.insert(key, value);
+        }
+    }
+
     if let Some(scope) = request
         .scope
         .as_deref()
@@ -123,20 +130,44 @@ pub fn build_launch_plan(
         env.insert("SWARM_MCP_FILE_ROOT".to_owned(), request.cwd.clone());
     }
 
-    let (command, display_command, bootstrap_command) = if harness == "shell" {
-        (shell.clone(), shell, None)
+    let direct_harness = harness != "shell"
+        && (!request.args.is_empty()
+            || request
+                .initial_input
+                .as_deref()
+                .is_some_and(|value| !value.is_empty()));
+
+    let (command, args, display_command, bootstrap_command) = if harness == "shell" {
+        (shell.clone(), request.args.clone(), shell, None)
+    } else if direct_harness {
+        env.insert("SWARM_SERVER_HARNESS".to_owned(), harness.to_owned());
+        env.insert(
+            "SWARM_UI_ROLE".to_owned(),
+            role.clone().unwrap_or_else(|| harness.to_owned()),
+        );
+        (
+            harness.to_owned(),
+            request.args.clone(),
+            harness.to_owned(),
+            None,
+        )
     } else {
         env.insert("SWARM_SERVER_HARNESS".to_owned(), harness.to_owned());
         env.insert(
             "SWARM_UI_ROLE".to_owned(),
             role.clone().unwrap_or_else(|| harness.to_owned()),
         );
-        (shell.clone(), harness.to_owned(), Some(harness.to_owned()))
+        (
+            shell.clone(),
+            Vec::new(),
+            harness.to_owned(),
+            Some(harness.to_owned()),
+        )
     };
 
     Ok(LaunchPlan {
         command,
-        args: Vec::new(),
+        args,
         cwd: request.cwd.clone(),
         env,
         display_command,
@@ -145,7 +176,31 @@ pub fn build_launch_plan(
         scope: request.scope.clone(),
         label: request.label.clone(),
         name,
+        initial_input: request.initial_input.clone(),
     })
+}
+
+fn normalize_env_pair(key: &str, value: &str) -> Result<Option<(String, String)>, ServerError> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Ok(None);
+    }
+
+    if key.contains('=') || key.contains('\0') || value.contains('\0') {
+        return Err(ServerError::validation(format!(
+            "invalid environment override: {key}"
+        )));
+    }
+
+    if !key.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+        || key.chars().next().is_some_and(|c| c.is_ascii_digit())
+    {
+        return Err(ServerError::validation(format!(
+            "invalid environment override: {key}"
+        )));
+    }
+
+    Ok(Some((key.to_owned(), value.to_owned())))
 }
 
 fn read_launch_config_file() -> Option<LaunchConfigFile> {
@@ -281,6 +336,9 @@ mod tests {
             instance_id: None,
             cols: None,
             rows: None,
+            args: Vec::new(),
+            env: Default::default(),
+            initial_input: None,
         }
     }
 
@@ -300,9 +358,30 @@ mod tests {
         let plan = build_launch_plan(&request("codex"), &LaunchConfig::load()).unwrap();
         assert_eq!(plan.display_command, "codex");
         assert_eq!(plan.bootstrap_command.as_deref(), Some("codex"));
+        assert_eq!(plan.command, shell_path());
+        assert!(plan.args.is_empty());
         assert_eq!(
             plan.env.get("SWARM_SERVER_HARNESS").map(String::as_str),
             Some("codex")
+        );
+    }
+
+    #[test]
+    fn launch_plan_for_harness_args_runs_harness_directly() {
+        let mut request = request("codex");
+        request.args = vec!["exec".to_owned(), "fix it".to_owned()];
+        request
+            .env
+            .insert("SWARM_DB_PATH".to_owned(), "/tmp/swarm.db".to_owned());
+
+        let plan = build_launch_plan(&request, &LaunchConfig::load()).unwrap();
+
+        assert_eq!(plan.command, "codex");
+        assert_eq!(plan.args, vec!["exec".to_owned(), "fix it".to_owned()]);
+        assert!(plan.bootstrap_command.is_none());
+        assert_eq!(
+            plan.env.get("SWARM_DB_PATH").map(String::as_str),
+            Some("/tmp/swarm.db")
         );
     }
 
