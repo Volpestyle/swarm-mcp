@@ -1,74 +1,105 @@
-# Swarm-server logs
+# Swarm-Server Logs
 
-The Rust daemon `swarm-server` writes one log file per UTC day to:
+The Rust daemon `swarm-server` writes one log file per UTC day under the server directory next to the swarm DB:
 
+```text
+${dirname(SWARM_DB_PATH:-~/.swarm-mcp/swarm.db)}/server/logs/swarm-server.log.YYYY-MM-DD
 ```
+
+With the default DB path, that is:
+
+```text
 ~/.swarm-mcp/server/logs/swarm-server.log.YYYY-MM-DD
 ```
 
-These logs cover daemon-level concerns the SQLite tables do not — PTY lifecycle, pairing, certificate handshakes, HTTP/WSS errors, internal panics. Reach for them when:
+These logs cover daemon-level concerns the SQLite swarm tables do not: PTY lifecycle, local UDS server failures, pairing, TLS/certificate handshakes, HTTP/WSS errors, mobile reconnects, and internal panics.
 
-- A `swarm-ui` desktop session is misbehaving (PTY won't spawn, won't bind, won't adopt)
+Reach for them when:
+
+- A `swarm-ui` desktop session is misbehaving, such as PTY spawn, bind, prompt, or adoption failures
 - Pairing with the iOS/iPadOS client failed
 - The daemon crashed or refused a connection
 - An unadopted instance row appeared and you need to know whether the harness ever started
+- `ui_commands` rows stay `pending`, `running`, or `failed` and the DB alone does not explain why
 
-The logs do **not** record swarm coordination actions (those live in `events`). If you only want messages/tasks/KV history, query `swarm.db` instead.
+The logs do not record normal swarm coordination actions. Messages, tasks, KV changes, locks, annotations, and UI command status transitions live in `swarm.db` events.
 
 ## Format
 
 `tracing` text output with ISO-8601 UTC timestamps:
 
-```
+```text
 2026-04-25T15:25:28.800595Z  WARN swarm_server: uds client connection failed err=...
 2026-04-25T19:53:25.123456Z  INFO swarm_server::pty: pty spawned id=... harness=claude bound_instance=...
 ```
 
-Fields are `key=value` after the module path. JSON output mode is not enabled by default.
+Fields are `key=value` after the module path. JSON output mode is not enabled by default. Verbosity follows `RUST_LOG`; the default filter is `swarm_server=info`.
 
-## Useful greps
+## Useful Searches
 
 ```sh
-LOG=~/.swarm-mcp/server/logs/swarm-server.log.$(date +%F)
+DB=${SWARM_DB_PATH:-$HOME/.swarm-mcp/swarm.db}
+LOG="$(dirname "$DB")/server/logs/swarm-server.log.$(date -u +%F)"
 
 # Errors and panics only
-grep -E '\sERROR\s|panic' "$LOG"
+rg '\sERROR\s|panic' "$LOG"
 
-# PTY lifecycle (spawn / exit / lease)
-grep -E 'pty (spawned|exited|lease)' "$LOG"
+# PTY lifecycle, bind, and prompt forwarding
+rg 'pty|bound_instance|send_prompt|PtyExit' "$LOG"
 
-# Pairing flow
-grep -E 'pairing|/pair' "$LOG"
+# Pairing and certificate flow
+rg 'pairing|/pair|fingerprint|TLS|handshake' "$LOG"
 
-# Specific instance — once you know its UUID
-grep '<instance-uuid>' "$LOG"
+# Local socket / desktop app connection issues
+rg 'uds|UDS|local server|client connection failed' "$LOG"
+
+# Specific instance once you know its UUID
+rg '<instance-uuid>' "$LOG"
 
 # Specific PTY id
-grep '<pty-id>' "$LOG"
-
-# Time window (after 22:00 local on a given day)
-awk '$1 >= "2026-04-25T22:00:00Z"' "$LOG"
+rg '<pty-id>' "$LOG"
 ```
 
-## Cross-referencing with `swarm.db`
+Use UTC for log windows, or convert your local incident time before searching.
 
-When the daemon binds a swarm-aware harness (`claude`, `codex`, `opencode`), it creates a pending `instances` row with `adopted = 0` and injects the UUID into the harness env (`SWARM_MCP_INSTANCE_ID`). Match the log's `bound_instance=<uuid>` to:
+## Cross-Referencing With `swarm.db`
 
-- `instances.id` (live), or
-- the `subject` of an `instance.registered` event in `swarm.db`
+When the daemon launches a swarm-aware harness (`claude`, `codex`, or `opencode`), `swarm-ui` pre-creates an `instances` row with `adopted = 0` and injects `SWARM_MCP_INSTANCE_ID=<uuid>` into the child environment. Match log fields such as `bound_instance=<uuid>` to:
 
-If the log shows a spawn but no `instance.registered` event ever fires for that UUID, the MCP subprocess never came up — common causes are missing `bun`/`node`, a bad `SWARM_DB_PATH`, or the harness exiting before adoption.
+- `instances.id` for live rows
+- `events.subject` or `events.actor` for `instance.registered`, `instance.deregistered`, and `instance.stale_reclaimed`
+- `ui_commands.result` for completed spawn/prompt/move/organize commands
 
-## Common patterns
+If the log shows a PTY spawn but no `instance.registered` event ever appears for that UUID, the MCP subprocess probably never came up. Common causes are a missing `bun`/`node`/host binary, a bad `SWARM_DB_PATH`, wrong working directory, or the harness exiting before adoption.
 
-**"`swarm-mcp ui spawn` succeeded but no node appeared"** — `ui_commands` row is `done`, but the daemon log shows the PTY exited immediately. Check the harness binary on `$PATH` and the `cwd` argument.
+## Server Auth DB
 
-**"Mobile client can't reconnect after a cert rotate"** — log entries about TLS handshake failures with the device's pinned fingerprint. Re-pair the device.
+`server/server.db` is separate from `swarm.db`. It stores devices, tokens, pairing sessions, certificates, and server audit events. Inspect it only for pairing/mobile/server-auth incidents, not task/message/KV coordination.
 
-**"UDS client connection failed" spam** — usually a `swarm-ui` instance retrying after the daemon was restarted. Benign if it stops on its own.
+Useful pairing audit query:
+
+```sh
+sqlite3 -readonly -header -separator $'\t' ~/.swarm-mcp/server/server.db \
+  "SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts, kind, subject, payload FROM audit_events ORDER BY id DESC LIMIT 50;"
+```
+
+## Common Patterns
+
+**`swarm-mcp ui spawn` succeeded but no node adopted**
+
+Check `ui_commands` for the command result, then search logs for the `pty_id` or `bound_instance`. If the PTY exited immediately, verify the harness binary on `PATH` and the `cwd`/`SWARM_DB_PATH` environment.
+
+**Mobile client cannot reconnect after certificate rotation**
+
+Look for TLS handshake or fingerprint mismatch entries. Re-pair the device after confirming the expected fingerprint.
+
+**UDS client connection failed spam**
+
+Usually a desktop app retrying while the daemon is restarting or the socket path changed. Benign if it stops; suspicious if paired with `ui_commands` that never leave `pending`.
 
 ## Caveats
 
-- Logs are **not** rotated past one file per day; old days accumulate. Safe to delete files older than the time window you care about.
-- The daemon writes to stderr in addition to the file when run in the foreground (`cargo run --manifest-path apps/swarm-server/Cargo.toml`).
-- Releases may change log fields — treat field names as advisory, grep on stable substrings (`pty spawned`, `pairing`, `panic`).
+- Logs are one file per day and old days accumulate until deleted manually.
+- The daemon writes only to the log file through tracing in normal runs; foreground development may also show process stderr/stdout around startup failures.
+- Field names can change between releases. Prefer stable substrings (`pty`, `bound_instance`, `pairing`, `panic`, `uds`) over exact log fields.
+- Logs are UTC. DB report timestamps should usually be converted to localtime for user-facing summaries.

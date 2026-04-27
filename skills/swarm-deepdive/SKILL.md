@@ -1,6 +1,6 @@
 ---
 name: swarm-deepdive
-description: Forensic inspection of a swarm's activity — reconstruct timelines, debug stuck or failed agents, audit task/message/KV history. Use when the user asks "what happened in the swarm", "why did agent X stop", "trace this task", "show me message history", or otherwise wants to dig into swarm state past what `list_*` MCP tools surface.
+description: Forensic inspection of swarm activity - reconstruct timelines, debug stuck or failed agents, audit task/message/KV/file-lock/UI command history, and correlate daemon logs. Use when the user asks "what happened in the swarm", "why did agent X stop", "trace this task", "show message history", "why is swarm-ui stuck", or otherwise wants to investigate swarm state beyond normal MCP coordination tools.
 metadata:
   short-description: Investigate swarm history and live state
   domain: agent-coordination
@@ -10,106 +10,149 @@ metadata:
 
 # Swarm Deep Dive
 
-Use this skill to investigate what a swarm actually did — postmortem or live. The MCP tools (`list_instances`, `list_tasks`, `poll_messages`) show current state from one session's perspective. This skill reads the underlying SQLite database and server logs directly so you can reconstruct full timelines, audit decisions, and debug coordination failures across all sessions.
+Use this skill to investigate what a swarm actually did, either live or after the fact. Normal swarm MCP tools (`list_instances`, `list_tasks`, `poll_messages`, `kv_get`) are for participation from one registered session. This skill is for inspection: read the SQLite database, event audit log, and server logs to reconstruct timelines and explain coordination failures.
 
-## When to use
+If the user only wants to coordinate current work, use `swarm-mcp` instead. If they want evidence, timelines, root cause, or a postmortem, use this skill.
+
+## When To Use
 
 - "What happened in the swarm overnight / while I was away?"
 - "Why is task X blocked / why did agent Y stop?"
 - "Reconstruct the conversation between planner and implementer"
-- "Audit who edited which file and when"
+- "Audit who edited, locked, or annotated a file"
 - "Did this KV value get clobbered?"
+- "Why did this UI command stay pending?"
 - "Why didn't my agent register / why was it pruned?"
 - Any postmortem on swarm behavior.
 
-If the user just wants current state from inside an active session, use the swarm MCP tools (`list_instances`, `list_tasks`, `poll_messages`) instead — this skill is for forensics, not coordination.
-
-## Where the data lives
+## Where The Data Lives
 
 | Source | Path | What it has |
 |---|---|---|
-| Shared SQLite DB | `~/.swarm-mcp/swarm.db` | All instances, tasks, messages, KV, file locks/annotations, **events audit log**, UI command queue |
-| Server auth DB | `~/.swarm-mcp/server/server.db` | Devices, bearer tokens, pairing — NOT swarm state |
-| Server logs | `~/.swarm-mcp/server/logs/swarm-server.log.YYYY-MM-DD` | PTY lifecycle, pairing, HTTP/WS errors, daemon-level issues |
+| Shared SQLite DB | `${SWARM_DB_PATH:-~/.swarm-mcp/swarm.db}` | Instances, tasks, messages, KV, file locks/annotations, events audit log, UI command queue |
+| Server auth DB | directory of swarm DB + `/server/server.db` | Devices, bearer tokens, pairing sessions, server audit events - not swarm coordination state |
+| Server logs | directory of swarm DB + `/server/logs/swarm-server.log.YYYY-MM-DD` | PTY lifecycle, pairing, HTTP/WSS/UDS errors, daemon startup/crashes |
 
-The DB is shared between the MCP server (`swarm-mcp`) and the Rust daemon (`swarm-server`). Both write to it, so it is the single source of truth for swarm activity.
+The Bun MCP server, `swarm-ui`, and `swarm-server` share the same swarm DB path. The default is `~/.swarm-mcp/swarm.db`, but `SWARM_DB_PATH` overrides it.
 
-## The events table is your primary tool
+## Preserve Evidence First
 
-`events` is an append-only audit log of every swarm-altering action. It is the fastest way to reconstruct a timeline. Event types:
+For strict postmortems, start with `sqlite3 -readonly` before using `swarm-mcp inspect`. The CLI is convenient, but every state subcommand imports the runtime and runs stale-instance pruning before it reads. That can release tasks, delete stale instance rows, clear locks/messages for those instances, and delete messages older than one hour.
+
+Use the CLI when you want the live view after normal runtime cleanup. Use read-only SQL when you need the least-mutated snapshot.
+
+```sh
+sqlite3 -readonly -header -separator $'\t' "${SWARM_DB_PATH:-$HOME/.swarm-mcp/swarm.db}" "SELECT COUNT(*) FROM events;"
+```
+
+## Events Are The Primary Timeline
+
+`events` is the append-only audit log for swarm-altering actions. It is the fastest way to reconstruct causality.
+
+Current event families include:
 
 - `instance.registered`, `instance.deregistered`, `instance.stale_reclaimed`
 - `task.created`, `task.claimed`, `task.updated`, `task.approved`, `task.cascade.unblocked`, `task.cascade.cancelled`
-- `message.sent`, `message.broadcast`
+- `message.sent`, `message.broadcast`, `message.cleared`
 - `kv.set`, `kv.deleted`, `kv.appended`
 - `context.annotated`, `context.lock_acquired`, `context.lock_released`
+- `ui.command.started`, `ui.command.completed`, `ui.command.failed`
 
-Each row has `scope`, `actor` (instance id or `system`), `subject` (task id, kv key, file, recipient...), and a JSON `payload` with type-specific detail.
+Each row has `scope`, `actor`, `subject`, `payload`, and `created_at`. Payloads can include sensitive content: message text, KV values, deleted prior values, appended JSON, annotation text, and UI command results. Treat raw payloads as evidence, not as automatically safe user-facing output.
 
-**Critical caveat: events have a 24-hour TTL.** Cleanup drops events older than 24h when an MCP server process exits cleanly, so do not rely on `events` for older incidents. Fall back to inspecting the surviving rows in `tasks`, `messages`, `kv`, `context`, plus `swarm-server.log.*`.
+## Retention Model
 
-## Start here
+| Data | Retention behavior |
+|---|---|
+| `events` | Deleted after 24 hours when an MCP server process exits cleanly. |
+| `messages` | Deleted after one hour by stale-prune paths. Messages for deregistered/stale recipients are deleted immediately during release. Use `message.*` events for 24-hour reconstruction. |
+| `tasks` | Active tasks persist. Terminal `done`/`failed`/`cancelled` tasks are deleted after 24 hours when MCP cleanup runs. |
+| `context` | Locks persist until released, task completion, deregister, or stale reclaim. Non-lock annotations are deleted after 24 hours when MCP cleanup runs. |
+| `kv` | Only current values persist. MCP KV writes emit content-bearing events, but some internal UI KV writes do not. |
+| `ui_commands` | Command rows persist unless manually cleaned; status is `pending`, `running`, `done`, or `failed`. |
 
-1. Identify the **scope** under investigation (usually the project's git root, e.g. `/Users/.../my-project`). Almost every query filters by scope.
-2. Get the high-level snapshot first: `swarm-mcp inspect --scope <path>`. This gives instances + tasks + locks + KV + recent messages in one shot.
-3. Pick the right reference for the kind of dive you need:
+Never assume older incidents are fully reconstructable from the DB. For older windows, combine surviving task/KV/UI rows with server logs and whatever event rows remain.
+
+## Start Here
+
+1. Identify the scope under investigation. It is usually the project git root. Almost every useful query filters by `scope`.
+2. Identify the time window and whether evidence preservation matters. If yes, query with `sqlite3 -readonly` first. If no, use `swarm-mcp inspect --scope <path> --json` for a live snapshot.
+3. Establish data freshness: oldest/newest `events`, recent `messages`, terminal tasks, and whether `SWARM_DB_PATH` points somewhere non-default.
+4. Resolve instance UUIDs to labels using live `instances` rows and `instance.registered` events.
+5. Use the reference that matches the question.
 
 | Goal | Reference |
 |---|---|
-| Reconstruct a timeline, find when something happened | `references/queries.md` → "Timeline" |
-| Trace one task end-to-end (created → claimed → done/failed) | `references/queries.md` → "Task lifecycle" |
-| Replay messages between two agents | `references/queries.md` → "Message threads" |
-| Audit who edited / locked a file | `references/queries.md` → "File contention" |
-| Track a KV key's history | `references/queries.md` → "KV history" |
-| Investigate a pruned / stale agent | `references/queries.md` → "Stale agents" |
-| Need column names / types | `references/schema.md` |
-| Daemon-level errors (PTY, pairing, server panics) | `references/server-logs.md` |
+| Reconstruct a timeline, find when something happened | `references/queries.md` -> "Timeline" |
+| Trace one task end-to-end | `references/queries.md` -> "Task lifecycle" |
+| Replay messages or broadcasts | `references/queries.md` -> "Messages" |
+| Audit locks, annotations, or file contention | `references/queries.md` -> "File contention" |
+| Track a KV key | `references/queries.md` -> "KV history" |
+| Investigate stale, pruned, or unadopted agents | `references/queries.md` -> "Stale agents" |
+| Inspect `swarm-ui` command execution | `references/queries.md` -> "UI command queue" |
+| Need column names, payload facts, or retention rules | `references/schema.md` |
+| Daemon-level errors: PTY, pairing, HTTP/WSS/UDS, crashes | `references/server-logs.md` |
 
-## Core conventions
+## Core Conventions
 
-- **Most timestamps are unix seconds**. Convert ordinary `*_at` fields with `datetime(created_at, 'unixepoch', 'localtime')` in SQLite. `tasks.changed_at` and `kv_scope_updates.changed_at` are unix milliseconds for polling.
-- **Instance IDs are UUIDs**; correlate to a human-readable role/label by joining against `instances.label`, or by checking the `instance.registered` event payload (`{"label": "role:planner provider:claude", ...}`). Labels persist in events even after the instance row is deleted.
-- **Scope filtering matters**: the DB holds every project on the machine. Always pass `--scope` (CLI) or `WHERE scope = ?` (SQL) unless you specifically want a global view.
-- **Read-only first**: query, don't mutate. Only use `swarm-mcp send/kv set/...` or direct `UPDATE` if the user explicitly asks you to repair state.
-- **The DB is live**: agents may be writing concurrently. Use `sqlite3 -readonly` for safety, or accept that snapshots can change between queries.
+- Most timestamps are Unix seconds. Convert with `datetime(created_at, 'unixepoch', 'localtime')`.
+- `tasks.changed_at`, `kv_scope_updates.changed_at`, and planner `assigned_at` values are Unix milliseconds.
+- Scope filtering matters. The DB can hold many projects. Use `WHERE scope = :scope` unless you are intentionally investigating cross-project behavior.
+- Instance IDs are UUIDs. User-facing summaries should resolve them to `instances.label` or the `instance.registered` event payload label.
+- The DB is live. Agents, `swarm-ui`, and CLI calls can write while you inspect. Prefer `sqlite3 -readonly` for investigations.
+- Payload content may be sensitive. Quote only the minimum needed in the final report.
 
-## Two ways in
+## Two Ways In
 
-**`swarm-mcp` CLI** for structured reads (`inspect`, `instances`, `tasks`, `messages`, `context`, `kv list`, `kv get`). It prunes stale instances on startup and respects scope resolution. Use `--json` for machine-readable output. See `skills/swarm-mcp/references/cli.md` for full flag reference.
-
-**`sqlite3`** for anything the CLI does not surface — most importantly the `events` audit log, free-form joins, and time-windowed queries. The CLI has no `events` subcommand; SQL is the only way to read that table.
+Use direct SQL for forensic work:
 
 ```sh
-# Read-only, tab-separated, with headers — good default for ad-hoc queries
-sqlite3 -readonly -header -separator $'\t' ~/.swarm-mcp/swarm.db "SELECT ..."
+sqlite3 -readonly -header -separator $'\t' "${SWARM_DB_PATH:-$HOME/.swarm-mcp/swarm.db}"
 ```
+
+Use the CLI for live state or structured snapshots after accepting prune side effects:
+
+```sh
+swarm-mcp inspect --scope "$SCOPE" --json
+swarm-mcp instances --scope "$SCOPE" --json
+swarm-mcp tasks --scope "$SCOPE" --json
+swarm-mcp messages --scope "$SCOPE" --limit 100 --json
+swarm-mcp context --scope "$SCOPE" --json
+swarm-mcp kv list --scope "$SCOPE" --json
+```
+
+The CLI has no `events` subcommand. Query `events` directly.
 
 ## Constraints
 
-### Must do
+### Must Do
 
-- Pass `--scope <path>` or `WHERE scope = ?` on every query unless investigating cross-project behavior
-- Convert unix-seconds to localtime before showing timestamps to the user
-- Note the 24h event TTL when an investigation needs older data — fall back to surviving table state and server logs
-- Resolve instance UUIDs to labels for the user-facing summary (raw UUIDs are unreadable)
-- Use `sqlite3 -readonly` for inspection
+- Filter by scope unless the user explicitly asks for cross-project history.
+- State the DB path, scope, and time window you inspected.
+- Convert timestamps to localtime for user-facing timelines.
+- Explain retention limits when evidence is missing or old.
+- Resolve UUIDs to labels where possible.
+- Use `sqlite3 -readonly` for inspection unless the user asks for repair.
 
-### Must not do
+### Must Not Do
 
-- Mutate swarm state (`UPDATE`, `DELETE`, `swarm-mcp send/kv set/lock`) unless the user explicitly asks for a repair
-- Assume `events` covers older-than-24h incidents
-- Confuse `~/.swarm-mcp/server/server.db` (auth) with `~/.swarm-mcp/swarm.db` (swarm state)
-- Treat `swarm-mcp messages` output as authoritative consumption — it peeks; messages remain unread for the recipient agent
-- Run heavy queries against `swarm.db` while a critical agent is mid-task without `-readonly`
+- Mutate swarm state (`UPDATE`, `DELETE`, `swarm-mcp send`, `kv set`, locks) unless the user explicitly requests a repair.
+- Treat `swarm-mcp inspect` as a no-side-effect forensic read.
+- Assume `events` covers incidents older than 24 hours.
+- Assume `messages` rows are complete; they are short-lived and per-recipient.
+- Confuse `server/server.db` with `swarm.db`.
+- Paste raw sensitive payloads into the final report unless needed.
 
-## Default report shape
+## Default Report Shape
 
 When the user asks for an investigation, summarize in this order:
 
-1. **Scope and time window** you searched (`scope`, earliest/latest event timestamps)
-2. **Cast**: who was online, role labels, when they joined/left
-3. **Timeline**: ordered events with localtime + actor label + one-line description
-4. **Findings**: the specific question answered (root cause, message thread, who clobbered the key, etc.)
-5. **Caveats**: anything outside the 24h window, anything you could not recover
+1. Scope, DB path, and time window searched.
+2. Data freshness and caveats: oldest/newest events, known TTL gaps, whether CLI prune was used.
+3. Cast: instance labels, roles, join/exit/stale times.
+4. Timeline: ordered events with localtime, actor label, and one-line descriptions.
+5. Findings: root cause or direct answer to the question.
+6. Evidence: concise supporting rows or log snippets, with sensitive values redacted when appropriate.
+7. Follow-ups: only concrete repair or prevention steps.
 
-Keep raw SQL output out of the summary unless the user asks for it — show resolved labels and human times.
+Keep raw SQL output out of the summary unless the user asks for it.

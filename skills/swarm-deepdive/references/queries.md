@@ -1,150 +1,211 @@
-# Investigation queries
+# Investigation Queries
 
-Drop-in SQL for `~/.swarm-mcp/swarm.db`. Substitute `:scope` with the project scope (usually a git root path). All queries are read-only.
+Drop-in SQL for `${SWARM_DB_PATH:-~/.swarm-mcp/swarm.db}`. Substitute or bind `:scope`, `:task_id`, `:instance_id`, `:key`, and other parameters before running.
 
-Recommended invocation:
+Recommended interactive setup:
 
 ```sh
-SCOPE=/Users/you/path/to/project
-sqlite3 -readonly -header -separator $'\t' ~/.swarm-mcp/swarm.db "<query>"
+DB=${SWARM_DB_PATH:-$HOME/.swarm-mcp/swarm.db}
+sqlite3 -readonly -header -separator $'\t' "$DB"
 ```
 
-A label-resolution helper appears in many queries below as a left join, so UUIDs are translated to human labels (`role:planner provider:claude`) where possible. Live agents resolve via the `instances` table; deregistered ones resolve via their `instance.registered` event payload (24h window).
+Then in sqlite:
 
-## Snapshot first
+```sql
+.parameter init
+.parameter set :scope '/Users/you/path/to/project'
+.parameter set :task_id 'task-uuid-if-needed'
+.parameter set :instance_id 'instance-uuid-if-needed'
+.parameter set :key 'owner/planner'
+```
 
-Before running any of these, run the CLI snapshot — it reads cleanly across all tables:
+For strict forensics, run read-only SQL before `swarm-mcp inspect`. The CLI is useful, but it runs stale pruning before read commands.
+
+## Snapshot Or Evidence First
+
+Live snapshot after accepting normal prune side effects:
 
 ```sh
 swarm-mcp inspect --scope "$SCOPE" --json
 ```
 
-For more targeted snapshots: `swarm-mcp instances`, `tasks`, `messages`, `context`, `kv list` — all accept `--scope`.
+Data freshness and retention check:
+
+```sql
+SELECT 'events' AS source,
+       COUNT(*) AS rows,
+       datetime(MIN(created_at), 'unixepoch', 'localtime') AS oldest,
+       datetime(MAX(created_at), 'unixepoch', 'localtime') AS newest
+FROM events WHERE scope = :scope
+UNION ALL
+SELECT 'messages', COUNT(*),
+       datetime(MIN(created_at), 'unixepoch', 'localtime'),
+       datetime(MAX(created_at), 'unixepoch', 'localtime')
+FROM messages WHERE scope = :scope
+UNION ALL
+SELECT 'terminal_tasks', COUNT(*),
+       datetime(MIN(updated_at), 'unixepoch', 'localtime'),
+       datetime(MAX(updated_at), 'unixepoch', 'localtime')
+FROM tasks WHERE scope = :scope AND status IN ('done', 'failed', 'cancelled');
+```
 
 ## Timeline
 
-The single most useful query — a chronological audit of everything in scope (last 24h):
+Chronological audit log for one scope:
 
 ```sql
+WITH latest_reg AS (
+  SELECT scope, actor, MAX(id) AS event_id
+  FROM events
+  WHERE type = 'instance.registered'
+  GROUP BY scope, actor
+), labels AS (
+  SELECT e.scope, e.actor, json_extract(e.payload, '$.label') AS label
+  FROM events e
+  JOIN latest_reg r ON r.scope = e.scope AND r.actor = e.actor AND r.event_id = e.id
+)
 SELECT
+  e.id,
   datetime(e.created_at, 'unixepoch', 'localtime') AS ts,
   e.type,
-  COALESCE(i.label, json_extract(reg.payload, '$.label'), e.actor) AS actor_label,
+  COALESCE(i.label, labels.label, e.actor, 'null') AS actor_label,
   e.subject,
   e.payload
 FROM events e
 LEFT JOIN instances i ON i.id = e.actor
-LEFT JOIN events reg
-  ON reg.actor = e.actor
- AND reg.type  = 'instance.registered'
- AND reg.scope = e.scope
+LEFT JOIN labels ON labels.scope = e.scope AND labels.actor = e.actor
 WHERE e.scope = :scope
 ORDER BY e.id ASC;
 ```
 
-Time-windowed variant — last hour:
+Time-windowed variant, last hour:
 
 ```sql
 WHERE e.scope = :scope AND e.created_at >= unixepoch() - 3600
 ```
 
-## Cast — who was online when
-
-Live right now in scope:
+Event type counts for a quick shape of the incident:
 
 ```sql
-SELECT id, label, pid, datetime(registered_at, 'unixepoch', 'localtime') AS joined,
-       datetime(heartbeat, 'unixepoch', 'localtime') AS last_beat, adopted
-FROM instances
+SELECT type, COUNT(*) AS count,
+       datetime(MIN(created_at), 'unixepoch', 'localtime') AS first_seen,
+       datetime(MAX(created_at), 'unixepoch', 'localtime') AS last_seen
+FROM events
 WHERE scope = :scope
-ORDER BY registered_at;
+GROUP BY type
+ORDER BY count DESC, type;
 ```
 
-Everyone who appeared in scope in the last 24h, including pruned/deregistered:
+## Cast
+
+Live agents in scope:
+
+```sql
+SELECT id, label, pid, adopted,
+       datetime(registered_at, 'unixepoch', 'localtime') AS joined,
+       datetime(heartbeat, 'unixepoch', 'localtime') AS last_beat,
+       unixepoch() - heartbeat AS idle_seconds
+FROM instances
+WHERE scope = :scope
+ORDER BY registered_at, id;
+```
+
+Everyone who appeared in the event window, including deregistered or stale agents:
 
 ```sql
 SELECT
-  e.actor AS instance_id,
-  json_extract(e.payload, '$.label') AS label,
-  datetime(MIN(e.created_at), 'unixepoch', 'localtime') AS first_seen,
-  datetime(MAX(d.created_at), 'unixepoch', 'localtime') AS last_seen,
-  GROUP_CONCAT(DISTINCT d.type)                         AS exit_types
-FROM events e
-LEFT JOIN events d
-  ON d.scope = e.scope
+  reg.actor AS instance_id,
+  json_extract(reg.payload, '$.label') AS label,
+  datetime(reg.created_at, 'unixepoch', 'localtime') AS registered_at,
+  datetime(ex.created_at, 'unixepoch', 'localtime') AS exited_at,
+  ex.type AS exit_type,
+  ex.payload AS exit_payload
+FROM events reg
+LEFT JOIN events ex
+  ON ex.scope = reg.scope
  AND (
-   (d.type = 'instance.deregistered' AND d.actor = e.actor)
-   OR (d.type = 'instance.stale_reclaimed' AND d.subject = e.actor)
+   (ex.type = 'instance.deregistered' AND ex.subject = reg.actor)
+   OR (ex.type = 'instance.stale_reclaimed' AND ex.subject = reg.actor)
  )
-WHERE e.scope = :scope AND e.type = 'instance.registered'
-GROUP BY e.actor
-ORDER BY first_seen;
+WHERE reg.scope = :scope AND reg.type = 'instance.registered'
+ORDER BY reg.id;
 ```
 
-## Task lifecycle
+## Task Lifecycle
 
 One task end-to-end:
 
 ```sql
-SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
-       type, actor, subject, payload
-FROM events
-WHERE scope = :scope
-  AND (subject = :task_id
-       OR json_extract(payload, '$.task_id') = :task_id)
-ORDER BY id;
+SELECT e.id,
+       datetime(e.created_at, 'unixepoch', 'localtime') AS ts,
+       e.type,
+       COALESCE(i.label, e.actor) AS actor,
+       e.subject,
+       e.payload
+FROM events e
+LEFT JOIN instances i ON i.id = e.actor
+WHERE e.scope = :scope
+  AND (e.subject = :task_id OR json_extract(e.payload, '$.task_id') = :task_id)
+ORDER BY e.id;
 ```
 
-Current state of one task (any age):
+Current state of one task:
 
 ```sql
 SELECT id, type, status, priority, title,
        requester, assignee, depends_on, parent_task_id,
-       files, result,
+       idempotency_key, files, result,
        datetime(created_at, 'unixepoch', 'localtime') AS created,
-       datetime(updated_at, 'unixepoch', 'localtime') AS updated
-FROM tasks WHERE id = :task_id;
+       datetime(updated_at, 'unixepoch', 'localtime') AS updated,
+       datetime(changed_at / 1000, 'unixepoch', 'localtime') AS changed
+FROM tasks
+WHERE scope = :scope AND id = :task_id;
 ```
 
-All active / blocked work in scope, with role labels:
+Active, blocked, and approval-gated work:
 
 ```sql
-SELECT t.status, t.priority, t.type, t.title,
-       COALESCE(req.label, 'gone') AS requester,
-       COALESCE(ass.label, '—')    AS assignee,
+SELECT t.id, t.status, t.priority, t.type, t.title,
+       COALESCE(req.label, t.requester) AS requester,
+       COALESCE(ass.label, t.assignee, '-') AS assignee,
        t.depends_on
 FROM tasks t
 LEFT JOIN instances req ON req.id = t.requester
 LEFT JOIN instances ass ON ass.id = t.assignee
-WHERE t.scope = :scope AND t.status IN ('open', 'claimed', 'in_progress', 'blocked', 'approval_required')
-ORDER BY t.priority DESC, t.created_at;
+WHERE t.scope = :scope
+  AND t.status IN ('open', 'claimed', 'in_progress', 'blocked', 'approval_required')
+ORDER BY t.priority DESC, t.created_at, t.id;
 ```
 
-Dependency chain — what does this task block, what does it depend on:
+Dependencies for one task:
 
 ```sql
--- depended on by (downstream):
-SELECT id, status, title FROM tasks
-WHERE scope = :scope AND depends_on LIKE '%' || :task_id || '%';
-
--- depends on (upstream): inspect the JSON array in tasks.depends_on for :task_id
-SELECT depends_on FROM tasks WHERE id = :task_id;
+SELECT dep.value AS dependency_id,
+       d.status,
+       d.title
+FROM tasks t,
+     json_each(COALESCE(t.depends_on, '[]')) AS dep
+LEFT JOIN tasks d ON d.scope = t.scope AND d.id = dep.value
+WHERE t.scope = :scope AND t.id = :task_id;
 ```
 
-Tasks that completed without ever being claimed (suspicious):
+Tasks blocked by one task:
 
 ```sql
-SELECT id, type, title, requester, result
-FROM tasks
-WHERE scope = :scope AND status = 'done' AND assignee IS NULL;
+SELECT t.id, t.status, t.title
+FROM tasks t,
+     json_each(COALESCE(t.depends_on, '[]')) AS dep
+WHERE t.scope = :scope AND dep.value = :task_id
+ORDER BY t.created_at;
 ```
 
-## Message threads
+## Messages
 
-Direct conversation between two agents (peeks; does not flip `read`):
+Recent message rows between two agents. This table is short-lived and may only cover about one hour:
 
 ```sql
-SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
+SELECT id,
+       datetime(created_at, 'unixepoch', 'localtime') AS ts,
        sender, recipient, read, content
 FROM messages
 WHERE scope = :scope
@@ -152,7 +213,24 @@ WHERE scope = :scope
 ORDER BY id;
 ```
 
-Inbox snapshot — unread counts per recipient:
+Event-backed message history in the 24-hour event window:
+
+```sql
+SELECT e.id,
+       datetime(e.created_at, 'unixepoch', 'localtime') AS ts,
+       e.type,
+       COALESCE(i.label, e.actor) AS sender,
+       e.subject AS recipient_or_null,
+       json_extract(e.payload, '$.recipients') AS broadcast_recipients,
+       json_extract(e.payload, '$.content') AS content
+FROM events e
+LEFT JOIN instances i ON i.id = e.actor
+WHERE e.scope = :scope
+  AND e.type IN ('message.sent', 'message.broadcast')
+ORDER BY e.id;
+```
+
+Unread inbox counts per live recipient:
 
 ```sql
 SELECT COALESCE(i.label, m.recipient) AS recipient,
@@ -164,46 +242,23 @@ GROUP BY m.recipient
 ORDER BY unread DESC;
 ```
 
-System (`[auto]`) messages — task assignments, completions, recoveries:
+History-clearing actions from `swarm-ui`:
 
 ```sql
 SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
-       sender, recipient, content
-FROM messages
-WHERE scope = :scope AND content LIKE '[auto]%'
-ORDER BY id DESC LIMIT 50;
+       actor, subject, payload
+FROM events
+WHERE scope = :scope AND type = 'message.cleared'
+ORDER BY id;
 ```
 
-Broadcast sends only (payload has recipient count and length, not content):
+## File Contention
+
+Current locks:
 
 ```sql
-SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
-       COALESCE(i.label, e.actor) AS sender,
-       e.payload
-FROM events e
-LEFT JOIN instances i ON i.id = e.actor
-WHERE e.scope = :scope AND e.type = 'message.broadcast'
-ORDER BY e.id;
-```
-
-Broadcast message content is stored as one `messages` row per recipient, so there is no `recipient IS NULL` marker. To recover likely broadcast content, group duplicate sends:
-
-```sql
-SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
-       sender, content, COUNT(DISTINCT recipient) AS recipients
-FROM messages
-WHERE scope = :scope
-GROUP BY sender, content, created_at
-HAVING recipients > 1
-ORDER BY MIN(id);
-```
-
-## File contention
-
-Who is currently locking what:
-
-```sql
-SELECT c.file, COALESCE(i.label, c.instance_id) AS holder,
+SELECT c.file,
+       COALESCE(i.label, c.instance_id) AS holder,
        c.content AS note,
        datetime(c.created_at, 'unixepoch', 'localtime') AS held_since
 FROM context c
@@ -212,22 +267,24 @@ WHERE c.scope = :scope AND c.type = 'lock'
 ORDER BY c.created_at;
 ```
 
-Lock churn for one file (24h):
+Lock and annotation churn for one file inside the event window:
 
 ```sql
 SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
        type, actor, payload
 FROM events
-WHERE scope = :scope AND subject = :file_path
+WHERE scope = :scope
+  AND subject = :file_path
   AND type IN ('context.lock_acquired', 'context.lock_released', 'context.annotated')
 ORDER BY id;
 ```
 
-Annotations on a file (any age):
+Current annotations for one file. Non-lock annotations are cleanup-pruned after 24 hours:
 
 ```sql
 SELECT datetime(c.created_at, 'unixepoch', 'localtime') AS ts,
        COALESCE(i.label, c.instance_id) AS author,
+       c.type,
        c.content
 FROM context c
 LEFT JOIN instances i ON i.id = c.instance_id
@@ -235,12 +292,14 @@ WHERE c.scope = :scope AND c.file = :file_path AND c.type != 'lock'
 ORDER BY c.created_at;
 ```
 
-## KV history
+## KV History
 
 Current value:
 
-```sh
-swarm-mcp kv get owner/planner --scope "$SCOPE"
+```sql
+SELECT key, value, datetime(updated_at, 'unixepoch', 'localtime') AS updated
+FROM kv
+WHERE scope = :scope AND key = :key;
 ```
 
 All current keys in scope:
@@ -248,108 +307,158 @@ All current keys in scope:
 ```sql
 SELECT key, length(value) AS size,
        datetime(updated_at, 'unixepoch', 'localtime') AS updated
-FROM kv WHERE scope = :scope ORDER BY key;
+FROM kv
+WHERE scope = :scope
+ORDER BY key;
 ```
 
-History of changes for one key (24h, value content not preserved — payload only stores length):
+History of MCP-side changes for one key. Values may be sensitive:
 
 ```sql
-SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
-       type, COALESCE(i.label, e.actor) AS actor, payload
+SELECT e.id,
+       datetime(e.created_at, 'unixepoch', 'localtime') AS ts,
+       e.type,
+       COALESCE(i.label, e.actor) AS actor,
+       json_extract(e.payload, '$.value') AS set_value,
+       json_extract(e.payload, '$.prior_value') AS deleted_prior_value,
+       json_extract(e.payload, '$.appended') AS appended_value,
+       e.payload
 FROM events e
 LEFT JOIN instances i ON i.id = e.actor
-WHERE e.scope = :scope AND e.subject = :key
+WHERE e.scope = :scope
+  AND e.subject = :key
   AND e.type IN ('kv.set', 'kv.deleted', 'kv.appended')
 ORDER BY e.id;
 ```
 
-Planner failovers — `owner/planner` flips:
+Planner owner current value and event history:
 
 ```sql
+SELECT value, datetime(updated_at, 'unixepoch', 'localtime') AS updated
+FROM kv
+WHERE scope = :scope AND key = 'owner/planner';
+
 SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
-       type, COALESCE(i.label, e.actor) AS actor
-FROM events e
-LEFT JOIN instances i ON i.id = e.actor
-WHERE e.scope = :scope AND e.subject = 'owner/planner'
-ORDER BY e.id;
+       type, actor, payload
+FROM events
+WHERE scope = :scope AND subject = 'owner/planner'
+ORDER BY id;
 ```
 
-## Stale agents
+## Stale Agents
 
-Pruned in last 24h (and why their successor took over):
+Pruned or reclaimed instances in the event window:
 
 ```sql
 SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
        subject AS reclaimed_instance,
-       json_extract(payload, '$.label') AS label
+       json_extract(payload, '$.label') AS label,
+       payload
 FROM events
 WHERE scope = :scope AND type = 'instance.stale_reclaimed'
 ORDER BY id;
 ```
 
-Instances that registered but never adopted (harness died before MCP came up):
+UI-spawned rows that have not adopted yet:
 
 ```sql
-SELECT id, label, pid, datetime(registered_at, 'unixepoch', 'localtime') AS joined
+SELECT id, label, pid,
+       datetime(registered_at, 'unixepoch', 'localtime') AS joined,
+       datetime(heartbeat, 'unixepoch', 'localtime') AS last_beat,
+       unixepoch() - heartbeat AS idle_seconds
 FROM instances
 WHERE scope = :scope AND adopted = 0
 ORDER BY registered_at;
 ```
 
-## UI command queue
+Tasks released by stale reclaim or deregister are visible as task status/assignee changes plus `instance.stale_reclaimed` or `instance.deregistered` events. Messages for the removed recipient are deleted during release.
 
-Pending UI commands — a long pending list means no `swarm-ui` is watching:
+## UI Command Queue
+
+Pending or recent UI commands:
 
 ```sql
-SELECT id, kind, status, created_by,
+SELECT id, kind, status, created_by, claimed_by,
        datetime(created_at, 'unixepoch', 'localtime') AS queued,
        datetime(started_at, 'unixepoch', 'localtime') AS started,
        datetime(completed_at, 'unixepoch', 'localtime') AS finished,
-       error
+       result, error
 FROM ui_commands
 WHERE scope = :scope
-ORDER BY id DESC LIMIT 50;
+ORDER BY id DESC
+LIMIT 50;
 ```
 
-## Common debugging recipes
-
-**"Why is my task stuck blocked?"** — check its `depends_on` and the status of each dep:
+Event history for one UI command:
 
 ```sql
-WITH t AS (SELECT depends_on FROM tasks WHERE id = :task_id)
-SELECT id, status, title FROM tasks
-WHERE id IN (SELECT value FROM t, json_each(t.depends_on));
+SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
+       type, actor, subject, payload
+FROM events
+WHERE scope = :scope
+  AND type LIKE 'ui.command.%'
+  AND json_extract(payload, '$.command_id') = :command_id
+ORDER BY id;
 ```
 
-**"Who claimed and abandoned this task?"** — claim with no completion within N seconds:
+If commands stay `pending`, no `swarm-ui` worker is claiming rows for this DB. Check `server-logs.md` and confirm the desktop app is connected to the same `SWARM_DB_PATH`.
+
+## Common Debugging Recipes
+
+Why is a task blocked?
+
+```sql
+SELECT t.id AS blocked_task,
+       dep.value AS dependency_id,
+       d.status AS dependency_status,
+       d.title AS dependency_title
+FROM tasks t,
+     json_each(COALESCE(t.depends_on, '[]')) AS dep
+LEFT JOIN tasks d ON d.scope = t.scope AND d.id = dep.value
+WHERE t.scope = :scope AND t.id = :task_id;
+```
+
+Who claimed work and then stopped updating it?
 
 ```sql
 SELECT t.id, t.title, t.status,
        COALESCE(i.label, t.assignee) AS assignee,
-       datetime(t.updated_at, 'unixepoch', 'localtime') AS last_change
+       datetime(t.updated_at, 'unixepoch', 'localtime') AS last_change,
+       unixepoch() - t.updated_at AS idle_seconds
 FROM tasks t
 LEFT JOIN instances i ON i.id = t.assignee
 WHERE t.scope = :scope
-  AND t.status = 'claimed'
-  AND t.updated_at < unixepoch() - 600;
+  AND t.status IN ('claimed', 'in_progress')
+  AND t.updated_at < unixepoch() - 600
+ORDER BY t.updated_at;
 ```
 
-**"Was a message ever delivered to its recipient?"** — `read = 1` means yes (consumed via `poll_messages`):
+Was a message consumed by its recipient?
 
 ```sql
 SELECT id, sender, recipient, read,
        datetime(created_at, 'unixepoch', 'localtime') AS sent_at,
-       substr(content, 1, 80) AS snippet
+       substr(content, 1, 120) AS snippet
 FROM messages
 WHERE scope = :scope AND id = :msg_id;
 ```
 
-**"Reconstruct the full session for one agent"**:
+Reconstruct all events caused by one agent:
 
 ```sql
 SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
        type, subject, payload
 FROM events
 WHERE scope = :scope AND actor = :instance_id
+ORDER BY id;
+```
+
+Find events where one agent was the subject, even if `system` was the actor:
+
+```sql
+SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
+       type, actor, payload
+FROM events
+WHERE scope = :scope AND subject = :instance_id
 ORDER BY id;
 ```

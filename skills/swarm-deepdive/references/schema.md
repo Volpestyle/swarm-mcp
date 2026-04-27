@@ -1,109 +1,143 @@
-# Swarm DB schema cheatsheet
+# Swarm DB Schema Cheatsheet
 
-Database file: `~/.swarm-mcp/swarm.db` (SQLite, WAL journal). Ordinary `*_at` timestamps are **unix seconds**. `tasks.changed_at` and `kv_scope_updates.changed_at` are **unix milliseconds**.
+Database file: `${SWARM_DB_PATH:-~/.swarm-mcp/swarm.db}`. The default is `~/.swarm-mcp/swarm.db`; `SWARM_DB_PATH` overrides it for the MCP server, `swarm-ui`, and `swarm-server`.
 
-## `instances` — live and recently-live agents
+The database is SQLite with WAL journaling. Ordinary `*_at` timestamps are Unix seconds unless noted. `tasks.changed_at`, `kv_scope_updates.changed_at`, and planner `assigned_at` payloads are Unix milliseconds.
+
+## `instances` - Live And Recently Live Agents
 
 | Column | Notes |
 |---|---|
-| `id` | UUID primary key. `actor` and `assignee` columns elsewhere reference this. |
-| `scope` | The directory key everything else filters by. Usually a git root. |
+| `id` | UUID primary key. `actor`, `assignee`, `requester`, and `instance_id` columns elsewhere often reference this. |
+| `scope` | Shared directory key. Usually a git root. |
 | `directory` | Where the agent was launched. |
-| `root` | Same as directory unless explicitly overridden during register. |
-| `file_root` | Filesystem root the agent claims responsibility for; `lock_file` is rooted here. |
-| `pid` | OS PID. Useful for matching a row to a still-running process. |
-| `label` | Free-form tokens like `role:planner provider:claude team:backend`. Soft convention. |
-| `registered_at` | When the agent first joined. |
-| `heartbeat` | Last time the agent pinged. Stale agents are pruned ~30s after heartbeat lapses. |
-| `adopted` | `1` if a swarm-aware harness adopted the row; `0` for a pending PTY-bound row that has not yet started its MCP subprocess. |
+| `root` | Git root detected at registration time, or the launch directory fallback. |
+| `file_root` | Filesystem root used to resolve relative paths for locks/tasks. |
+| `pid` | OS PID. `0` is used for UI-precreated, not-yet-adopted rows. |
+| `label` | Free-form tokens such as `role:planner provider:claude team:backend`. These are conventions, not schema. |
+| `registered_at` | Unix seconds when the row was created. |
+| `heartbeat` | Unix seconds for the latest heartbeat. Runtime stale threshold is about 30 seconds. |
+| `adopted` | `1` after the child MCP process adopts the row. `0` means a UI-spawned PTY row is pending adoption. |
 
-A row disappears on clean deregister or stale prune — but the `instance.registered` and `instance.deregistered`/`instance.stale_reclaimed` events stick around (24h) and preserve the label.
+Rows disappear on clean deregister or stale reclaim. `instance.registered`, `instance.deregistered`, and `instance.stale_reclaimed` events preserve labels for the 24-hour event window.
 
-## `tasks` — work items
-
-| Column | Notes |
-|---|---|
-| `id` | UUID. |
-| `scope` | Project scope. |
-| `type` | One of `review`, `implement`, `fix`, `test`, `research`, `other`. |
-| `title` / `description` | Human-readable. |
-| `requester` | Instance id that created the task. |
-| `assignee` | Instance id currently working it (set by `claim_task`). |
-| `status` | `open`, `claimed`, `in_progress`, `done`, `failed`, `cancelled`, `blocked`, `approval_required`. |
-| `files` | JSON array of paths the task touches. |
-| `result` | JSON or string set on completion (`{files_changed, test_status, summary}` by convention). |
-| `priority` | Integer; higher = more urgent. `list_tasks` orders by this. |
-| `depends_on` | JSON array of task IDs. Status auto-flips `blocked` → `open` when all deps complete; cascade-cancels on dep failure. |
-| `parent_task_id` | Optional parent for subtask trees. |
-| `idempotency_key` | Prevents duplicate creation on retry. Unique per scope. |
-| `created_at` / `updated_at` | unix seconds. |
-| `changed_at` | unix **milliseconds** — used by clients for change polling. |
-
-## `messages` — direct + broadcast comms
-
-| Column | Notes |
-|---|---|
-| `id` | Auto-increment integer; ordering across the swarm. |
-| `scope` | Project scope (broadcasts also carry scope). |
-| `sender` | Instance id, or another identifier for `[auto]` system messages. |
-| `recipient` | Instance id. Broadcasts are fanned out as one row per recipient; use `message.broadcast` events to identify broadcast sends. |
-| `content` | Plain text. `[auto] ...` prefix marks system notifications (task assignments, completions, stale-agent recovery). `[signal:complete]` is the planner's "we're done" broadcast. |
-| `created_at` | unix seconds. |
-| `read` | `1` once the recipient called `poll_messages` and consumed it. Peek queries do NOT flip this. |
-
-## `events` — append-only audit log (24h TTL)
-
-| Column | Notes |
-|---|---|
-| `id` | Auto-increment, monotonic per DB. |
-| `scope` | Project scope. |
-| `type` | One of: `instance.registered`, `instance.deregistered`, `instance.stale_reclaimed`, `task.created`, `task.claimed`, `task.updated`, `task.approved`, `task.cascade.unblocked`, `task.cascade.cancelled`, `message.sent`, `message.broadcast`, `kv.set`, `kv.deleted`, `kv.appended`, `context.annotated`, `context.lock_acquired`, `context.lock_released`. |
-| `actor` | Instance id of the cause, or `'system'` for daemon-driven events (prune, cascade). |
-| `subject` | Most-relevant entity: task id for `task.*`, kv key for `kv.*`, file path for `context.*`, recipient id for `message.sent`, instance id for `instance.*`. |
-| `payload` | JSON detail. Examples: `{"label": "...", "adopted": true, "pid": 12345}` for register, `{"length": 121}` for kv.set (content not stored), `{"id": "<lock-uuid>"}` for lock_acquired. |
-| `created_at` | unix seconds. |
-
-**TTL-pruned by MCP cleanup** — anything older than 24h may be gone after a server process exits cleanly. The CLI does not have an `events` subcommand; query directly with sqlite3.
-
-## `context` — file locks and annotations
+## `tasks` - Work Items
 
 | Column | Notes |
 |---|---|
 | `id` | UUID. |
 | `scope` | Project scope. |
-| `instance_id` | Owner of the lock or author of the annotation. |
+| `type` | `review`, `implement`, `fix`, `test`, `research`, or `other`. |
+| `title` / `description` | Human-readable task text. |
+| `requester` | Instance ID that created the task. |
+| `assignee` | Instance ID currently assigned, or `NULL`. |
+| `status` | `open`, `claimed`, `in_progress`, `done`, `failed`, `cancelled`, `blocked`, or `approval_required`. |
+| `files` | JSON array of paths. Paths are resolved through the requester's registration context. |
+| `result` | JSON string or plain string set on terminal update. Structured convention is `{files_changed, test_status, summary}`. |
+| `priority` | Integer. Higher is more urgent; task listing orders by priority descending. |
+| `depends_on` | JSON array of task IDs. Unmet dependencies hold a task in `blocked`; failed/cancelled dependencies cascade-cancel dependents. |
+| `parent_task_id` | Optional parent for task trees. |
+| `idempotency_key` | Unique per scope when present; prevents duplicate task creation on retry. |
+| `created_at` / `updated_at` | Unix seconds. |
+| `changed_at` | Unix milliseconds for polling and UI snapshots. |
+
+Active tasks persist. Terminal tasks are deleted after 24 hours when MCP cleanup runs. `swarm-ui` snapshots also hide terminal tasks whose `changed_at` is older than 24 hours.
+
+## `messages` - Direct And Broadcast Communication
+
+| Column | Notes |
+|---|---|
+| `id` | Auto-increment integer; monotonic message order. |
+| `scope` | Project scope. |
+| `sender` | Instance ID, or `system` for some automatic notifications. |
+| `recipient` | Instance ID. Broadcasts are fanned out as one row per recipient. |
+| `content` | Plain text. `[auto]` prefixes system notifications; `[signal:complete]` is the planner completion signal. |
+| `created_at` | Unix seconds. |
+| `read` | `1` once the recipient consumed it with `poll_messages`. CLI and resource peeks do not flip this. |
+
+Messages are short-lived. Runtime prune deletes rows older than one hour and deletes queued rows for recipients that deregister or go stale. For message history inside the 24-hour event window, prefer `message.sent` and `message.broadcast` events because their payloads include content.
+
+`message.cleared` events are emitted by `swarm-ui` when a user clears the history between two instances.
+
+## `events` - Append-Only Audit Log
+
+| Column | Notes |
+|---|---|
+| `id` | Auto-increment integer, monotonic per DB. |
+| `scope` | Project scope. |
+| `type` | Event type string. See event families below. |
+| `actor` | Instance ID, `system`, a UI worker ID, or `NULL` depending on event source. |
+| `subject` | Most-relevant entity: task ID, KV key, file path, recipient ID, instance ID, command kind, etc. |
+| `payload` | JSON detail. Often contains content. Treat as sensitive evidence. |
+| `created_at` | Unix seconds. |
+
+Event families currently emitted into `swarm.db`:
+
+| Family | Event types |
+|---|---|
+| Instances | `instance.registered`, `instance.deregistered`, `instance.stale_reclaimed` |
+| Tasks | `task.created`, `task.claimed`, `task.updated`, `task.approved`, `task.cascade.unblocked`, `task.cascade.cancelled` |
+| Messages | `message.sent`, `message.broadcast`, `message.cleared` |
+| KV | `kv.set`, `kv.deleted`, `kv.appended` |
+| File context | `context.annotated`, `context.lock_acquired`, `context.lock_released` |
+| UI commands | `ui.command.started`, `ui.command.completed`, `ui.command.failed` |
+
+Payload facts that matter for investigations:
+
+| Event | Payload notes |
+|---|---|
+| `message.sent` | Includes `content` and `length`; `subject` is the recipient. |
+| `message.broadcast` | Includes `content`, `recipients`, and `length`; `subject` is usually `NULL`. |
+| `kv.set` | Includes full `value` and `length` for MCP-side writes. |
+| `kv.deleted` | Includes `prior_value` and `prior_length` when the row existed. |
+| `kv.appended` | Includes parsed `appended` JSON and resulting array `length`. |
+| `task.created` | Includes type, title, status, assignee, files, priority, dependency and parent fields, and idempotency metadata where present. |
+| `task.updated` | Includes `status`, `prior_status`, and `result` where present. |
+| `context.annotated` | Includes annotation type, annotation ID, and content. |
+| `context.lock_acquired` / `context.lock_released` | Includes lock ID/content or release count/reason. |
+| `ui.command.*` | Includes `command_id`, result or error, and command metadata. |
+
+Events are deleted after 24 hours when an MCP server process exits cleanly. The CLI has no `events` subcommand; inspect this table with SQL.
+
+## `context` - File Locks And Annotations
+
+| Column | Notes |
+|---|---|
+| `id` | UUID. |
+| `scope` | Project scope. |
+| `instance_id` | Lock owner or annotation author. |
 | `file` | Absolute path. |
 | `type` | `lock`, `finding`, `warning`, `note`, `bug`, or `todo`. |
-| `content` | For locks: optional note. For non-lock annotations: the message. |
-| `created_at` | unix seconds. |
+| `content` | Lock reason or annotation text. |
+| `created_at` | Unix seconds. |
 
-A unique partial index enforces one active `lock` per `(scope, file)`. Locks auto-clear when the owner deregisters.
+A unique partial index enforces one active `lock` per `(scope, file)`. Locks clear on explicit unlock, terminal task update for task files, instance deregister, or stale reclaim. Non-lock annotations are deleted after 24 hours when MCP cleanup runs.
 
-## `kv` — shared coordination state
+## `kv` - Shared Coordination State
 
 | Column | Notes |
 |---|---|
 | `scope` | Part of the composite primary key. |
-| `key` | Free-form; conventional namespaces: `owner/<role>`, `progress/<instance-id>`, `plan/<...>`, `queue/<...>`, `handoff/<...>`. |
-| `value` | TEXT. Typically JSON. |
-| `updated_at` | unix seconds. |
+| `key` | Free-form. Common namespaces: `owner/<role>`, `progress/<instance-id>`, `plan/<...>`, `queue/<...>`, `handoff/<...>`, `ui/<...>`. |
+| `value` | Text, usually JSON for structured values. |
+| `updated_at` | Unix seconds. |
 
-Note: only the **current value** lives here. To see history, query `events` for `kv.set` / `kv.deleted` / `kv.appended` rows with `subject = '<key>'` (24h window only — payload stores `{"length": N}`, not the prior value, so reconstruction is partial).
+Only the current value lives here. MCP-side `kv_set`, `kv_delete`, and `kv_append` also emit events with enough content to reconstruct changes inside the event window. Some internal `swarm-ui` KV writes, such as layout and planner-owner refreshes, update `kv` directly and may not emit `kv.*` events. Always compare current `kv` rows against event history before claiming a complete KV timeline.
 
-`kv_scope_updates` is a per-scope `changed_at` (unix milliseconds) used by clients to poll cheaply.
+`kv_scope_updates` stores one row per scope with `changed_at` in Unix milliseconds for polling.
 
-## `ui_commands` — async desktop UI queue
+## `ui_commands` - Async Desktop UI Queue
 
 | Column | Notes |
 |---|---|
-| `id` | Auto-increment. |
+| `id` | Auto-increment integer. |
 | `scope` | Project scope. |
-| `created_by` | Instance id of the requester. |
+| `created_by` | Instance ID of the requester when available. |
 | `kind` | `spawn_shell`, `send_prompt`, `move_node`, `organize_nodes`, etc. |
 | `payload` | JSON args. |
-| `status` | `pending`, `running`, `done`, `failed`. |
-| `claimed_by` | UI app instance that picked the command up. |
-| `result` / `error` | Set on completion. |
-| `created_at` / `started_at` / `completed_at` | unix seconds. |
+| `status` | `pending`, `running`, `done`, or `failed`. |
+| `claimed_by` | UI worker that picked the command up. |
+| `result` / `error` | Set on completion/failure. |
+| `created_at` / `started_at` / `completed_at` | Unix seconds. |
 
-If a command sits `pending` forever, no `swarm-ui` desktop app is running.
+If a command stays `pending`, no `swarm-ui` worker is actively claiming commands for that DB. Cross-reference `ui.command.started`, `ui.command.completed`, and `ui.command.failed` events for execution history.
