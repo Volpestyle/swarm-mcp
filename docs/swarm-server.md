@@ -83,6 +83,7 @@ Common local and remote endpoints:
 | `GET /stream` | WebSocket stream for table deltas, events, PTY frames, ping/pong, and replay. |
 | `POST /reveal` | Reveal redacted KV/message/annotation content and audit the reveal. |
 | `POST /pty` | Spawn a PTY. |
+| `GET /pty/:id/replay` | Return retained PTY output as text for diagnostics. |
 | `POST /pty/:id/input` | Write bytes to a PTY. |
 | `POST /pty/:id/resize` | Resize a PTY. |
 | `DELETE /pty/:id` | Close a PTY. |
@@ -120,7 +121,7 @@ Pairing sessions expire after 120 seconds. A successful `POST /pair` returns a b
 - `codex`
 - `opencode`
 
-Plain shell PTYs are unbound. For swarm-aware harnesses, the server creates a pending `instances` row with `adopted = 0`, binds that instance id to the PTY, and injects environment variables so the MCP subprocess can adopt the row:
+Plain shell PTYs are unbound. For swarm-aware harnesses, the server creates a pending `instances` row with `adopted = 0`, binds that instance id to the PTY, and injects environment variables so the MCP subprocess can adopt the row. Orchestrators may also pass `instance_id` to bind the PTY to an existing unadopted pending row that they created before launch; the server rejects reattaching an already-adopted online row.
 
 - `SWARM_MCP_INSTANCE_ID`
 - `SWARM_MCP_DIRECTORY`
@@ -131,6 +132,8 @@ Plain shell PTYs are unbound. For swarm-aware harnesses, the server creates a pe
 - `SWARM_UI_ROLE`
 
 When `src/index.ts` starts inside the harness, it auto-adopts the pending row and flips `adopted = 1`. If a harness exits before adoption, the server deletes the unadopted row. Long-running servers also reclaim offline unadopted rows that are no longer bound to a live PTY.
+
+`POST /pty` publishes the PTY catalog row before deferred `initial_input` delivery so UI clients can render and attach immediately. Exited PTYs are retained briefly, including their replay buffer, so callers can fetch `/pty/:id/replay` after early exits or adoption failures.
 
 Default role presets are `planner`, `implementer`, `reviewer`, and `researcher`. Direct `swarm-server` launches read extra roles from `$XDG_CONFIG_HOME/swarm-server/role-presets.json`, with `$XDG_CONFIG_HOME/swarm-ui/role-presets.json` as a legacy fallback. The desktop UI reads `$XDG_CONFIG_HOME/swarm-ui/role-presets.json`.
 

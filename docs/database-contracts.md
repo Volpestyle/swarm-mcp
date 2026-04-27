@@ -26,14 +26,14 @@ Most `swarm.db` tables have one owner:
 
 The adoption flow is the cross-stack contract for `instances`:
 
-1. swarm-ui or swarm-server creates a pending row with `pid = 0` and `adopted = 0`.
+1. swarm-ui, swarm-server, or an external orchestrator such as Clanky creates a pending row with `pid = 0` and `adopted = 0`.
 2. The spawned process receives `SWARM_MCP_INSTANCE_ID` and related scope/directory env vars: `SWARM_MCP_DIRECTORY`, `SWARM_MCP_SCOPE`, `SWARM_MCP_FILE_ROOT`, and `SWARM_MCP_LABEL` when available.
 3. When the MCP server starts, `src/index.ts` auto-adopts by calling `registry.register(...)` with the preassigned id.
 4. `registry.register` updates the same row with the live pid, optional label, current heartbeat, and `adopted = 1`.
 5. Heartbeats and normal deregistration are owned by the adopted MCP server.
 6. UI/server cleanup may only delete rows where `adopted = 0`; manual UI cleanup can remove stale adopted rows only after checking that no live PTY is bound.
 
-If a pending row is pruned before adoption, the MCP server may insert a fresh adopted row using the same preassigned id so the PTY binding remains stable. `swarm-server` also periodically reclaims unadopted rows that are offline and no longer bound to a live PTY.
+`swarm-server` may attach a PTY to an existing unadopted pending row when `POST /pty` includes `instance_id`. Pending rows can have fresh heartbeats before adoption, so `adopted = 0` is the authoritative signal that the row is still attachable; adopted online rows must not be reattached. If a pending row is pruned before adoption, the MCP server may insert a fresh adopted row using the same preassigned id so the PTY binding remains stable. `swarm-server` also periodically reclaims unadopted rows that are offline and no longer bound to a live PTY.
 
 ## ui_commands
 

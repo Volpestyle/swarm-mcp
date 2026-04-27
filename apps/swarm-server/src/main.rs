@@ -146,6 +146,7 @@ struct InstanceInfo {
     directory: String,
     label: Option<String>,
     heartbeat: i64,
+    adopted: bool,
 }
 
 impl AuthSession {
@@ -275,6 +276,7 @@ fn build_router(state: EndpointState) -> Router {
         .route("/stream", get(stream))
         .route("/reveal", post(reveal))
         .route("/pty", post(spawn_pty))
+        .route("/pty/:id/replay", get(replay_pty))
         .route("/pty/:id/input", post(write_pty))
         .route("/pty/:id/resize", post(resize_pty))
         .route("/pty/:id", delete(close_pty))
@@ -675,6 +677,37 @@ async fn release_lease(
         )
         .map_err(server_error_response)?;
     Ok(Json(ack).into_response())
+}
+
+async fn replay_pty(
+    State(state): State<EndpointState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Response, Response> {
+    let auth = authenticate_request(&state, &headers).await?;
+    enforce_rate_limit(&state, &auth, "pty.replay")?;
+    let frames = state
+        .app
+        .pty_service
+        .replay(&id, None)
+        .map_err(|rejected| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                ErrorPayload::new(ErrorClass::NotFound, rejected.reason),
+            )
+        })?;
+    let mut data = Vec::new();
+    for frame in frames {
+        if let FramePayload::PtyData(payload) = frame.payload {
+            data.extend(payload.data);
+        }
+    }
+
+    Ok((
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        String::from_utf8_lossy(&data).into_owned(),
+    )
+        .into_response())
 }
 
 async fn stream_session(mut socket: WebSocket, state: AppState, auth: AuthSession) {
@@ -1326,7 +1359,7 @@ fn load_instance_info(
     instance_id: &str,
 ) -> Result<Option<InstanceInfo>, Response> {
     conn.query_row(
-        "SELECT id, scope, directory, label, heartbeat
+        "SELECT id, scope, directory, label, heartbeat, COALESCE(adopted, 1)
          FROM instances
          WHERE id = ?",
         params![instance_id],
@@ -1337,6 +1370,7 @@ fn load_instance_info(
                 directory: row.get(2)?,
                 label: row.get(3)?,
                 heartbeat: row.get(4)?,
+                adopted: row.get::<_, i64>(5)? != 0,
             })
         },
     )
@@ -1454,8 +1488,9 @@ fn spawn_pty_impl(
             )
         })?;
 
-        if swarm_protocol::InstanceStatus::from_heartbeat(now_secs(), existing.heartbeat)
-            == swarm_protocol::InstanceStatus::Online
+        if existing.adopted
+            && swarm_protocol::InstanceStatus::from_heartbeat(now_secs(), existing.heartbeat)
+                == swarm_protocol::InstanceStatus::Online
         {
             return Err(error_response(
                 StatusCode::BAD_REQUEST,
@@ -1532,16 +1567,24 @@ async fn pty_frame_forwarder(state: AppState) {
         match receiver.recv().await {
             Ok(frame) => {
                 if let FramePayload::PtyExit(payload) = &frame.payload {
-                    if let Ok(snapshot) = state.pty_service.snapshot() {
-                        if let Some(instance_id) = snapshot
-                            .rows
-                            .iter()
-                            .find(|pty| pty.id == payload.pty_id)
-                            .and_then(|pty| pty.bound_instance_id.clone())
-                        {
+                    match state.pty_service.bound_instance_id(&payload.pty_id) {
+                        Ok(Some(instance_id)) => {
                             if let Ok(conn) = open_swarm_rw(&state.config.swarm_db_path) {
                                 let _ = delete_unadopted_instance(&conn, &instance_id);
                             }
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            // Surfaces the race where PtyExit arrives after
+                            // cleanup_session removed the session from the
+                            // map: bound_instance_id then returns NotFound and
+                            // we'd silently skip delete_unadopted_instance,
+                            // letting the pending row leak to stale_reclaim.
+                            warn!(
+                                pty_id = %payload.pty_id,
+                                error = %err,
+                                "pty_frame_forwarder: bound_instance_id lookup failed on PtyExit"
+                            );
                         }
                     }
                 }
