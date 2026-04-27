@@ -22,7 +22,7 @@ export function send(
     type: "message.sent",
     actor: sender,
     subject: recipient,
-    payload: { length: content.length },
+    payload: { content, length: content.length },
   });
 }
 
@@ -46,7 +46,11 @@ export function broadcast(sender: string, scope: string, content: string) {
       type: "message.broadcast",
       actor: sender,
       subject: null,
-      payload: { recipients: rows.length, length: content.length },
+      payload: {
+        content,
+        recipients: rows.length,
+        length: content.length,
+      },
     });
   });
   tx();
