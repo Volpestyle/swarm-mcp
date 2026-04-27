@@ -729,7 +729,7 @@ registeredTool(
 
 registeredTool(
   "claim_task",
-  "Claim an open task to work on it.",
+  "Start work on a task: assigns it to you (if open) and transitions to in_progress in one call. Works on open+unassigned tasks and on tasks pre-assigned to you (status=claimed).",
   {
     task_id: z.string().describe("The task ID to claim"),
     ignore_unread_messages: z
@@ -751,10 +751,10 @@ registeredTool(
 
 registeredTool(
   "update_task",
-  "Update a task's status and optionally attach a result.",
+  "Move a claimed/in_progress task to a terminal status (done, failed, cancelled). claim_task already transitions to in_progress, so this is the single completion call. Auto-releases this instance's locks on the task's files.",
   {
     task_id: z.string().describe("The task ID"),
-    status: z.enum(["in_progress", "done", "failed", "cancelled"]).describe("New status"),
+    status: z.enum(["done", "failed", "cancelled"]).describe("Terminal status"),
     result: z.string().optional().describe("Result or summary of work done"),
   },
   async ({ task_id, status, result }) => {
@@ -869,7 +869,7 @@ registeredTool(
 
 registeredTool(
   "lock_file",
-  "Announce that you are actively working on a file. Other instances should avoid editing it.",
+  "Acquire an edit lock on a file and read existing peer annotations in one call. Returns the new lock id plus any non-lock annotations on the file. Locks held by this instance are auto-released when its task reaches a terminal state via update_task.",
   {
     file: z.string().describe("File path to lock"),
     reason: z.string().optional().describe("Why you're locking it"),
@@ -889,27 +889,12 @@ registeredTool(
 
 registeredTool(
   "unlock_file",
-  "Release a file lock so other instances can edit it.",
+  "Release a file lock early. Locks are auto-released on terminal update_task, so call this only when you finish a file before the task as a whole.",
   { file: z.string().describe("File path to unlock") },
   async ({ file }) => {
     const current = instance!;
     context.clearLocks(current.id, current.scope, resolveFileInput(file));
     return respond(`Unlocked ${file}`);
-  },
-);
-
-registeredTool(
-  "check_file",
-  "Check if a file has any annotations, locks, or warnings from other instances in this scope.",
-  { file: z.string().describe("File path to check") },
-  async ({ file }) => {
-    const current = instance!;
-    const rows = context.lookup(current.scope, resolveFileInput(file));
-    if (!rows.length)
-      return {
-        content: [{ type: "text", text: "No annotations for this file" }],
-      };
-    return respondJson(rows);
   },
 );
 

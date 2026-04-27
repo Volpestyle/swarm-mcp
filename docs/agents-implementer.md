@@ -34,14 +34,12 @@ Immediately after registering, call `poll_messages`, `list_tasks`, and `list_ins
 When you find a task to work on:
 
 1. If `claim_task` reports unread messages, call `poll_messages` and act on planner corrections before retrying.
-2. `claim_task` promptly so no other session takes it.
-3. `update_task` to `in_progress`.
-4. `check_file` for every file you plan to edit -- look for locks, warnings, or annotations from other sessions.
-5. `lock_file` with a short reason before editing.
-6. Do the work.
-7. `annotate` important findings on files you touched -- things a reviewer or future session needs to know.
-8. `unlock_file` as soon as you are done editing.
-9. `update_task` to `done` with a structured result (see below).
+2. `claim_task` promptly — this also moves the task to `in_progress` for you in one call.
+3. Before editing a file, call `lock_file`. Its response includes any peer annotations on that file, so a separate pre-check call is unnecessary. If `list_instances` shows you alone in scope, you can skip locking until peers join.
+4. Do the work.
+5. `annotate` important findings on files you touched — things a reviewer or future session needs to know.
+6. `unlock_file` only if you finish a file early and want peers to edit it before the task as a whole completes.
+7. `update_task` to `done` with a structured result (see below). Locks on the task's files release automatically.
 
 ### Structured results
 
@@ -98,7 +96,7 @@ If the planner rejects your work and sends a `fix` task:
 If you receive a task from a session on a different team:
 
 - Treat it the same as any other task. Scope is shared, so all tools work normally.
-- `check_file` is especially important -- the other team may have locks or annotations you need to respect.
+- Always `lock_file` before editing in cross-team work — the response surfaces locks/annotations the other team may have left.
 - When done, route the `review` task back to the requester's instance ID (check the task's `requester` field or `list_instances`).
 
 ---
@@ -135,9 +133,8 @@ When you complete a task with `update_task`, the requester (planner) is automati
 When you receive a broadcast containing `[signal:complete]`:
 
 1. Finish any task currently in progress — do not abandon mid-edit.
-2. `unlock_file` any remaining locks.
-3. `update_task` to `done` for any in-progress work.
-4. Call `deregister` to leave the swarm.
+2. `update_task` any in-progress work to a terminal status (this also releases its file locks).
+3. Call `deregister` to leave the swarm.
 
 ---
 
@@ -145,15 +142,15 @@ When you receive a broadcast containing `[signal:complete]`:
 
 When there are no more tasks and the planner signals completion:
 
-1. `unlock_file` any remaining locks.
+1. Make sure all in-progress tasks reached a terminal `update_task` (locks release automatically).
 2. Call `deregister` to leave the swarm and release any remaining resources.
 
 ---
 
 ## Do not
 
-- Start editing without calling `check_file` and `lock_file` first.
-- Hold locks longer than needed -- lock one file, edit it, unlock it.
+- Edit a file other peers may also touch without calling `lock_file` first.
+- Hold locks longer than needed (terminal `update_task` releases them; use `unlock_file` for early per-file release).
 - Forget to `update_task` when you finish -- the planner is waiting on it.
 - Create planning or decomposition tasks -- that is the planner's job.
 - Try to claim `blocked` tasks -- they will become `open` automatically when their dependencies complete.

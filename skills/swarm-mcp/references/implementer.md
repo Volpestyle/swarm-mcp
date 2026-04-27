@@ -23,19 +23,17 @@ When tasks are available:
 
 ## Execute Safely
 
-For each claimed task:
+For each task:
 
-1. `claim_task` immediately.
-2. `update_task` to `in_progress`.
-3. `kv_set("progress/<your-instance-id>", ...)` with current activity.
-4. `check_file` for every file you plan to edit.
-5. `lock_file` before editing a file.
-6. Make the smallest correct code changes.
-7. `annotate` important findings, warnings, or follow-ups on touched files.
-8. Run relevant tests or checks when feasible.
-9. `unlock_file` as soon as you finish each file.
-10. `update_task` to `done`, `failed`, or `cancelled` with a useful result.
-11. Create a `review` task assigned to the planner or reviewer when implementation or fix work needs review.
+1. `claim_task` — this transitions the task to `in_progress` for you in one call.
+2. For long tasks only, `kv_set("progress/<your-instance-id>", ...)` with current activity.
+3. Before editing a file, call `lock_file`. Its response includes any peer annotations on that file, so no separate `check` call is needed. Skip locking entirely when `list_instances` shows you alone in scope.
+4. Make the smallest correct code changes.
+5. `annotate` important findings, warnings, or follow-ups on touched files.
+6. Run relevant tests or checks when feasible.
+7. `unlock_file` only if you finish a file early and want peers to edit it before the task as a whole completes.
+8. `update_task` to `done`, `failed`, or `cancelled` with a useful result. Locks on the task's files release automatically.
+9. Create a `review` task assigned to the planner or reviewer when implementation or fix work needs review.
 
 ## Structured Results
 
@@ -103,8 +101,8 @@ When you receive a broadcast containing `[signal:complete]`:
 
 ## Must Not
 
-- Edit without calling `check_file` and `lock_file` first.
-- Hold locks longer than needed.
+- Edit a file other peers may also touch without calling `lock_file` first.
+- Hold locks longer than needed (terminal `update_task` releases them; use `unlock_file` for early per-file release).
 - Forget to `update_task` when finished.
 - Create planning/decomposition tasks unless the planner asked you to.
 - Claim `blocked` tasks.

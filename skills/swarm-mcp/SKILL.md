@@ -24,11 +24,10 @@ If the user invoked this skill with a role argument, follow the matching role re
 
 1. Bootstrap into the swarm with `register`
 2. Inspect the current swarm with `whoami`, `list_instances`, `poll_messages`, and `list_tasks`
-3. Check coordination risk before editing with `check_file`
-4. Lock files while editing with `lock_file`
-5. Delegate or coordinate with `request_task`, `send_message`, or `broadcast`
-6. Leave durable context with `annotate` and small shared state with `kv_set`
-7. Release locks and complete tasks with `unlock_file` and `update_task`
+3. While editing, call `lock_file` — its response includes any peer annotations, so a separate check call is unnecessary. Skip locking entirely when alone in scope.
+4. Delegate or coordinate with `request_task`, `send_message`, or `broadcast`
+5. Leave durable context with `annotate` and small shared state with `kv_set`
+6. Complete a task with a single `update_task` (terminal status). Locks on the task's files release automatically.
 
 For planner sessions, the server maintains `owner/planner` automatically. Check it with `kv_get` to see whether you currently own planner duties.
 
@@ -68,9 +67,9 @@ When the role is unclear, do not invent one. Ask one short question or proceed a
 ### Must Do
 
 - Call `register` before using other swarm tools
-- Use `whoami`, `list_instances`, `poll_messages`, and `list_tasks` early in the session
-- Call `check_file` before editing and `lock_file` while editing
-- Use `update_task` when you start and finish claimed work
+- Use `whoami`, `list_instances`, `poll_messages`, and `list_tasks` early in the session. If `list_instances` returns only you, skip per-edit locking until peers join.
+- Call `lock_file` while editing when peers are present. Read the returned annotations as your pre-edit check.
+- Use `update_task` once at task completion (terminal status). `claim_task` already moved the task to `in_progress`.
 - Use explicit `review` tasks for normal review handoff
 - Treat `role:` labels as conventions, not hard schema
 - Treat sessions without a `role:` label token as generalists

@@ -15,11 +15,11 @@ describe("prompts", () => {
   test("protocol prompt includes lock and task guidance", () => {
     const text = prompts.protocol();
 
-    expect(text).toContain("check_file");
     expect(text).toContain("lock_file");
     expect(text).toContain("update_task");
     expect(text).toContain("review");
     expect(text).toContain("approval_required");
+    expect(text).not.toContain("check_file");
   });
 
   test("docs snippets stay aligned with host-neutral usage", () => {

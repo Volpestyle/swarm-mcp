@@ -8,7 +8,7 @@ Agents see shared state through MCP tools. The skill teaches conventions; MCP pr
 
 - `register` establishes the session identity and scope.
 - `list_instances`, `poll_messages`, and `list_tasks` read the live coordination surface.
-- `check_file`, `lock_file`, `unlock_file`, and `annotate` coordinate file-level work.
+- `lock_file`, `unlock_file`, and `annotate` coordinate file-level work. `lock_file` returns peer annotations alongside the lock; `unlock_file` is only needed for early per-file release (terminal `update_task` releases task-file locks automatically).
 - `kv_list`, `kv_get`, `kv_set`, `kv_append`, and `kv_delete` read/write small shared state.
 - `wait_for_activity` wakes on `new_messages`, `task_updates`, `kv_updates`, and `instance_changes`.
 
@@ -40,7 +40,7 @@ Use KV for small durable state, not logs or large documents.
 
 ## Progress Heartbeats
 
-While working, periodically call:
+For long-running tasks (multi-minute), periodically call:
 
 ```text
 kv_set("progress/<your-instance-id>", "<short status>")
@@ -57,6 +57,8 @@ Examples:
 ```
 
 This lets planners and peers check status with `kv_list("progress/")` without interrupting you.
+
+Skip progress heartbeats for short tasks — the call cost outweighs the value.
 
 ## Reacting To KV Updates
 

@@ -176,8 +176,7 @@ You can also test shared coordination tools:
 
 - `broadcast` to announce progress to all other sessions
 - `request_task` to hand work to another session
-- `check_file` before editing
-- `lock_file` while editing
+- `lock_file` while editing (its response also surfaces peer annotations)
 - `annotate` to leave shared notes on a file
 
 ## 9. Add operating instructions and start collaborating
@@ -196,7 +195,7 @@ The minimum collaboration loop is:
 
 - Call `register` at session start
 - Call `poll_messages` and `list_tasks` before starting work
-- Call `check_file` before editing and `lock_file` while editing
+- Call `lock_file` while editing (skip if you're alone in scope; the response includes peer annotations)
 - Call `broadcast` or `update_task` when handing work off
 
 For troubleshooting tips, see the [Troubleshooting](../README.md#troubleshooting) section in the README.

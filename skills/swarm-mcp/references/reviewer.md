@@ -22,16 +22,15 @@ Use this reference when the session should review completed work, identify bugs 
 
 For each review task:
 
-1. `claim_task`.
-2. `update_task` to `in_progress`.
-3. Read the related implementation task result if referenced.
-4. Prefer structured results with `files_changed`, `test_status`, and `summary`.
-5. Call `check_file` for files under review to see locks and annotations.
-6. Inspect the actual changes, not only the summary.
-7. Focus on correctness, behavioral regressions, missing tests, security/privacy risks, and concurrency/file-collision issues.
-8. Use `annotate` for file-specific findings that future agents should see.
-9. If approved, `update_task` the review to `done` with a concise approval summary.
-10. If changes are needed, `update_task` the review to `failed` and create a follow-up `fix` task with concrete instructions.
+1. `claim_task` — moves the review to `in_progress`.
+2. Read the related implementation task result if referenced.
+3. Prefer structured results with `files_changed`, `test_status`, and `summary`.
+4. To see locks and peer annotations for a file, call `lock_file` on it (the response includes annotations). For read-only inspection in a quiet swarm you can skip the lock.
+5. Inspect the actual changes, not only the summary.
+6. Focus on correctness, behavioral regressions, missing tests, security/privacy risks, and concurrency/file-collision issues.
+7. Use `annotate` for file-specific findings that future agents should see.
+8. If approved, `update_task` the review to `done` with a concise approval summary.
+9. If changes are needed, `update_task` the review to `failed` and create a follow-up `fix` task with concrete instructions.
 
 ## Findings Format
 

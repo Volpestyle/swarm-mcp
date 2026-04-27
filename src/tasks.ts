@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import * as context from "./context";
 import { db } from "./db";
 import { emit } from "./events";
 import {
@@ -150,7 +151,13 @@ function processCompletion(completedId: string, scope: string) {
         type: "task.cascade.cancelled",
         actor: "system",
         subject: task.id,
-        payload: { trigger: completedId, reason: "dependency_failed" },
+        payload: {
+          trigger: completedId,
+          reason: "dependency_failed",
+          prior_status: "blocked",
+          dependency_status: state.depStatus,
+          result: autoCancelledResult(state.depId, state.depStatus),
+        },
       });
       processFailure(task.id, scope);
     } else if (state.kind === "ready") {
@@ -164,7 +171,11 @@ function processCompletion(completedId: string, scope: string) {
         type: "task.cascade.unblocked",
         actor: "system",
         subject: task.id,
-        payload: { trigger: completedId, status: newStatus },
+        payload: {
+          trigger: completedId,
+          status: newStatus,
+          prior_status: "blocked",
+        },
       });
     }
   }
@@ -184,16 +195,21 @@ function processFailure(failedId: string, scope: string) {
     const deps = JSON.parse(task.depends_on) as string[];
     if (!deps.includes(failedId)) continue;
 
+    const cancelResult = `auto-cancelled: dependency ${failedId} failed`;
     db.run(
       `UPDATE tasks SET status = 'cancelled', result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?`,
-      [`auto-cancelled: dependency ${failedId} failed`, stamp(), task.id],
+      [cancelResult, stamp(), task.id],
     );
     emit({
       scope,
       type: "task.cascade.cancelled",
       actor: "system",
       subject: task.id,
-      payload: { trigger: failedId, reason: "dependency_failed" },
+      payload: {
+        trigger: failedId,
+        reason: "dependency_failed",
+        result: cancelResult,
+      },
     });
 
     // Recursive cascade
@@ -324,10 +340,14 @@ function insertPreparedTask(
     payload: {
       task_type: task.type,
       title: task.title,
+      description: task.description,
       status: task.status,
       assignee: task.assignee,
       parent_task_id: task.parent_task_id,
       depends_on: task.depends_on,
+      files: task.files ?? null,
+      priority: task.priority,
+      result: task.result,
       ...extraPayload,
     },
   });
@@ -386,7 +406,13 @@ export function claim(
     .get(id, scope) as { status: TaskStatus; assignee: string | null } | null;
 
   if (!before) return { error: "Task not found" };
-  if (before.status !== "open" || before.assignee !== null) {
+
+  // Allowed: open + unassigned, or pre-assigned to this caller (status=claimed
+  // when planner pre-set assignee). Everything else is a no-op.
+  const isOpenForAnyone = before.status === "open" && before.assignee === null;
+  const isPreassignedToMe =
+    before.status === "claimed" && before.assignee === assignee;
+  if (!isOpenForAnyone && !isPreassignedToMe) {
     return { error: `Task is already ${before.status}` };
   }
 
@@ -397,9 +423,13 @@ export function claim(
 
   const result = db.run(
     `UPDATE tasks
-     SET assignee = ?, status = 'claimed', updated_at = unixepoch(), changed_at = ?
-     WHERE id = ? AND scope = ? AND status = 'open' AND assignee IS NULL`,
-    [assignee, stamp(), id, scope],
+     SET assignee = ?, status = 'in_progress', updated_at = unixepoch(), changed_at = ?
+     WHERE id = ? AND scope = ?
+       AND (
+         (status = 'open' AND assignee IS NULL)
+         OR (status = 'claimed' AND assignee = ?)
+       )`,
+    [assignee, stamp(), id, scope, assignee],
   );
 
   if (result.changes > 0) {
@@ -408,6 +438,7 @@ export function claim(
       type: "task.claimed",
       actor: assignee,
       subject: id,
+      payload: { prior_status: before.status, status: "in_progress" },
     });
     return { ok: true as const };
   }
@@ -424,7 +455,7 @@ export function update(
   id: string,
   scope: string,
   actor: string,
-  status: "in_progress" | "done" | "failed" | "cancelled",
+  status: "done" | "failed" | "cancelled",
   result?: string,
 ) {
   const tx = db.transaction(() => {
@@ -465,10 +496,6 @@ export function update(
         return { error: "Only the assignee can update this task" };
     }
 
-    if (status === "in_progress" && task.status !== "claimed") {
-      return { error: "Task must be claimed before it can move to in_progress" };
-    }
-
     db.run(
       "UPDATE tasks SET status = ?, result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ? AND scope = ?",
       [status, result ?? null, stamp(), id, scope],
@@ -478,8 +505,19 @@ export function update(
       type: "task.updated",
       actor,
       subject: id,
-      payload: { status, prior_status: task.status },
+      payload: {
+        status,
+        prior_status: task.status,
+        result: result ?? null,
+      },
     });
+
+    // Auto-release this actor's locks on the task's files. Saves an unlock
+    // call per file at task completion.
+    const files = task.files ? (JSON.parse(task.files) as string[]) : [];
+    if (files.length && task.assignee) {
+      context.releaseInstanceLocksForFiles(task.assignee, scope, files);
+    }
 
     // Dependency cascades
     if (status === "done") {
@@ -512,16 +550,23 @@ export function approve(id: string, scope: string) {
       const state = dependencyState(scope, deps);
 
       if (state.kind === "failed") {
+        const cancelResult = autoCancelledResult(state.depId, state.depStatus);
         db.run(
           "UPDATE tasks SET status = 'cancelled', result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?",
-          [autoCancelledResult(state.depId, state.depStatus), stamp(), id],
+          [cancelResult, stamp(), id],
         );
         emit({
           scope,
           type: "task.cascade.cancelled",
           actor: "system",
           subject: id,
-          payload: { trigger: state.depId, reason: "dependency_failed" },
+          payload: {
+            trigger: state.depId,
+            reason: "dependency_failed",
+            prior_status: "approval_required",
+            dependency_status: state.depStatus,
+            result: cancelResult,
+          },
         });
         processFailure(id, scope);
         return {
@@ -541,7 +586,7 @@ export function approve(id: string, scope: string) {
           type: "task.approved",
           actor: null,
           subject: id,
-          payload: { status: "blocked" },
+          payload: { status: "blocked", prior_status: "approval_required" },
         });
         return { ok: true as const, status: "blocked" as TaskStatus };
       }
@@ -557,7 +602,7 @@ export function approve(id: string, scope: string) {
       type: "task.approved",
       actor: null,
       subject: id,
-      payload: { status: newStatus },
+      payload: { status: newStatus, prior_status: "approval_required" },
     });
     return { ok: true as const, status: newStatus };
   });

@@ -122,7 +122,7 @@ The `register` tool accepts these parameters. Only `directory` is required.
 |-------|----------|-------------|
 | `directory` | Yes | The live working directory for the current session. |
 | `scope` | No | Shared swarm boundary. Sessions in the same scope can see each other; different scopes are different swarms. Defaults to the detected git root, or to `directory` when no git root exists. Use a new scope only for a separate swarm; do not split frontend/backend inside one repo with scope. Use `team:` label tokens for that. |
-| `file_root` | No | Canonical base path for resolving relative file paths in `annotate`, `lock_file`, `check_file`, and task `files`. Useful when disposable worktrees should share one logical file tree. |
+| `file_root` | No | Canonical base path for resolving relative file paths in `annotate`, `lock_file`, and task `files`. Useful when disposable worktrees should share one logical file tree. |
 | `label` | No | Free-form identity text. Recommended convention: machine-readable space-separated tokens like `provider:codex-cli role:planner`. The `role:` token is optional; if missing, the session is treated as a generalist. |
 
 ### Task features
@@ -194,8 +194,8 @@ Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are c
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `request_task`       | Post a task (types: `review`, `implement`, `fix`, `test`, `research`, `other`). Use `review` for routine code review handoff. Supports `priority`, `depends_on`, `idempotency_key`, `parent_task_id`, and `approval_required`. |
 | `request_task_batch` | Create multiple tasks atomically in a single transaction. Supports `$N` references (1-indexed) for intra-batch dependencies. |
-| `claim_task`         | Claim an open task. Prevents double-claiming and blocks if you have unread messages until you call `poll_messages` (or explicitly override). |
-| `update_task`        | Update a claimed task to `in_progress`, `done`, `failed`, or `cancelled`. Attach a result when useful.                    |
+| `claim_task`         | Start work on a task: assigns and transitions to `in_progress` in one call. Prevents double-claiming and blocks on unread messages until `poll_messages` (or explicit override). Also accepts tasks pre-assigned to you (status=`claimed`). |
+| `update_task`        | Move a task to a terminal status (`done`, `failed`, `cancelled`). Auto-releases the actor's locks on the task's files. Attach a result when useful. |
 | `approve_task`       | Approve a task in `approval_required` status. Transitions to `open`/`claimed` (or `blocked` if deps unmet).               |
 | `get_task`           | Get full details of a task.                                                                                               |
 | `list_tasks`         | Filter tasks by status, assignee, or requester. Sorted by priority (highest first).                                       |
@@ -205,9 +205,8 @@ Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are c
 | Tool             | Description                                                   |
 | ---------------- | ------------------------------------------------------------- |
 | `annotate`       | Share findings, warnings, bugs, notes, or todos about a file. |
-| `lock_file`      | Acquire an exclusive file lock so others avoid editing it.    |
-| `unlock_file`    | Release a file lock.                                          |
-| `check_file`     | See annotations and locks before editing a file.              |
+| `lock_file`      | Acquire an exclusive file lock and read peer annotations on the file in one call. Locks auto-release on terminal `update_task`. |
+| `unlock_file`    | Release a file lock early (before the task as a whole completes). |
 | `search_context` | Search annotations by file path or content.                   |
 
 ### Key-value store

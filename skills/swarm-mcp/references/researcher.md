@@ -15,13 +15,12 @@ Use this reference when the session should investigate code, docs, APIs, runtime
 
 For each research task:
 
-1. `claim_task`.
-2. `update_task` to `in_progress`.
-3. Read the task description and clarify the expected output.
-4. Investigate using read-only tools unless explicitly asked to produce a patch.
-5. Use `annotate` for file-specific findings, warnings, bugs, or todos.
-6. Use `kv_set` for structured findings other agents should be able to inspect, such as `research/<topic>` or `findings/<task-id>`.
-7. `update_task` to `done` with a structured summary, evidence, and recommended next actions.
+1. `claim_task` — moves the task to `in_progress`.
+2. Read the task description and clarify the expected output.
+3. Investigate using read-only tools unless explicitly asked to produce a patch.
+4. Use `annotate` for file-specific findings, warnings, bugs, or todos.
+5. Use `kv_set` for structured findings other agents should be able to inspect, such as `research/<topic>` or `findings/<task-id>`.
+6. `update_task` to `done` with a structured summary, evidence, and recommended next actions.
 
 ## Result Format
 

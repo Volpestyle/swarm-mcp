@@ -23,15 +23,15 @@ If you choose a \`label\`, prefer machine-readable tokens such as \`provider:cod
 
 Before starting work, call the swarm \`poll_messages\` and \`list_tasks\` tools to pick up requests from other sessions. Prefer the highest-priority open task when claiming work. Skip \`blocked\` tasks — they will become \`open\` automatically when their dependencies complete.
 
-Before editing a file, call the swarm \`check_file\` tool for that path. If another session has a lock or warning, avoid overlap and coordinate first.
+If \`list_instances\` shows you alone in this scope, you can skip per-edit lock calls entirely — there is no one to coordinate with. Re-enable locking when \`instance_changes\` reports peers joining.
 
 ---
 
 ## Lock carefully
 
-When you begin editing a file, call the swarm \`lock_file\` tool with a short reason.
+When you begin editing a file, call the swarm \`lock_file\` tool with a short reason. The response includes any peer annotations on the file, so a separate pre-check is not needed.
 
-Unlock it with the swarm \`unlock_file\` tool as soon as you are done. Keep locks short and specific.
+Locks held by your instance are auto-released when you mark the task terminal with \`update_task\`. Use \`unlock_file\` only when you finish a file early.
 
 ---
 
@@ -73,12 +73,12 @@ If your host compacts context or you start a fresh window, call \`register\` aga
 
 ### Progress heartbeats
 
-While working on a task, periodically update your status:
+For long-running tasks (multi-minute), publish a status so peers can check without interrupting:
 
 - Key: \`progress/<your-instance-id>\`
-- Value: short summary of current activity and progress
+- Value: short summary of current activity
 
-This lets planners and other agents check on you with \`kv_list("progress/")\` without interrupting your work. Clear your progress key when you finish a task or go idle.
+Skip this for short tasks; the cost outweighs the value. Clear the key when you finish or go idle.
 
 ---
 
@@ -101,7 +101,7 @@ Only break out of this loop when the overall goal is complete or you genuinely n
 
 ## Finish cleanly
 
-When you complete assigned work, call the swarm \`update_task\` tool with \`in_progress\` when you start and \`done\`, \`failed\`, or \`cancelled\` when you finish.
+\`claim_task\` already moves the task to \`in_progress\`. When you finish, call \`update_task\` once with \`done\`, \`failed\`, or \`cancelled\`. That single call also auto-releases the locks you hold on the task's files.
 
 Include a structured \`result\` when possible — a JSON string with \`files_changed\`, \`test_status\`, and \`summary\` — so the reviewer can assess your work. Fall back to a plain string if structured output is not feasible.
 `;
@@ -176,10 +176,10 @@ Your job is to decompose work, delegate to specialists, and keep the swarm produ
 
 Your job is to claim and execute coding tasks assigned by planners.
 
-1. Call \`list_tasks\` and \`poll_messages\` — claim the highest-priority \`open\` task that matches your role (or is unassigned). Skip \`blocked\` tasks.
-2. Before editing a file, call \`check_file\`. Then \`lock_file\` with a short reason while you work; \`unlock_file\` as soon as you're done.
-3. Update progress with \`kv_set("progress/<your-instance-id>", "...")\` while working.
-4. On completion, call \`update_task\` with \`done\` (or \`failed\`/\`cancelled\`) and a structured \`result\` JSON: \`{ "files_changed": [...], "test_status": "...", "summary": "..." }\`.
+1. Call \`list_tasks\` and \`poll_messages\` — claim the highest-priority \`open\` task that matches your role (or is unassigned). Skip \`blocked\` tasks. \`claim_task\` transitions the task to \`in_progress\` for you.
+2. When you begin editing a file, call \`lock_file\` — the response includes any peer annotations on it, so no separate pre-check is needed. If \`list_instances\` shows you alone in scope, you can skip locking until peers appear.
+3. For long-running tasks, publish progress with \`kv_set("progress/<your-instance-id>", "...")\`. Skip for short tasks.
+4. On completion, call \`update_task\` once with \`done\` (or \`failed\`/\`cancelled\`) and a structured \`result\` JSON: \`{ "files_changed": [...], "test_status": "...", "summary": "..." }\`. Locks on the task's files release automatically.
 5. After implementation or fix work, create a \`review\` task for the planner or reviewer instead of relying on passive scans.
 6. Enter the \`wait_for_activity\` loop and claim the next task as soon as it appears. Do not wait for user prompts between tasks.`,
 
@@ -187,7 +187,7 @@ Your job is to claim and execute coding tasks assigned by planners.
 
 Your job is to review work handed to you through explicit \`review\` tasks — read diffs, check correctness, and either approve or request changes.
 
-1. Call \`list_tasks\` — look for \`review\` tasks assigned to you or open for claiming.
+1. Call \`list_tasks\` — look for \`review\` tasks assigned to you or open for claiming. \`claim_task\` moves the review to \`in_progress\` for you.
 2. Read the implementation task result (files_changed, test_status, summary) and inspect the actual changes. Use \`annotate\` to leave file-specific findings.
 3. Approve the \`review\` task via \`update_task\` with \`done\`, or push back by failing the \`review\` task and creating a follow-up \`fix\` task.
 4. Use \`broadcast\` for cross-cutting concerns spotted during review.
@@ -212,20 +212,20 @@ export function protocol() {
   return `Follow the shared swarm coordination protocol for this session.
 
 - Use the swarm server tools exposed by your host
-- Before editing, call the swarm \`check_file\` tool
-- When editing, call the swarm \`lock_file\` tool
-- When finished, call the swarm \`unlock_file\` tool
+- When editing, call the swarm \`lock_file\` tool — its response also returns peer annotations on the file, so no separate pre-check is needed
+- Locks auto-release when you mark the task terminal via \`update_task\`. Use \`unlock_file\` only for early per-file release.
+- If \`list_instances\` shows no peers, you can skip locking until peers join (watch \`instance_changes\`)
 - When choosing collaborators, inspect \`list_instances\` labels for tokens like \`role:planner\`, \`role:reviewer\`, or \`role:implementer\`; if no \`role:\` token exists, treat that session as a generalist
 - Use the swarm \`annotate\` tool for file-specific findings
 - Use the swarm \`broadcast\` tool for important progress updates
-- Use the swarm \`update_task\` tool to move delegated work through \`in_progress\` to a final status
+- \`claim_task\` already transitions a task to \`in_progress\`. Use \`update_task\` once at the end with \`done\`, \`failed\`, or \`cancelled\`.
 - Use \`priority\` to control task execution order — higher values are claimed first
 - Use \`depends_on\` to express task ordering — dependent tasks stay \`blocked\` until all dependencies complete
 - Use \`request_task_batch\` to create multiple tasks atomically with \`$N\` dependency references
 - Use explicit \`review\` tasks for code review handoff. Reserve \`approval_required\` for true approval gates
 - Use \`wait_for_activity\` as your idle loop instead of waiting for user prompts. React to messages, task changes, KV updates, and instance changes as they arrive.
 - If you are a planner, watch \`owner/planner\` on \`kv_updates\`. When ownership transfers to you, load \`plan/latest\` and resume.
-- Update your progress with \`kv_set("progress/<your-instance-id>", ...)\` while working on tasks
+- For long-running tasks, publish \`kv_set("progress/<your-instance-id>", ...)\`. Skip for short tasks.
 - Messages prefixed with \`[auto]\` are system notifications (task assignments, completions, stale-agent recovery) — act on them like any other message
 - When you receive a broadcast containing \`[signal:complete]\`, the planner is signaling all work is done — finish current work and deregister
 - When completing tasks, prefer a structured JSON result: \`{ "files_changed": [...], "test_status": "pass", "summary": "..." }\``;

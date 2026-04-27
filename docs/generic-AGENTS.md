@@ -40,9 +40,8 @@ Check `poll_messages` and `list_tasks` periodically, not just at startup.
 When you receive a task via `request_task`:
 
 - If `claim_task` reports unread messages, call `poll_messages` and handle those messages before retrying
-- `claim_task` promptly so no other session takes it
-- Call `update_task` to `in_progress` when you start
-- Call `update_task` to `done` with a structured result when finished (see below), or `failed` with what went wrong
+- `claim_task` promptly — this also moves the task to `in_progress` for you in one call
+- Call `update_task` once at completion with `done` and a structured result (see below), or `failed` / `cancelled`. Locks on the task's files release automatically.
 - If the task requires follow-up, create a new `request_task` (e.g. the implementer sends a `review` task back to the planner)
 
 When you receive a direct message via `send_message`:
@@ -77,17 +76,11 @@ Fall back to a plain string if you cannot produce structured output.
 
 ---
 
-## Check before editing
-
-Before editing a file, call `check_file` for that path. If another session has a lock or warning, avoid overlap and coordinate first.
-
----
-
 ## Lock while editing
 
-When you begin editing a file, call `lock_file` with a short reason.
+When you begin editing a file, call `lock_file` with a short reason. Its response includes any peer annotations on that file, so a separate pre-check is not needed. If `list_instances` shows you alone in scope, skip locking until peers join.
 
-Unlock it with `unlock_file` as soon as you are done. Keep locks short and specific.
+Locks on a task's files release automatically when you call terminal `update_task`. Use `unlock_file` only for early per-file release before the task as a whole completes.
 
 ---
 
