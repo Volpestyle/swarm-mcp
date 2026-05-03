@@ -78,6 +78,14 @@ export function poll(recipient: string, scope: string, limit = 50) {
     );
   }
 
+  emit({
+    scope,
+    type: "agent.polled",
+    actor: recipient,
+    subject: recipient,
+    payload: { unread_count: rows.length, limit },
+  });
+
   return rows;
 }
 

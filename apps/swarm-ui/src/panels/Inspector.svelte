@@ -8,12 +8,9 @@
 -->
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import anthropicLogoUrl from '../assets/anthropic-logo.png';
-  import openAiLogoUrl from '../assets/openai-old-logo.png';
-  import { deriveAgentIdentity } from '../lib/agentIdentity';
-  import { personaForInstance } from '../lib/persona';
   import type {
     Annotation,
+    AgentRuntimeProfile,
     Event,
     KvEntry,
     SwarmNodeData,
@@ -21,10 +18,21 @@
     XYFlowNode,
     XYFlowEdge,
   } from '../lib/types';
+  import { buildAssetContextBlock } from '../lib/assetContext';
   import { formatTimestamp } from '../lib/time';
+  import { agentIdentityFromLabel, mergeAgentLabelTokens } from '../lib/agentIdentity';
   import { isSystemMessage } from '../lib/messages';
   import { buildTaskTree, type TaskTreeRow } from '../lib/tasks';
   import Markdown from '../lib/Markdown.svelte';
+  import {
+    appendSkillSuggestion,
+    skillSuggestionsForHarness,
+  } from '../lib/skillSuggestions';
+  import { agentRuntimeProfiles } from '../stores/agentProfiles';
+  import {
+    assetAttachments,
+    projectAssets,
+  } from '../stores/projectAssets';
   import {
     annotations,
     events as eventsStore,
@@ -40,24 +48,75 @@
   $: inspectingNode = selectedNode !== null;
   $: inspectingEdge = selectedEdge !== null && selectedNode === null;
   $: nodeData = selectedNode?.data as SwarmNodeData | null;
-  $: nodeIdentity = nodeData
-    ? deriveAgentIdentity({
-        instance: nodeData.instance,
-        ptySession: nodeData.ptySession,
-        role: nodeData.label,
-        displayName: nodeData.displayName,
-      })
-    : null;
-  $: nodePersona = personaForInstance(nodeData?.instance ?? null);
-  $: nodeProviderLogo = nodeIdentity?.providerKind === 'anthropic'
-    ? anthropicLogoUrl
-    : nodeIdentity?.providerKind === 'openai'
-      ? openAiLogoUrl
-      : null;
 
   // Every edge is now a unified `connection` bundling messages, tasks, and
   // dependencies between the same unordered instance pair.
   $: edgeData = selectedEdge?.data as ConnectionEdgeData | null;
+
+  let identityFormSourceKey = '';
+  let identityName = '';
+  let identityRole = '';
+  let identityPersona = '';
+  let identityMission = '';
+  let identitySkills = '';
+  let identityPermissions = '';
+  let identitySaving = false;
+  let identitySaved = false;
+  let identityError: string | null = null;
+
+  $: syncIdentityForm(nodeData, $agentRuntimeProfiles);
+  $: identitySkillSuggestions = skillSuggestionsForHarness(
+    nodeData?.agentDisplay.provider || nodeData?.ptySession?.command || nodeData?.label || '',
+  );
+  $: attachedAssets = nodeData?.instance
+    ? $projectAssets.filter((asset) =>
+        $assetAttachments.some(
+          (entry) =>
+            entry.assetId === asset.id &&
+            entry.targetType === 'agent' &&
+            entry.targetId === nodeData?.instance?.id,
+        ),
+      )
+    : [];
+  $: attachedAssetContext = buildAssetContextBlock(attachedAssets);
+
+  function syncIdentityForm(
+    node: SwarmNodeData | null,
+    runtimeProfiles: Record<string, AgentRuntimeProfile>,
+  ): void {
+    const instance = node?.instance ?? null;
+    const sourceKey = instance
+      ? `${instance.id}:${instance.label ?? ''}:${runtimeProfiles[instance.id]?.updatedAt ?? 0}`
+      : '';
+
+    if (sourceKey === identityFormSourceKey) return;
+    identityFormSourceKey = sourceKey;
+    identitySaved = false;
+    identityError = null;
+
+    if (!instance || !node) {
+      identityName = '';
+      identityRole = '';
+      identityPersona = '';
+      identityMission = '';
+      identitySkills = '';
+      identityPermissions = '';
+      return;
+    }
+
+    const labelIdentity = agentIdentityFromLabel(instance.label ?? null);
+    const runtime = runtimeProfiles[instance.id] ?? null;
+    identityName = runtime?.name || labelIdentity.name || node.displayName || '';
+    identityRole = runtime?.role || labelIdentity.role || node.label || '';
+    identityPersona = runtime?.persona || labelIdentity.persona || '';
+    identityMission = runtime?.mission || labelIdentity.mission || '';
+    identitySkills = runtime?.skills || labelIdentity.skills || '';
+    identityPermissions = runtime?.permissions || labelIdentity.permissions || '';
+  }
+
+  function appendIdentitySkillSuggestion(value: string): void {
+    identitySkills = appendSkillSuggestion(identitySkills, value);
+  }
 
   // Reference edgeData.messages directly so Svelte's reactive dep tracker
   // picks up the update. A wrapper function call would hide the read and
@@ -315,6 +374,45 @@
     }
   }
 
+  async function handleSaveIdentity(): Promise<void> {
+    const instance = nodeData?.instance ?? null;
+    if (!instance || identitySaving) return;
+
+    identitySaving = true;
+    identitySaved = false;
+    identityError = null;
+
+    try {
+      const nextLabel = mergeAgentLabelTokens(instance.label ?? null, {
+        name: identityName,
+        role: identityRole,
+        persona: identityPersona,
+      });
+
+      await invoke<boolean>('ui_set_instance_label', {
+        instanceId: instance.id,
+        label: nextLabel,
+      });
+
+      agentRuntimeProfiles.save({
+        instanceId: instance.id,
+        name: identityName.trim(),
+        role: identityRole.trim(),
+        persona: identityPersona.trim(),
+        mission: identityMission.trim(),
+        skills: identitySkills.trim(),
+        permissions: identityPermissions.trim(),
+        updatedAt: Date.now(),
+      });
+
+      identitySaved = true;
+    } catch (err) {
+      identityError = `Failed to save identity: ${err}`;
+    } finally {
+      identitySaving = false;
+    }
+  }
+
   // -------------------------------------------------------------------
   // Per-section delete actions. Each writes to swarm.db via a dedicated
   // Tauri command; the 500ms poll then re-emits the snapshot and the
@@ -391,35 +489,114 @@
     {#if inspectingNode && nodeData}
       <!-- ===== Node Inspection ===== -->
 
-      {#if nodeIdentity}
-        <section class="agent-summary-card">
-          <div class="agent-avatar" aria-hidden="true">{nodePersona}</div>
-          <div class="agent-summary-copy">
-            <div class="agent-summary-topline">
-              <strong title={nodeIdentity.nameLabel}>{nodeIdentity.nameLabel}</strong>
-              <span class="agent-role-pill">{nodeIdentity.roleLabel}</span>
-            </div>
-            <div class="agent-model-line">
-              {#if nodeProviderLogo}
-                <span class="agent-provider-logo">
-                  <img src={nodeProviderLogo} alt={`${nodeIdentity.providerLabel} logo`} />
-                </span>
-              {:else}
-                <span class="agent-provider-initial" aria-hidden="true">
-                  {nodeIdentity.providerLabel.slice(0, 1)}
-                </span>
-              {/if}
-              <span title={`${nodeIdentity.providerLabel} ${nodeIdentity.modelLabel}`}>
-                {nodeIdentity.modelLabel}
-              </span>
-            </div>
+      <section>
+        <div class="section-head">
+          <h4>Agent Identity</h4>
+          {#if nodeData.instance}
+            <button
+              class="delete-btn identity-save"
+              disabled={identitySaving}
+              on:click={handleSaveIdentity}
+            >
+              {identitySaving ? 'Saving...' : identitySaved ? 'Saved' : 'Save'}
+            </button>
+          {/if}
+        </div>
+
+        {#if identityError}
+          <div class="error-banner">{identityError}</div>
+        {/if}
+
+        {#if nodeData.instance}
+          <div class="identity-form">
+            <label>
+              <span>Name</span>
+              <input class="identity-input" bind:value={identityName} />
+            </label>
+            <label>
+              <span>Role</span>
+              <input class="identity-input" bind:value={identityRole} />
+            </label>
+            <label>
+              <span>Persona</span>
+              <input class="identity-input" bind:value={identityPersona} />
+            </label>
+            <label class="identity-wide">
+              <span>Mission</span>
+              <textarea class="identity-input identity-textarea" bind:value={identityMission}></textarea>
+            </label>
+            <label class="identity-wide">
+              <span>Skills</span>
+              <textarea class="identity-input identity-textarea" bind:value={identitySkills}></textarea>
+              <div class="skill-suggestion-row" aria-label="Skill suggestions">
+                {#each identitySkillSuggestions as suggestion (suggestion.id)}
+                  <button
+                    type="button"
+                    class="suggestion-chip"
+                    title={suggestion.value}
+                    on:click={() => appendIdentitySkillSuggestion(suggestion.value)}
+                  >
+                    {suggestion.label}
+                  </button>
+                {/each}
+              </div>
+            </label>
+            <label class="identity-wide">
+              <span>Permissions</span>
+              <textarea class="identity-input identity-textarea" bind:value={identityPermissions}></textarea>
+            </label>
           </div>
-          <span
-            class="agent-status-light"
-            style:background={statusBadgeColor(nodeData.status)}
-            style:color={statusBadgeColor(nodeData.status)}
-            title={nodeData.status}
-          ></span>
+        {:else}
+          <div class="empty-state">No registered agent identity yet</div>
+        {/if}
+      </section>
+
+      <section>
+        <h4>Listener Health</h4>
+        <div class="detail-grid">
+          <span class="detail-label">State</span>
+          <span class="detail-value">
+            <span class="inline-badge" style="color: {statusBadgeColor(nodeData.status)}">
+              {nodeData.listenerHealth.label}
+            </span>
+          </span>
+
+          <span class="detail-label">Detail</span>
+          <span class="detail-value">{nodeData.listenerHealth.detail}</span>
+
+          <span class="detail-label">Unread</span>
+          <span class="detail-value">{nodeData.listenerHealth.unreadMessages}</span>
+
+          <span class="detail-label">Active Tasks</span>
+          <span class="detail-value">{nodeData.listenerHealth.activeTaskCount}</span>
+
+          <span class="detail-label">Last Poll</span>
+          <span class="detail-value">{formatTimestamp(nodeData.listenerHealth.lastPollAt)}</span>
+
+          <span class="detail-label">Wait Loop</span>
+          <span class="detail-value">{formatTimestamp(nodeData.listenerHealth.lastWaitAt)}</span>
+        </div>
+      </section>
+
+      {#if nodeData.instance}
+        <section>
+          <h4>Attached Assets</h4>
+          {#if attachedAssets.length === 0}
+            <div class="empty-state">No project assets attached.</div>
+          {:else}
+            <div class="asset-list">
+              {#each attachedAssets as asset (asset.id)}
+                <div class="asset-row">
+                  <span>{asset.kind}</span>
+                  <strong>{asset.title}</strong>
+                  {#if asset.path}
+                    <code>{asset.path}</code>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+            <pre class="asset-context">{attachedAssetContext}</pre>
+          {/if}
         </section>
       {/if}
 
@@ -438,7 +615,7 @@
               </span>
             </span>
 
-            <span class="detail-label">Scope</span>
+            <span class="detail-label">Channel</span>
             <span class="detail-value">{nodeData.instance.scope}</span>
 
             <span class="detail-label">PID</span>
@@ -681,7 +858,7 @@
     {#if visibleAnnotations.length > 0}
       <section class="context-section">
         <h4>
-          Context ({visibleAnnotations.length}{nodeData?.instance ? '' : selectedScope ? '' : ' · all scopes'})
+          Context ({visibleAnnotations.length}{nodeData?.instance ? '' : selectedScope ? '' : ' · all channels'})
         </h4>
         <div class="annotation-groups">
           {#each annotationTypeOrder as type (type)}
@@ -728,7 +905,7 @@
         >
           <span class="kv-caret" class:open={!activityCollapsed}>▸</span>
           <span class="kv-title">
-            Activity ({visibleEvents.length}{selectedScope ? '' : ' · all scopes'})
+            Activity ({visibleEvents.length}{selectedScope ? '' : ' · all channels'})
           </span>
         </button>
         {#if !activityCollapsed}
@@ -775,7 +952,7 @@
                   {#if expanded}
                     <pre class="activity-detail mono">{eventDetail(evt)}</pre>
                     {#if !selectedScope}
-                      <div class="kv-meta">scope: <span class="mono">{evt.scope}</span></div>
+                      <div class="kv-meta">channel: <span class="mono">{evt.scope}</span></div>
                     {/if}
                   {/if}
                 </div>
@@ -796,7 +973,7 @@
         >
           <span class="kv-caret" class:open={!kvCollapsed}>▸</span>
           <span class="kv-title">
-            Coordination (KV) ({visibleKv.length}{selectedScope ? '' : ' · all scopes'})
+            Coordination (KV) ({visibleKv.length}{selectedScope ? '' : ' · all channels'})
           </span>
         </button>
         {#if !kvCollapsed}
@@ -818,7 +995,7 @@
                 {#if expanded}
                   <pre class="kv-value-detail mono">{kvDetail(entry.value)}</pre>
                   {#if !selectedScope}
-                    <div class="kv-meta">scope: <span class="mono">{entry.scope}</span></div>
+                    <div class="kv-meta">channel: <span class="mono">{entry.scope}</span></div>
                   {/if}
                 {/if}
               </div>
@@ -861,126 +1038,6 @@
 
   section.endpoints {
     margin-bottom: 12px;
-  }
-
-  .agent-summary-card {
-    position: relative;
-    display: grid;
-    grid-template-columns: 58px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 14px;
-    padding: 12px;
-    border: 1px solid color-mix(in srgb, var(--node-border-selected, #89b4fa) 24%, transparent);
-    border-radius: 14px;
-    background:
-      radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--node-border-selected, #89b4fa) 18%, transparent), transparent 42%),
-      rgba(255, 255, 255, 0.035);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
-  }
-
-  .agent-avatar {
-    width: 58px;
-    height: 58px;
-    border-radius: 14px;
-    border: 1px solid color-mix(in srgb, var(--node-border-selected, #89b4fa) 32%, transparent);
-    background: rgba(0, 0, 0, 0.34);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 16px;
-    font-weight: 900;
-    letter-spacing: 0.08em;
-    line-height: 1;
-  }
-
-  .agent-summary-copy {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .agent-summary-topline {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    min-width: 0;
-  }
-
-  .agent-summary-topline strong {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--terminal-fg, #c0caf5);
-    font-size: 16px;
-    line-height: 1.05;
-  }
-
-  .agent-role-pill {
-    flex: 0 0 auto;
-    max-width: 112px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: #a6adc8;
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .agent-model-line {
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    color: #a6adc8;
-    font-size: 12px;
-    font-weight: 650;
-  }
-
-  .agent-model-line > span:last-child {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .agent-provider-logo,
-  .agent-provider-initial {
-    width: 24px;
-    height: 24px;
-    border-radius: 7px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.9);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    flex: 0 0 auto;
-  }
-
-  .agent-provider-logo img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-
-  .agent-provider-initial {
-    background: color-mix(in srgb, var(--node-border-selected, #89b4fa) 18%, black);
-    color: var(--terminal-fg, #c0caf5);
-    font-size: 11px;
-    font-weight: 800;
-  }
-
-  .agent-status-light {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    box-shadow: 0 0 12px currentColor;
   }
 
   .section-head {
@@ -1035,6 +1092,82 @@
     border: 1px solid color-mix(in srgb, var(--edge-task-failed) 35%, transparent);
     color: var(--edge-task-failed);
     font-size: 11px;
+  }
+
+  .identity-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .identity-form label {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .identity-form label span {
+    color: #6c7086;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .identity-wide {
+    grid-column: 1 / -1;
+  }
+
+  .identity-input {
+    min-width: 0;
+    width: 100%;
+    border: 1px solid rgba(108, 112, 134, 0.35);
+    border-radius: 6px;
+    background: rgba(17, 17, 27, 0.72);
+    color: var(--terminal-fg, #c0caf5);
+    padding: 7px 8px;
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .identity-input:focus {
+    outline: none;
+    border-color: color-mix(in srgb, var(--node-border-selected, #89b4fa) 60%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-border-selected, #89b4fa) 16%, transparent);
+  }
+
+  .identity-textarea {
+    min-height: 62px;
+    resize: vertical;
+  }
+
+  .skill-suggestion-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .suggestion-chip {
+    border: 1px solid rgba(108, 112, 134, 0.26);
+    border-radius: 999px;
+    background: rgba(17, 17, 27, 0.2);
+    color: #a6adc8;
+    padding: 3px 8px;
+    font-size: 10px;
+    line-height: 1.2;
+    cursor: pointer;
+  }
+
+  .suggestion-chip:hover {
+    border-color: rgba(137, 180, 250, 0.5);
+    color: #cdd6f4;
+  }
+
+  .identity-save {
+    border-color: color-mix(in srgb, var(--status-online, #a6e3a1) 38%, transparent);
+    color: var(--status-online, #a6e3a1);
   }
 
   .task-row {
@@ -1531,6 +1664,49 @@
     font-size: 10px;
   }
 
+  .asset-list {
+    display: grid;
+    gap: 6px;
+  }
+
+  .asset-row {
+    display: grid;
+    gap: 3px;
+    border: 1px solid rgba(108, 112, 134, 0.22);
+    background: rgba(108, 112, 134, 0.06);
+    padding: 8px;
+  }
+
+  .asset-row span {
+    color: var(--edge-message, #89b4fa);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .asset-row strong {
+    color: #cdd6f4;
+    font-size: 12px;
+  }
+
+  .asset-row code,
+  .asset-context {
+    color: #a6adc8;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+    font-size: 10px;
+    overflow-wrap: anywhere;
+  }
+
+  .asset-context {
+    margin: 8px 0 0;
+    max-height: 180px;
+    overflow: auto;
+    white-space: pre-wrap;
+    border: 1px solid rgba(108, 112, 134, 0.18);
+    background: rgba(0, 0, 0, 0.18);
+    padding: 8px;
+  }
+
   /* ── Tron Encom OS overrides ──────────────────────────────────────────
      White-LED hairlines, sharp corners, uppercase HUD type. The mock's
      sidebar has manila-folder rows with status pills on the right; here
@@ -1547,46 +1723,6 @@
     text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
     border-bottom: 1px solid var(--led-line, #d8dde6);
     padding-bottom: 6px;
-  }
-
-  :global([data-theme="tron-encom-os"]) .agent-summary-card {
-    border: 2px solid var(--led-line-x, #ffffff);
-    border-radius: 0;
-    background:
-      linear-gradient(90deg, rgba(255, 255, 255, 0.09), transparent 24%),
-      var(--bg-base, #000000);
-    box-shadow:
-      var(--led-halo, 0 0 14px rgba(255, 255, 255, 0.26)),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.06);
-  }
-
-  :global([data-theme="tron-encom-os"]) .agent-avatar {
-    border: 2px solid var(--led-line-x, #ffffff);
-    border-radius: 0;
-    background: var(--bg-base, #000000);
-    box-shadow:
-      inset 0 0 12px rgba(255, 255, 255, 0.08),
-      0 0 10px rgba(255, 255, 255, 0.34);
-  }
-
-  :global([data-theme="tron-encom-os"]) .agent-summary-topline strong {
-    color: var(--fg-primary, #f5f7fa);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    text-shadow: var(--glow, 0 0 8px rgba(255, 255, 255, 0.45));
-  }
-
-  :global([data-theme="tron-encom-os"]) .agent-role-pill,
-  :global([data-theme="tron-encom-os"]) .agent-model-line {
-    color: var(--fg-primary, #f5f7fa);
-    text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
-  }
-
-  :global([data-theme="tron-encom-os"]) .agent-provider-logo,
-  :global([data-theme="tron-encom-os"]) .agent-provider-initial {
-    border-radius: 0;
-    border-color: var(--led-line, #d8dde6);
-    box-shadow: 0 0 8px rgba(255, 255, 255, 0.26);
   }
 
   :global([data-theme="tron-encom-os"]) .delete-btn {
@@ -1619,7 +1755,8 @@
     font-size: 10.5px;
   }
 
-  :global([data-theme="tron-encom-os"]) input {
+  :global([data-theme="tron-encom-os"]) input,
+  :global([data-theme="tron-encom-os"]) textarea {
     border-radius: 0;
     background: var(--bg-input, #02040a);
     border: 1px solid var(--led-line, #d8dde6);

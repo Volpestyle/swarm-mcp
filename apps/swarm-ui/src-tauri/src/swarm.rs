@@ -81,11 +81,6 @@ fn watcher_loop<R: Runtime>(
     on_update: Option<Arc<SwarmUpdateCallback>>,
 ) {
     let mut conn: Option<Connection> = None;
-    let mut daemon_snapshot_log = daemon::RetryLogThrottle::default();
-    let mut daemon_stream_log = daemon::RetryLogThrottle::default();
-    let mut daemon_subscribe_log = daemon::RetryLogThrottle::default();
-    let mut daemon_read_log = daemon::RetryLogThrottle::default();
-    let mut daemon_recovery_log = daemon::RetryLogThrottle::default();
 
     loop {
         if conn.is_none() {
@@ -104,13 +99,10 @@ fn watcher_loop<R: Runtime>(
 
         if let Err(err) = fetch_and_publish_state(&app_handle, conn.as_ref(), on_update.as_deref())
         {
-            daemon_snapshot_log.warn(|| format!("[swarm] failed to fetch daemon snapshot: {err}"));
-            recover_daemon("fetching daemon snapshot", &mut daemon_recovery_log);
+            eprintln!("[swarm] failed to fetch daemon snapshot: {err}");
             thread::sleep(POLL_INTERVAL);
             continue;
         }
-        daemon_snapshot_log.reset();
-        daemon_recovery_log.reset();
 
         let cursors = match read_state() {
             Ok(state) => state
@@ -124,13 +116,9 @@ fn watcher_loop<R: Runtime>(
             }
         };
         let mut socket = match tauri::async_runtime::block_on(daemon::open_stream()) {
-            Ok(socket) => {
-                daemon_stream_log.reset();
-                socket
-            }
+            Ok(socket) => socket,
             Err(err) => {
-                daemon_stream_log.warn(|| format!("[swarm] failed to open daemon stream: {err}"));
-                recover_daemon("opening daemon stream", &mut daemon_recovery_log);
+                eprintln!("[swarm] failed to open daemon stream: {err}");
                 thread::sleep(POLL_INTERVAL);
                 continue;
             }
@@ -138,19 +126,16 @@ fn watcher_loop<R: Runtime>(
         if let Err(err) =
             tauri::async_runtime::block_on(daemon::subscribe_with_cursors(&mut socket, cursors))
         {
-            daemon_subscribe_log
-                .warn(|| format!("[swarm] failed to subscribe daemon stream: {err}"));
+            eprintln!("[swarm] failed to subscribe daemon stream: {err}");
             thread::sleep(POLL_INTERVAL);
             continue;
         }
-        daemon_subscribe_log.reset();
 
         loop {
             match tauri::async_runtime::block_on(async {
                 tokio::time::timeout(POLL_INTERVAL, daemon::read_frame(&mut socket)).await
             }) {
                 Ok(Ok(Some(frame))) => {
-                    daemon_read_log.reset();
                     if let Err(err) =
                         apply_stream_frame(&app_handle, frame, conn.as_ref(), on_update.as_deref())
                     {
@@ -160,7 +145,7 @@ fn watcher_loop<R: Runtime>(
                 }
                 Ok(Ok(None)) => break,
                 Ok(Err(err)) => {
-                    daemon_read_log.warn(|| format!("[swarm] daemon stream read failed: {err}"));
+                    eprintln!("[swarm] daemon stream read failed: {err}");
                     break;
                 }
                 Err(_) => {
@@ -176,12 +161,6 @@ fn watcher_loop<R: Runtime>(
         }
 
         thread::sleep(POLL_INTERVAL);
-    }
-}
-
-fn recover_daemon(operation: &'static str, log: &mut daemon::RetryLogThrottle) {
-    if let Err(err) = daemon::ensure_running() {
-        log.warn(|| format!("[swarm] failed to recover swarm-server after {operation}: {err}"));
     }
 }
 
@@ -793,10 +772,10 @@ mod tests {
     fn make_instance(id: &str) -> Instance {
         Instance {
             id: id.to_string(),
-            scope: "/Users/example/Desktop".to_string(),
-            directory: "/Users/example/Desktop".to_string(),
-            root: "/Users/example/Desktop".to_string(),
-            file_root: "/Users/example/Desktop".to_string(),
+            scope: "/Users/mathewfrazier/Desktop".to_string(),
+            directory: "/Users/mathewfrazier/Desktop".to_string(),
+            root: "/Users/mathewfrazier/Desktop".to_string(),
+            file_root: "/Users/mathewfrazier/Desktop".to_string(),
             pid: 42,
             label: Some("provider:claude role:planner".to_string()),
             registered_at: 10,

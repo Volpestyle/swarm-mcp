@@ -9,10 +9,3 @@ nvim.log
 *.db-wal
 *.db-shm
 .DS_Store
-
-# Local-only agent/operator scratch notes. Keep branch uploads free of
-# personal paths, live planning docs, and session handoff material.
-Agents.md
-DEVNOTES.md
-docs/superpowers/
-docs/encom-overhaul-plan.md

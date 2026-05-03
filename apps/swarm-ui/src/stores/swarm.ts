@@ -24,6 +24,7 @@ import type {
   Position,
   SavedLayout,
 } from '../lib/types';
+import { reconcileLocalInstanceRemoval } from '../lib/swarmReconcile';
 
 // ---------------------------------------------------------------------------
 // Core stores — normalized state
@@ -597,6 +598,28 @@ function applyUpdate(update: SwarmUpdate): void {
  */
 export function getInstance(instanceId: string): Instance | undefined {
   return get(instances).get(instanceId);
+}
+
+/**
+ * Optimistically mirror backend instance cleanup in the local Svelte stores.
+ * This keeps counts and graph nodes honest immediately when a cleanup command
+ * races the watcher tick or the backend reports that a row already vanished.
+ */
+export function removeInstancesFromLocalState(instanceIds: Iterable<string>): void {
+  const next = reconcileLocalInstanceRemoval({
+    instances: get(rawInstances),
+    tasks: get(rawTasks),
+    messages: get(rawMessages),
+    locks: get(rawLocks),
+    annotations: get(rawAnnotations),
+  }, instanceIds);
+
+  if (!next.changed) return;
+  rawInstances.set(next.instances);
+  rawTasks.set(next.tasks);
+  rawMessages.set(next.messages);
+  rawLocks.set(next.locks);
+  rawAnnotations.set(next.annotations);
 }
 
 /**

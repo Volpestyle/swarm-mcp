@@ -1,4 +1,20 @@
-import type { Instance, PtySession } from './types';
+import type {
+  AgentDisplayState,
+  AgentRuntimeProfile,
+  Instance,
+  NodeType,
+  PtySession,
+} from './types';
+
+export type AgentLabelIdentity = {
+  provider: string | null;
+  role: string | null;
+  name: string | null;
+  persona: string | null;
+  mission: string | null;
+  skills: string | null;
+  permissions: string | null;
+};
 
 export type AgentProviderKind = 'anthropic' | 'openai' | 'local' | 'unknown';
 
@@ -24,11 +40,23 @@ interface LabelTokens {
   model: string | null;
 }
 
+const IDENTITY_TOKEN_KEYS = [
+  'provider',
+  'role',
+  'name',
+  'persona',
+  'mission',
+  'skills',
+  'permissions',
+] as const;
+
+type IdentityTokenKey = (typeof IDENTITY_TOKEN_KEYS)[number];
+
 const DEFAULT_CLAUDE_MODEL = 'Claude Opus 4.7';
 const DEFAULT_CODEX_MODEL = 'Codex GPT-5.4';
 
 export function deriveAgentIdentity(input: AgentIdentityInput): AgentIdentity {
-  const tokens = parseLabelTokens(input.instance?.label ?? null);
+  const tokens = parseDisplayLabelTokens(input.instance?.label ?? null);
   const providerHint = firstText(
     tokens.provider,
     commandBasename(input.ptySession?.command ?? null),
@@ -37,8 +65,9 @@ export function deriveAgentIdentity(input: AgentIdentityInput): AgentIdentity {
   const providerKind = deriveProviderKind(providerHint);
   const roleValue = firstText(tokens.role, input.role, providerKind === 'local' ? 'shell' : null);
   const roleLabel = titleCase(roleValue ?? 'Agent');
-  const nameLabel = firstText(input.displayName, tokens.name, roleValue)
-    ? titleCase(firstText(input.displayName, tokens.name, roleValue) ?? '')
+  const primaryName = firstText(input.displayName, tokens.name, roleValue);
+  const nameLabel = primaryName
+    ? titleCase(primaryName)
     : input.instance?.id.slice(0, 8) ?? 'Agent';
 
   return {
@@ -50,7 +79,132 @@ export function deriveAgentIdentity(input: AgentIdentityInput): AgentIdentity {
   };
 }
 
-function parseLabelTokens(label: string | null): LabelTokens {
+export function agentIdentityFromLabel(label: string | null | undefined): AgentLabelIdentity {
+  const identity: AgentLabelIdentity = {
+    provider: null,
+    role: null,
+    name: null,
+    persona: null,
+    mission: null,
+    skills: null,
+    permissions: null,
+  };
+
+  for (const token of (label ?? '').split(/\s+/).filter(Boolean)) {
+    const [key, ...rest] = token.split(':');
+    const value = rest.join(':');
+    if (!isIdentityTokenKey(key) || !value) continue;
+    identity[key] = value;
+  }
+
+  return identity;
+}
+
+export function mergeAgentLabelToken(
+  label: string | null | undefined,
+  key: string,
+  value: string,
+): string {
+  const tokens = (label ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => !token.startsWith(`${key}:`));
+  const normalized = normalizeLabelTokenValue(value);
+  if (normalized) tokens.push(`${key}:${normalized}`);
+  return tokens.join(' ');
+}
+
+export function mergeAgentLabelTokens(
+  label: string | null | undefined,
+  updates: Record<string, string | null | undefined>,
+): string {
+  const keys = new Set(Object.keys(updates));
+  const tokens = (label ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => {
+      const [key] = token.split(':');
+      return !keys.has(key);
+    });
+
+  for (const [key, value] of Object.entries(updates)) {
+    const normalized = normalizeLabelTokenValue(value ?? '');
+    if (normalized) tokens.push(`${key}:${normalized}`);
+  }
+
+  return tokens.join(' ');
+}
+
+export function normalizeLabelTokenValue(value: string): string {
+  return value.trim().replace(/\s+/g, '_');
+}
+
+export function buildAgentDisplayState(input: {
+  nodeType: NodeType;
+  instance: Instance | null;
+  pty: PtySession | null;
+  label: string;
+  displayName: string | null;
+  runtimeProfile?: AgentRuntimeProfile | null;
+  taskCount: number;
+  lockCount: number;
+  unreadMessages: number;
+  listenerLabel: string;
+}): AgentDisplayState {
+  const identity = agentIdentityFromLabel(input.instance?.label ?? null);
+  const runtime = input.runtimeProfile ?? null;
+  const role = runtime?.role || identity.role || input.label || fallbackRole(input.nodeType);
+
+  return {
+    name:
+      runtime?.name ||
+      identity.name ||
+      input.displayName ||
+      fallbackName(input.nodeType, input.instance, input.pty, input.label),
+    role,
+    provider: identity.provider || inferProvider(input.pty) || 'local',
+    persona: runtime?.persona || identity.persona || null,
+    mission: runtime?.mission || identity.mission || '',
+    skills: runtime?.skills || identity.skills || '',
+    permissions: runtime?.permissions || identity.permissions || '',
+    taskCount: input.taskCount,
+    lockCount: input.lockCount,
+    unreadMessages: input.unreadMessages,
+    listenerLabel: input.listenerLabel,
+  };
+}
+
+function isIdentityTokenKey(value: string): value is IdentityTokenKey {
+  return (IDENTITY_TOKEN_KEYS as readonly string[]).includes(value);
+}
+
+function fallbackRole(nodeType: NodeType): string {
+  if (nodeType === 'pty') return 'shell';
+  if (nodeType === 'instance') return 'agent';
+  return 'operator';
+}
+
+function fallbackName(
+  nodeType: NodeType,
+  instance: Instance | null,
+  pty: PtySession | null,
+  label: string,
+): string {
+  if (label) return label;
+  if (instance) return instance.id.slice(0, 8);
+  if (pty) return pty.command.split('/').pop() || 'Shell';
+  return nodeType;
+}
+
+function inferProvider(pty: PtySession | null): string | null {
+  const command = pty?.command.toLowerCase() ?? '';
+  if (command.includes('codex')) return 'codex';
+  if (command.includes('claude')) return 'claude';
+  if (command.includes('opencode')) return 'opencode';
+  return null;
+}
+
+function parseDisplayLabelTokens(label: string | null): LabelTokens {
   const tokens: LabelTokens = {
     provider: null,
     role: null,

@@ -825,22 +825,19 @@ impl PtyService {
         Ok(())
     }
 
-    fn finalize_dead_session(
-        &self,
-        pty_id: &str,
-        handle: &Arc<PtyHandle>,
-        exit_code: Option<i32>,
-    ) {
+    fn finalize_dead_session(&self, pty_id: &str, handle: &Arc<PtyHandle>, exit_code: Option<i32>) {
         let at = now_millis();
         if let Ok(mut state) = handle.state.lock() {
             state.info.exit_code = exit_code;
             state.exit_at = Some(at);
         }
-        let _ = self.frames.send(Frame::new(FramePayload::PtyExit(PtyExitFrame {
-            pty_id: pty_id.to_owned(),
-            exit_code,
-            at,
-        })));
+        let _ = self
+            .frames
+            .send(Frame::new(FramePayload::PtyExit(PtyExitFrame {
+                pty_id: pty_id.to_owned(),
+                exit_code,
+                at,
+            })));
         cleanup_session(
             &self.sessions,
             &self.frames,

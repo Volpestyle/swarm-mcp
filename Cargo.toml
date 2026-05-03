@@ -6,3 +6,12 @@ members = [
     "crates/swarm-state",
 ]
 resolver = "2"
+
+# Local macOS/Rust 1.95 builds can stall at zero CPU while emitting full
+# debug info for the Tauri app. Keep dev/test builds launchable; use an
+# explicit env override when Rust-level debugging needs symbols.
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0

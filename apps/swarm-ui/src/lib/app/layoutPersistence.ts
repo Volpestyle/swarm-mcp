@@ -47,6 +47,10 @@ function resolveNodeScope(node: XYFlowNode): string | null {
   if (instance && typeof instance.scope === 'string' && instance.scope) {
     return instance.scope;
   }
+  const browserContext = node.data?.browserContext;
+  if (browserContext && typeof browserContext.scope === 'string' && browserContext.scope) {
+    return browserContext.scope;
+  }
   return null;
 }
 

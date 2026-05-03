@@ -1,92 +1,52 @@
 import { describe, expect, it } from 'bun:test';
 
-import { deriveAgentIdentity } from './agentIdentity';
-import type { Instance, PtySession } from './types';
+import {
+  agentIdentityFromLabel,
+  mergeAgentLabelToken,
+  mergeAgentLabelTokens,
+  normalizeLabelTokenValue,
+} from './agentIdentity';
 
-function makeInstance(label: string | null): Instance {
-  return {
-    id: 'instance-1234567890',
-    scope: '/Users/example/projects/swarm-mcp',
-    directory: '/Users/example/projects/swarm-mcp',
-    root: '/Users/example/projects/swarm-mcp',
-    file_root: '/Users/example/projects/swarm-mcp',
-    pid: 1234,
-    label,
-    registered_at: 0,
-    heartbeat: 0,
-    status: 'online',
-    adopted: true,
-  };
-}
-
-function makePty(command: string): PtySession {
-  return {
-    id: 'pty-abc',
-    command,
-    cwd: '/Users/example/projects/swarm-mcp',
-    started_at: 0,
-    exit_code: null,
-    bound_instance_id: null,
-    launch_token: null,
-    cols: 120,
-    rows: 40,
-    lease: null,
-  };
-}
-
-describe('deriveAgentIdentity', () => {
-  it('renders Claude labels as Anthropic with the requested Opus display model', () => {
-    const identity = deriveAgentIdentity({
-      instance: makeInstance('provider:claude role:planner name:Atlas'),
-      ptySession: makePty('claude'),
-      role: 'planner',
-      displayName: 'Atlas',
-    });
-
-    expect(identity.providerKind).toBe('anthropic');
-    expect(identity.providerLabel).toBe('Anthropic');
-    expect(identity.modelLabel).toBe('Claude Opus 4.7');
-    expect(identity.nameLabel).toBe('Atlas');
-    expect(identity.roleLabel).toBe('Planner');
+describe('agentIdentityFromLabel', () => {
+  it('extracts name, role, provider, and persona from label tokens', () => {
+    const identity = agentIdentityFromLabel('provider:codex role:planner name:Orion persona:owl');
+    expect(identity.provider).toBe('codex');
+    expect(identity.role).toBe('planner');
+    expect(identity.name).toBe('Orion');
+    expect(identity.persona).toBe('owl');
   });
 
-  it('renders Codex labels as OpenAI with the requested GPT display model', () => {
-    const identity = deriveAgentIdentity({
-      instance: makeInstance('provider:codex role:implementer name:MJ'),
-      ptySession: makePty('codex'),
-      role: 'implementer',
-      displayName: 'MJ',
-    });
+  it('preserves colon-containing token values', () => {
+    const identity = agentIdentityFromLabel('provider:codex mission:repo:/tmp/demo');
+    expect(identity.mission).toBe('repo:/tmp/demo');
+  });
+});
 
-    expect(identity.providerKind).toBe('openai');
-    expect(identity.providerLabel).toBe('OpenAI');
-    expect(identity.modelLabel).toBe('Codex GPT-5.4');
-    expect(identity.nameLabel).toBe('MJ');
-    expect(identity.roleLabel).toBe('Implementer');
+describe('mergeAgentLabelToken', () => {
+  it('replaces an existing token without duplicating it', () => {
+    expect(mergeAgentLabelToken('role:planner name:Orion', 'role', 'reviewer'))
+      .toBe('name:Orion role:reviewer');
   });
 
-  it('formats explicit model tokens without losing provider context', () => {
-    const identity = deriveAgentIdentity({
-      instance: makeInstance('provider:anthropic role:researcher model:claude-sonnet-4-6'),
-      ptySession: makePty('claude'),
-      role: 'researcher',
-      displayName: null,
-    });
-
-    expect(identity.providerKind).toBe('anthropic');
-    expect(identity.modelLabel).toBe('Claude Sonnet 4.6');
-    expect(identity.nameLabel).toBe('Researcher');
-    expect(identity.roleLabel).toBe('Researcher');
+  it('removes an existing token when the next value is blank', () => {
+    expect(mergeAgentLabelToken('role:planner name:Orion', 'role', ''))
+      .toBe('name:Orion');
   });
+});
 
-  it('keeps GPT version labels compact when a Codex model token is explicit', () => {
-    const identity = deriveAgentIdentity({
-      instance: makeInstance('provider:codex role:implementer model:gpt-5.4'),
-      ptySession: makePty('codex'),
-      role: 'implementer',
-      displayName: null,
-    });
+describe('mergeAgentLabelTokens', () => {
+  it('updates multiple tokens while preserving unrelated values', () => {
+    expect(
+      mergeAgentLabelTokens('provider:codex role:planner name:Orion team:ui', {
+        name: 'Vega Prime',
+        role: 'reviewer',
+      }),
+    ).toBe('provider:codex team:ui name:Vega_Prime role:reviewer');
+  });
+});
 
-    expect(identity.modelLabel).toBe('Codex GPT-5.4');
+describe('normalizeLabelTokenValue', () => {
+  it('converts whitespace to underscores for label-token compatibility', () => {
+    expect(normalizeLabelTokenValue('  Agent One  ')).toBe('Agent_One');
   });
 });

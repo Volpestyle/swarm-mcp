@@ -106,6 +106,121 @@ pub struct SwarmUpdate {
     pub ui_meta: Option<Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectBoundary {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+fn default_project_color() -> String {
+    "#ffffff".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSpace {
+    pub id: String,
+    pub name: String,
+    pub root: String,
+    #[serde(default = "default_project_color")]
+    pub color: String,
+    pub additional_roots: Vec<String>,
+    pub notes: String,
+    pub scope: Option<String>,
+    pub boundary: ProjectBoundary,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMembership {
+    pub project_id: String,
+    pub instance_id: String,
+    pub attached_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectAsset {
+    pub id: String,
+    pub project_id: String,
+    pub kind: String,
+    pub title: String,
+    pub path: Option<String>,
+    pub content: Option<String>,
+    pub description: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetAttachment {
+    pub asset_id: String,
+    pub target_type: String,
+    pub target_id: String,
+    pub attached_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserContext {
+    pub scope: String,
+    pub id: String,
+    pub owner_instance_id: Option<String>,
+    pub endpoint: String,
+    pub host: String,
+    pub port: i64,
+    pub profile_dir: String,
+    pub pid: Option<i64>,
+    pub start_url: String,
+    pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserTab {
+    pub scope: String,
+    pub context_id: String,
+    pub tab_id: String,
+    pub tab_type: String,
+    pub url: String,
+    pub title: String,
+    pub active: bool,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserSnapshotElement {
+    pub tag: String,
+    pub role: Option<String>,
+    pub text: String,
+    pub selector: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserSnapshot {
+    pub id: String,
+    pub scope: String,
+    pub context_id: String,
+    pub tab_id: String,
+    pub url: String,
+    pub title: String,
+    pub text: String,
+    pub elements: Vec<BrowserSnapshotElement>,
+    pub screenshot_path: Option<String>,
+    pub created_by: Option<String>,
+    pub created_at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -29,6 +29,9 @@
   let releaseAttachment: (() => void) | null = null;
   let unsubscribeExit: (() => void) | null = null;
   let exitCode: number | null = null;
+  let terminalReady = false;
+  let terminalStable = false;
+  let terminalError: string | null = null;
 
   onMount(() => {
     mounted = true;
@@ -58,6 +61,9 @@
     attachedPtyId = nextPtyId;
     attachedContainer = nextContainer;
     exitCode = null;
+    terminalReady = false;
+    terminalStable = false;
+    terminalError = null;
 
     const surface = getTerminalSurface(nextPtyId, { fontSize });
     unsubscribeExit = surface.exitCode.subscribe((code) => {
@@ -74,13 +80,16 @@
     try {
       await attachment.ready;
       if (!isCurrentAttachment(generation)) return;
+      terminalReady = true;
       dispatch('ready');
 
       await attachment.stable;
       if (!isCurrentAttachment(generation)) return;
+      terminalStable = true;
       dispatch('stable');
     } catch (err) {
       if (!isCurrentAttachment(generation)) return;
+      terminalError = err instanceof Error ? err.message : String(err);
       console.error('[TerminalPane] failed to attach terminal surface:', err);
     }
   }
@@ -125,6 +134,18 @@
     <div class="exit-overlay">
       Process exited with code {exitCode}
     </div>
+  {:else if terminalError}
+    <div class="terminal-status-overlay error">
+      Terminal attach failed: {terminalError}
+    </div>
+  {:else if !terminalReady}
+    <div class="terminal-status-overlay">
+      Starting terminal...
+    </div>
+  {:else if !terminalStable}
+    <div class="terminal-status-overlay">
+      Fitting terminal...
+    </div>
   {/if}
 </div>
 
@@ -149,5 +170,25 @@
     font-size: 11px;
     pointer-events: none;
     z-index: 5;
+  }
+
+  .terminal-status-overlay {
+    position: absolute;
+    left: 10px;
+    top: 10px;
+    z-index: 5;
+    max-width: calc(100% - 20px);
+    border: 1px solid color-mix(in srgb, var(--terminal-fg, #d4d4d4) 18%, transparent);
+    background: rgba(0, 0, 0, 0.68);
+    color: color-mix(in srgb, var(--terminal-fg, #d4d4d4) 78%, transparent);
+    padding: 5px 8px;
+    font-size: 11px;
+    line-height: 1.35;
+    pointer-events: none;
+  }
+
+  .terminal-status-overlay.error {
+    border-color: rgba(255, 124, 124, 0.42);
+    color: rgba(255, 154, 154, 0.9);
   }
 </style>

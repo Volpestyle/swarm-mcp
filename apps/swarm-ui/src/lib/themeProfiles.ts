@@ -2,7 +2,7 @@ import type { ThemeProfile, ThemeProfileId } from './types';
 
 const THEME_PROFILES: ThemeProfile[] = [
   // -------------------------------------------------------------------------
-  // Tron Encom OS — default theme as of rev 0.7
+  // Tron Encom Clear — default theme as of rev 0.7
   //
   // White-LED hairline aesthetic on a pure-black canvas. Every chrome surface
   // gets a 1px white stroke + a multi-layer halo box-shadow. Sharp corners,
@@ -20,10 +20,11 @@ const THEME_PROFILES: ThemeProfile[] = [
   // -------------------------------------------------------------------------
   {
     id: 'tron-encom-os',
-    name: 'Tron Encom OS',
-    description: 'White-LED hairlines on pure black. Sharp corners, JetBrains Mono, uppercase HUD type. The default profile.',
+    name: 'Tron Encom Clear',
+    description: 'White-LED hairlines on pure black with native blur off by default, built for crisp see-through tuning.',
     appearance: {
       defaultBackgroundOpacity: 1.0,
+      defaultBackdropBlur: 0,
       canvasRgb: [0, 0, 0],
       panelRgb: [5, 7, 10],
       sidebarRgb: [5, 7, 10],
@@ -114,9 +115,205 @@ const THEME_PROFILES: ThemeProfile[] = [
       accentAmber: '#ffa94d',
       accentRed: '#ff3a4c',
       accentViolet: '#b86bff',
-      // Use the green sparingly for operator intent, not as the whole UI wash.
       accentTron: '#c6ff3d',
       gridColor: 'rgba(216,221,230,0.04)',
+    },
+  },
+  // -------------------------------------------------------------------------
+  // Liquid Glass Blur Cool — sourced from Claude Design "Swarm-UI · Liquid Glass" (v1)
+  //
+  // Translucent glass deck on a deep blue-black field with a pale blue radial
+  // wash. Card surfaces use rgba(255,255,255,0.05) fills + rgba(255,255,255,0.18)
+  // hairlines (handled by the theme-scoped CSS in app.css). Pairs with
+  // 'liquid-glass-warm' as a temperature pair sharing one design language.
+  //
+  // Vibrancy: this theme applies macOS HudWindow vibrancy at activation via
+  // ui_set_window_vibrancy so the frosted-glass backdrop reads correctly. Other
+  // themes clear vibrancy so the slider's see-through end composites onto the
+  // desktop (see Tron Encom Clear rationale).
+  // -------------------------------------------------------------------------
+  {
+    id: 'liquid-glass-cool',
+    name: 'Liquid Glass Blur Cool',
+    description:
+      'Blur-forward glass deck on a deep blue-black field with a pale blue radial wash. Sourced from Claude Design Liquid Glass (v1).',
+    appearance: {
+      defaultBackgroundOpacity: 0.55,
+      defaultBackdropBlur: 82,
+      canvasRgb: [5, 8, 16],
+      panelRgb: [10, 14, 22],
+      sidebarRgb: [10, 14, 22],
+      nodeRgb: [10, 14, 22],
+      nodeHeaderRgb: [6, 9, 15],
+      nodeBorderRgb: [216, 221, 230],
+      nodeBorderSelected: '#ffffff',
+      nodeBorderMobile: '#bcd6ff',
+      nodeTitleFg: '#e8efff',
+      nodeStatusMuted: '#a8b0bc',
+      nodeStatusMutedDot: '#5a6270',
+      statusOnline: '#5eea8f',
+      statusStale: '#ffb547',
+      statusOffline: '#5a6270',
+      statusPending: '#bcd6ff',
+      edgeTaskOpen: '#d8dde6',
+      edgeTaskInProgress: '#ffb547',
+      edgeTaskDone: '#5eea8f',
+      edgeTaskFailed: '#ff4757',
+      edgeTaskCancelled: '#5a6270',
+      edgeMessage: '#bcd6ff',
+      edgeDepBlocked: '#5a6270',
+      edgeDepSatisfied: '#5eea8f',
+      badgePlanner: '#b86bff',
+      badgeImplementer: '#bcd6ff',
+      badgeReviewer: '#5eea8f',
+      badgeResearcher: '#ffb547',
+      badgeShell: '#5a6270',
+      badgeCustom: '#d8dde6',
+    },
+    terminal: {
+      background: '#050810',
+      foreground: '#e8efff',
+      cursor: '#bcd6ff',
+      cursorAccent: '#050810',
+      selectionBackground: '#1f2a3d',
+      selectionForeground: '#e8efff',
+      black: '#1a1d24',
+      red: '#ff4757',
+      green: '#5eea8f',
+      yellow: '#ffb547',
+      blue: '#bcd6ff',
+      magenta: '#b86bff',
+      cyan: '#9fd5ff',
+      white: '#d8dde6',
+      brightBlack: '#5a6270',
+      brightRed: '#ff6b78',
+      brightGreen: '#7ff0a8',
+      brightYellow: '#ffd089',
+      brightBlue: '#d4e5ff',
+      brightMagenta: '#d39bff',
+      brightCyan: '#c9e8ff',
+      brightWhite: '#ffffff',
+    },
+    chrome: {
+      ledLine: '#d8dde6',
+      ledLineSoft: '#6e7682',
+      ledLineBright: '#ffffff',
+      ledHalo:
+        '0 0 0 1px rgba(255,255,255,0.06), 0 0 12px 2px rgba(188,214,255,0.18), 0 0 32px 8px rgba(188,214,255,0.10), inset 0 0 0 1px rgba(255,255,255,0.04)',
+      ledHaloBright:
+        '0 0 0 1px rgba(255,255,255,0.14), 0 0 18px 3px rgba(188,214,255,0.34), 0 0 48px 12px rgba(188,214,255,0.18), inset 0 0 0 1px rgba(255,255,255,0.10)',
+      glow: '0 0 6px rgba(188,214,255,0.45), 0 0 14px rgba(188,214,255,0.18)',
+      glowSoft: '0 0 4px rgba(188,214,255,0.30)',
+      bgBase: '#050810',
+      bgPanel: '#0a0e16',
+      bgElevated: '#0e131e',
+      bgInput: '#03050a',
+      fgPrimary: '#e8efff',
+      fgSecondary: '#a8b0bc',
+      fgMuted: '#5a6270',
+      fgDim: '#2a2f3a',
+      accent: '#bcd6ff',
+      accentDim: '#9fb6da',
+      accentAmber: '#ffb547',
+      accentRed: '#ff4757',
+      accentViolet: '#b86bff',
+      accentTron: '#5eea8f',
+      gridColor: 'rgba(188,214,255,0.05)',
+    },
+  },
+  // -------------------------------------------------------------------------
+  // Liquid Glass Blur Warm — sourced from Claude Design "Swarm-UI · Liquid Glass v2"
+  //
+  // Same design language as Liquid Glass Blur Cool but with a warm brown-black
+  // canvas and an amber radial wash. Identical card/hairline tokens.
+  // -------------------------------------------------------------------------
+  {
+    id: 'liquid-glass-warm',
+    name: 'Liquid Glass Blur Warm',
+    description:
+      'Blur-forward glass deck on a warm brown-black field with an amber radial wash. Sourced from Claude Design Liquid Glass (v2).',
+    appearance: {
+      defaultBackgroundOpacity: 0.55,
+      defaultBackdropBlur: 82,
+      canvasRgb: [20, 17, 14],
+      panelRgb: [26, 22, 18],
+      sidebarRgb: [26, 22, 18],
+      nodeRgb: [26, 22, 18],
+      nodeHeaderRgb: [16, 13, 10],
+      nodeBorderRgb: [216, 221, 230],
+      nodeBorderSelected: '#ffffff',
+      nodeBorderMobile: '#ffaa50',
+      nodeTitleFg: '#fbece0',
+      nodeStatusMuted: '#a8a098',
+      nodeStatusMutedDot: '#5a544c',
+      statusOnline: '#5eea8f',
+      statusStale: '#ffb547',
+      statusOffline: '#5a544c',
+      statusPending: '#ffaa50',
+      edgeTaskOpen: '#d8dde6',
+      edgeTaskInProgress: '#ffb547',
+      edgeTaskDone: '#5eea8f',
+      edgeTaskFailed: '#ff4757',
+      edgeTaskCancelled: '#5a544c',
+      edgeMessage: '#ffaa50',
+      edgeDepBlocked: '#5a544c',
+      edgeDepSatisfied: '#5eea8f',
+      badgePlanner: '#b86bff',
+      badgeImplementer: '#ffaa50',
+      badgeReviewer: '#5eea8f',
+      badgeResearcher: '#ffd089',
+      badgeShell: '#5a544c',
+      badgeCustom: '#d8dde6',
+    },
+    terminal: {
+      background: '#14110e',
+      foreground: '#fbece0',
+      cursor: '#ffaa50',
+      cursorAccent: '#14110e',
+      selectionBackground: '#3d2f1f',
+      selectionForeground: '#fbece0',
+      black: '#1a1d24',
+      red: '#ff4757',
+      green: '#5eea8f',
+      yellow: '#ffb547',
+      blue: '#bcd6ff',
+      magenta: '#b86bff',
+      cyan: '#9fd5ff',
+      white: '#d8dde6',
+      brightBlack: '#5a544c',
+      brightRed: '#ff6b78',
+      brightGreen: '#7ff0a8',
+      brightYellow: '#ffd089',
+      brightBlue: '#d4e5ff',
+      brightMagenta: '#d39bff',
+      brightCyan: '#c9e8ff',
+      brightWhite: '#ffffff',
+    },
+    chrome: {
+      ledLine: '#d8dde6',
+      ledLineSoft: '#6e6862',
+      ledLineBright: '#ffffff',
+      ledHalo:
+        '0 0 0 1px rgba(255,255,255,0.06), 0 0 12px 2px rgba(255,170,80,0.20), 0 0 32px 8px rgba(255,170,80,0.10), inset 0 0 0 1px rgba(255,255,255,0.04)',
+      ledHaloBright:
+        '0 0 0 1px rgba(255,255,255,0.14), 0 0 18px 3px rgba(255,170,80,0.36), 0 0 48px 12px rgba(255,170,80,0.20), inset 0 0 0 1px rgba(255,255,255,0.10)',
+      glow: '0 0 6px rgba(255,170,80,0.45), 0 0 14px rgba(255,170,80,0.18)',
+      glowSoft: '0 0 4px rgba(255,170,80,0.30)',
+      bgBase: '#14110e',
+      bgPanel: '#1a1612',
+      bgElevated: '#221c16',
+      bgInput: '#0a0806',
+      fgPrimary: '#fbece0',
+      fgSecondary: '#a8a098',
+      fgMuted: '#5a544c',
+      fgDim: '#2a2620',
+      accent: '#ffaa50',
+      accentDim: '#d4905f',
+      accentAmber: '#ffb547',
+      accentRed: '#ff4757',
+      accentViolet: '#b86bff',
+      accentTron: '#5eea8f',
+      gridColor: 'rgba(255,170,80,0.05)',
     },
   },
   {
@@ -125,6 +322,7 @@ const THEME_PROFILES: ThemeProfile[] = [
     description: 'The current ghostty-inspired chrome and Catppuccin-leaning terminal palette.',
     appearance: {
       defaultBackgroundOpacity: 0.68,
+      defaultBackdropBlur: 55,
       canvasRgb: [17, 17, 27],
       panelRgb: [30, 30, 46],
       sidebarRgb: [30, 30, 46],
@@ -186,6 +384,7 @@ const THEME_PROFILES: ThemeProfile[] = [
     description: 'Burnt copper chrome with a dusk terminal palette.',
     appearance: {
       defaultBackgroundOpacity: 0.74,
+      defaultBackdropBlur: 48,
       canvasRgb: [24, 18, 16],
       panelRgb: [45, 31, 26],
       sidebarRgb: [45, 31, 26],
@@ -247,6 +446,7 @@ const THEME_PROFILES: ThemeProfile[] = [
     description: 'Cold glass chrome with a crisp ice-blue terminal palette.',
     appearance: {
       defaultBackgroundOpacity: 0.62,
+      defaultBackdropBlur: 58,
       canvasRgb: [10, 17, 27],
       panelRgb: [19, 31, 45],
       sidebarRgb: [19, 31, 45],
@@ -308,6 +508,7 @@ const THEME_PROFILES: ThemeProfile[] = [
     description: 'Black-and-amber operations mode with CRT-adjacent contrast.',
     appearance: {
       defaultBackgroundOpacity: 0.82,
+      defaultBackdropBlur: 36,
       canvasRgb: [9, 7, 4],
       panelRgb: [24, 18, 9],
       sidebarRgb: [24, 18, 9],

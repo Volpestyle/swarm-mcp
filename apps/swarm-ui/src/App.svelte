@@ -10,15 +10,16 @@
   6. Overlays the SwarmStatus bar on the canvas
 -->
 <script lang="ts">
-  import {
-    SvelteFlow,
-    Background,
-    Controls,
-    MiniMap,
-    type Connection,
-    type EdgeTypes,
-    type NodeTypes,
-  } from '@xyflow/svelte';
+	  import {
+	    SvelteFlow,
+	    Background,
+	    Controls,
+	    MiniMap,
+	    ViewportPortal,
+	    type Connection,
+	    type EdgeTypes,
+	    type NodeTypes,
+	  } from '@xyflow/svelte';
   import '@xyflow/svelte/dist/style.css';
   import { invoke } from '@tauri-apps/api/core';
   import type { UnlistenFn } from '@tauri-apps/api/event';
@@ -29,41 +30,79 @@
   import {
     initSwarmStore,
     destroySwarmStore,
+    allInstances,
     instances,
     tasks,
     messages,
     locks,
+    events,
     savedLayout,
     activeScope,
   } from './stores/swarm';
-  import {
+	  import {
+	    clearStalePtySession,
     ptySessions,
     bindings,
     initPtyStore,
     destroyPtyStore,
     killInstance,
-    killPtySession,
-  } from './stores/pty';
+	    killPtySession,
+	    respawnInstanceInProject,
+	    sendOperatorMessage,
+	    writeToPty,
+	  } from './stores/pty';
+	  import {
+	    attachInstanceToProject,
+	    findProjectContainingNode,
+	    findNodesInsideProject,
+	    loadProjects,
+	    projectMembershipTargetForNode,
+	    projectMemberships,
+	    projects,
+	    saveProject,
+	    translateNodesWithMovedProject,
+	  } from './stores/projects';
+  import { loadProjectAssets, normalizeProjectAssets, saveProjectAsset } from './stores/projectAssets';
+  import { buildAssetContextBlock } from './lib/assetContext';
+  import { buildBrowserReferenceAsset } from './lib/browserReference';
 
-  // Graph builder (Agent 3)
-  import { buildGraph } from './lib/graph';
-  import type { Position, XYFlowNode, XYFlowEdge } from './lib/types';
+	  // Graph builder (Agent 3)
+	  import { buildGraph } from './lib/graph';
+	  import type {
+	    Position,
+	    BrowserCatalog,
+	    BrowserContext,
+	    BrowserSnapshot,
+	    BrowserTab,
+	    ProjectBoundary as ProjectBoundaryGeometry,
+	    ProjectMembership,
+	    ProjectAsset,
+	    ProjectNodeAccent,
+	    ProjectSpace,
+	    Task,
+	    XYFlowEdge,
+	    XYFlowNode,
+	  } from './lib/types';
 
-  // Custom node types (Agent 4)
-  import TerminalNode from './nodes/TerminalNode.svelte';
-  import ViewportFocus from './nodes/ViewportFocus.svelte';
+	  // Custom node types (Agent 4)
+	  import ProjectBoundary from './canvas/ProjectBoundary.svelte';
+	  import BrowserNode from './nodes/BrowserNode.svelte';
+	  import TerminalNode from './nodes/TerminalNode.svelte';
+	  import ViewportFocus from './nodes/ViewportFocus.svelte';
 
   // Custom edge types (Agent 4)
   import ConnectionEdge from './edges/ConnectionEdge.svelte';
 
   // Panels (Agent 4)
   import AnalyzePanel from './panels/AnalyzePanel.svelte';
+  import AgentCommandCenter from './panels/AgentCommandCenter.svelte';
   import ConversationPanel from './panels/ConversationPanel.svelte';
   import FrazierCodePanel from './panels/FrazierCodePanel.svelte';
-  import Inspector from './panels/Inspector.svelte';
+  import InspectWorkspace from './panels/InspectWorkspace.svelte';
   import Launcher from './panels/Launcher.svelte';
-  import MobileAccessModal from './panels/MobileAccessModal.svelte';
-  import SettingsModal from './panels/SettingsModal.svelte';
+	  import MobileAccessModal from './panels/MobileAccessModal.svelte';
+	  import ProjectPage from './panels/ProjectPage.svelte';
+	  import SettingsModal from './panels/SettingsModal.svelte';
   import StartupHome from './panels/StartupHome.svelte';
   import SwarmStatus from './panels/SwarmStatus.svelte';
   import TopStrip from './panels/TopStrip.svelte';
@@ -98,7 +137,8 @@
     registerNodeWindowActions,
     setCompactNodeScope,
     toggleCompactNode,
-  } from './lib/app/nodeWindowState';
+	  } from './lib/app/nodeWindowState';
+	  import { confirm } from './lib/confirm';
 
   // Styles
   import './styles/terminal.css';
@@ -109,6 +149,7 @@
   // -------------------------------------------------------------------
 
   const nodeTypes: NodeTypes = {
+    browser: BrowserNode,
     terminal: TerminalNode,
   };
 
@@ -129,6 +170,10 @@
 
   let nodes: XYFlowNode[] = [];
   let edges: XYFlowEdge[] = [];
+  let browserContexts: BrowserContext[] = [];
+  let browserTabs: BrowserTab[] = [];
+  let browserSnapshots: BrowserSnapshot[] = [];
+  let browserCatalogRefreshKey = '';
 
   // User-drawn edges created by dragging from one handle to another. These
   // aren't backed by any backend message/task/dep yet — they're visual
@@ -146,16 +191,24 @@
   let hasSelection = false;
   let showMobileAccess = false;
   let showSettings = false;
-  let showCloseConfirm = false;
-  let frazierCodeOpen = false;
-  let appMode: 'home' | 'canvas' = 'home';
-  let closeRequestUnlisten: UnlistenFn | null = null;
+  let kitOpenSignal = 0;
+  let browserOpenSignal = 0;
+  let canvasQuickMenu: { x: number; y: number } | null = null;
+	  let showCloseConfirm = false;
+	  let frazierCodeOpen = false;
+	  let inspectWorkspaceOpen = false;
+	  let agentCommandCenterOpen = false;
+	  let appMode: 'home' | 'canvas' = 'home';
+	  let activeProjectId: string | null = null;
+	  let projectPageOpen = false;
+	  let pendingProjectAttachKey: string | null = null;
+	  let closeRequestUnlisten: UnlistenFn | null = null;
   let appWindow: ReturnType<typeof getCurrentWindow> | null = null;
   let compactNodeIdsUnsubscribe: (() => void) | null = null;
   let unregisterNodeWindowActions: (() => void) | null = null;
   const layoutPersistence = createLayoutPersistence();
-  const COMPACT_NODE_WIDTH = 360;
-  const COMPACT_NODE_HEIGHT = 148;
+  const COMPACT_NODE_WIDTH = 154;
+  const COMPACT_NODE_HEIGHT = 54;
   const compactRestoreSizes = new Map<string, { width?: number; height?: number }>();
   let compactNodeIdSet = new Set<string>();
 
@@ -172,7 +225,6 @@
   type LauncherHandle = {
     launch: () => Promise<boolean>;
   };
-
   let workspaceStage: WorkspaceStage = 'closed';
   let workspaceInitialNodeId: string | null = null;
   let workspaceReturnNodeId: string | null = null;
@@ -256,7 +308,11 @@
       }
 
       if (ptyId) {
-        await killPtySession(ptyId);
+        if (node.data?.nodeType === 'pty' && node.data?.status === 'stale') {
+          await clearStalePtySession(ptyId);
+        } else {
+          await killPtySession(ptyId);
+        }
         return true;
       }
 
@@ -375,7 +431,7 @@
   const initialSidebarState = loadSidebarState();
   const MODE_RAIL_WIDTH = 86;
   const SHELL_SURFACE_GAP = 18;
-  const SHELL_SURFACE_MIN_WIDTH = 380;
+  const SHELL_SURFACE_MIN_WIDTH = 540;
   let shellSurfaceWidth = Math.max(SHELL_SURFACE_MIN_WIDTH, initialSidebarState.width);
   let shellSurfaceOpen = !initialSidebarState.collapsed;
   let shellSurfaceResizing = false;
@@ -388,7 +444,7 @@
   $: shellSurfaceCopy = activeTab === 'launch'
     ? 'Spawn agents and manage launch profiles.'
     : activeTab === 'chat'
-      ? 'Live scope messages without leaving the canvas.'
+      ? 'Live channel messages without leaving the canvas.'
       : 'Selected node and edge details.';
   $: shellSurfaceBadge = activeTab === 'launch'
     ? 'spawn'
@@ -408,9 +464,25 @@
   }
 
   function openShellTab(tab: 'launch' | 'chat' | 'inspect'): void {
+    if (tab === 'inspect') {
+      activeTab = 'inspect';
+      analyzeOverlayOpen = false;
+      frazierCodeOpen = false;
+      agentCommandCenterOpen = false;
+      inspectWorkspaceOpen = true;
+      setShellSurfaceOpen(false);
+      return;
+    }
+
+    if (activeTab === tab && shellSurfaceOpen) {
+      setShellSurfaceOpen(false);
+      return;
+    }
     activeTab = tab;
     analyzeOverlayOpen = false;
     frazierCodeOpen = false;
+    inspectWorkspaceOpen = false;
+    agentCommandCenterOpen = false;
     setShellSurfaceOpen(true);
   }
 
@@ -422,7 +494,28 @@
     analyzeOverlayOpen = !analyzeOverlayOpen;
     if (analyzeOverlayOpen) {
       frazierCodeOpen = false;
+      inspectWorkspaceOpen = false;
+      agentCommandCenterOpen = false;
       setShellSurfaceOpen(false);
+    }
+  }
+
+  function openAgentCommandCenter(): void {
+    analyzeOverlayOpen = false;
+    frazierCodeOpen = false;
+    inspectWorkspaceOpen = false;
+    setShellSurfaceOpen(false);
+    agentCommandCenterOpen = true;
+  }
+
+  function closeAgentCommandCenter(): void {
+    agentCommandCenterOpen = false;
+  }
+
+  function closeInspectWorkspace(): void {
+    inspectWorkspaceOpen = false;
+    if (activeTab === 'inspect') {
+      activeTab = 'launch';
     }
   }
 
@@ -430,6 +523,8 @@
     analyzeOverlayOpen = false;
     showSettings = false;
     showMobileAccess = false;
+    inspectWorkspaceOpen = false;
+    agentCommandCenterOpen = false;
     setShellSurfaceOpen(false);
     frazierCodeOpen = true;
   }
@@ -483,19 +578,31 @@
       $tasks,
       $messages,
       $locks,
+      $events,
       $bindings,
       $activeScope,
       $savedLayout,
+      browserContexts,
+      browserTabs,
+      browserSnapshots,
+      $allInstances,
     ),
     $savedLayout,
+    $projects,
+    $projectMemberships,
+    activeProjectId,
   );
 
   function applyBuild(
     built: { nodes: XYFlowNode[]; edges: XYFlowEdge[] },
     persistedLayout: Record<string, Position>,
+    projectList: ProjectSpace[],
+    membershipList: ProjectMembership[],
+    preferredProjectId: string | null,
   ) {
     nodes = mergeNodes(nodes, built.nodes, persistedLayout);
     applyCompactNodeGeometry();
+    nodes = applyProjectToneToNodes(nodes, projectList, membershipList, preferredProjectId);
     // Preserve user-drawn edges across rebuilds. We keep only those whose
     // source and target nodes still exist — otherwise XYFlow will warn and
     // the edge would render as a dangling path.
@@ -510,6 +617,55 @@
       preservedUserEdges.push(edge);
     }
     edges = [...mergeEdges(edges, built.edges), ...preservedUserEdges];
+  }
+
+  function sameProjectTone(
+    left: ProjectNodeAccent | null | undefined,
+    right: ProjectNodeAccent | null,
+  ): boolean {
+    return (left?.id ?? null) === (right?.id ?? null)
+      && (left?.color ?? null) === (right?.color ?? null)
+      && (left?.name ?? null) === (right?.name ?? null);
+  }
+
+  function applyProjectToneToNodes(
+    currentNodes: XYFlowNode[],
+    projectList: ProjectSpace[],
+    membershipList: ProjectMembership[],
+    preferredProjectId: string | null,
+  ): XYFlowNode[] {
+    if (currentNodes.length === 0) return currentNodes;
+
+    const projectsById = new Map(projectList.map((project) => [project.id, project]));
+    const toneByTarget = new Map<string, ProjectNodeAccent>();
+    for (const membership of membershipList) {
+      const project = projectsById.get(membership.projectId);
+      if (!project) continue;
+      const tone = { id: project.id, name: project.name, color: project.color };
+      if (membership.projectId === preferredProjectId || !toneByTarget.has(membership.instanceId)) {
+        toneByTarget.set(membership.instanceId, tone);
+      }
+    }
+
+    let changed = false;
+    const tonedNodes = currentNodes.map((node) => {
+      const targetId = projectMembershipTargetForNode(node);
+      const tone = targetId ? toneByTarget.get(targetId) ?? null : null;
+      if (sameProjectTone(node.data?.project, tone)) {
+        return node;
+      }
+
+      changed = true;
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          project: tone,
+        },
+      };
+    });
+
+    return changed ? tonedNodes : currentNodes;
   }
 
   // -------------------------------------------------------------------
@@ -567,13 +723,20 @@
   $: selectedNode = selectedNodeId
     ? nodes.find((n) => n.id === selectedNodeId) ?? null
     : null;
-  $: selectedEdge = selectedEdgeId
-    ? edges.find((e) => e.id === selectedEdgeId) ?? null
-    : null;
-  $: hasSelection = selectedNode !== null || selectedEdge !== null;
-  $: layoutPersistence.sync($activeScope, nodes, $savedLayout, persistLayout);
+	  $: selectedEdge = selectedEdgeId
+	    ? edges.find((e) => e.id === selectedEdgeId) ?? null
+	    : null;
+	  $: hasSelection = selectedNode !== null || selectedEdge !== null;
+	  $: activeProject = activeProjectId
+	    ? $projects.find((project) => project.id === activeProjectId) ?? null
+	    : null;
+	  $: instanceList = Array.from($instances.values());
+	  $: taskList = Array.from($tasks.values());
+	  $: eventList = $events;
+	  $: layoutPersistence.sync($activeScope, nodes, $savedLayout, persistLayout);
   $: setCompactNodeScope($activeScope);
   $: pruneCompactNodeIds(nodes.map((node) => node.id));
+  $: refreshBrowserCatalogForCanvas($activeScope, latestBrowserEventId($events));
 
   // -------------------------------------------------------------------
   // Lifecycle
@@ -593,8 +756,14 @@
       openWorkspace,
     });
 
-    await Promise.all([initSwarmStore(), initPtyStore()]);
-  });
+	    await Promise.all([
+	      initSwarmStore(),
+	      initPtyStore(),
+	      loadProjects().catch((err) => {
+	        console.warn('[projects] failed to load projects:', err);
+	      }),
+	    ]);
+	  });
 
   onDestroy(() => {
     closeRequestUnlisten?.();
@@ -618,9 +787,83 @@
       && Boolean(target.closest('button, input, textarea, select, a, [role="button"]'));
   }
 
+  function closeCanvasCommandMenu(): void {
+    canvasQuickMenu = null;
+  }
+
+  function setCanvasMenuMessage(message: string): void {
+    console.info(`[canvas-kit] ${message}`);
+  }
+
+  function handleCanvasContextMenu(event: MouseEvent): void {
+    if (appMode !== 'canvas') return;
+    if (isInteractiveTarget(event.target)) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest('.svelte-flow__pane, .svelte-flow__background')) return;
+    if (
+      target.closest(
+        '.svelte-flow__node, .terminal-node, .browser-node, .terminal-container, .terminal-pane-anchor, [data-pty-surface], .nodrag, .nopan, .nowheel',
+      )
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    const menuWidth = 230;
+    const menuHeight = 260;
+    canvasQuickMenu = {
+      x: Math.max(12, Math.min(event.clientX + 8, window.innerWidth - menuWidth - 12)),
+      y: Math.max(42, Math.min(event.clientY + 8, window.innerHeight - menuHeight - 12)),
+    };
+  }
+
+  function openLaunchDeckFromCanvasMenu(): void {
+    closeCanvasCommandMenu();
+    openShellTab('launch');
+  }
+
+  async function launchChromeFromCanvasMenu(): Promise<void> {
+    closeCanvasCommandMenu();
+    browserOpenSignal += 1;
+    setCanvasMenuMessage('Browser lane opened.');
+  }
+
+  function openNoteFromCanvasMenu(): void {
+    if (activeProject) {
+      closeCanvasCommandMenu();
+      openProject(activeProject);
+      return;
+    }
+    setCanvasMenuMessage('Create a note inside a project so agents inherit it as context.');
+  }
+
+  function openPlanFromCanvasMenu(): void {
+    openShellTab('chat');
+    setCanvasMenuMessage('Plan context belongs in the active project or conversation feed.');
+  }
+
+  function openImportFromCanvasMenu(): void {
+    if (activeProject) {
+      closeCanvasCommandMenu();
+      openProject(activeProject);
+      return;
+    }
+    setCanvasMenuMessage('Import files through a project page so assets have a clear boundary.');
+  }
+
+  function openOrganizeFromCanvasMenu(): void {
+    analyzeOverlayOpen = false;
+    frazierCodeOpen = false;
+    agentCommandCenterOpen = false;
+    inspectWorkspaceOpen = true;
+    activeTab = 'inspect';
+    setShellSurfaceOpen(false);
+    setCanvasMenuMessage('.organize opened Inspect for the current canvas selection.');
+  }
+
   function handleNodeClick(event: { node: XYFlowNode; event?: MouseEvent | TouchEvent }) {
+    closeCanvasCommandMenu();
     setSelectedNode(event.node.id);
-    openShellTab('inspect');
 
     if (workspaceStage !== 'closed') return;
     if (!event.node.data?.ptySession?.id) return;
@@ -629,14 +872,323 @@
     void focusNodeTerminal(event.node.id);
   }
 
-  function handleEdgeClick({ edge }: { edge: { id: string } }) {
+	  function handleEdgeClick({ edge }: { edge: { id: string } }) {
+    closeCanvasCommandMenu();
     setSelectedEdge(edge.id);
-    openShellTab('inspect');
+	  }
+
+	  function sleep(ms: number): Promise<void> {
+	    return new Promise((resolve) => window.setTimeout(resolve, ms));
+	  }
+
+	  function nodeInstanceId(node: XYFlowNode): string | null {
+	    return node.data?.instance?.id ?? null;
+	  }
+
+	  function ptyIdForInstance(instanceId: string): string | null {
+	    return $bindings.resolved.find(([id]) => id === instanceId)?.[1]
+	      ?? nodes.find((node) => node.data?.instance?.id === instanceId)?.data?.ptySession?.id
+	      ?? null;
+	  }
+
+	  function projectRoots(project: ProjectSpace): string[] {
+	    return [project.root, ...project.additionalRoots].filter((entry) => entry.trim().length > 0);
+	  }
+
+		  function taskBelongsToProject(
+		    project: ProjectSpace,
+		    instanceId: string | null,
+		    memberIds: Set<string>,
+		  ): (task: Task) => boolean {
+	    return (task) => {
+	      if (instanceId && task.assignee === instanceId) return true;
+	      if (task.assignee && memberIds.has(task.assignee)) return true;
+	      const roots = projectRoots(project);
+	      return (task.files ?? []).some((file) =>
+	        roots.some((root) => file === root || file.startsWith(`${root}/`)),
+	      );
+		    };
+		  }
+
+		  function localDateSlug(date = new Date()): string {
+		    const year = date.getFullYear();
+		    const month = String(date.getMonth() + 1).padStart(2, '0');
+		    const day = String(date.getDate()).padStart(2, '0');
+		    return `${year}-${month}-${day}`;
+			  }
+
+			  function buildProjectBootstrap(project: ProjectSpace, instanceId: string, assets: ProjectAsset[] = []): string {
+	    const memberIds = new Set(
+	      $projectMemberships
+	        .filter((entry) => entry.projectId === project.id)
+	        .map((entry) => entry.instanceId),
+	    );
+	    memberIds.add(instanceId);
+	    const projectTasks = Array.from($tasks.values())
+	      .filter(taskBelongsToProject(project, instanceId, memberIds))
+	      .slice(0, 8);
+	    const roots = projectRoots(project);
+	    const taskLines = projectTasks.length
+	      ? projectTasks.map((task) => `- ${task.title} [${task.status}] id:${task.id}`).join('\n')
+	      : '- No project-linked tasks yet.';
+	    const extraRoots = roots.slice(1);
+		    const assetBlock = buildAssetContextBlock(assets.slice(0, 8));
+		    const assetLines = assetBlock || 'Project assets:\n- No project assets saved yet.';
+    const browserLines = buildProjectBrowserBlock(project);
+		    const workspaceRoot = `${project.root.replace(/\/+$/, '')}/workspace`;
+			    const todayWorkspace = `${workspaceRoot}/${localDateSlug()}`;
+
+			    return [
+		      `[project-context] ${project.name}`,
+		      `Project root: ${project.root}`,
+		      `Extra roots: ${extraRoots.length ? extraRoots.join(', ') : 'none'}`,
+		      `Project workspace: use or create ${workspaceRoot}. Put daily scratch plans, temporary actions, and small notes in ${todayWorkspace}. Keep durable/important project notes directly under ${workspaceRoot}.`,
+		      `Notes:\n${project.notes.trim() || 'No project notes saved yet.'}`,
+	      assetLines,
+      browserLines,
+	      `Current project tasks:\n${taskLines}`,
+	      'This attachment is context sync only. Do not change cwd, channel, or filesystem assumptions because of the boundary.',
+	      'Inspect the project context, then stand by/listen: poll messages/tasks and use wait_for_activity when idle.',
+	    ].join('\n\n');
+	  }
+
+  function buildProjectBrowserBlock(project: ProjectSpace): string {
+    const contextIds = new Set(
+      $projectMemberships
+        .filter((entry) => entry.projectId === project.id && entry.instanceId.startsWith('browser:'))
+        .map((entry) => entry.instanceId.slice('browser:'.length)),
+    );
+    const projectContexts = browserContexts.filter((context) => contextIds.has(context.id));
+    if (projectContexts.length === 0) {
+      return 'Project browser contexts:\n- No browser contexts attached yet.';
+    }
+
+    const lines = projectContexts.slice(0, 6).map((context) => {
+      const activeTab = browserTabs.find((tab) => tab.contextId === context.id && tab.active)
+        ?? browserTabs.find((tab) => tab.contextId === context.id)
+        ?? null;
+      const label = activeTab?.title || activeTab?.url || context.startUrl || context.id;
+      const url = activeTab?.url || context.startUrl || context.endpoint;
+      return `- ${label} (${url}) context:${context.id}`;
+    });
+    return `Project browser contexts:\n${lines.join('\n')}`;
   }
 
+  async function createBrowserReferenceAsset(
+    project: ProjectSpace,
+    context: BrowserContext,
+  ): Promise<ProjectAsset> {
+    const activeTab = browserTabs.find((tab) => tab.contextId === context.id && tab.active)
+      ?? browserTabs.find((tab) => tab.contextId === context.id)
+      ?? null;
+    let referenceContext = context;
+    let referenceTabs = browserTabs.filter((tab) => tab.contextId === context.id);
+    let referenceSnapshots = browserSnapshots.filter((snapshot) => snapshot.contextId === context.id);
+
+    if (context.status !== 'closed') {
+      try {
+        const catalog = await invoke<BrowserCatalog>('ui_capture_browser_snapshot', {
+          scope: context.scope,
+          contextId: context.id,
+          tabId: activeTab?.tabId,
+        });
+        browserContexts = catalog.contexts ?? browserContexts;
+        browserTabs = catalog.tabs ?? browserTabs;
+        browserSnapshots = catalog.snapshots ?? browserSnapshots;
+        referenceContext = browserContexts.find((entry) => entry.id === context.id) ?? context;
+        referenceTabs = browserTabs.filter((tab) => tab.contextId === context.id);
+        referenceSnapshots = browserSnapshots.filter((snapshot) => snapshot.contextId === context.id);
+      } catch (err) {
+        console.warn('[projects] readable browser capture failed; saving URL-only reference:', err);
+      }
+    }
+
+    const asset = buildBrowserReferenceAsset({
+      project,
+      context: referenceContext,
+      tabs: referenceTabs,
+      snapshots: referenceSnapshots,
+    });
+    return saveProjectAsset(asset);
+  }
+
+  async function sendBrowserProjectUpdate(
+    project: ProjectSpace,
+    context: BrowserContext,
+    referenceAsset: ProjectAsset,
+  ): Promise<void> {
+    const content = [
+      `[project-browser] ${project.name}`,
+      'The operator attached this browser tab as intentional project context.',
+      `Reference asset: ${referenceAsset.title}`,
+      `URL: ${referenceAsset.path ?? context.startUrl ?? context.endpoint}`,
+      `Context id: ${context.id}`,
+      '',
+      referenceAsset.content ?? '',
+      '',
+      'Use this reference before searching or guessing. If it is incomplete, ask the operator for refresh/deeper capture instead of wandering off.',
+    ].join('\n');
+
+    const memberIds = $projectMemberships
+      .filter((entry) => entry.projectId === project.id && !entry.instanceId.startsWith('browser:'))
+      .map((entry) => entry.instanceId);
+    await Promise.all(memberIds.map(async (memberId) => {
+      const instance = $instances.get(memberId);
+      const scope = instance?.scope ?? $activeScope;
+      if (!scope) return;
+      await sendOperatorMessage(scope, memberId, content).catch((err) => {
+        console.warn('[projects] browser project update was not delivered:', err);
+      });
+    }));
+  }
+
+	  async function sendProjectBootstrap(
+	    project: ProjectSpace,
+	    instanceId: string,
+	    ptyIdOverride: string | null = null,
+	  ): Promise<void> {
+	    let assets: ProjectAsset[] = [];
+	    await loadProjectAssets(project.id)
+	      .then((catalog) => {
+	        assets = normalizeProjectAssets(catalog.assets);
+	      })
+	      .catch((err) => {
+	        console.warn('[projects] project assets were not loaded for bootstrap:', err);
+	      });
+	    const content = buildProjectBootstrap(project, instanceId, assets);
+	    const instance = $instances.get(instanceId);
+	    const scope = instance?.scope ?? $activeScope;
+	    if (scope) {
+	      await sendOperatorMessage(scope, instanceId, content).catch((err) => {
+	        console.warn('[projects] direct project bootstrap message was not delivered:', err);
+	      });
+	    }
+
+	    const ptyId = ptyIdOverride ?? ptyIdForInstance(instanceId);
+	    if (ptyId) {
+	      await writeToPty(ptyId, new TextEncoder().encode(`${content}\n`)).catch((err) => {
+	        console.warn('[projects] project bootstrap prompt was not typed:', err);
+	      });
+	    }
+	  }
+
+	  function attachableNodesInsideProject(project: ProjectSpace): XYFlowNode[] {
+	    return nodes.filter((node) => {
+	      if (findNodesInsideProject(project, [node]).length === 0) return false;
+	      const instanceId = nodeInstanceId(node);
+	      if (!instanceId) return false;
+	      return !$projectMemberships.some(
+	        (entry) => entry.projectId === project.id && entry.instanceId === instanceId,
+	      );
+	    });
+	  }
+
+	  async function attachAgentToProject(
+	    project: ProjectSpace,
+	    instanceId: string,
+	    openPage = true,
+	  ): Promise<void> {
+	    await attachInstanceToProject(project.id, instanceId);
+	    await sendProjectBootstrap(project, instanceId);
+	    activeProjectId = project.id;
+	    if (openPage) {
+	      projectPageOpen = true;
+	    }
+	  }
+
+	  async function syncEnclosedAgents(project: ProjectSpace): Promise<void> {
+	    const attachable = attachableNodesInsideProject(project);
+	    if (attachable.length === 0) {
+	      activeProjectId = project.id;
+	      projectPageOpen = true;
+	      return;
+	    }
+
+	    const ok = await confirm({
+	      title: 'Sync enclosed agents',
+	      message: `Attach ${attachable.length} enclosed agent${attachable.length === 1 ? '' : 's'} to "${project.name}" and send the project context bootstrap? This does not change cwd or channel.`,
+	      confirmLabel: 'Sync agents',
+	    });
+	    if (!ok) return;
+
+	    for (const node of attachable) {
+	      const instanceId = nodeInstanceId(node);
+	      if (!instanceId) continue;
+	      await attachAgentToProject(project, instanceId, false);
+	    }
+	    activeProjectId = project.id;
+	    projectPageOpen = true;
+	  }
+
+	  async function handleNodeDragStop(event: { targetNode: XYFlowNode | null }): Promise<void> {
+	    if (appMode !== 'canvas') return;
+	    const node = event.targetNode;
+	    if (!node) return;
+	    const membershipTarget = projectMembershipTargetForNode(node);
+	    if (!membershipTarget) return;
+
+	    const project = findProjectContainingNode(node, $projects);
+	    if (!project) return;
+
+	    const attachKey = `${project.id}:${membershipTarget}`;
+	    if (pendingProjectAttachKey === attachKey) return;
+	    if ($projectMemberships.some(
+	      (entry) => entry.projectId === project.id && entry.instanceId === membershipTarget,
+	    )) {
+	      return;
+	    }
+
+	    pendingProjectAttachKey = attachKey;
+	    try {
+      if (node.data?.browserContext) {
+        await attachInstanceToProject(project.id, membershipTarget);
+        const referenceAsset = await createBrowserReferenceAsset(project, node.data.browserContext);
+        await sendBrowserProjectUpdate(project, node.data.browserContext, referenceAsset);
+        activeProjectId = project.id;
+        setCanvasMenuMessage(`Browser reference attached to ${project.name}.`);
+        return;
+      }
+
+      const instanceId = node.data?.instance?.id;
+      if (!instanceId) return;
+	      const ok = await confirm({
+	        title: 'Attach agent to project',
+	        message: `Attach this agent to project "${project.name}"?\nThis shares project context with the agent. It does not change cwd, channel, or OS-level file permissions.`,
+	        confirmLabel: 'Attach agent',
+	      });
+	      if (!ok) return;
+	      await attachAgentToProject(project, instanceId);
+	    } catch (err) {
+	      console.error('[projects] failed to attach instance:', err);
+	    } finally {
+	      pendingProjectAttachKey = null;
+	    }
+	  }
+
+	  async function handleProjectBoundaryGeometryChange(
+	    event: CustomEvent<{ project: ProjectSpace; boundary: ProjectBoundaryGeometry }>,
+	  ): Promise<void> {
+	    try {
+	      const saved = await saveProject({
+	        ...event.detail.project,
+	        boundary: event.detail.boundary,
+	      });
+	      nodes = translateNodesWithMovedProject(event.detail.project, saved.boundary, nodes);
+	      activeProjectId = saved.id;
+	      await syncEnclosedAgents(saved);
+	    } catch (err) {
+	      console.error('[projects] failed to save project boundary:', err);
+	    }
+	  }
+
+	  function handleProjectBoundarySync(event: CustomEvent<{ project: ProjectSpace }>): void {
+	    void syncEnclosedAgents(event.detail.project);
+	  }
+
   function handlePaneClick() {
+    closeCanvasCommandMenu();
     clearSelection();
-    if (activeTab === 'inspect') {
+    if (activeTab === 'inspect' && !inspectWorkspaceOpen) {
       activeTab = 'launch';
     }
   }
@@ -644,6 +1196,38 @@
   function handleInspectorClose() {
     clearSelection();
     activeTab = 'launch';
+  }
+
+  function latestBrowserEventId(eventList: Array<{ id: number; type: string }>): number {
+    let latest = 0;
+    for (const event of eventList) {
+      if (!event.type.startsWith('browser.')) continue;
+      latest = Math.max(latest, event.id);
+    }
+    return latest;
+  }
+
+  async function refreshBrowserCatalogForCanvas(scope: string | null, latestEventId: number): Promise<void> {
+    if (scope === null) {
+      browserCatalogRefreshKey = '';
+      browserContexts = [];
+      browserTabs = [];
+      browserSnapshots = [];
+      return;
+    }
+
+    const key = `${scope}:${latestEventId}`;
+    if (browserCatalogRefreshKey === key) return;
+    browserCatalogRefreshKey = key;
+
+    try {
+      const catalog = await invoke<BrowserCatalog>('ui_list_browser_catalog', { scope });
+      browserContexts = catalog.contexts ?? [];
+      browserTabs = catalog.tabs ?? [];
+      browserSnapshots = catalog.snapshots ?? [];
+    } catch (err) {
+      console.warn('[browser] failed to load browser catalog for canvas:', err);
+    }
   }
 
   async function persistLayout(
@@ -661,27 +1245,89 @@
   }
 
   function openSettings() {
+    closeCanvasCommandMenu();
     analyzeOverlayOpen = false;
     frazierCodeOpen = false;
+    inspectWorkspaceOpen = false;
+    agentCommandCenterOpen = false;
     showMobileAccess = false;
     showSettings = true;
   }
 
   function openHome() {
     if (workspaceStage !== 'closed') return;
+    closeCanvasCommandMenu();
     analyzeOverlayOpen = false;
     frazierCodeOpen = false;
+    inspectWorkspaceOpen = false;
+    agentCommandCenterOpen = false;
     showMobileAccess = false;
     showSettings = false;
     appMode = 'home';
   }
 
-  function enterCanvas() {
-    appMode = 'canvas';
-    analyzeOverlayOpen = false;
-    frazierCodeOpen = false;
-    setShellSurfaceOpen(true);
-  }
+	  function enterCanvas() {
+	    closeCanvasCommandMenu();
+	    appMode = 'canvas';
+	    analyzeOverlayOpen = false;
+	    frazierCodeOpen = false;
+	    inspectWorkspaceOpen = false;
+	    agentCommandCenterOpen = false;
+	    setShellSurfaceOpen(false);
+	  }
+
+	  function openProject(project: ProjectSpace): void {
+	    closeCanvasCommandMenu();
+	    activeProjectId = project.id;
+	    projectPageOpen = true;
+	    appMode = 'canvas';
+	    analyzeOverlayOpen = false;
+	    frazierCodeOpen = false;
+	    inspectWorkspaceOpen = false;
+	    agentCommandCenterOpen = false;
+	  }
+
+	  function handleProjectOpen(event: CustomEvent<{ project: ProjectSpace }>): void {
+	    openProject(event.detail.project);
+	  }
+
+	  function closeProjectPage(): void {
+	    projectPageOpen = false;
+	  }
+
+	  function handleProjectDeleted(): void {
+	    projectPageOpen = false;
+	    activeProjectId = null;
+	  }
+
+	  async function handleProjectRespawn(
+	    event: CustomEvent<{ project: ProjectSpace; instanceId: string }>,
+	  ): Promise<void> {
+	    const { project, instanceId } = event.detail;
+	    const instance = $instances.get(instanceId);
+	    const label = instance?.label
+	      ?.split(/\s+/)
+	      .find((token) => token.startsWith('name:'))
+	      ?.slice('name:'.length)
+	      .replace(/_/g, ' ')
+	      || instanceId.slice(0, 8);
+	    const scope = project.scope ?? project.root;
+	    const ok = await confirm({
+	      title: 'Respawn in project',
+	      message: `Respawn ${label} in ${project.root}? This explicitly changes the restarted process working directory and project channel. Live agents must be stopped before this can run.`,
+	      confirmLabel: 'Respawn',
+	      danger: true,
+	    });
+	    if (!ok) return;
+
+	    try {
+	      const result = await respawnInstanceInProject(instanceId, project.root, scope);
+	      await sleep(2200);
+	      await sendProjectBootstrap(project, instanceId, result.pty_id);
+	    } catch (err) {
+	      console.error('[projects] failed to respawn in project:', err);
+	    }
+	  }
 
   function closeSettings() {
     showSettings = false;
@@ -690,6 +1336,8 @@
   function openMobileAccess() {
     analyzeOverlayOpen = false;
     frazierCodeOpen = false;
+    inspectWorkspaceOpen = false;
+    agentCommandCenterOpen = false;
     showSettings = false;
     showMobileAccess = true;
   }
@@ -729,7 +1377,7 @@
     if (showCloseConfirm) return;
 
     const meta = event.metaKey || event.ctrlKey;
-    const overlayOpen = showSettings || showMobileAccess || appMode === 'home' || analyzeOverlayOpen || frazierCodeOpen;
+    const overlayOpen = showSettings || showMobileAccess || appMode === 'home' || analyzeOverlayOpen || frazierCodeOpen || inspectWorkspaceOpen || agentCommandCenterOpen;
 
     if (!event.defaultPrevented && !event.repeat && !event.isComposing) {
       const wantsLaunch =
@@ -762,6 +1410,18 @@
           event.preventDefault();
           event.stopPropagation();
           closeFrazierCode();
+          return;
+        }
+        if (inspectWorkspaceOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          closeInspectWorkspace();
+          return;
+        }
+        if (agentCommandCenterOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAgentCommandCenter();
           return;
         }
         const nodeId = overlayOpen
@@ -865,9 +1525,10 @@
 
   }
 
-  function miniMapNodeColor(node: { data?: { status?: string } }): string {
+  function miniMapNodeColor(node: { data?: { status?: string; project?: ProjectNodeAccent | null } }): string {
     const data = node.data;
-    if (!data) return '#313244';
+    if (!data) return '#05070a';
+    if (data.project?.color) return data.project.color;
 
     switch (data.status) {
       case 'online':
@@ -877,9 +1538,9 @@
       case 'offline':
         return '#6c7086';
       case 'pending':
-        return '#89b4fa';
+        return '#00f060';
       default:
-        return '#313244';
+        return '#05070a';
     }
   }
 
@@ -898,9 +1559,65 @@
   style="--sidebar-inset: 0px; --sidebar-transition-duration: {shellSurfaceResizing ? '0ms' : '420ms'}; --mode-rail-width: {MODE_RAIL_WIDTH}px; --shell-surface-gap: {SHELL_SURFACE_GAP}px;"
 >
   <!-- Canvas area -->
-  <div class="canvas-area" class:connection-active={connectionActive} class:has-strip={appMode === 'canvas'}>
+  <div
+    class="canvas-area"
+    class:connection-active={connectionActive}
+    class:has-strip={appMode === 'canvas'}
+    role="application"
+    aria-label="Agent canvas"
+    tabindex="-1"
+    on:contextmenu={handleCanvasContextMenu}
+  >
     {#if appMode === 'canvas'}
-      <TopStrip />
+      <TopStrip
+        {activeProject}
+        openSignal={kitOpenSignal}
+        browserOpenSignal={browserOpenSignal}
+        on:openProject={handleProjectOpen}
+        on:launchAgent={openLaunchDeckFromCanvasMenu}
+        on:launchChrome={launchChromeFromCanvasMenu}
+        on:createNote={openNoteFromCanvasMenu}
+        on:plan={openPlanFromCanvasMenu}
+        on:importFile={openImportFromCanvasMenu}
+        on:organize={openOrganizeFromCanvasMenu}
+        on:openSettings={openSettings}
+      />
+      {#if canvasQuickMenu}
+        <div
+          class="canvas-quick-menu"
+          style={`left:${canvasQuickMenu.x}px; top:${canvasQuickMenu.y}px;`}
+          role="menu"
+          tabindex="-1"
+          aria-label="Canvas quick actions"
+          on:pointerdown|stopPropagation
+          on:contextmenu|preventDefault
+        >
+          <button type="button" role="menuitem" on:click={openLaunchDeckFromCanvasMenu}>
+            <span>+</span>
+            <strong>Launch Agent</strong>
+          </button>
+          <button type="button" role="menuitem" on:click={launchChromeFromCanvasMenu}>
+            <span>BR</span>
+            <strong>Browser Surface</strong>
+          </button>
+          <button type="button" role="menuitem" on:click={() => { closeCanvasCommandMenu(); kitOpenSignal += 1; }}>
+            <span>KIT</span>
+            <strong>Workspace Kit</strong>
+          </button>
+          <button type="button" role="menuitem" on:click={openNoteFromCanvasMenu}>
+            <span>N</span>
+            <strong>Create Note</strong>
+          </button>
+          <button type="button" role="menuitem" on:click={openPlanFromCanvasMenu}>
+            <span>P</span>
+            <strong>Plan</strong>
+          </button>
+          <button type="button" role="menuitem" on:click={openOrganizeFromCanvasMenu}>
+            <span>?</span>
+            <strong>Inspect Canvas</strong>
+          </button>
+        </div>
+      {/if}
       <button
         type="button"
         class="floating-home"
@@ -924,9 +1641,10 @@
       {edgeTypes}
       fitView
       onnodeclick={handleNodeClick}
-      onedgeclick={handleEdgeClick}
-      onpaneclick={handlePaneClick}
-      onconnect={handleConnect}
+	      onedgeclick={handleEdgeClick}
+	      onpaneclick={handlePaneClick}
+	      onnodedragstop={handleNodeDragStop}
+	      onconnect={handleConnect}
       onconnectstart={handleConnectStart}
       onconnectend={handleConnectEnd}
       minZoom={0.2}
@@ -938,9 +1656,20 @@
       zoomOnScroll={false}
       zoomOnPinch={true}
       zoomOnDoubleClick={false}
-    >
-      <Background />
-      <Controls />
+	    >
+	      <Background />
+	      <ViewportPortal target="back">
+	        {#each $projects as project (project.id)}
+	          <ProjectBoundary
+	            {project}
+	            active={project.id === activeProjectId}
+	            on:open={handleProjectOpen}
+	            on:geometryChange={handleProjectBoundaryGeometryChange}
+	            on:sync={handleProjectBoundarySync}
+	          />
+	        {/each}
+	      </ViewportPortal>
+	      <Controls />
       <MiniMap
         nodeColor={miniMapNodeColor}
         maskColor="rgba(0, 0, 0, 0.7)"
@@ -989,16 +1718,34 @@
             type="button"
             class="mode-btn"
             class:selected={activeTab === 'inspect'}
-            class:open={activeTab === 'inspect' && shellSurfaceOpen}
+            class:open={inspectWorkspaceOpen}
             on:click={() => openShellTab('inspect')}
             title="Inspect"
-            aria-pressed={activeTab === 'inspect' && shellSurfaceOpen}
+            aria-pressed={inspectWorkspaceOpen}
           >
             <svg class="mode-btn-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="11" cy="11" r="7" />
               <path d="m21 21-4.35-4.35" />
             </svg>
             <span class="mode-btn-label">Inspect</span>
+          </button>
+
+          <button
+            type="button"
+            class="mode-btn"
+            class:selected={agentCommandCenterOpen}
+            class:open={agentCommandCenterOpen}
+            on:click={openAgentCommandCenter}
+            title="Agents"
+            aria-pressed={agentCommandCenterOpen}
+          >
+            <svg class="mode-btn-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M16 21v-2a4 4 0 0 0-8 0v2" />
+              <circle cx="12" cy="7" r="4" />
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            <span class="mode-btn-label">Agents</span>
           </button>
 
           <button
@@ -1095,6 +1842,8 @@
         class:resizing={shellSurfaceResizing}
         style="width: {shellSurfaceWidth}px"
         aria-hidden={!shellSurfaceOpen}
+        on:wheel|stopPropagation
+        on:touchmove|stopPropagation
       >
         <div
           class="surface-resize-handle"
@@ -1112,7 +1861,7 @@
             <img src={darkFolderAsset} alt="" />
           </div>
           <div class="surface-header-copy">
-            <span class="surface-kicker">Graph Overlay</span>
+            <span class="surface-kicker">Canvas Surface</span>
             <h2>{shellSurfaceTitle}</h2>
             <p>{shellSurfaceCopy}</p>
           </div>
@@ -1139,9 +1888,6 @@
           <div class="tab-panel" class:hidden={activeTab !== 'chat'}>
             <ConversationPanel />
           </div>
-          <div class="tab-panel" class:hidden={activeTab !== 'inspect'}>
-            <Inspector {selectedNode} {selectedEdge} />
-          </div>
         </div>
       </section>
     {/if}
@@ -1151,9 +1897,28 @@
     <SettingsModal on:close={closeSettings} />
   {/if}
 
-  {#if appMode === 'home'}
-    <StartupHome on:enterCanvas={enterCanvas} on:openSettings={openSettings} />
-  {/if}
+	  {#if appMode === 'home'}
+	    <StartupHome
+	      on:enterCanvas={enterCanvas}
+	      on:openSettings={openSettings}
+	      on:openFrazierCode={openFrazierCode}
+	      on:openProject={handleProjectOpen}
+	    />
+	  {/if}
+
+	  {#if projectPageOpen && activeProject}
+	    <ProjectPage
+	      project={activeProject}
+	      memberships={$projectMemberships}
+	      instances={instanceList}
+	      tasks={taskList}
+	      locks={Array.from($locks.values())}
+	      events={eventList}
+	      on:close={closeProjectPage}
+	      on:deleted={handleProjectDeleted}
+	      on:respawnAgent={handleProjectRespawn}
+	    />
+	  {/if}
 
   {#if showMobileAccess}
     <MobileAccessModal on:close={closeMobileAccess} />
@@ -1171,6 +1936,27 @@
   <AnalyzePanel open={analyzeOverlayOpen} on:close={closeAnalyzeOverlay} />
 
   <FrazierCodePanel open={frazierCodeOpen} on:close={closeFrazierCode} />
+
+  <InspectWorkspace
+    open={inspectWorkspaceOpen}
+    {selectedNode}
+    {selectedEdge}
+    projects={$projects}
+    on:close={closeInspectWorkspace}
+  />
+
+  <AgentCommandCenter
+    open={agentCommandCenterOpen}
+    instances={instanceList}
+    tasks={taskList}
+    projects={$projects}
+    on:close={closeAgentCommandCenter}
+    on:launchProfile={() => {
+      closeAgentCommandCenter();
+      activeTab = 'launch';
+      setShellSurfaceOpen(true);
+    }}
+  />
 
   {#if workspaceActive}
     <FullscreenWorkspace
@@ -1226,6 +2012,72 @@
     background: var(--canvas-bg);
   }
 
+  .canvas-quick-menu {
+    position: absolute;
+    z-index: 60;
+    width: 230px;
+    padding: 8px;
+    display: grid;
+    gap: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    border-radius: 8px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 28%),
+      rgba(0, 0, 0, 0.88);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.08) inset,
+      0 18px 42px rgba(0, 0, 0, 0.54),
+      0 0 28px rgba(106, 216, 255, 0.12);
+    backdrop-filter: blur(22px) saturate(1.16);
+    -webkit-backdrop-filter: blur(22px) saturate(1.16);
+  }
+
+  .canvas-quick-menu button {
+    width: 100%;
+    min-height: 36px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 0 9px;
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    color: rgba(238, 250, 255, 0.9);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .canvas-quick-menu button:hover,
+  .canvas-quick-menu button:focus-visible {
+    border-color: rgba(106, 216, 255, 0.38);
+    background: rgba(106, 216, 255, 0.11);
+    outline: none;
+  }
+
+  .canvas-quick-menu span {
+    width: 28px;
+    height: 24px;
+    display: inline-grid;
+    place-items: center;
+    border: 1px solid rgba(106, 216, 255, 0.24);
+    border-radius: 4px;
+    color: rgba(106, 216, 255, 0.86);
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 10px;
+    letter-spacing: 0;
+  }
+
+  .canvas-quick-menu strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
   .mode-rail {
     position: absolute;
     top: 44px;
@@ -1238,7 +2090,7 @@
     border-radius: 20px;
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 28%),
-      var(--sidebar-bg, rgba(30, 30, 46, 0.2));
+      color-mix(in srgb, var(--terminal-bg, #05070a) 78%, transparent);
     backdrop-filter: blur(calc(var(--sidebar-blur, 40px) * 0.85)) saturate(1.22);
     -webkit-backdrop-filter: blur(calc(var(--sidebar-blur, 40px) * 0.85)) saturate(1.22);
     display: flex;
@@ -1266,7 +2118,7 @@
     border-radius: 12px;
     border: 1px solid transparent;
     background: transparent;
-    color: rgba(166, 173, 200, 0.82);
+    color: color-mix(in srgb, var(--terminal-fg, #c0caf5) 68%, transparent);
     display: inline-flex;
     flex-direction: column;
     align-items: center;
@@ -1284,9 +2136,9 @@
 
   .mode-btn:hover {
     transform: translateY(-1px);
-    background: rgba(255, 255, 255, 0.04);
+    background: color-mix(in srgb, var(--terminal-bg, #05070a) 68%, white 4%);
     color: var(--terminal-fg, #c0caf5);
-    border-color: rgba(137, 180, 250, 0.22);
+    border-color: color-mix(in srgb, var(--status-pending, #00f060) 36%, transparent);
   }
 
   .mode-btn:active {
@@ -1298,7 +2150,7 @@
   }
 
   .mode-btn.open {
-    background: rgba(255, 255, 255, 0.06);
+    background: color-mix(in srgb, var(--terminal-bg, #05070a) 70%, var(--status-pending, #00f060) 8%);
     border-color: var(--node-border, rgba(255, 255, 255, 0.2));
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   }
@@ -1354,7 +2206,7 @@
     border-radius: 24px;
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03) 18%, transparent),
-      var(--sidebar-bg, rgba(30, 30, 46, 0.2));
+      color-mix(in srgb, var(--terminal-bg, #05070a) 82%, transparent);
     backdrop-filter: blur(calc(var(--sidebar-blur, 40px) + 4px)) saturate(1.2);
     -webkit-backdrop-filter: blur(calc(var(--sidebar-blur, 40px) + 4px)) saturate(1.2);
     box-shadow:
@@ -1374,6 +2226,7 @@
   }
 
   .shell-surface.open {
+    z-index: 70;
     opacity: 1;
     pointer-events: auto;
     transform: translateX(0);
@@ -1408,8 +2261,8 @@
 
   .surface-resize-handle:hover::after,
   .shell-surface.resizing .surface-resize-handle::after {
-    background: rgba(137, 180, 250, 0.54);
-    box-shadow: 0 0 12px rgba(137, 180, 250, 0.35);
+    background: rgba(0, 240, 96, 0.54);
+    box-shadow: 0 0 12px rgba(0, 240, 96, 0.35);
   }
 
   .surface-header {
@@ -1450,7 +2303,7 @@
       brightness(1.22)
       contrast(1.08)
       saturate(0.9)
-      drop-shadow(0 0 12px rgba(137, 180, 250, 0.18));
+      drop-shadow(0 0 12px rgba(0, 240, 96, 0.12));
     mix-blend-mode: screen;
   }
 
@@ -1534,7 +2387,7 @@
   .surface-action:hover {
     background: rgba(255, 255, 255, 0.05);
     color: var(--terminal-fg, #c0caf5);
-    border-color: rgba(137, 180, 250, 0.4);
+    border-color: rgba(0, 240, 96, 0.4);
     transform: translateX(-1px);
   }
 
@@ -1544,6 +2397,17 @@
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+    overscroll-behavior: contain;
+  }
+
+  :global(.shell-surface:has(.agent-modal-backdrop)),
+  :global(.surface-body:has(.agent-modal-backdrop)),
+  :global(.tab-panel:has(.agent-modal-backdrop)) {
+    overflow: visible;
+  }
+
+  :global(.shell-surface:has(.agent-modal-backdrop)) {
+    z-index: 90;
   }
 
   .tab-panel {
@@ -1567,7 +2431,7 @@
     padding: 0 13px 0 11px;
     border-radius: 10px;
     border: 1px solid rgba(108, 112, 134, 0.35);
-    background: var(--panel-bg, rgba(30, 30, 46, 0.68));
+    background: color-mix(in srgb, var(--terminal-bg, #05070a) 78%, transparent);
     backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.08);
     -webkit-backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.08);
     color: #a6adc8;
@@ -1586,7 +2450,7 @@
   .floating-home:hover {
     background: rgba(49, 50, 68, 0.92);
     color: var(--terminal-fg, #c0caf5);
-    border-color: rgba(137, 180, 250, 0.55);
+    border-color: rgba(0, 240, 96, 0.55);
     transform: translateY(-1px);
   }
 

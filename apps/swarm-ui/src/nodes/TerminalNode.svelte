@@ -24,6 +24,7 @@
   } from '../lib/app/nodeWindowState';
   import NodeHeader from './NodeHeader.svelte';
   import NodePersonaTab from './NodePersonaTab.svelte';
+  import AgentCard from './AgentCard.svelte';
   import TerminalPane from './TerminalPane.svelte';
   import '../styles/terminal.css';
 
@@ -34,6 +35,7 @@
 
   let nodeElement: HTMLDivElement | null = null;
   let paneRef: TerminalPane | null = null;
+  let cardRef: AgentCard | null = null;
 
   // Derived from data
   $: hasPty = data.ptySession !== null;
@@ -50,16 +52,11 @@
     : null;
   $: compact = $compactNodeIds.has(id);
   $: workspaceActive = $workspaceOverlayActive;
-  $: compactKindLabel = data.nodeType === 'bound'
-    ? 'Agent'
-    : data.nodeType === 'instance'
-      ? 'External'
-      : 'Shell';
-  $: compactActivityLabel = instance
-    ? formatTimestamp(instance.heartbeat ?? instance.registered_at)
-    : formatTimestamp(data.ptySession?.started_at ?? null);
-  $: compactDetail = cwd || data.ptySession?.command || instance?.label || '--';
-  $: compactStatusLabel = status.charAt(0).toUpperCase() + status.slice(1);
+  $: projectAccent = data.project;
+  $: projectColor = projectAccent?.color ?? '';
+  $: projectStyle = projectColor
+    ? `--node-project-color:${projectColor};`
+    : '';
 
   function handleInspect() {
     nodeElement?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -69,6 +66,10 @@
     handleInspect();
     if (compact && ptyId) {
       requestNodeWorkspace(id);
+      return;
+    }
+    if (cardRef) {
+      void cardRef.focus();
       return;
     }
     paneRef?.focus();
@@ -102,7 +103,9 @@
   class:selected
   class:compact
   class:mobile-controlled={mobileControlled}
+  class:project-attached={Boolean(projectColor)}
   data-node-id={id}
+  style={projectStyle}
 >
   <!-- Resize handles on all four corners + edges. Only visible when the node
        is selected so they don't clutter the canvas. -->
@@ -153,9 +156,14 @@
     nodeType={data.nodeType}
     assignedTasks={data.assignedTasks}
     locks={data.locks}
+    unreadMessages={data.unreadMessages}
+    listenerHealth={data.listenerHealth}
     ptyId={ptyId}
     launchToken={data.ptySession?.launch_token ?? null}
     adopted={instance?.adopted ?? true}
+    persona={data.agentDisplay.persona}
+    provider={data.agentDisplay.provider}
+    {projectColor}
     {mobileControlled}
     {compact}
     mobileLeaseHolder={mobileLeaseHolder}
@@ -166,38 +174,12 @@
   />
 
   {#if compact}
-    <div class="terminal-compact-card">
-      <div class="compact-summary-row">
-        <span class="compact-pill">{compactKindLabel}</span>
-        <span class="compact-pill status {status}">{compactStatusLabel}</span>
-        {#if mobileControlled}
-          <span class="compact-pill">Mobile</span>
-        {/if}
-      </div>
-
-      <div class="compact-stats">
-        <div class="compact-stat">
-          <span class="compact-stat-label">Tasks</span>
-          <span class="compact-stat-value">{data.assignedTasks.length}</span>
-        </div>
-        <div class="compact-stat">
-          <span class="compact-stat-label">Locks</span>
-          <span class="compact-stat-value">{data.locks.length}</span>
-        </div>
-        <div class="compact-stat">
-          <span class="compact-stat-label">{instance ? 'Heartbeat' : 'Started'}</span>
-          <span class="compact-stat-value">{compactActivityLabel}</span>
-        </div>
-      </div>
-
-      <div class="compact-detail" title={compactDetail}>
-        {compactDetail}
-      </div>
-    </div>
+    <!-- Compact nodes intentionally collapse to the placard only. -->
   {:else if hasPty && ptyId && !workspaceActive}
-    <TerminalPane
-      bind:this={paneRef}
-      {ptyId}
+    <AgentCard
+      bind:this={cardRef}
+      {data}
+      initialMode="overview"
     />
   {:else if hasPty}
     <div class="terminal-suspended">

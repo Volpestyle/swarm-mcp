@@ -1,0 +1,5 @@
+Field notes for Phase 5 asset QA.
+
+- This file should import as a note asset when the project asset refresh scans this folder.
+- It should also fill the note content box when chosen with Add note -> Choose file.
+- Attached agents should see this text inside the Project assets context block.

@@ -14,8 +14,20 @@ use crate::events::BIND_RESOLVED;
 use crate::model::{AppError, InstanceStatus};
 use crate::pty::PtyManager;
 use crate::swarm::get_swarm_state;
+use crate::writes;
 
-const DEFAULT_ROLES: &[&str] = &["planner", "implementer", "reviewer", "researcher"];
+const DEFAULT_ROLES: &[&str] = &[
+    "planner",
+    "implementer",
+    "reviewer",
+    "researcher",
+    "designer",
+    "operator",
+    "architect",
+    "debugger",
+    "qa",
+    "scribe",
+];
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RolePresetSummary {
@@ -450,6 +462,115 @@ pub async fn respawn_instance(
     })
 }
 
+/// Explicitly relaunch a stale/offline instance in a project root. This is the
+/// product-safe version of "move this agent": attaching to a project only syncs
+/// context; this command is the visible runtime relocation step.
+#[tauri::command]
+#[allow(clippy::unused_async)]
+pub async fn respawn_instance_in_project(
+    app_handle: AppHandle,
+    pty_manager: State<'_, PtyManager>,
+    binder: State<'_, Binder>,
+    instance_id: String,
+    directory: String,
+    scope: Option<String>,
+) -> Result<RespawnResult, AppError> {
+    let trimmed = instance_id.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Validation("instance_id is required".into()));
+    }
+
+    let project_dir = directory.trim();
+    if project_dir.is_empty() {
+        return Err(AppError::Validation("project directory is required".into()));
+    }
+    validate_working_dir(project_dir)?;
+
+    if binder.resolved_pty_for(trimmed).is_some() {
+        return Err(AppError::Validation(format!(
+            "instance {trimmed} already has a live PTY in this session"
+        )));
+    }
+
+    let existing = get_swarm_state()?
+        .instances
+        .into_iter()
+        .find(|instance| instance.id == trimmed)
+        .ok_or_else(|| AppError::NotFound(format!("instance {trimmed} not found")))?;
+
+    let status = existing.status;
+    if status == InstanceStatus::Online {
+        return Err(AppError::Validation(format!(
+            "instance {trimmed} is still {} and cannot be respawned",
+            instance_status_label(status)
+        )));
+    }
+
+    let harness = parse_harness_from_label(existing.label.as_deref()).ok_or_else(|| {
+        AppError::Validation(format!(
+            "instance {trimmed} has no harness in its label — cannot determine respawn command"
+        ))
+    })?;
+    let role = parse_role_from_label(existing.label.as_deref())
+        .filter(|candidate| !is_harness_shell_role(candidate));
+
+    {
+        let conn = writes::open_rw().map_err(AppError::Operation)?;
+        let updated = writes::retarget_instance_runtime_context(
+            &conn,
+            &existing.id,
+            project_dir,
+            scope.as_deref(),
+        )
+        .map_err(AppError::Operation)?;
+        if !updated {
+            return Err(AppError::NotFound(format!(
+                "instance {} disappeared before respawn",
+                existing.id
+            )));
+        }
+    }
+
+    let request = SpawnPtyRequest {
+        v: PROTOCOL_VERSION,
+        cwd: project_dir.to_owned(),
+        harness: harness.clone(),
+        role: role.clone(),
+        scope,
+        label: existing.label.clone(),
+        name: None,
+        instance_id: Some(existing.id.clone()),
+        cols: None,
+        rows: None,
+    };
+    let response = daemon::spawn_pty(&request)
+        .await
+        .map_err(AppError::Operation)?;
+    pty_manager
+        .upsert_session(&app_handle, response.pty.clone())
+        .map_err(AppError::Internal)?;
+
+    binder
+        .bind_immediate(&existing.id, &response.pty.id)
+        .map_err(AppError::Internal)?;
+
+    let _ = app_handle.emit(
+        BIND_RESOLVED,
+        serde_json::json!({
+            "instance_id": existing.id,
+            "pty_id": response.pty.id,
+        }),
+    );
+
+    Ok(RespawnResult {
+        pty_id: response.pty.id,
+        token: None,
+        instance_id: existing.id,
+        harness: Some(harness),
+        role,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -606,6 +727,9 @@ mod tests {
         };
         assert!(config.is_known("planner"));
         assert!(config.is_known("implementer"));
+        assert!(config.is_known("operator"));
+        assert!(config.is_known("designer"));
+        assert!(config.is_known("qa"));
         assert!(!config.is_known("nonsense"));
     }
 

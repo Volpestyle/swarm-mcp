@@ -9,8 +9,8 @@
 //
 // Default resolution order:
 //   1. Explicit `persona:<emoji>` token in the instance label
-//   2. Role-based default from DEFAULT_PERSONAS_BY_ROLE (planner -> owl, etc.)
-//   3. Final fallback: robot
+//   2. Role-based default from DEFAULT_PERSONAS_BY_ROLE (planner → 🦉, …)
+//   3. Final fallback: 🤖
 //
 // Setter writes the new token by:
 //   1. Splitting the existing label on whitespace
@@ -21,6 +21,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { Instance } from './types';
+import { mergeAgentLabelToken } from './agentIdentity';
 
 /**
  * Full list of pickable emojis shown in the persona picker. 24 entries,
@@ -55,7 +56,7 @@ export const PERSONA_POOL: ReadonlyArray<{ emoji: string; name: string }> = [
 ];
 
 /**
- * Role -> default emoji. Matched against the lowercased role string with
+ * Role → default emoji. Matched against the lowercased role string with
  * `includes()` semantics so "implementer", "implement", "shell-only" all
  * route correctly. Order matters for overlapping substrings — more specific
  * checks come first.
@@ -132,7 +133,7 @@ export function personaForInstance(
 /**
  * Resolve the persona for a chat sender. `senderId` may be an instance id
  * (matched against the `instancesById` map), an `operator:<scope>` synthetic
- * sender, `system`, or an unknown string.
+ * sender, `system`, or an unknown string (falls back to 🤖).
  */
 export function personaForSender(
   senderId: string | null | undefined,
@@ -155,11 +156,7 @@ export function rewriteLabelWithPersona(
   existingLabel: string | null | undefined,
   emoji: string,
 ): string {
-  const tokens = (existingLabel ?? '')
-    .split(/\s+/)
-    .filter((t) => t.length > 0 && !t.startsWith('persona:'));
-  tokens.push(`persona:${emoji}`);
-  return tokens.join(' ');
+  return mergeAgentLabelToken(existingLabel, 'persona', emoji);
 }
 
 /**

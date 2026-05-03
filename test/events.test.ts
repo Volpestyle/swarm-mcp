@@ -119,6 +119,36 @@ describe("events: messages", () => {
     const payload = JSON.parse(broadcasts[0].payload!);
     expect(payload.recipients).toBe(2);
   });
+
+  test("poll emits agent.polled with unread count", () => {
+    const a = reg("alice");
+    const b = reg("bob");
+    messages.send(a.id, SCOPE, b.id, "hello");
+    db.exec("DELETE FROM events");
+
+    const rows = messages.poll(b.id, SCOPE, 50);
+
+    expect(rows).toHaveLength(1);
+    const polled = listEvents().filter((e) => e.type === "agent.polled");
+    expect(polled).toHaveLength(1);
+    expect(polled[0].actor).toBe(b.id);
+    expect(polled[0].subject).toBe(b.id);
+    const payload = JSON.parse(polled[0].payload!);
+    expect(payload.unread_count).toBe(1);
+  });
+
+  test("empty poll still emits agent.polled so the UI can see listeners", () => {
+    const b = reg("bob");
+    db.exec("DELETE FROM events");
+
+    const rows = messages.poll(b.id, SCOPE, 50);
+
+    expect(rows).toHaveLength(0);
+    const polled = listEvents().filter((e) => e.type === "agent.polled");
+    expect(polled).toHaveLength(1);
+    const payload = JSON.parse(polled[0].payload!);
+    expect(payload.unread_count).toBe(0);
+  });
 });
 
 describe("events: kv", () => {

@@ -3,14 +3,18 @@ use swarm_ui::{
     swarm::start_swarm_watcher, writes,
 };
 use tauri::{Listener, Manager};
-#[cfg(target_os = "macos")]
-use window_vibrancy::{NSVisualEffectMaterial, NSVisualEffectState, apply_vibrancy};
+// window_vibrancy is intentionally not imported at startup. Vibrancy is now
+// theme-controlled and applied at runtime by Liquid Glass themes via a
+// ui_set_window_vibrancy command (see src/lib.rs / ui_appearance.rs). Keeping
+// it out of `setup` lets Tron Encom OS at slider transparency=100% composite
+// straight to the desktop instead of onto a dark HudWindow backdrop.
 
 fn main() {
     tauri::Builder::default()
         .manage(PtyManager::new())
         .manage(Binder::new())
         .manage(LaunchConfig::load())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             swarm_ui::swarm::get_swarm_state,
             swarm_ui::pty::pty_write,
@@ -22,12 +26,17 @@ fn main() {
             swarm_ui::pty::get_pty_sessions,
             swarm_ui::launch::spawn_shell,
             swarm_ui::launch::respawn_instance,
+            swarm_ui::launch::respawn_instance_in_project,
             swarm_ui::launch::get_role_presets,
+            swarm_ui::provenance::ui_build_provenance,
             swarm_ui::mobile_access::mobile_access_fetch_devices,
             swarm_ui::mobile_access::mobile_access_create_pairing_session,
             swarm_ui::mobile_access::mobile_access_cancel_pairing_session,
             swarm_ui::mobile_access::mobile_access_revoke_device,
             swarm_ui::bind::get_binding_state,
+            swarm_ui::ui_commands::ui_preflight_launch_command,
+            swarm_ui::ui_commands::ui_write_codex_launch_script,
+            swarm_ui::ui_commands::ui_resolve_swarm_mcp_server,
             swarm_ui::ui_commands::ui_set_instance_label,
             swarm_ui::ui_commands::ui_clear_messages,
             swarm_ui::ui_commands::ui_unassign_task,
@@ -37,24 +46,49 @@ fn main() {
             swarm_ui::ui_commands::ui_deregister_offline_instances,
             swarm_ui::ui_commands::ui_sweep_unadopted_orphans,
             swarm_ui::ui_commands::ui_set_layout,
+            swarm_ui::ui_commands::ui_export_layout,
+            swarm_ui::ui_commands::ui_capture_screenshot,
+            swarm_ui::ui_commands::ui_write_proof_pack,
+            swarm_ui::ui_commands::ui_launch_chrome,
+            swarm_ui::ui_commands::ui_list_browser_catalog,
+            swarm_ui::ui_commands::ui_refresh_browser_catalog,
+            swarm_ui::ui_commands::ui_refresh_browser_context,
+            swarm_ui::ui_commands::ui_capture_browser_snapshot,
+            swarm_ui::ui_commands::ui_open_browser_context,
+            swarm_ui::ui_commands::ui_import_front_chrome_tab,
+            swarm_ui::ui_commands::ui_close_browser_context,
+            swarm_ui::ui_commands::ui_list_projects,
+            swarm_ui::ui_commands::ui_default_project_root,
+            swarm_ui::ui_commands::ui_ensure_project_folder,
+            swarm_ui::ui_commands::ui_save_project,
+            swarm_ui::ui_commands::ui_delete_project,
+            swarm_ui::ui_commands::ui_attach_instance_to_project,
+            swarm_ui::ui_commands::ui_detach_instance_from_project,
+            swarm_ui::ui_commands::ui_list_project_assets,
+            swarm_ui::ui_commands::ui_save_project_asset,
+            swarm_ui::ui_commands::ui_analyze_project_asset,
+            swarm_ui::ui_commands::ui_get_asset_analyzer_settings,
+            swarm_ui::ui_commands::ui_save_asset_analyzer_settings,
+            swarm_ui::ui_commands::ui_read_asset_text_file,
+            swarm_ui::ui_commands::ui_refresh_project_assets,
+            swarm_ui::ui_commands::ui_delete_project_asset,
+            swarm_ui::ui_commands::ui_attach_asset,
+            swarm_ui::ui_commands::ui_detach_asset,
             swarm_ui::ui_commands::ui_exit_app,
             swarm_ui::ui_commands::ui_broadcast_message,
+            swarm_ui::ui_commands::ui_send_message,
             swarm_ui::ui_commands::ui_send_sigint_scope,
             swarm_ui::ui_commands::ui_kill_instance,
             swarm_ui::system_load::ui_scan_system_load,
             swarm_ui::system_load::ui_kill_session_tree,
             swarm_ui::system_load::ui_kill_all_agent_sessions,
+            swarm_ui::ui_appearance::ui_set_window_vibrancy,
         ])
         .setup(|app| {
-            #[cfg(target_os = "macos")]
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = apply_vibrancy(
-                    &window,
-                    NSVisualEffectMaterial::HudWindow,
-                    Some(NSVisualEffectState::Active),
-                    None,
-                );
-            }
+            // Vibrancy is theme-controlled — Liquid Glass themes apply HudWindow
+            // vibrancy at runtime; everything else (including Tron Encom OS)
+            // gets a genuinely transparent window so the slider's see-through
+            // end actually composites onto the desktop.
 
             if let Err(err) = swarm_ui::daemon::ensure_running() {
                 eprintln!("[daemon] {err}");

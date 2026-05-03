@@ -23,11 +23,13 @@
   import { messages, instances, activeScope } from '../stores/swarm';
   import {
     broadcastOperatorMessage,
+    sendOperatorMessage,
     sendScopeSigint,
   } from '../stores/pty';
   import { formatTimestamp } from '../lib/time';
   import { isSystemMessage } from '../lib/messages';
   import { personaForSender } from '../lib/persona';
+  import { formatConversationMarkdown } from '../lib/conversationExport';
   import type { Message, Instance } from '../lib/types';
 
   let draft = '';
@@ -35,8 +37,18 @@
   let stopping = false;
   let error: string | null = null;
   let hideSystemMessages = false;
+  let expanded = false;
+  let copyState = '';
+  let selectedRecipient = 'all';
   let feedEl: HTMLDivElement | null = null;
-  let previousMessageCount = 0;
+  let previousItemCount = 0;
+
+  type ConversationItem = {
+    key: string;
+    primary: Message;
+    messages: Message[];
+    recipients: string[];
+  };
 
   // Stable lookup: instance id -> short display label so the transcript reads
   // as "planner-a → implementer-b" instead of two uuid fragments. Derived
@@ -52,6 +64,58 @@
     return id.slice(0, 8);
   }
 
+  function groupConversationItems(source: Message[]): ConversationItem[] {
+    const items: ConversationItem[] = [];
+    const buckets = new Map<string, Message[]>();
+    const order: string[] = [];
+
+    for (const msg of source) {
+      const groupKey = msg.recipient
+        ? `${msg.scope}\n${msg.sender}\n${msg.created_at}\n${msg.content}`
+        : `message:${msg.id}`;
+      if (!buckets.has(groupKey)) {
+        buckets.set(groupKey, []);
+        order.push(groupKey);
+      }
+      buckets.get(groupKey)?.push(msg);
+    }
+
+    for (const groupKey of order) {
+      const messages = buckets.get(groupKey) ?? [];
+      const recipients = Array.from(
+        new Set(messages.map((msg) => msg.recipient).filter(Boolean) as string[]),
+      );
+      const shouldGroup = !groupKey.startsWith('message:') && messages.length > 1 && recipients.length > 1;
+
+      if (!shouldGroup) {
+        for (const msg of messages) {
+          items.push({
+            key: `message:${msg.id}`,
+            primary: msg,
+            messages: [msg],
+            recipients: msg.recipient ? [msg.recipient] : [],
+          });
+        }
+        continue;
+      }
+
+      items.push({
+        key: `broadcast:${groupKey}`,
+        primary: messages[0],
+        messages,
+        recipients,
+      });
+    }
+
+    return items;
+  }
+
+  function recipientSummary(item: ConversationItem, instMap: Map<string, Instance>): string {
+    if (item.messages.length > 1) return `${item.recipients.length} agents`;
+    const recipient = item.primary.recipient;
+    return recipient ? labelFor(recipient, instMap) : 'all';
+  }
+
   // Store is newest-first; spread before reverse so the shared array isn't mutated.
   $: ascending = [...$messages].reverse();
 
@@ -59,18 +123,39 @@
     ? ascending.filter((m) => !isSystemMessage(m))
     : ascending;
 
+  $: visibleItems = groupConversationItems(visibleMessages);
+
+  $: recipientOptions = [...$instances.values()]
+    .slice()
+    .sort((a, b) => {
+      if (a.status !== b.status) {
+        if (a.status === 'online') return -1;
+        if (b.status === 'online') return 1;
+      }
+      return labelFor(a.id, $instances).localeCompare(labelFor(b.id, $instances));
+    });
+
+  $: if (
+    selectedRecipient !== 'all' &&
+    ($instances.get(selectedRecipient)?.status !== 'online' ||
+      $instances.get(selectedRecipient)?.adopted === false)
+  ) {
+    selectedRecipient = 'all';
+  }
+
   // System messages are useful for debugging but clutter the live feel, so we
   // offer a toggle. Counting always runs against the full list.
   $: systemMessageCount = ascending.filter(isSystemMessage).length;
 
   $: canSend = Boolean($activeScope) && draft.trim().length > 0 && !sending;
   $: canStop = Boolean($activeScope) && !stopping;
+  $: canCopy = visibleMessages.length > 0;
 
   // Auto-scroll to the bottom whenever the message list grows. Only scrolls
   // when new messages land — user-initiated scrolling up to review history
   // isn't fought by every incoming packet.
-  $: if (visibleMessages.length !== previousMessageCount) {
-    previousMessageCount = visibleMessages.length;
+  $: if (visibleItems.length !== previousItemCount) {
+    previousItemCount = visibleItems.length;
     scrollToBottom();
   }
 
@@ -87,14 +172,23 @@
     sending = true;
     error = null;
     try {
-      const recipients = await broadcastOperatorMessage(scope, text);
-      if (recipients === 0) {
-        error = 'No agents in this scope to broadcast to.';
+      if (selectedRecipient === 'all') {
+        const recipients = await broadcastOperatorMessage(scope, text);
+        if (recipients === 0) {
+          error = 'No agents in this channel to broadcast to.';
+        } else {
+          draft = '';
+        }
       } else {
-        draft = '';
+        const sent = await sendOperatorMessage(scope, selectedRecipient, text);
+        if (!sent) {
+          error = 'That agent is no longer registered in this channel.';
+        } else {
+          draft = '';
+        }
       }
     } catch (err) {
-      console.error('[ConversationPanel] broadcast failed:', err);
+      console.error('[ConversationPanel] send failed:', err);
       error = err instanceof Error ? err.message : String(err);
     } finally {
       sending = false;
@@ -120,6 +214,27 @@
     }
   }
 
+  async function handleCopyConversation() {
+    if (!canCopy) return;
+    error = null;
+    copyState = '';
+    try {
+      const markdown = formatConversationMarkdown({
+        scope: $activeScope,
+        messages: visibleMessages,
+        instances: $instances,
+      });
+      await navigator.clipboard.writeText(markdown);
+      copyState = 'Copied';
+      window.setTimeout(() => {
+        copyState = '';
+      }, 1600);
+    } catch (err) {
+      console.error('[ConversationPanel] copy failed:', err);
+      error = err instanceof Error ? err.message : 'Failed to copy conversation.';
+    }
+  }
+
   function handleKeydown(event: KeyboardEvent) {
     // Cmd/Ctrl+Enter sends, plain Enter inserts a newline. Matches the rest
     // of the app's input conventions (Inspector notes, etc.).
@@ -129,17 +244,25 @@
     }
   }
 
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (!expanded || event.key !== 'Escape') return;
+    event.preventDefault();
+    expanded = false;
+  }
+
   onMount(() => {
-    previousMessageCount = visibleMessages.length;
+    previousItemCount = visibleItems.length;
     void scrollToBottom();
   });
 </script>
 
-<div class="conversation-panel">
+<svelte:window on:keydown={handleWindowKeydown} />
+
+<div class="conversation-panel" class:expanded>
   <header class="conv-header">
     <div class="conv-title">
       <span class="conv-label">Conversation</span>
-      <span class="conv-scope">{$activeScope ?? 'no scope'}</span>
+      <span class="conv-scope">{$activeScope ?? 'no channel'}</span>
     </div>
     <div class="conv-header-actions">
       {#if systemMessageCount > 0}
@@ -155,10 +278,28 @@
       {/if}
       <button
         type="button"
+        class="filter-btn"
+        disabled={!canCopy}
+        on:click={handleCopyConversation}
+        title="Copy visible conversation as Markdown"
+      >
+        {copyState || 'Copy convo'}
+      </button>
+      <button
+        type="button"
+        class="filter-btn"
+        class:active={expanded}
+        on:click={() => (expanded = !expanded)}
+        title={expanded ? 'Collapse conversation panel' : 'Expand conversation panel full screen'}
+      >
+        {expanded ? 'Collapse' : 'Full screen'}
+      </button>
+      <button
+        type="button"
         class="stop-btn"
         disabled={!canStop}
         on:click={handleStop}
-        title="Send Ctrl-C to every agent in this scope"
+        title="Send Ctrl-C to every agent in this channel"
       >
         {stopping ? 'Stopping…' : 'Stop all'}
       </button>
@@ -166,19 +307,21 @@
   </header>
 
   <div class="feed" bind:this={feedEl} role="log" aria-live="polite">
-    {#if visibleMessages.length === 0}
+    {#if visibleItems.length === 0}
       <div class="empty">
         {#if !$activeScope}
-          Pick a scope to see messages.
+          Pick a channel to see messages.
         {:else}
           No messages yet in <code>{$activeScope}</code>. Type below to broadcast.
         {/if}
       </div>
     {:else}
-      {#each visibleMessages as msg (msg.id)}
+      {#each visibleItems as item (item.key)}
+        {@const msg = item.primary}
         {@const isOperator = msg.sender.startsWith('operator:')}
         {@const isSystem = isSystemMessage(msg)}
         {@const senderEmoji = personaForSender(msg.sender, $instances)}
+        {@const isGrouped = item.messages.length > 1}
         <div class="msg" class:operator={isOperator} class:system={isSystem}>
           <span
             class="msg-avatar"
@@ -192,11 +335,26 @@
               <span class="msg-sender">{labelFor(msg.sender, $instances)}</span>
               <span class="msg-arrow">→</span>
               <span class="msg-recipient">
-                {msg.recipient ? labelFor(msg.recipient, $instances) : 'all'}
+                {recipientSummary(item, $instances)}
               </span>
               <span class="msg-time">{formatTimestamp(msg.created_at)}</span>
             </div>
             <div class="msg-content">{msg.content}</div>
+            {#if isGrouped}
+              <details class="recipient-details">
+                <summary>Sent to {item.recipients.length} recipients</summary>
+                <div class="recipient-list">
+                  {#each item.messages as groupedMsg (groupedMsg.id)}
+                    <span class="recipient-chip" class:unread={!groupedMsg.read}>
+                      {groupedMsg.recipient
+                        ? labelFor(groupedMsg.recipient, $instances)
+                        : 'all'}
+                      {groupedMsg.read ? '' : ' · unread'}
+                    </span>
+                  {/each}
+                </div>
+              </details>
+            {/if}
           </div>
         </div>
       {/each}
@@ -208,24 +366,49 @@
   {/if}
 
   <div class="composer">
+    <div class="recipient-row">
+      <label for="conversation-recipient">To</label>
+      <select
+        id="conversation-recipient"
+        bind:value={selectedRecipient}
+        disabled={!$activeScope || sending}
+      >
+        <option value="all">All agents in channel</option>
+        {#each recipientOptions as instance (instance.id)}
+          <option
+            value={instance.id}
+            disabled={instance.status !== 'online' || !instance.adopted}
+          >
+            {labelFor(instance.id, $instances)} · {instance.status}
+            {instance.status === 'online' && instance.adopted ? '' : ' · not listening'}
+          </option>
+        {/each}
+      </select>
+    </div>
     <textarea
       bind:value={draft}
       on:keydown={handleKeydown}
       placeholder={$activeScope
-        ? 'Broadcast to every agent in scope… (⌘↵ to send)'
-        : 'No active scope'}
+        ? selectedRecipient === 'all'
+          ? 'Broadcast to every agent in channel… (⌘↵ to send)'
+          : `Send directly to ${labelFor(selectedRecipient, $instances)}… (⌘↵ to send)`
+        : 'No active channel'}
       disabled={!$activeScope || sending}
       rows="3"
     ></textarea>
     <div class="composer-actions">
-      <span class="hint">⌘↵ sends to all agents in {$activeScope ?? 'scope'}</span>
+      <span class="hint">
+        ⌘↵ sends to {selectedRecipient === 'all'
+          ? `all agents in ${$activeScope ?? 'channel'}`
+          : labelFor(selectedRecipient, $instances)}
+      </span>
       <button
         type="button"
         class="send-btn"
         disabled={!canSend}
         on:click={handleSend}
       >
-        {sending ? 'Sending…' : 'Broadcast'}
+        {sending ? 'Sending…' : selectedRecipient === 'all' ? 'Broadcast' : 'Send direct'}
       </button>
     </div>
   </div>
@@ -240,6 +423,24 @@
     min-height: 0;
     background: transparent;
     overflow: hidden;
+  }
+
+  .conversation-panel.expanded {
+    position: fixed;
+    inset: 18px;
+    z-index: 1200;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    border: 1px solid var(--node-border, rgba(255, 255, 255, 0.18));
+    border-radius: 14px;
+    background:
+      radial-gradient(circle at 72% 12%, rgba(122, 162, 247, 0.13), transparent 36%),
+      rgba(12, 13, 22, 0.96);
+    box-shadow:
+      0 24px 80px rgba(0, 0, 0, 0.5),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+    backdrop-filter: blur(18px);
   }
 
   .conv-header,
@@ -324,6 +525,7 @@
   }
 
   .stop-btn:disabled,
+  .filter-btn:disabled,
   .send-btn:disabled,
   .composer textarea:disabled {
     opacity: 0.45;
@@ -631,6 +833,47 @@
     word-break: break-word;
   }
 
+  .conversation-panel.expanded .msg-content {
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .recipient-details {
+    margin-top: 5px;
+  }
+
+  .recipient-details summary {
+    cursor: pointer;
+    color: var(--text-secondary, #a9b1d6);
+    font-size: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  .recipient-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 6px;
+  }
+
+  .recipient-chip {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(122, 162, 247, 0.25);
+    border-radius: 999px;
+    padding: 2px 7px;
+    background: rgba(122, 162, 247, 0.07);
+    color: var(--text-secondary, #a9b1d6);
+    font-size: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  .recipient-chip.unread {
+    border-color: rgba(224, 175, 104, 0.42);
+    background: rgba(224, 175, 104, 0.09);
+    color: #e0af68;
+  }
+
   .error {
     margin: 0 14px 8px;
     padding: 6px 10px;
@@ -648,6 +891,36 @@
     flex-direction: column;
     gap: 6px;
     flex-shrink: 0;
+  }
+
+  .recipient-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .recipient-row label {
+    color: var(--text-secondary, #a9b1d6);
+    font-size: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .recipient-row select {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid var(--node-border, rgba(255, 255, 255, 0.12));
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--text-primary, #c0caf5);
+    font: inherit;
+    font-size: 11px;
+    padding: 5px 8px;
+  }
+
+  .recipient-row select:disabled {
+    opacity: 0.45;
   }
 
   .composer textarea {

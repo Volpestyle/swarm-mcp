@@ -249,8 +249,8 @@
 
         <div class="shell-actions">
           <div class="scope-chip">
-            <span>Scope</span>
-            <code>{$activeScope ?? 'all scopes'}</code>
+            <span>Channel</span>
+            <code>{$activeScope ?? 'all channels'}</code>
           </div>
           <div class="scope-chip">
             <span>Refresh</span>
@@ -441,7 +441,7 @@
                       <div class="scan-row-meta">
                         <span>{row.provider ?? 'unknown'} / {row.harness ?? 'unknown'}</span>
                         <span>{row.model ?? 'model N/A'}</span>
-                        <span>{row.scope ?? 'scope N/A'}</span>
+                        <span>{row.scope ?? 'channel N/A'}</span>
                         <span>{row.tty ?? row.pty_id ?? 'tty / pty N/A'}</span>
                       </div>
 

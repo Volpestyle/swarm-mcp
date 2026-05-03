@@ -1,10 +1,12 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import type {
-    RecoveryScopeSummary,
-    RecoverySessionItem,
-    RolePresetSummary,
+  import { open as openDialog } from '@tauri-apps/plugin-dialog';
+	  import type {
+	    ProjectSpace,
+	    RecoveryScopeSummary,
+	    RecoverySessionItem,
+	    RolePresetSummary,
     ThemeProfile,
     ThemeProfileId,
   } from '../lib/types';
@@ -18,13 +20,40 @@
     startupPreferences,
   } from '../stores/startup';
   import { agentProfiles } from '../stores/agentProfiles';
-  import { setScopeSelection } from '../stores/swarm';
-  import { deregisterOfflineInstances, killInstance, getRolePresets, respawnInstance } from '../stores/pty';
+  import { activeScope, setScopeSelection } from '../stores/swarm';
+  import {
+    clearStalePtySession,
+    killInstance,
+    getRolePresets,
+    respawnInstance,
+  } from '../stores/pty';
   import { confirm } from '../lib/confirm';
+  import {
+    STANDARD_AGENT_ROLE_PRESETS,
+    rolePresetForRole,
+  } from '../lib/agentRolePresets';
+  import {
+    MAY_FIRST_ARCHIVED_PHASES,
+    MAY_FIRST_MVP_SLICES,
+    MAY_FIRST_NORTH_STAR_STEPS,
+    MAY_FIRST_OVERHAUL_STAGES,
+    MAY_FIRST_OVERHAUL_SUMMARY,
+  } from '../lib/mayFirstOverhaulPlan';
   import { harnessAliases, HARNESS_NAMES } from '../stores/harnessAliases';
+	  import { launchProfiles } from '../stores/launchProfiles';
+	  import {
+	    DEFAULT_PROJECT_COLOR,
+	    ensureProjectFolder,
+	    loadProjects,
+	    projects,
+	    saveProject,
+	  } from '../stores/projects';
+  import darkFolderUrl from '../assets/dark-folder.png';
   import frazierCodeTronUrl from '../assets/fraziercode-tron-2.jpg';
 
-  type HomeSection = 'start' | 'sessions' | 'agents' | 'diagnostics' | 'dictionary' | 'about' | 'settings';
+  type HomeSection = 'start' | 'launch' | 'projects' | 'sessions' | 'agents' | 'diagnostics' | 'dictionary' | 'about' | 'settings';
+  type ResourceLaneId = 'projects' | 'notes' | 'media' | 'plans' | 'markdown' | 'skills' | 'browser';
+  type ProjectCreateMode = 'choose' | 'scratch' | 'existing';
 
   type HomeNavItem = {
     id: HomeSection;
@@ -33,19 +62,71 @@
     icon: string;
   };
 
+  type ResourceLane = {
+    id: ResourceLaneId;
+    label: string;
+    detail: string;
+    icon: string;
+    enabled: boolean;
+  };
+
   type ScopeEntry = {
     scope: RecoveryScopeSummary;
     items: RecoverySessionItem[];
     hasLayout: boolean;
   };
 
-  const dispatch = createEventDispatcher<{
-    enterCanvas: void;
-    openSettings: void;
-  }>();
+  type BrowserContext = {
+    id: string;
+    scope: string;
+    endpoint: string;
+    profileDir: string;
+    pid?: number | null;
+    startUrl: string;
+    status: string;
+    ownerInstanceId?: string | null;
+    createdAt: number;
+    updatedAt: number;
+  };
+
+  type BrowserTab = {
+    contextId: string;
+    tabId: string;
+    tabType: string;
+    url: string;
+    title: string;
+    active: boolean;
+    updatedAt: number;
+  };
+
+  type BrowserSnapshot = {
+    id: string;
+    contextId: string;
+    tabId: string;
+    url: string;
+    title: string;
+    text: string;
+    screenshotPath?: string | null;
+    createdBy?: string | null;
+    createdAt: number;
+  };
+
+  type BrowserCatalog = {
+    contexts: BrowserContext[];
+    tabs: BrowserTab[];
+    snapshots: BrowserSnapshot[];
+  };
+
+	  const dispatch = createEventDispatcher<{
+	    enterCanvas: void;
+	    openSettings: void;
+	    openProject: { project: ProjectSpace };
+	    openFrazierCode: void;
+	  }>();
 
   const navItems: HomeNavItem[] = [
-    { id: 'start', label: 'Start', meta: 'Blank canvas and shared defaults', icon: '◇' },
+    { id: 'start', label: 'Start', meta: 'Open the all-channel desktop', icon: '◇' },
+    { id: 'launch', label: 'Launch', meta: 'Previous start setup, channel, and launch defaults', icon: '◒' },
     { id: 'sessions', label: 'Sessions & Layouts', meta: 'Reopen, recover, or clear past scopes', icon: '◈' },
     { id: 'agents', label: 'Agents', meta: 'Saved personas, context, mission, and permissions', icon: '◉' },
     { id: 'diagnostics', label: 'Diagnostics', meta: 'Cleanup actions and harness visibility', icon: '◎' },
@@ -54,31 +135,87 @@
     { id: 'settings', label: 'Settings', meta: 'Theme, startup, and recovery controls', icon: '◌' },
   ];
 
-  function navAccent(section: HomeSection): string {
-    switch (section) {
-      case 'start':
-        return '#00ffb2';
-      case 'sessions':
-        return '#d8dde6';
-      case 'agents':
-        return '#b86bff';
-      case 'diagnostics':
-        return '#ffa94d';
-      case 'dictionary':
-        return '#ffffff';
-      case 'about':
-        return '#ffc16b';
-      case 'settings':
-        return '#8a94a0';
-    }
-  }
+  const resourceLanes: ResourceLane[] = [
+    {
+      id: 'projects',
+      label: 'Projects',
+      detail: 'Roots, notes, files, and attached agents.',
+      icon: 'P',
+      enabled: true,
+    },
+    {
+      id: 'notes',
+      label: 'Notes',
+      detail: 'Persistent project notes and handoff context.',
+      icon: 'N',
+      enabled: true,
+    },
+    {
+      id: 'media',
+      label: 'Media',
+      detail: 'Images and assets linked to project work.',
+      icon: 'M',
+      enabled: true,
+    },
+    {
+      id: 'plans',
+      label: 'Plan Docs',
+      detail: 'Specs, runbooks, and phase plans.',
+      icon: 'D',
+      enabled: true,
+    },
+    {
+      id: 'markdown',
+      label: '.md Files',
+      detail: 'Markdown files agents can inspect by path.',
+      icon: '#',
+      enabled: true,
+    },
+    {
+      id: 'skills',
+      label: '/skills',
+      detail: 'Skill folders need a safer management pass.',
+      icon: 'S',
+      enabled: false,
+    },
+    {
+      id: 'browser',
+      label: 'Browser',
+      detail: 'Managed Chrome contexts agents can read and control.',
+      icon: 'B',
+      enabled: true,
+    },
+  ];
+
+  // Encom doctrine: chrome is monochrome white LED. Accent colors are reserved
+  // for status, imagery, and the single warm Start action.
 
   let activeSection: HomeSection = 'start';
+  let resourceLibraryExpanded = false;
+  let activeResource: ResourceLaneId = 'projects';
   let initializedSection = false;
   let rolePresets: RolePresetSummary[] = [];
   let startError: string | null = null;
-  let diagnosticsMessage: string | null = null;
-  let sweepingOrphans = false;
+	  let diagnosticsMessage: string | null = null;
+	  let projectError: string | null = null;
+	  let projectMutation = false;
+  let browserError: string | null = null;
+  let browserLoading = false;
+  let browserCatalogScope = '';
+  let browserContexts: BrowserContext[] = [];
+  let browserTabs: BrowserTab[] = [];
+  let browserSnapshots: BrowserSnapshot[] = [];
+  let selectedBrowserContextId = '';
+  let selectedBrowserContext: BrowserContext | null = null;
+  let selectedBrowserTabs: BrowserTab[] = [];
+  let selectedBrowserSnapshots: BrowserSnapshot[] = [];
+  let browserUrlDraft = 'https://www.google.com';
+  let projectCreateModalOpen = false;
+  let projectCreateMode: ProjectCreateMode = 'choose';
+  let draftProjectName = '';
+  let draftProjectRoot = '';
+  let draftProjectNotes = '';
+	  let sweepingOrphans = false;
   let clearingScope: string | null = null;
   let clearingLayoutScope: string | null = null;
   let nukingEverything = false;
@@ -93,10 +230,12 @@
   };
 
   let selectedDirectory = '';
+  let defaultProjectRoot = '';
   let harness = '';
   let role = '';
   let startScopeOverride = '';
   let themeProfileId = '';
+  let selectedLaunchProfileId = '';
   let backgroundOpacity = 68;
   let effectiveBackgroundOpacity = 0.68;
   let currentTheme: ThemeProfile | undefined;
@@ -111,6 +250,9 @@
   $: harness = $startupPreferences.launchDefaults.harness;
   $: role = $startupPreferences.launchDefaults.role;
   $: themeProfileId = $startupPreferences.themeProfileId;
+  $: selectedLaunchProfileId = $startupPreferences.selectedLaunchProfileId;
+  $: selectedLaunchProfile =
+    $launchProfiles.find((profile) => profile.id === selectedLaunchProfileId) ?? null;
   $: currentTheme = builtInThemeProfiles.find((profile) => profile.id === themeProfileId);
   $: effectiveBackgroundOpacity =
     $startupPreferences.backgroundOpacityOverride ??
@@ -131,20 +273,43 @@
     adoptingCount: $recoverySessionItems.filter((item) => item.status === 'adopting').length,
   };
   $: startScopeDescription = buildStartScopeDescription(selectedDirectory, startScopeOverride);
+  $: activeResourceLane = resourceLanes.find((lane) => lane.id === activeResource) ?? {
+    id: 'projects',
+    label: 'Projects',
+    detail: 'Roots, notes, files, and attached agents.',
+    icon: 'P',
+    enabled: true,
+  };
+  $: browserScope = $activeScope || selectedDirectory || defaultProjectRoot || '';
+  $: if (browserContexts.length && !browserContexts.some((context) => context.id === selectedBrowserContextId)) {
+    selectedBrowserContextId = browserContexts[0].id;
+  }
+  $: if (!browserContexts.length && selectedBrowserContextId) {
+    selectedBrowserContextId = '';
+  }
+  $: selectedBrowserContext = browserContexts.find((context) => context.id === selectedBrowserContextId) ?? browserContexts[0] ?? null;
+  $: selectedBrowserTabs = selectedBrowserContext
+    ? browserTabs.filter((tab) => tab.contextId === selectedBrowserContext.id)
+    : [];
+  $: selectedBrowserSnapshots = selectedBrowserContext
+    ? browserSnapshots.filter((snapshot) => snapshot.contextId === selectedBrowserContext.id)
+    : [];
+  $: if (activeSection === 'projects' && activeResource === 'browser' && browserScope && browserCatalogScope !== browserScope && !browserLoading) {
+    void loadBrowserCatalog();
+  }
 
-  onMount(async () => {
-    startScopeOverride = '';
+	  onMount(async () => {
+	    startScopeOverride = '';
+	    void loadDefaultProjectRoot();
+	    void loadProjects().catch((err) => {
+	      console.warn('[StartupHome] failed to load project spaces:', err);
+	    });
 
-    try {
+	    try {
       rolePresets = await getRolePresets();
     } catch (err) {
       console.warn('[StartupHome] failed to load role presets:', err);
-      rolePresets = [
-        { role: 'planner' },
-        { role: 'implementer' },
-        { role: 'reviewer' },
-        { role: 'researcher' },
-      ];
+      rolePresets = STANDARD_AGENT_ROLE_PRESETS.map((preset) => ({ role: preset.role }));
     }
   });
 
@@ -193,19 +358,275 @@
     return label?.split(/\s+/).filter(Boolean) ?? [];
   }
 
-  function buildFreshScope(directory: string): string {
+	  function buildFreshScope(directory: string): string {
     const stamp = new Date()
       .toISOString()
       .replace(/[-:]/g, '')
       .replace(/\.\d{3}Z$/, 'Z');
     return `${directory}#fresh-${stamp.toLowerCase()}`;
+	  }
+
+	  function projectNameFromDirectory(directory: string): string {
+	    const trimmed = directory.trim().replace(/\/+$/, '');
+	    const parts = trimmed.split('/').filter(Boolean);
+	    const last = parts[parts.length - 1];
+	    return last || 'Untitled Project';
+	  }
+
+	  function projectIdFromName(name: string): string {
+	    const slug = name
+	      .trim()
+	      .toLowerCase()
+	      .replace(/[^a-z0-9]+/g, '-')
+	      .replace(/^-+|-+$/g, '')
+	      .slice(0, 36) || 'project';
+	    return `${slug}-${Date.now().toString(36)}`;
+	  }
+
+  function projectSlugFromName(name: string): string {
+    return name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 42) || 'untitled-project';
   }
 
-  function buildStartScopeDescription(directory: string, override: string): {
+  function suggestedProjectRoot(name: string): string {
+    const base = (defaultProjectRoot || selectedDirectory || '').trim().replace(/\/+$/, '');
+    const rootBase = base || '/Users/mathewfrazier/Desktop';
+    return `${rootBase}/${projectSlugFromName(name)}`;
+  }
+
+  function selectResourceLane(lane: ResourceLane): void {
+    activeResource = lane.id;
+    activeSection = 'projects';
+    projectError = null;
+    browserError = null;
+    if (lane.id === 'browser') {
+      void loadBrowserCatalog();
+      return;
+    }
+    projectError = lane.enabled
+      ? null
+      : `${lane.label} is parked for a later bridge. Project spaces stay the active lane for now.`;
+  }
+
+  function openWorkspaceKit(): void {
+    activeSection = 'projects';
+    resourceLibraryExpanded = false;
+  }
+
+  function selectProjectsLane(): void {
+    const projectsLane = resourceLanes.find((lane) => lane.id === 'projects');
+    if (projectsLane) {
+      selectResourceLane(projectsLane);
+    }
+  }
+
+  function applyBrowserCatalog(catalog: BrowserCatalog): void {
+    browserContexts = catalog.contexts ?? [];
+    browserTabs = catalog.tabs ?? [];
+    browserSnapshots = catalog.snapshots ?? [];
+  }
+
+  async function loadBrowserCatalog(): Promise<void> {
+    if (!browserScope) {
+      browserError = 'Pick a channel or starting location first.';
+      return;
+    }
+
+    browserCatalogScope = browserScope;
+    browserLoading = true;
+    browserError = null;
+    try {
+      applyBrowserCatalog(await invoke<BrowserCatalog>('ui_list_browser_catalog', { scope: browserScope }));
+    } catch (err) {
+      browserError = err instanceof Error ? err.message : String(err);
+    } finally {
+      browserLoading = false;
+    }
+  }
+
+  async function refreshBrowserCatalog(): Promise<void> {
+    if (!browserScope) {
+      browserError = 'Pick a channel or starting location first.';
+      return;
+    }
+
+    browserCatalogScope = browserScope;
+    browserLoading = true;
+    browserError = null;
+    try {
+      applyBrowserCatalog(await invoke<BrowserCatalog>('ui_refresh_browser_catalog', { scope: browserScope }));
+    } catch (err) {
+      browserError = err instanceof Error ? err.message : String(err);
+    } finally {
+      browserLoading = false;
+    }
+  }
+
+  async function openManagedBrowserContext(): Promise<void> {
+    if (!browserScope) {
+      browserError = 'Pick a channel or starting location first.';
+      return;
+    }
+
+    const url = browserUrlDraft.trim() || 'about:blank';
+    browserLoading = true;
+    browserError = null;
+    try {
+      applyBrowserCatalog(await invoke<BrowserCatalog>('ui_open_browser_context', {
+        scope: browserScope,
+        url,
+      }));
+    } catch (err) {
+      browserError = err instanceof Error ? err.message : String(err);
+    } finally {
+      browserLoading = false;
+    }
+  }
+
+  async function importFrontChromeTab(): Promise<void> {
+    if (!browserScope) {
+      browserError = 'Pick a channel or starting location first.';
+      return;
+    }
+
+    browserLoading = true;
+    browserError = null;
+    try {
+      applyBrowserCatalog(await invoke<BrowserCatalog>('ui_import_front_chrome_tab', { scope: browserScope }));
+    } catch (err) {
+      browserError = err instanceof Error ? err.message : String(err);
+    } finally {
+      browserLoading = false;
+    }
+  }
+
+  async function closeManagedBrowserContext(): Promise<void> {
+    if (!browserScope || !selectedBrowserContext) {
+      browserError = 'Select a browser context first.';
+      return;
+    }
+
+    browserLoading = true;
+    browserError = null;
+    try {
+      applyBrowserCatalog(await invoke<BrowserCatalog>('ui_close_browser_context', {
+        scope: browserScope,
+        contextId: selectedBrowserContext.id,
+      }));
+    } catch (err) {
+      browserError = err instanceof Error ? err.message : String(err);
+    } finally {
+      browserLoading = false;
+    }
+  }
+
+  async function captureBrowserSnapshot(): Promise<void> {
+    if (!browserScope || !selectedBrowserContext) {
+      browserError = 'Select a browser context first.';
+      return;
+    }
+
+    const activeTab = selectedBrowserTabs.find((tab) => tab.active) ?? selectedBrowserTabs[0] ?? null;
+    browserLoading = true;
+    browserError = null;
+    try {
+      applyBrowserCatalog(await invoke<BrowserCatalog>('ui_capture_browser_snapshot', {
+        scope: browserScope,
+        contextId: selectedBrowserContext.id,
+        tabId: activeTab?.tabId,
+      }));
+    } catch (err) {
+      browserError = err instanceof Error ? err.message : String(err);
+    } finally {
+      browserLoading = false;
+    }
+  }
+
+  function selectBrowserContext(contextId: string): void {
+    selectedBrowserContextId = contextId;
+  }
+
+  function browserTitle(context: BrowserContext): string {
+    const activeTab = browserTabs.find((tab) => tab.contextId === context.id && tab.active);
+    return activeTab?.title || activeTab?.url || context.startUrl || context.id;
+  }
+
+  function browserSubline(context: BrowserContext): string {
+    const tabCount = browserTabs.filter((tab) => tab.contextId === context.id).length;
+    const snapshotCount = browserSnapshots.filter((snapshot) => snapshot.contextId === context.id).length;
+    return `${tabCount} tab${tabCount === 1 ? '' : 's'} / ${snapshotCount} snapshot${snapshotCount === 1 ? '' : 's'}`;
+  }
+
+  function openProjectCreateModal(mode: ProjectCreateMode = 'choose'): void {
+    projectCreateModalOpen = true;
+    projectCreateMode = mode;
+    projectError = null;
+    if (mode === 'scratch') {
+      const name = projectNameFromDirectory(selectedDirectory || defaultProjectRoot || 'New Project');
+      draftProjectName = name === 'Desktop' ? 'New Project' : name;
+      draftProjectRoot = suggestedProjectRoot(draftProjectName);
+      draftProjectNotes = '';
+    } else if (mode === 'existing') {
+      draftProjectRoot = selectedDirectory.trim() || defaultProjectRoot;
+      draftProjectName = projectNameFromDirectory(draftProjectRoot);
+      draftProjectNotes = '';
+    }
+  }
+
+  function closeProjectCreateModal(): void {
+    projectCreateModalOpen = false;
+    projectCreateMode = 'choose';
+  }
+
+  function handleDraftProjectNameInput(event: Event): void {
+    const target = event.currentTarget as HTMLInputElement;
+    draftProjectName = target.value;
+    if (projectCreateMode === 'scratch') {
+      draftProjectRoot = suggestedProjectRoot(target.value);
+    }
+  }
+
+  function handleDraftProjectRootInput(event: Event): void {
+    const target = event.currentTarget as HTMLInputElement;
+    draftProjectRoot = target.value;
+    if (!draftProjectName.trim()) {
+      draftProjectName = projectNameFromDirectory(target.value);
+    }
+  }
+
+	  async function submitProjectCreateModal(): Promise<void> {
+    const project = await createOrOpenProject(draftProjectRoot, {
+      name: draftProjectName,
+      notes: draftProjectNotes,
+      ensureFolder: projectCreateMode === 'scratch',
+    });
+    if (project) {
+      closeProjectCreateModal();
+    }
+  }
+
+	  async function loadDefaultProjectRoot(): Promise<void> {
+	    try {
+	      const root = await invoke<string>('ui_default_project_root');
+	      defaultProjectRoot = root;
+	      if (!selectedDirectory.trim()) {
+	        startupPreferences.setSelectedDirectory(root);
+	      }
+	    } catch (err) {
+	      console.warn('[StartupHome] failed to resolve default project root:', err);
+	      defaultProjectRoot = selectedDirectory.trim();
+	    }
+	  }
+
+  function buildStartScopeDescription(directory: string | null | undefined, override: string | null | undefined): {
     title: string;
     subtitle: string;
   } {
-    const explicitScope = override.trim();
+    const explicitScope = (override ?? '').trim();
     if (explicitScope) {
       return {
         title: `Open ${formatScopeLabel(explicitScope, 2)}`,
@@ -213,7 +634,7 @@
       };
     }
 
-    const trimmedDirectory = directory.trim();
+    const trimmedDirectory = (directory ?? '').trim();
     if (!trimmedDirectory) {
       return {
         title: 'Pick a starting location',
@@ -251,6 +672,18 @@
     startupPreferences.setLaunchDefaults({ role: target.value });
   }
 
+  function handleLaunchProfileChange(event: Event): void {
+    const target = event.currentTarget as HTMLSelectElement;
+    const profile = $launchProfiles.find((entry) => entry.id === target.value) ?? null;
+    startupPreferences.setSelectedLaunchProfileId(target.value);
+    if (profile) {
+      startupPreferences.setLaunchDefaults({
+        harness: profile.harness,
+        role: profile.defaultRole,
+      });
+    }
+  }
+
   function handleStartScopeInput(event: Event): void {
     const target = event.currentTarget as HTMLInputElement;
     startScopeOverride = target.value;
@@ -283,12 +716,49 @@
     dispatch('openSettings');
   }
 
+  function openFrazierCode(): void {
+    dispatch('openFrazierCode');
+  }
+
   function handleLaunchProfile(): void {
     diagnosticsMessage = null;
     enterCanvas();
   }
 
-  function handleStartFresh(): void {
+  async function handleOpenProjectPrimary(): Promise<void> {
+    projectError = null;
+    try {
+      const selected = await openDialog({
+        directory: true,
+        multiple: false,
+        defaultPath: selectedDirectory.trim() || defaultProjectRoot || undefined,
+      });
+      const selectedPath = Array.isArray(selected) ? selected[0] : selected;
+      if (typeof selectedPath === 'string' && selectedPath.trim()) {
+        startupPreferences.setSelectedDirectory(selectedPath);
+        await createOrOpenProject(selectedPath);
+        return;
+      }
+    } catch (err) {
+      console.warn('[StartupHome] native project picker unavailable, falling back to project dialog:', err);
+    }
+
+    openProjectCreateModal('existing');
+  }
+
+  function handleStartFromPlan(): void {
+    activeSection = 'agents';
+  }
+
+  function handleResumeRunningAgents(): void {
+    if (diagnostics.sessionCount > 0) {
+      enterCanvas();
+      return;
+    }
+    activeSection = 'sessions';
+  }
+
+	  function handleStartFresh(): void {
     const trimmedDirectory = selectedDirectory.trim();
     const error = validateDirectory(trimmedDirectory);
     if (error) {
@@ -308,10 +778,82 @@
     setScopeSelection(derivedScope);
     diagnosticsMessage = null;
     startError = null;
-    enterCanvas();
-  }
+	    enterCanvas();
+	  }
 
-  function openScope(scope: string, directory = ''): void {
+	  function findProjectByRoot(root: string): ProjectSpace | null {
+	    const trimmed = root.trim().replace(/\/+$/, '');
+	    return $projects.find((project) => project.root.replace(/\/+$/, '') === trimmed) ?? null;
+	  }
+
+	  async function createOrOpenProject(
+    root: string,
+    options: { name?: string; notes?: string; ensureFolder?: boolean } = {},
+  ): Promise<ProjectSpace | null> {
+	    const trimmedDirectory = root.trim();
+	    const error = validateDirectory(trimmedDirectory);
+	    if (error) {
+	      projectError = error;
+	      return null;
+	    }
+
+	    projectMutation = true;
+	    projectError = null;
+	    try {
+	      const projectRoot = options.ensureFolder
+	        ? await ensureProjectFolder(trimmedDirectory)
+	        : trimmedDirectory;
+	      const existing = findProjectByRoot(projectRoot);
+	      if (existing) {
+	        openProject(existing);
+	        return existing;
+	      }
+
+	      const name = options.name?.trim() || projectNameFromDirectory(projectRoot);
+	      const explicitScope = startScopeOverride.trim();
+	      const now = Date.now();
+	      const project = await saveProject({
+	        id: projectIdFromName(name),
+	        name,
+	        root: projectRoot,
+	        color: DEFAULT_PROJECT_COLOR,
+	        additionalRoots: [],
+	        notes: options.notes?.trim() ?? '',
+	        scope: explicitScope || projectRoot,
+	        boundary: {
+	          x: 80 + ($projects.length % 4) * 44,
+	          y: 90 + ($projects.length % 3) * 38,
+	          width: 860,
+	          height: 540,
+	        },
+	        createdAt: now,
+	        updatedAt: now,
+	      });
+	      rememberScopeContext(project.scope ?? project.root, project.root);
+	      diagnosticsMessage = null;
+	      dispatch('openProject', { project });
+	      return project;
+	    } catch (err) {
+	      projectError = err instanceof Error ? err.message : String(err);
+	      return null;
+	    } finally {
+	      projectMutation = false;
+	    }
+	  }
+
+	  async function handleOpenProjectPath(): Promise<void> {
+	    await createOrOpenProject(selectedDirectory);
+	  }
+
+	  function openProject(project: ProjectSpace): void {
+	    rememberScopeContext(project.scope ?? project.root, project.root);
+	    diagnosticsMessage = null;
+	    projectError = null;
+	    enterCanvas();
+	    dispatch('openProject', { project });
+	  }
+
+	  function openScope(scope: string, directory = ''): void {
     rememberScopeContext(scope, directory);
     diagnosticsMessage = null;
     enterCanvas();
@@ -320,10 +862,12 @@
   /**
    * Tear down a recovery row the user has explicitly asked to remove.
    *
-   * Uses `ui_kill_instance` so that externally-adopted agents (Claude
+   * Orphan PTY-only rows go through the daemon's `pty_close` path so stale
+   * canvas nodes disappear without being framed as a process kill. Instance
+   * rows still use `ui_kill_instance` so externally-adopted agents (Claude
    * processes spawned by another tab or from a Terminal.app window) are
-   * actually SIGTERM'd and not just dropped from the swarm.db rows. This
-   * is the only path that handles every failure mode cleanly:
+   * actually SIGTERM'd and not just dropped from the swarm.db rows. Together
+   * those two paths cover the main failure modes cleanly:
    *   - Stale binder resolution pointing at a dead PTY.
    *   - Fresh heartbeat from a server-side adopter keeping the row Online
    *     past the stale window (the kill flips it to dead).
@@ -349,7 +893,15 @@
    * see that the session may still be alive.
    */
   async function tearDownSessionRow(session: RecoverySessionItem): Promise<void> {
-    await killInstance(session.id);
+    if (session.kind === 'orphan_pty' && session.ptyId) {
+      await clearStalePtySession(session.ptyId);
+      return;
+    }
+    if (session.instanceId) {
+      await killInstance(session.instanceId);
+      return;
+    }
+    throw new Error(`No teardown target for recovery row ${session.id}`);
   }
 
   async function handleSessionAction(session: RecoverySessionItem): Promise<void> {
@@ -362,7 +914,10 @@
           openScope(session.scope, session.directory);
           break;
         case 'respawn':
-          await respawnInstance(session.id);
+          if (!session.instanceId) {
+            throw new Error('No instance row is available to respawn.');
+          }
+          await respawnInstance(session.instanceId);
           rememberScopeContext(session.scope, session.directory);
           enterCanvas();
           break;
@@ -393,7 +948,7 @@
       (session) =>
         session.status === 'online' ||
         session.status === 'adopting' ||
-        session.boundPtyId,
+        (session.kind === 'instance' && Boolean(session.ptyId)),
     );
     if (liveSessions.length > 0) {
       const ok = await confirm({
@@ -422,7 +977,7 @@
         sessions.length === 1 ? '' : 's'
       } in ${formatScopeLabel(scope)}.`;
     } catch (err) {
-      diagnosticsMessage = `Scope cleanup failed: ${err}`;
+      diagnosticsMessage = `Channel cleanup failed: ${err}`;
       console.error('[StartupHome] failed to clear scope:', err);
     } finally {
       clearingScope = null;
@@ -447,7 +1002,11 @@
   async function removeSessionRow(session: RecoverySessionItem): Promise<void> {
     if (mutatingSessionId) return;
     // Live sessions get a confirm — tearing them down stops the running terminal.
-    if (session.status === 'online' || session.status === 'adopting' || session.boundPtyId) {
+    if (
+      session.status === 'online' ||
+      session.status === 'adopting' ||
+      (session.kind === 'instance' && Boolean(session.ptyId))
+    ) {
       const label = session.displayName ?? shortId(session.id);
       const ok = await confirm({
         title: 'Remove session',
@@ -491,7 +1050,10 @@
     }
 
     const liveItems = $recoverySessionItems.filter(
-      (item) => item.status === 'online' || item.status === 'adopting' || item.boundPtyId,
+      (item) =>
+        item.status === 'online' ||
+        item.status === 'adopting' ||
+        (item.kind === 'instance' && Boolean(item.ptyId)),
     );
     const removableCount = $recoverySessionItems.length - liveItems.length;
     const parts: string[] = [];
@@ -516,11 +1078,10 @@
     startError = null;
     try {
       // Iterate every row and apply tearDownSessionRow — it picks the right
-      // primitive per row: closePty for bound-live (server's exit handler
-      // then deletes the unadopted row), ui_deregister_instance for
-      // stale/offline rows. The bulk deregisterOfflineInstances command
-      // enumerates by heartbeat on the server and skips bound/fresh rows,
-      // so it can't deliver the "clear everything" promise by itself.
+      // primitive per row: closePty for orphan PTYs and ui_kill_instance for
+      // instance rows. Bulk deregistration enumerates by heartbeat and skips
+      // bound/fresh rows, so it cannot deliver the "clear everything" promise
+      // by itself.
       const rowsToClear = [...$recoverySessionItems];
       for (const item of rowsToClear) {
         try {
@@ -573,13 +1134,13 @@
   function actionLabel(session: RecoverySessionItem): string {
     switch (session.action) {
       case 'open_scope':
-        return 'Open Scope';
+        return 'Open Channel';
       case 'respawn':
         return 'Respawn';
       case 'remove':
         return 'Remove';
       case 'cleanup_orphan':
-        return 'Cleanup Orphan';
+        return session.kind === 'orphan_pty' ? 'Clear stale' : 'Cleanup Orphan';
     }
   }
 </script>
@@ -594,11 +1155,56 @@
         </div>
 
         <nav class="section-nav" aria-label="Home sections">
+          <div class="nav-resource-group">
+            <button
+              type="button"
+              class="nav-group-toggle"
+              class:active={activeSection === 'projects'}
+              aria-expanded={resourceLibraryExpanded}
+              on:click={openWorkspaceKit}
+            >
+              <span>Workspace Kit</span>
+              <span class="nav-chevron" class:open={resourceLibraryExpanded}>›</span>
+            </button>
+            {#if resourceLibraryExpanded}
+              <div class="resource-nav-list" aria-label="Workspace resources">
+                {#each resourceLanes as lane (lane.id)}
+                  <div class="resource-nav-row" class:active={activeSection === 'projects' && activeResource === lane.id}>
+                    <button
+                      type="button"
+                      class="resource-nav-main"
+                      title={lane.detail}
+                      on:click={() => selectResourceLane(lane)}
+                    >
+                      <span class="nav-icon" aria-hidden="true">{lane.icon}</span>
+                      <span class="resource-nav-copy">
+                        <span class="nav-label">{lane.label}</span>
+                        {#if !lane.enabled}
+                          <span class="soon-label">later</span>
+                        {/if}
+                      </span>
+                    </button>
+                    {#if lane.id === 'projects'}
+                      <button
+                        type="button"
+                        class="resource-add-btn"
+                        title="Add project"
+                        aria-label="Add project"
+                        on:click={() => openProjectCreateModal('choose')}
+                      >
+                        +
+                      </button>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
           {#each navItems as item (item.id)}
             <button
               class:active={activeSection === item.id}
               title={item.meta}
-              style={`--nav-accent: ${navAccent(item.id)}`}
               on:click={() => (activeSection = item.id)}
             >
               <span class="nav-icon" aria-hidden="true">{item.icon}</span>
@@ -621,32 +1227,14 @@
     </aside>
 
     <section class="home-content">
-      {#if themeProfileId === 'tron-encom-os'}
-        <div class="encom-hero">
-          <img
-            class="encom-hero-art"
-            src={frazierCodeTronUrl}
-            alt="FrazierCode Agentic Tron concept art"
-          />
-          <div class="encom-hero-overlay">
-            <div class="encom-hero-bar">
-              <span class="encom-hero-title">ENCOM · COMMAND DECK</span>
-              <span class="encom-hero-sub">Tron Encom OS · swarm-ui</span>
-            </div>
-            <div class="encom-hero-meta">
-              <span class="encom-hero-cell"><em>SCOPE</em>{selectedDirectory || 'unset'}</span>
-              <span class="encom-hero-cell"><em>HARNESS</em>{harness || 'shell'}</span>
-              <span class="encom-hero-cell"><em>ROLE</em>{role || '—'}</span>
-              <span class="encom-hero-cell"><em>SESSIONS</em>{diagnostics.sessionCount}</span>
-            </div>
-          </div>
-        </div>
-      {/if}
-
       <div class="content-header">
         <h2>
           {#if activeSection === 'start'}
             Start
+          {:else if activeSection === 'launch'}
+            Launch
+          {:else if activeSection === 'projects'}
+            {activeResource === 'projects' ? 'Project Spaces' : activeResourceLane.label}
           {:else if activeSection === 'sessions'}
             Sessions &amp; Layouts
           {:else if activeSection === 'agents'}
@@ -665,7 +1253,11 @@
         <div class="header-actions">
           <span class="header-chip">{currentTheme?.name ?? 'Theme'}</span>
           {#if activeSection === 'start'}
-            <button class="ghost-btn" type="button" on:click={enterCanvas}>Skip to canvas</button>
+            <button class="ghost-btn" type="button" on:click={() => (activeSection = 'launch')}>Launch setup</button>
+          {:else if activeSection === 'projects'}
+            <button class="primary-btn" type="button" disabled={projectMutation} on:click={() => openProjectCreateModal('choose')}>
+              {projectMutation ? 'Opening...' : 'Add Project'}
+            </button>
           {:else if activeSection === 'settings'}
             <button class="primary-btn" type="button" on:click={openSettings}>Open settings</button>
           {/if}
@@ -675,29 +1267,83 @@
       <div class="summary-strip" aria-label="Home summary">
         <span class="summary-item"><em>{diagnostics.sessionCount}</em> sessions</span>
         <span class="summary-item"><em>{diagnostics.layoutScopeCount}</em> layouts</span>
+        <span class="summary-item"><em>{$projects.length}</em> projects</span>
         <span class="summary-item"><em>{$agentProfiles.length}</em> agents</span>
         <span class="summary-item">launch <em>{harness || 'shell'}{role ? ` · ${role}` : ''}</em></span>
       </div>
 
       {#if activeSection === 'start'}
-        <div class="start-grid">
-          <article class="panel-card panel-card--hero">
+        <div class="start-grid" aria-label="Start">
+          <section class="start-command-panel">
+            <div class="start-copy">
+              <span class="start-kicker">Project Command Deck</span>
+              <h3>Open a project. Turn plans into tasks. Launch agents.</h3>
+              <p>
+                The normal path is project first: pick the repo, shape the tasks, then let task-bound agents report back with real listener and status proof.
+              </p>
+            </div>
+            <div class="start-actions">
+              <button class="primary-btn primary-btn--large" type="button" disabled={projectMutation} on:click={handleOpenProjectPrimary}>
+                {projectMutation ? 'Opening...' : 'Open Project'}
+              </button>
+              <button class="ghost-btn ghost-btn--large" type="button" on:click={handleStartFromPlan}>
+                Start From Plan
+              </button>
+              <button class="ghost-btn ghost-btn--large" type="button" on:click={handleResumeRunningAgents}>
+                Resume Running Agents
+              </button>
+            </div>
+            <div class="start-loop-strip" aria-label="May 1st loop">
+              {#each ['Open Project', 'Project Cockpit', 'Task Board', 'Task-Bound Agents'] as step, index (step)}
+                <span>{index + 1}. {step}</span>
+              {/each}
+            </div>
+            <div class="start-secondary-actions">
+              <button class="inline-btn" type="button" on:click={enterCanvas}>
+                Enter Canvas
+              </button>
+              <button class="inline-btn" type="button" on:click={() => (activeSection = 'launch')}>
+                Advanced Launch
+              </button>
+            </div>
+            {#if startError}
+              <p class="error-text">{startError}</p>
+            {/if}
+          </section>
+
+          <section class="frazier-start-card" aria-label="FrazierCode Agentic">
+            <button type="button" class="frazier-preview" on:click={openFrazierCode}>
+              <img src={frazierCodeTronUrl} alt="FrazierCode Agentic Tron concept art" />
+              <span class="frazier-preview-glass">
+                <strong>FrazierCode <span>[Agentic]</span></strong>
+                <small>Open archive window</small>
+              </span>
+            </button>
+            <div class="frazier-start-copy">
+              <span class="start-kicker">Prominent, not primary</span>
+              <h3>FrazierCode lives in its own window.</h3>
+              <p>The credit and archive stay one click away, while startup now leads with the operational desktop.</p>
+            </div>
+          </section>
+        </div>
+      {:else if activeSection === 'launch'}
+        <div class="content-grid launch-grid">
+          <article class="panel-card panel-card--wide">
             <div class="card-heading">
               <div>
-                <h3>Starting Location</h3>
-                <p>The shared working directory used by Home and the in-canvas launcher.</p>
+                <h3>Launch Setup</h3>
+                <p>The previous Start controls live here now: working directory, channel behavior, harness, role, and launch profile.</p>
               </div>
-              {#if $startupPreferences.recentDirectories.length > 0}
-                <span class="status-chip muted">{$startupPreferences.recentDirectories.length} recent</span>
-              {/if}
+              <span class="status-chip muted">{startScopeDescription.title}</span>
             </div>
 
+            <label for="start-directory">Starting Location</label>
             <input
-              id="home-directory"
+              id="start-directory"
               class="text-input mono"
               type="text"
               bind:value={selectedDirectory}
-              placeholder="/path/to/project"
+              placeholder={defaultProjectRoot || '/Users/mathewfrazier/Desktop'}
               on:input={handleDirectoryInput}
             />
 
@@ -711,74 +1357,356 @@
               </div>
             {/if}
 
-            {#if startError}
-              <p class="error-text">{startError}</p>
-            {/if}
-          </article>
-
-          <article class="panel-card">
-            <div class="card-heading">
-              <div>
-                <h3>Launch Defaults</h3>
-                <p>Pick the default harness and role without pinning the next canvas to an old scope.</p>
-              </div>
-            </div>
-
             <div class="inline-grid">
               <div>
-                <label for="home-harness">Default Harness</label>
-                <select id="home-harness" class="text-input" bind:value={harness} on:change={handleHarnessChange}>
+                <label for="start-harness">Harness</label>
+                <select id="start-harness" class="text-input" value={harness} on:change={handleHarnessChange}>
                   {#each harnessOptions as option (option)}
                     <option value={option}>{option}</option>
                   {/each}
                 </select>
               </div>
-
               <div>
-                <label for="home-role">Default Role</label>
-                <select id="home-role" class="text-input" bind:value={role} on:change={handleRoleChange}>
-                  <option value="">—</option>
+                <label for="start-role">Role</label>
+                <select id="start-role" class="text-input" value={role} on:change={handleRoleChange}>
+                  <option value="">No role preset</option>
                   {#each rolePresets as preset (preset.role)}
-                    <option value={preset.role}>{preset.role}</option>
+                    <option value={preset.role}>{rolePresetForRole(preset.role).label} ({preset.role})</option>
                   {/each}
                 </select>
               </div>
             </div>
 
-            <div class="field-row">
-              <label for="home-scope">Fresh Canvas Scope Override</label>
-              {#if startScopeOverride.trim()}
-                <button class="inline-btn" type="button" on:click={clearStartScopeOverride}>Clear Override</button>
-              {/if}
+            <div class="inline-grid">
+              <div>
+                <label for="start-channel">Channel Override</label>
+                <input
+                  id="start-channel"
+                  class="text-input mono"
+                  type="text"
+                  value={startScopeOverride}
+                  placeholder="leave blank to mint a fresh channel"
+                  on:input={handleStartScopeInput}
+                />
+              </div>
+              <div>
+                <label for="launch-profile">Launch Profile</label>
+                <select
+                  id="launch-profile"
+                  class="text-input"
+                  value={selectedLaunchProfileId}
+                  on:change={handleLaunchProfileChange}
+                >
+                  <option value="">Manual defaults</option>
+                  {#each $launchProfiles as profile (profile.id)}
+                    <option value={profile.id}>{profile.name}</option>
+                  {/each}
+                </select>
+              </div>
             </div>
-            <input
-              id="home-scope"
-              class="text-input mono"
-              type="text"
-              bind:value={startScopeOverride}
-              placeholder="leave blank to mint a new isolated scope"
-              on:input={handleStartScopeInput}
-            />
-            <p class="field-hint">This field is for Start Fresh only. Entering the canvas clears any sticky launcher scope override so new nodes follow the current scope by default.</p>
+
+            <p class="field-hint">{startScopeDescription.subtitle}</p>
+            {#if selectedLaunchProfile}
+              <p class="field-hint">Launch Profile: {selectedLaunchProfile.description}</p>
+            {/if}
+            {#if startError}
+              <p class="error-text">{startError}</p>
+            {/if}
+
+            <div class="footer-actions">
+              <button class="primary-btn primary-btn--large" type="button" on:click={handleStartFresh}>
+                Start Fresh
+              </button>
+              <button class="ghost-btn" type="button" on:click={clearStartScopeOverride}>
+                Clear channel override
+              </button>
+              <button class="ghost-btn" type="button" on:click={enterCanvas}>
+                Enter current canvas
+              </button>
+              <button class="ghost-btn ghost-btn--danger" type="button" disabled={nukingEverything} on:click={nukeEverythingAndStart}>
+                {nukingEverything ? 'Clearing...' : 'Clear & Quickstart'}
+              </button>
+            </div>
+          </article>
+        </div>
+      {:else if activeSection === 'projects'}
+        <div class="content-grid">
+          <article class="panel-card panel-card--wide resource-picker">
+            <div class="card-heading">
+              <div>
+                <h3>Workspace Kit</h3>
+                <p>Pick the resource lane first, then open or add the exact context the agents should carry.</p>
+              </div>
+              <span class="status-chip muted">{activeResourceLane.label}</span>
+            </div>
+
+            <div class="resource-choice-grid" aria-label="Workspace resources">
+              {#each resourceLanes as lane (lane.id)}
+                <button
+                  type="button"
+                  class="resource-choice"
+                  class:active={activeResource === lane.id}
+                  class:disabled={!lane.enabled}
+                  on:click={() => selectResourceLane(lane)}
+                >
+                  <span class="resource-choice-icon resource-choice-icon--image" aria-hidden="true">
+                    <img src={darkFolderUrl} alt="" />
+                  </span>
+                  <span>
+                    <strong>{lane.label}</strong>
+                    <small>{lane.detail}</small>
+                  </span>
+                  {#if !lane.enabled}
+                    <em>later</em>
+                  {/if}
+                </button>
+              {/each}
+              <button
+                type="button"
+                class="resource-choice resource-choice--add"
+                disabled={projectMutation}
+                on:click={() => openProjectCreateModal('choose')}
+              >
+                <span class="resource-choice-icon resource-choice-icon--image" aria-hidden="true">
+                  <img src={darkFolderUrl} alt="" />
+                </span>
+                <span>
+                  <strong>Add Project</strong>
+                  <small>Start from scratch or use an existing folder.</small>
+                </span>
+              </button>
+            </div>
           </article>
 
-        </div>
+          {#if activeResource === 'projects'}
+            <article class="panel-card panel-card--wide">
+              <div class="card-heading">
+                <div>
+                  <h3>Project Root</h3>
+                  <p>Projects are context spaces: roots, notes, files, assets, and agent membership. They do not sandbox or silently move running agents.</p>
+                </div>
+                <span class="status-chip muted">default {defaultProjectRoot || 'resolving...'}</span>
+              </div>
 
-        <p class="hint-line">{startScopeDescription.subtitle}</p>
+              <input
+                id="project-directory"
+                class="text-input mono"
+                type="text"
+                bind:value={selectedDirectory}
+                placeholder={defaultProjectRoot || '/Users/you/Desktop'}
+                on:input={handleDirectoryInput}
+              />
 
-        <div class="footer-actions">
-          <button class="primary-btn primary-btn--large primary-btn--start" type="button" on:click={handleStartFresh}>
-            {startScopeDescription.title}
-          </button>
-          <button
-            class="ghost-btn ghost-btn--danger"
-            type="button"
-            disabled={nukingEverything}
-            title="Stop live terminals, clear every saved layout, then drop into a clean canvas."
-            on:click={nukeEverythingAndStart}
-          >
-            {nukingEverything ? 'Clearing…' : 'Clear everything & start over'}
-          </button>
+              {#if $startupPreferences.recentDirectories.length > 0}
+                <div class="chip-row">
+                  {#each $startupPreferences.recentDirectories as directory (directory)}
+                    <button class="chip chip--path mono" type="button" on:click={() => applyRecentDirectory(directory)}>
+                      {directory}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+
+              {#if projectError}
+                <p class="error-text">{projectError}</p>
+              {/if}
+
+              <div class="footer-actions">
+                <button
+                  class="primary-btn"
+                  type="button"
+                  disabled={projectMutation}
+                  on:click={() => openProjectCreateModal('choose')}
+                >
+                  {projectMutation ? 'Opening...' : 'Add Project'}
+                </button>
+                <button
+                  class="ghost-btn"
+                  type="button"
+                  disabled={projectMutation}
+                  on:click={handleOpenProjectPath}
+                >
+                  Open Selected Folder
+                </button>
+              </div>
+            </article>
+
+            <article class="panel-card panel-card--wide">
+              <div class="card-heading">
+                <div>
+                  <h3>Saved Project Spaces</h3>
+                  <p>Open a project page, inspect linked agents/tasks, or use its boundary on the canvas to sync context.</p>
+                </div>
+                <span class="status-chip muted">{$projects.length}</span>
+              </div>
+
+              {#if $projects.length === 0}
+                <p class="field-hint">No project spaces saved yet. Add one and the first boundary appears immediately.</p>
+              {:else}
+                <div class="project-grid project-grid--chooser">
+                  {#each $projects as project (project.id)}
+                    <button class="project-tile" type="button" on:click={() => openProject(project)}>
+                      <span>
+                        <strong>{project.name}</strong>
+                        <small class="mono">{project.root}</small>
+                      </span>
+                      <span class="pill-row">
+                        <span class="meta-pill">{project.additionalRoots.length + 1} roots</span>
+                        {#if project.notes}
+                          <span class="meta-pill pulse">notes</span>
+                        {/if}
+                      </span>
+                    </button>
+                  {/each}
+                  <button class="project-tile project-tile--add" type="button" on:click={() => openProjectCreateModal('choose')}>
+                    <span>
+                      <strong>Add Project</strong>
+                      <small>Choose scratch or existing folder</small>
+                    </span>
+                  </button>
+                </div>
+              {/if}
+            </article>
+          {:else if activeResource === 'browser'}
+            <article class="panel-card panel-card--wide browser-bridge-card">
+              <div class="card-heading">
+                <div>
+                  <h3>Browser</h3>
+                  <p>Launch managed Chrome or import your front Chrome tab into a controlled swarm copy for this channel.</p>
+                </div>
+                <span class="status-chip muted">{browserScope || 'no channel'}</span>
+              </div>
+
+              <div class="browser-url-row">
+                <input
+                  class="text-input mono"
+                  type="text"
+                  bind:value={browserUrlDraft}
+                  placeholder="https://example.com"
+                  on:keydown={(event) => {
+                    if (event.key === 'Enter') void openManagedBrowserContext();
+                  }}
+                />
+              </div>
+
+              <div class="browser-toolbar">
+                <button
+                  class="primary-btn"
+                  type="button"
+                  disabled={browserLoading || !browserScope}
+                  on:click={openManagedBrowserContext}
+                >
+                  {browserLoading ? 'Working...' : 'Open URL'}
+                </button>
+                <button
+                  class="ghost-btn"
+                  type="button"
+                  disabled={browserLoading || !browserScope}
+                  on:click={importFrontChromeTab}
+                >
+                  Import Active Tab
+                </button>
+                <button
+                  class="ghost-btn"
+                  type="button"
+                  disabled={browserLoading || !browserScope}
+                  on:click={refreshBrowserCatalog}
+                >
+                  Refresh
+                </button>
+                <button
+                  class="ghost-btn"
+                  type="button"
+                  disabled={browserLoading || !selectedBrowserContext || selectedBrowserContext.status === 'closed'}
+                  on:click={captureBrowserSnapshot}
+                >
+                  Capture Snapshot
+                </button>
+                <button
+                  class="ghost-btn ghost-btn--danger"
+                  type="button"
+                  disabled={browserLoading || !selectedBrowserContext || selectedBrowserContext.status === 'closed'}
+                  on:click={closeManagedBrowserContext}
+                >
+                  Close
+                </button>
+              </div>
+
+              {#if browserError}
+                <p class="error-text">{browserError}</p>
+              {/if}
+
+              {#if browserLoading}
+                <p class="field-hint">Loading browser contexts...</p>
+              {:else if browserContexts.length === 0}
+                <p class="field-hint">No browser contexts for this channel yet.</p>
+              {:else}
+                <div class="browser-context-grid">
+                  {#each browserContexts as context (context.id)}
+                    <button
+                      type="button"
+                      class="browser-context-card"
+                      class:active={selectedBrowserContext?.id === context.id}
+                      on:click={() => selectBrowserContext(context.id)}
+                    >
+                      <span class={`browser-status browser-status--${context.status}`}>{context.status}</span>
+                      <strong>{browserTitle(context)}</strong>
+                      <small class="mono">{context.endpoint}</small>
+                      <em>{browserSubline(context)}</em>
+                    </button>
+                  {/each}
+                </div>
+
+                {#if selectedBrowserContext}
+                  <div class="browser-detail-grid">
+                    <div class="browser-detail-column">
+                      <strong>Tabs</strong>
+                      {#if selectedBrowserTabs.length === 0}
+                        <span>No tabs recorded</span>
+                      {:else}
+                        {#each selectedBrowserTabs as tab (tab.tabId)}
+                          <div class="browser-row">
+                            <b>{tab.title || tab.url || tab.tabId}</b>
+                            <span>{tab.url}</span>
+                          </div>
+                        {/each}
+                      {/if}
+                    </div>
+
+                    <div class="browser-detail-column">
+                      <strong>Snapshots</strong>
+                      {#if selectedBrowserSnapshots.length === 0}
+                        <span>No snapshots recorded</span>
+                      {:else}
+                        {#each selectedBrowserSnapshots.slice(0, 4) as snapshot (snapshot.id)}
+                          <div class="browser-row">
+                            <b>{snapshot.title || snapshot.url || snapshot.id}</b>
+                            <span>{snapshot.text}</span>
+                          </div>
+                        {/each}
+                      {/if}
+                    </div>
+                  </div>
+                {/if}
+              {/if}
+            </article>
+          {:else}
+            <article class="panel-card panel-card--wide resource-preview">
+              <div class="card-heading">
+                <div>
+                  <h3>{activeResourceLane.label}</h3>
+                  <p>{activeResourceLane.detail}</p>
+                </div>
+                <span class="status-chip muted">staged</span>
+              </div>
+              <p class="field-hint">
+                This lane belongs in the same top-level project kit, but the working implementation should land after the project picker is calm. For now, use the Project Page notes and roots to attach this context to agents.
+              </p>
+              <button class="ghost-btn" type="button" on:click={selectProjectsLane}>
+                Back to Projects
+              </button>
+            </article>
+          {/if}
         </div>
       {:else if activeSection === 'sessions'}
         <div class="stack-list">
@@ -847,7 +1775,7 @@
                       type="button"
                       disabled={clearingScope === group.scope.scope}
                       on:click={() => clearScope(group.scope.scope, group.items)}
-                      title="Remove stale/offline rows in this scope"
+                      title="Clear stale rows and orphan PTYs in this scope"
                     >
                       {clearingScope === group.scope.scope ? 'Clearing…' : 'Clear stale'}
                     </button>
@@ -908,9 +1836,11 @@
                           <button
                             class="icon-btn"
                             type="button"
-                            aria-label="Copy instance ID"
-                            title={`Copy instance ID (${session.id})`}
-                            on:click={() => copyText(session.id, 'instance ID')}
+                            aria-label={session.kind === 'orphan_pty' ? 'Copy PTY ID' : 'Copy instance ID'}
+                            title={session.kind === 'orphan_pty'
+                              ? `Copy PTY ID (${session.id})`
+                              : `Copy instance ID (${session.id})`}
+                            on:click={() => copyText(session.id, session.kind === 'orphan_pty' ? 'PTY ID' : 'instance ID')}
                           >
                             <span aria-hidden="true">⧉</span>
                           </button>
@@ -918,9 +1848,11 @@
                             class="icon-btn icon-btn--danger"
                             type="button"
                             aria-label="Remove row from recovery list"
-                            title={session.boundPtyId
-                              ? 'Stop terminal and remove row'
-                              : 'Remove row from recovery list'}
+                            title={session.kind === 'orphan_pty'
+                              ? 'Clear stale PTY from the canvas'
+                              : session.ptyId
+                                ? 'Stop terminal and remove row'
+                                : 'Remove row from recovery list'}
                             disabled={mutatingSessionId === session.id}
                             on:click={() => removeSessionRow(session)}
                           >
@@ -937,6 +1869,107 @@
         </div>
       {:else if activeSection === 'agents'}
         <div class="content-grid settings-grid">
+          <article class="panel-card panel-card--wide agents-overhaul-card">
+            <div class="card-heading agents-overhaul-heading">
+              <div>
+                <span class="start-kicker">Active overhaul plan</span>
+                <h3>{MAY_FIRST_OVERHAUL_SUMMARY.name}</h3>
+                <p>{MAY_FIRST_OVERHAUL_SUMMARY.correction}. The app direction is project-first, with old Phase 4/5/6/7 work archived as source material.</p>
+              </div>
+              <div class="agents-overhaul-scope">
+                <span>repo</span>
+                <code>{MAY_FIRST_OVERHAUL_SUMMARY.repo}</code>
+                <span>scope</span>
+                <code>{MAY_FIRST_OVERHAUL_SUMMARY.scope}</code>
+              </div>
+            </div>
+
+            <div class="agents-plan-spine" aria-label="May 1st product spine">
+              {#each MAY_FIRST_OVERHAUL_SUMMARY.authority.split(' -> ') as spineStep, index (`home-spine-${spineStep}`)}
+                <span>{index + 1}. {spineStep}</span>
+              {/each}
+            </div>
+          </article>
+
+          <article class="panel-card panel-card--wide agents-plan-board">
+            <div class="card-heading">
+              <div>
+                <h3>MVP Slices</h3>
+                <p>Slice 0-4 are the current build path. Slice 5 is the safety pass before expanding surfaces.</p>
+              </div>
+            </div>
+            <div class="agents-slice-grid">
+              {#each MAY_FIRST_MVP_SLICES as slice (slice.id)}
+                <section class="agents-slice-card agents-slice-card--{slice.status}">
+                  <div>
+                    <span>{slice.id}</span>
+                    <em>{slice.status}</em>
+                  </div>
+                  <strong>{slice.title}</strong>
+                  <p>{slice.goal}</p>
+                  <ul>
+                    {#each slice.build.slice(0, 3) as item (item)}
+                      <li>{item}</li>
+                    {/each}
+                  </ul>
+                </section>
+              {/each}
+            </div>
+          </article>
+
+          <article class="panel-card agents-stage-card">
+            <div class="card-heading">
+              <div>
+                <h3>Stage Map</h3>
+                <p>Logical stages, not calendar estimates.</p>
+              </div>
+            </div>
+            <div class="agents-stage-list">
+              {#each MAY_FIRST_OVERHAUL_STAGES as stage (stage.id)}
+                <details open={stage.id === 'Stage 0' || stage.id === 'Stage 1' || stage.id === 'Stage 2'}>
+                  <summary>
+                    <span>{stage.id}</span>
+                    <strong>{stage.title}</strong>
+                  </summary>
+                  <p>{stage.purpose}</p>
+                  <small>{stage.proof}</small>
+                </details>
+              {/each}
+            </div>
+          </article>
+
+          <article class="panel-card agents-stage-card">
+            <div class="card-heading">
+              <div>
+                <h3>North-Star Demo</h3>
+                <p>The operator-visible acceptance story.</p>
+              </div>
+            </div>
+            <ol class="agents-north-star">
+              {#each MAY_FIRST_NORTH_STAR_STEPS as step, index (step)}
+                <li><span>{index + 1}</span>{step}</li>
+              {/each}
+            </ol>
+          </article>
+
+          <article class="panel-card panel-card--wide agents-archive-card">
+            <div class="card-heading">
+              <div>
+                <h3>Archived Phase Lane</h3>
+                <p>{MAY_FIRST_OVERHAUL_SUMMARY.archiveRule}</p>
+              </div>
+            </div>
+            <div class="agents-archive-grid">
+              {#each MAY_FIRST_ARCHIVED_PHASES as phase (phase.name)}
+                <section>
+                  <strong>{phase.name}</strong>
+                  <span>{phase.status}</span>
+                  <p>{phase.useNow}</p>
+                </section>
+              {/each}
+            </div>
+          </article>
+
           <article class="panel-card panel-card--wide">
             <div class="card-heading">
               <div>
@@ -989,7 +2022,7 @@
           <article class="panel-card panel-card--wide">
             <div class="card-heading">
               <div>
-                <h3>Scope Snapshot</h3>
+                <h3>Channel Snapshot</h3>
                 <p>Path-aware labels keep `/Desktop/auto` separate from a literal `auto` scope.</p>
               </div>
             </div>
@@ -1207,9 +2240,9 @@
               <div class="mini-row"><span>Starting Location</span><span>Default working directory for new nodes. Required before Start Fresh.</span></div>
               <div class="mini-row"><span>Default Harness</span><span>The command launched in new PTY nodes (<code>flux</code>, <code>codex</code>, <code>shell</code>, etc.).</span></div>
               <div class="mini-row"><span>Default Role</span><span>Label token appended to new node labels on spawn (e.g. <code>role:planner</code>).</span></div>
-              <div class="mini-row"><span>Scope Override</span><span>Pin the next Start Fresh to an explicit scope string instead of minting a fresh timestamped one.</span></div>
+              <div class="mini-row"><span>Channel Override</span><span>Pin the next Start Fresh to an explicit channel string instead of minting a fresh timestamped one.</span></div>
               <div class="mini-row"><span>Harness Aliases</span><span>Shell commands auto-typed into a PTY when a harness-backed node starts. Edit in Settings when paths change.</span></div>
-              <div class="mini-row"><span>Theme Profile</span><span>Built-in palette for chrome and terminal colours. Background opacity is independently overridable.</span></div>
+              <div class="mini-row"><span>Theme Profile</span><span>Built-in palette for chrome and terminal colours. See-through and blur are independently overridable.</span></div>
               <div class="mini-row"><span>Default Home Section</span><span>Which section opens first when you return to Home.</span></div>
             </div>
           </article>
@@ -1275,7 +2308,7 @@
               <div class="mini-row"><span>Nodes</span><span>Each node holds a PTY running a harness command. Terminal surfaces persist across resize, compact toggle, and fullscreen — no remount, no lost history.</span></div>
               <div class="mini-row"><span>Sidebar</span><span>Three tabs: <em>Launch</em> (spawn nodes), <em>Chat</em> (operator broadcast + live message feed), <em>Inspect</em> (selected node/edge details).</span></div>
               <div class="mini-row"><span>UI commands</span><span>swarm-ui polls a <code>ui_commands</code> table. The <code>swarm-mcp ui *</code> CLI subcommands enqueue work there, letting scripts drive the canvas from outside the app.</span></div>
-              <div class="mini-row"><span>Scopes</span><span>The active scope determines which instances appear on the canvas. Switch from Home → Sessions &amp; Layouts. Canvas layout is scoped too.</span></div>
+              <div class="mini-row"><span>Channels</span><span>The active channel determines which instances appear on the canvas. Switch from Home → Sessions &amp; Layouts. Canvas layout is channel-specific too.</span></div>
               <div class="mini-row"><span>Close paths</span><span><code>closePty</code> = graceful PTY exit. <code>deregisterInstance</code> = drop stale/offline row. <code>killInstance</code> (red icon) = SIGTERM/SIGKILL the process + cascade row deletion. Use kill for externally-adopted or stuck instances.</span></div>
             </div>
           </article>
@@ -1341,8 +2374,8 @@
                 <span>{role || 'No role'}</span>
               </div>
               <div class="mini-row">
-                <span>Launcher scope override</span>
-                <span>{$startupPreferences.launchDefaults.scope || 'Follow active scope'}</span>
+                <span>Launcher channel override</span>
+                <span>{$startupPreferences.launchDefaults.scope || 'Follow active channel'}</span>
               </div>
             </div>
           </article>
@@ -1359,7 +2392,7 @@
                 <span class="flow-index">1</span>
                 <div>
                   <strong>Theme profile</strong>
-                  <p>Built-in chrome and terminal palettes with an opacity override on top.</p>
+                  <p>Built-in chrome and terminal palettes with separate see-through and blur overrides.</p>
                 </div>
               </div>
               <div class="flow-step">
@@ -1387,6 +2420,131 @@
       {/if}
     </section>
   </div>
+
+  {#if projectCreateModalOpen}
+    <div class="project-modal-backdrop">
+      <button
+        type="button"
+        class="project-modal-dismiss"
+        aria-label="Close project dialog"
+        on:click={closeProjectCreateModal}
+      ></button>
+      <div class="project-modal" role="dialog" aria-modal="true" aria-label="Add project">
+        <header class="project-modal-header">
+          <div class="project-modal-title-row">
+            {#if projectCreateMode !== 'choose'}
+              <button class="icon-btn" type="button" aria-label="Back to project choices" on:click={() => openProjectCreateModal('choose')}>
+                ‹
+              </button>
+            {/if}
+            <div>
+              <h3>
+                {projectCreateMode === 'choose'
+                  ? 'Create a new project'
+                  : projectCreateMode === 'scratch'
+                    ? 'Start from scratch'
+                    : 'Use an existing folder'}
+              </h3>
+              <p>
+                {projectCreateMode === 'choose'
+                  ? 'A project keeps roots, notes, files, and agent membership together without moving live agents.'
+                  : projectCreateMode === 'scratch'
+                    ? 'Name the context and pick the folder path agents should treat as the project root.'
+                    : 'Point swarm-ui at a folder you already work from.'}
+              </p>
+            </div>
+          </div>
+          <button class="icon-btn" type="button" aria-label="Close project dialog" on:click={closeProjectCreateModal}>×</button>
+        </header>
+
+        {#if projectCreateMode === 'choose'}
+          <div class="project-choice-list">
+            <button class="project-choice" type="button" on:click={() => openProjectCreateModal('scratch')}>
+              <span class="project-choice-icon">+</span>
+              <span>
+                <strong>Start from scratch</strong>
+                <small>Set up a new project context with a suggested folder.</small>
+              </span>
+              <em>›</em>
+            </button>
+            <button class="project-choice" type="button" disabled title="Import will need a separate chat/project importer.">
+              <span class="project-choice-icon">I</span>
+              <span>
+                <strong>Import project</strong>
+                <small>Bring in external project metadata later.</small>
+              </span>
+              <em>later</em>
+            </button>
+            <button class="project-choice" type="button" on:click={() => openProjectCreateModal('existing')}>
+              <span class="project-choice-icon">F</span>
+              <span>
+                <strong>Use an existing folder</strong>
+                <small>Turn the selected working directory into a project space.</small>
+              </span>
+              <em>›</em>
+            </button>
+          </div>
+        {:else}
+          <div class="project-modal-body">
+            <div class="form-field">
+              <label for="draft-project-name">Name</label>
+              <input
+                id="draft-project-name"
+                class="text-input"
+                type="text"
+                placeholder="Project name"
+                value={draftProjectName}
+                on:input={handleDraftProjectNameInput}
+              />
+            </div>
+
+            <div class="form-field">
+              <label for="draft-project-root">Project root</label>
+              <input
+                id="draft-project-root"
+                class="text-input mono"
+                type="text"
+                placeholder={defaultProjectRoot || '/Users/you/Desktop/project'}
+                value={draftProjectRoot}
+                on:input={handleDraftProjectRootInput}
+              />
+            </div>
+
+            <div class="form-field">
+              <label for="draft-project-notes">Instructions / notes</label>
+              <textarea
+                id="draft-project-notes"
+                class="text-input text-area"
+                rows="5"
+                placeholder="Optional project context, constraints, or handoff notes."
+                bind:value={draftProjectNotes}
+              ></textarea>
+            </div>
+
+            {#if projectError}
+              <p class="error-text">{projectError}</p>
+            {/if}
+
+            <div class="modal-actions">
+              <button class="ghost-btn" type="button" on:click={closeProjectCreateModal}>Cancel</button>
+              <button
+                class="primary-btn"
+                type="button"
+                disabled={projectMutation || !draftProjectRoot.trim()}
+                on:click={submitProjectCreateModal}
+              >
+                {projectMutation
+                  ? 'Creating...'
+                  : projectCreateMode === 'scratch'
+                    ? 'Create Folder + Project'
+                    : 'Create Project'}
+              </button>
+            </div>
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -1487,6 +2645,117 @@
     gap: 2px;
   }
 
+  .nav-resource-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid color-mix(in srgb, var(--node-border) 58%, transparent);
+  }
+
+  .nav-group-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border: 1px solid color-mix(in srgb, var(--node-border) 70%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--terminal-bg) 58%, transparent);
+    color: var(--terminal-fg, #d4d4d4);
+    padding: 8px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .nav-group-toggle:hover,
+  .nav-group-toggle.active {
+    background: color-mix(in srgb, var(--terminal-bg) 78%, transparent);
+    border-color: color-mix(in srgb, var(--status-pending) 44%, transparent);
+    color: var(--terminal-fg, #d4d4d4);
+  }
+
+  .nav-chevron {
+    display: inline-flex;
+    transform: rotate(0deg);
+    transition: transform 0.12s ease;
+  }
+
+  .nav-chevron.open {
+    transform: rotate(90deg);
+  }
+
+  .resource-nav-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .resource-nav-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+  }
+
+  .resource-nav-row.active {
+    background: color-mix(in srgb, var(--terminal-bg) 88%, transparent);
+    border-color: color-mix(in srgb, var(--status-pending) 36%, transparent);
+  }
+
+  .resource-nav-main,
+  .resource-add-btn {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .resource-nav-main {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 8px;
+    text-align: left;
+  }
+
+  .resource-nav-copy {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .resource-add-btn {
+    width: 26px;
+    height: 26px;
+    margin-right: 4px;
+    border: 1px solid color-mix(in srgb, var(--node-border) 76%, transparent);
+    border-radius: 6px;
+    color: color-mix(in srgb, var(--terminal-fg) 78%, transparent);
+  }
+
+  .resource-add-btn:hover {
+    color: var(--terminal-fg, #d4d4d4);
+    border-color: color-mix(in srgb, var(--status-pending) 52%, transparent);
+  }
+
+  .soon-label {
+    border: 1px solid color-mix(in srgb, var(--node-border) 72%, transparent);
+    border-radius: 999px;
+    padding: 1px 5px;
+    color: color-mix(in srgb, var(--terminal-fg) 46%, transparent);
+    font-size: 9px;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
   .section-nav button,
   .chip,
   .primary-btn,
@@ -1496,7 +2765,7 @@
     font: inherit;
   }
 
-  .section-nav button {
+  .section-nav > button {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -1510,12 +2779,12 @@
     transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
   }
 
-  .section-nav button:hover {
+  .section-nav > button:hover {
     background: color-mix(in srgb, var(--terminal-bg) 70%, transparent);
     color: var(--terminal-fg, #d4d4d4);
   }
 
-  .section-nav button.active {
+  .section-nav > button.active {
     background: color-mix(in srgb, var(--terminal-bg) 90%, transparent);
     border-color: color-mix(in srgb, var(--status-pending) 36%, transparent);
     color: var(--terminal-fg, #d4d4d4);
@@ -1565,10 +2834,13 @@
 
   .home-content {
     padding: 20px 22px;
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
     display: flex;
     flex-direction: column;
     gap: 16px;
+    min-width: 0;
   }
 
   .content-header {
@@ -1628,15 +2900,186 @@
 
   .content-grid,
   .metrics-grid,
-  .start-grid,
   .settings-grid {
     display: grid;
     gap: 14px;
   }
 
   .start-grid {
-    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-    align-items: start;
+    min-height: min(62vh, 680px);
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(280px, 0.95fr);
+    gap: 14px;
+    align-items: stretch;
+  }
+
+  .start-command-panel,
+  .frazier-start-card {
+    border: 1px solid color-mix(in srgb, var(--node-border) 78%, transparent);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--terminal-bg) 56%, transparent);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--terminal-fg) 6%, transparent),
+      0 24px 70px rgba(0, 0, 0, 0.28);
+  }
+
+  .start-command-panel {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 28px;
+    padding: 34px;
+  }
+
+  .start-copy,
+  .frazier-start-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .start-kicker {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--status-pending) 74%, var(--terminal-fg));
+  }
+
+  .start-copy h3,
+  .frazier-start-copy h3 {
+    margin: 0;
+    color: var(--terminal-fg, #d4d4d4);
+    font-weight: 650;
+    letter-spacing: 0;
+  }
+
+  .start-copy h3 {
+    max-width: 680px;
+    font-size: 46px;
+    line-height: 1.02;
+  }
+
+  .start-copy p,
+  .frazier-start-copy p {
+    margin: 0;
+    max-width: 620px;
+    color: color-mix(in srgb, var(--terminal-fg) 64%, transparent);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .start-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .start-loop-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .start-loop-strip span {
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    border: 1px solid color-mix(in srgb, var(--node-border) 74%, transparent);
+    border-left: 3px solid color-mix(in srgb, var(--status-pending) 72%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--terminal-bg) 68%, transparent);
+    color: color-mix(in srgb, var(--terminal-fg) 74%, transparent);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10px;
+    line-height: 1.25;
+    padding: 7px 9px;
+  }
+
+  .start-secondary-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .frazier-start-card {
+    display: grid;
+    grid-template-rows: minmax(220px, 1fr) auto;
+    overflow: hidden;
+  }
+
+  .frazier-preview {
+    position: relative;
+    min-height: 0;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--node-border) 78%, transparent);
+    background: #000;
+    color: var(--terminal-fg, #d4d4d4);
+    padding: 0;
+    cursor: pointer;
+    overflow: hidden;
+  }
+
+  .frazier-preview img {
+    width: 100%;
+    height: 100%;
+    min-height: 220px;
+    object-fit: cover;
+    opacity: 0.86;
+    filter: saturate(0.96) contrast(1.08);
+    transition: transform 0.18s ease, opacity 0.18s ease;
+  }
+
+  .frazier-preview:hover img {
+    transform: scale(1.025);
+    opacity: 0.96;
+  }
+
+  .frazier-preview-glass {
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    bottom: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.62);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    text-align: left;
+  }
+
+  .frazier-preview-glass strong {
+    min-width: 0;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .frazier-preview-glass strong span {
+    color: color-mix(in srgb, #ffd94a 82%, var(--terminal-fg));
+  }
+
+  .frazier-preview-glass small {
+    flex: 0 0 auto;
+    color: color-mix(in srgb, var(--terminal-fg) 62%, transparent);
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+
+  .frazier-start-copy {
+    padding: 18px;
+  }
+
+  .frazier-start-copy h3 {
+    font-size: 20px;
+    line-height: 1.05;
   }
 
   .content-grid,
@@ -1680,6 +3123,204 @@
     font-size: 14px;
     font-weight: 600;
     letter-spacing: -0.005em;
+  }
+
+  .agents-overhaul-card {
+    gap: 16px;
+    background:
+      linear-gradient(135deg, color-mix(in srgb, var(--status-online, #00f060) 11%, transparent), transparent 46%),
+      color-mix(in srgb, var(--terminal-bg) 56%, transparent);
+  }
+
+  .agents-overhaul-heading {
+    align-items: start;
+  }
+
+  .agents-overhaul-heading h3 {
+    margin-top: 6px;
+    font-size: clamp(22px, 3vw, 34px);
+    line-height: 1;
+  }
+
+  .agents-overhaul-scope {
+    min-width: min(360px, 100%);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 6px 10px;
+    align-items: center;
+    border: 1px solid color-mix(in srgb, var(--node-border) 68%, transparent);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 10px;
+  }
+
+  .agents-overhaul-scope span,
+  .agents-slice-card div span,
+  .agents-slice-card div em,
+  .agents-stage-list summary span,
+  .agents-archive-grid span {
+    color: color-mix(in srgb, var(--terminal-fg) 58%, transparent);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10px;
+    font-style: normal;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .agents-overhaul-scope code {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: color-mix(in srgb, var(--status-pending, #89b4fa) 78%, var(--terminal-fg));
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11px;
+  }
+
+  .agents-plan-spine {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 8px;
+  }
+
+  .agents-plan-spine span {
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    border: 1px solid color-mix(in srgb, var(--status-online, #00f060) 38%, transparent);
+    border-left: 3px solid var(--status-online, #00f060);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.24);
+    color: var(--terminal-fg, #d4d4d4);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11px;
+    padding: 7px 10px;
+  }
+
+  .agents-slice-grid,
+  .agents-archive-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 10px;
+  }
+
+  .agents-slice-card,
+  .agents-archive-grid section,
+  .agents-stage-list details,
+  .agents-north-star li {
+    border: 1px solid color-mix(in srgb, var(--node-border) 68%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--terminal-bg) 58%, transparent);
+  }
+
+  .agents-slice-card {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-left: 3px solid var(--status-online, #00f060);
+    padding: 12px;
+  }
+
+  .agents-slice-card--next {
+    border-left-color: var(--status-pending, #89b4fa);
+  }
+
+  .agents-slice-card--done {
+    border-left-color: var(--status-online, #00f060);
+  }
+
+  .agents-slice-card--follow-up {
+    border-left-color: var(--status-warning, #f9e2af);
+  }
+
+  .agents-slice-card div {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .agents-slice-card strong,
+  .agents-stage-list summary strong,
+  .agents-archive-grid strong {
+    color: var(--terminal-fg, #d4d4d4);
+    font-size: 13px;
+  }
+
+  .agents-slice-card ul {
+    margin: 0;
+    padding-left: 18px;
+  }
+
+  .agents-slice-card li,
+  .agents-stage-list p,
+  .agents-stage-list small,
+  .agents-archive-grid p,
+  .agents-north-star li {
+    color: color-mix(in srgb, var(--terminal-fg) 66%, transparent);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .agents-stage-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .agents-stage-list details {
+    padding: 10px 12px;
+  }
+
+  .agents-stage-list summary {
+    display: grid;
+    grid-template-columns: 70px minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  .agents-stage-list p,
+  .agents-stage-list small {
+    display: block;
+    margin: 8px 0 0 80px;
+  }
+
+  .agents-north-star {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .agents-north-star li {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 7px 10px;
+  }
+
+  .agents-north-star span {
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--status-online, #00f060) 42%, transparent);
+    border-radius: 999px;
+    color: var(--status-online, #00f060);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10px;
+  }
+
+  .agents-archive-grid section {
+    border-left: 3px solid var(--status-pending, #89b4fa);
+    padding: 12px;
+  }
+
+  .agents-archive-grid span {
+    display: block;
+    margin: 4px 0 6px;
+    color: color-mix(in srgb, var(--status-pending, #89b4fa) 82%, var(--terminal-fg));
   }
 
   .card-title-row {
@@ -1726,6 +3367,12 @@
   .mono,
   code {
     font-family: var(--font-mono, ui-monospace, monospace);
+  }
+
+  .scope-card p.mono,
+  .session-copy p.mono {
+    overflow-wrap: anywhere;
+    word-break: break-all;
   }
 
   .inline-grid {
@@ -1847,6 +3494,14 @@
     min-width: 0;
   }
 
+  .ghost-btn--large {
+    padding: 12px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    flex: 1;
+    min-width: 0;
+  }
+
   .ghost-btn,
   .inline-btn {
     border: 1px solid color-mix(in srgb, var(--node-border) 80%, transparent);
@@ -1933,6 +3588,288 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+  }
+
+  .project-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+  }
+
+  .resource-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+    gap: 8px;
+  }
+
+  .resource-choice,
+  .project-tile,
+  .project-choice {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid color-mix(in srgb, var(--node-border) 76%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--terminal-bg) 56%, transparent);
+    color: color-mix(in srgb, var(--terminal-fg) 78%, transparent);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    padding: 10px;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  }
+
+  .resource-choice:hover:not(:disabled),
+  .project-tile:hover,
+  .project-choice:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--status-pending) 48%, transparent);
+    background: color-mix(in srgb, var(--terminal-bg) 70%, transparent);
+    color: var(--terminal-fg, #d4d4d4);
+  }
+
+  .resource-choice.active,
+  .project-tile:focus-visible,
+  .project-choice:focus-visible {
+    border-color: color-mix(in srgb, var(--status-pending) 68%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--status-pending) 18%, transparent);
+    outline: none;
+  }
+
+  .resource-choice.disabled {
+    opacity: 0.58;
+  }
+
+  .resource-choice--add {
+    border-style: dashed;
+  }
+
+  .resource-choice-icon,
+  .project-choice-icon {
+    width: 34px;
+    height: 34px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid color-mix(in srgb, var(--node-border) 70%, transparent);
+    border-radius: 6px;
+    color: var(--terminal-fg, #d4d4d4);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .resource-choice-icon--image {
+    overflow: hidden;
+    background: #050505;
+  }
+
+  .resource-choice-icon--image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.95;
+  }
+
+  .resource-choice span:not(.resource-choice-icon),
+  .project-choice span:not(.project-choice-icon),
+  .project-tile > span:first-child {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .resource-choice strong,
+  .project-choice strong,
+  .project-tile strong {
+    color: var(--terminal-fg, #d4d4d4);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .resource-choice small,
+  .project-choice small,
+  .project-tile small {
+    min-width: 0;
+    color: color-mix(in srgb, var(--terminal-fg) 56%, transparent);
+    font-size: 10.5px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .resource-choice em,
+  .project-choice em {
+    margin-left: auto;
+    color: color-mix(in srgb, var(--terminal-fg) 48%, transparent);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 10px;
+    font-style: normal;
+    text-transform: uppercase;
+  }
+
+  .project-grid--chooser {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+
+  .project-tile {
+    min-height: 116px;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: space-between;
+  }
+
+  .project-tile--add {
+    justify-content: center;
+    border-style: dashed;
+  }
+
+  .resource-preview {
+    max-width: 760px;
+  }
+
+  .browser-bridge-card {
+    max-width: none;
+  }
+
+  .browser-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .browser-url-row {
+    display: grid;
+    gap: 8px;
+  }
+
+  .browser-url-row .text-input {
+    width: 100%;
+  }
+
+  .browser-context-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 10px;
+  }
+
+  .browser-context-card {
+    min-width: 0;
+    min-height: 112px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    border: 1px solid color-mix(in srgb, var(--node-border) 70%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--terminal-bg) 60%, transparent);
+    color: color-mix(in srgb, var(--terminal-fg) 76%, transparent);
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+    padding: 10px;
+  }
+
+  .browser-context-card:hover,
+  .browser-context-card.active {
+    border-color: color-mix(in srgb, var(--status-online) 58%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--status-online) 18%, transparent);
+  }
+
+  .browser-context-card strong,
+  .browser-context-card small,
+  .browser-context-card em {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .browser-context-card strong {
+    color: var(--terminal-fg, #d4d4d4);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .browser-context-card small,
+  .browser-context-card em {
+    color: color-mix(in srgb, var(--terminal-fg) 54%, transparent);
+    font-size: 10px;
+    font-style: normal;
+  }
+
+  .browser-status {
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    color: color-mix(in srgb, var(--terminal-fg) 58%, transparent);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    padding: 2px 6px;
+    text-transform: uppercase;
+  }
+
+  .browser-status--open {
+    color: var(--status-online, #a6e3a1);
+  }
+
+  .browser-status--closed {
+    color: var(--status-offline, #f38ba8);
+  }
+
+  .browser-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+  }
+
+  .browser-detail-column {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .browser-detail-column > strong {
+    color: var(--terminal-fg, #d4d4d4);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .browser-detail-column > span {
+    color: color-mix(in srgb, var(--terminal-fg) 56%, transparent);
+    font-size: 11px;
+  }
+
+  .browser-row {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+    border: 1px solid color-mix(in srgb, var(--node-border) 56%, transparent);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--terminal-bg) 66%, transparent);
+    padding: 8px;
+  }
+
+  .browser-row b,
+  .browser-row span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .browser-row b {
+    color: var(--terminal-fg, #d4d4d4);
+    font-size: 11px;
+    font-weight: 650;
+  }
+
+  .browser-row span {
+    color: color-mix(in srgb, var(--terminal-fg) 52%, transparent);
+    font-size: 10px;
   }
 
   .scope-card-header {
@@ -2055,12 +3992,12 @@
     border-top: 1px solid color-mix(in srgb, var(--node-border) 56%, transparent);
   }
 
-  .mini-row:first-child {
-    border-top: none;
-    padding-top: 0;
-  }
+	  .mini-row:first-child {
+	    border-top: none;
+	    padding-top: 0;
+	  }
 
-  .flow-step {
+	  .flow-step {
     display: flex;
     align-items: flex-start;
     gap: 10px;
@@ -2121,12 +4058,122 @@
     margin-top: 2px;
   }
 
+  .project-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.56);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  .project-modal-dismiss {
+    position: absolute;
+    inset: 0;
+    border: 0;
+    background: transparent;
+    cursor: default;
+  }
+
+  .project-modal {
+    position: relative;
+    z-index: 1;
+    width: min(560px, 94vw);
+    max-height: min(82vh, 760px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--node-border) 82%, transparent);
+    border-radius: 12px;
+    background: var(--node-header-bg, #2d2d2d);
+    box-shadow: 0 24px 88px rgba(0, 0, 0, 0.58);
+  }
+
+  .project-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 18px;
+    border-bottom: 1px solid color-mix(in srgb, var(--node-border) 72%, transparent);
+  }
+
+  .project-modal-title-row {
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .project-modal-header h3 {
+    margin: 0;
+    color: var(--terminal-fg, #d4d4d4);
+    font-size: 19px;
+    font-weight: 650;
+  }
+
+  .project-modal-header p {
+    margin: 6px 0 0;
+    max-width: 54ch;
+    color: color-mix(in srgb, var(--terminal-fg) 62%, transparent);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .project-choice-list,
+  .project-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px 18px 18px;
+    overflow-y: auto;
+  }
+
+  .project-choice {
+    min-height: 86px;
+    padding: 12px;
+  }
+
+  .project-choice:disabled {
+    cursor: default;
+    opacity: 0.52;
+  }
+
+  .project-modal-body .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .text-area {
+    min-height: 112px;
+    resize: vertical;
+    line-height: 1.45;
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
   @media (max-width: 1100px) {
     .home-shell {
       grid-template-columns: 1fr;
     }
 
-    .start-grid,
+    .start-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .start-loop-strip {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .content-grid,
     .settings-grid,
     .metrics-grid {
@@ -2139,10 +4186,10 @@
       padding: 12px;
     }
 
-    .start-grid,
     .content-grid,
     .settings-grid,
     .metrics-grid,
+    .start-grid,
     .inline-grid {
       grid-template-columns: 1fr;
     }
@@ -2160,146 +4207,37 @@
     .header-actions {
       justify-content: flex-start;
     }
+
+    .start-copy h3 {
+      font-size: 34px;
+    }
+
+    .start-loop-strip {
+      grid-template-columns: 1fr;
+    }
+
+    .frazier-preview-glass {
+      align-items: flex-start;
+      flex-direction: column;
+    }
   }
 
   /* ── Tron Encom OS overrides ────────────────────────────────────────── */
-  .encom-hero {
-    display: none;
-  }
-
-  :global([data-theme="tron-encom-os"]) .encom-hero {
-    position: relative;
-    display: block;
-    min-height: 238px;
-    overflow: hidden;
-    padding: 0;
-    border: 1px solid var(--led-line, #d8dde6);
-    background: var(--bg-base, #000);
-    box-shadow:
-      0 0 0 1px var(--led-halo, rgba(255, 255, 255, 0.08)),
-      var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-  }
-
-  :global([data-theme="tron-encom-os"]) .encom-hero-art {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    object-position: center 44%;
-    filter: saturate(1.1) contrast(1.06) brightness(0.78);
-  }
-
-  :global([data-theme="tron-encom-os"]) .encom-hero-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    gap: 14px;
-    padding: 15px 16px;
-    background:
-      linear-gradient(90deg, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0.2) 54%, rgba(0, 0, 0, 0.62)),
-      linear-gradient(180deg, rgba(0, 0, 0, 0.7), transparent 48%, rgba(0, 0, 0, 0.76));
-  }
-
-  :global([data-theme="tron-encom-os"]) .encom-hero-bar {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 16px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--led-line-s, rgba(216, 221, 230, 0.45));
-  }
-
-  :global([data-theme="tron-encom-os"]) .encom-hero-title {
-    font-size: 13px;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: var(--accent, #ffffff);
-    text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
-  }
-
-  :global([data-theme="tron-encom-os"]) .encom-hero-sub {
-    font-size: 10px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--fg-secondary, #8a94a0);
-  }
-
-  :global([data-theme="tron-encom-os"]) .encom-hero-meta {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 8px;
-  }
-
-  :global([data-theme="tron-encom-os"]) .encom-hero-cell {
-    background: rgba(0, 0, 0, 0.42);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 6px 8px;
-    border: 1px solid var(--led-line-s, rgba(216, 221, 230, 0.45));
-    font-size: 11px;
-    color: var(--fg-primary, #f5f7fa);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  :global([data-theme="tron-encom-os"]) .encom-hero-cell em {
-    font-style: normal;
-    font-size: 9px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--fg-secondary, #8a94a0);
-  }
-
   :global([data-theme="tron-encom-os"]) .home-overlay {
-    --home-neon-green: #00ffb2;
-    --home-neon-green-rgb: 0, 255, 178;
-    position: relative;
+    --home-action-accent: #ffc412;
+    --home-action-accent-rgb: 255, 196, 18;
     overflow: hidden;
-    background:
-      radial-gradient(circle at 16% 16%, rgba(184, 107, 255, 0.075), transparent 30%),
-      radial-gradient(circle at 82% 18%, rgba(255, 58, 76, 0.06), transparent 28%),
-      radial-gradient(circle at 78% 82%, rgba(184, 107, 255, 0.04), transparent 34%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 32%),
-      var(--canvas-bg, var(--bg-base, #000));
-    backdrop-filter: blur(var(--surface-blur, 20px));
-    -webkit-backdrop-filter: blur(var(--surface-blur, 20px));
-  }
-
-  :global([data-theme="tron-encom-os"]) .home-overlay::before,
-  :global([data-theme="tron-encom-os"]) .home-overlay::after {
-    content: '';
-    position: absolute;
-    inset: -18%;
-    pointer-events: none;
-    mix-blend-mode: screen;
-    z-index: 0;
+    background: var(--bg-base, #000);
   }
 
   :global([data-theme="tron-encom-os"]) .home-overlay::before {
-    background:
-      radial-gradient(circle at 18% 30%, rgba(184, 107, 255, 0.2), transparent 28%),
-      radial-gradient(circle at 74% 20%, rgba(255, 58, 76, 0.15), transparent 26%),
-      radial-gradient(circle at 58% 88%, rgba(184, 107, 255, 0.12), transparent 30%);
-    filter: blur(28px);
-    opacity: 0.62;
-    animation: encom-home-aurora 18s ease-in-out infinite alternate;
-  }
-
-  :global([data-theme="tron-encom-os"]) .home-overlay::after {
-    background:
-      radial-gradient(circle at 78% 68%, rgba(255, 58, 76, 0.18), transparent 30%),
-      radial-gradient(circle at 30% 72%, rgba(184, 107, 255, 0.13), transparent 34%);
-    filter: blur(36px);
-    opacity: 0.38;
-    animation: encom-home-aurora-secondary 23s ease-in-out infinite alternate;
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image: radial-gradient(rgba(216, 221, 230, 0.04) 1px, transparent 1.2px);
+    background-size: 26px 26px;
   }
 
   :global([data-theme="tron-encom-os"]) .home-shell {
@@ -2311,29 +4249,13 @@
   :global([data-theme="tron-encom-os"]) .home-content {
     border: 1px solid var(--led-line, #d8dde6);
     border-radius: 0;
+    background: var(--bg-panel, #05070a);
     box-shadow:
-      0 0 0 1px var(--led-halo, rgba(255, 255, 255, 0.08)),
-      0 0 24px rgba(255, 255, 255, 0.06),
-      inset 0 0 24px rgba(216, 221, 230, 0.025);
-  }
-
-  :global([data-theme="tron-encom-os"]) .home-nav {
-    background:
-      linear-gradient(180deg, rgba(184, 107, 255, 0.055), transparent 22%),
-      linear-gradient(90deg, rgba(255, 58, 76, 0.035), transparent 72%),
-      var(--sidebar-bg, var(--bg-base, #000));
-    backdrop-filter: blur(var(--sidebar-blur, 38px));
-    -webkit-backdrop-filter: blur(var(--sidebar-blur, 38px));
-  }
-
-  :global([data-theme="tron-encom-os"]) .home-content {
-    background:
-      linear-gradient(145deg, rgba(255, 255, 255, 0.035), transparent 34%),
-      radial-gradient(circle at 92% 8%, rgba(184, 107, 255, 0.055), transparent 24%),
-      radial-gradient(circle at 74% 94%, rgba(255, 58, 76, 0.035), transparent 24%),
-      var(--panel-bg, var(--bg-base, #000));
-    backdrop-filter: blur(var(--surface-blur, 20px));
-    -webkit-backdrop-filter: blur(var(--surface-blur, 20px));
+      0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 0 8px 1px rgba(255, 255, 255, 0.35),
+      0 0 18px 2px rgba(255, 255, 255, 0.18),
+      0 0 36px 6px rgba(255, 255, 255, 0.08),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.05);
   }
 
   :global([data-theme="tron-encom-os"]) .brand-block h1,
@@ -2377,79 +4299,99 @@
   }
 
   :global([data-theme="tron-encom-os"]) .summary-strip {
-    border: 1px solid var(--led-line-s, rgba(216, 221, 230, 0.45));
-    background:
-      linear-gradient(90deg, rgba(184, 107, 255, 0.055), rgba(255, 58, 76, 0.025) 42%, transparent 70%),
-      var(--node-header-bg, transparent);
+    border: 1px solid var(--led-line, #d8dde6);
+    background: var(--bg-panel, #05070a);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 0 8px 1px rgba(255, 255, 255, 0.28),
+      0 0 18px 2px rgba(255, 255, 255, 0.12);
     border-radius: 0;
   }
 
   :global([data-theme="tron-encom-os"]) .header-chip {
     border-radius: 0;
-    border-color: color-mix(in srgb, var(--c-amber, #ffa94d) 62%, var(--led-line, #d8dde6));
-    background: color-mix(in srgb, var(--c-amber, #ffa94d) 8%, transparent);
-    color: color-mix(in srgb, var(--c-amber, #ffa94d) 72%, var(--fg-primary, #f5f7fa));
+    border: 1px solid var(--led-line, #d8dde6);
+    background: var(--bg-panel, #05070a);
+    color: #ffffff;
     text-transform: uppercase;
-    letter-spacing: 0.14em;
-    box-shadow: 0 0 12px rgba(255, 169, 77, 0.12);
+    letter-spacing: 0.22em;
+    font-size: 9.5px;
+    padding: 3px 10px;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.3), 0 0 16px rgba(255, 255, 255, 0.1);
+    text-shadow: 0 0 3px rgba(255, 255, 255, 0.3);
   }
 
-  :global([data-theme="tron-encom-os"]) .section-nav button {
-    --nav-accent-color: var(--nav-accent, var(--accent, #ffffff));
+  :global([data-theme="tron-encom-os"]) .section-nav > button {
     position: relative;
     overflow: hidden;
     border-radius: 0;
+    border: 1px solid transparent;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
-    font-size: 11px;
+    letter-spacing: 0.18em;
+    font-size: 10.5px;
     color: var(--fg-secondary, #8a94a0);
-    border-left-color: color-mix(in srgb, var(--nav-accent-color) 18%, transparent);
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
   }
 
-  :global([data-theme="tron-encom-os"]) .section-nav button::before {
+  :global([data-theme="tron-encom-os"]) .section-nav > button::before {
     content: '';
     position: absolute;
-    inset: 5px auto 5px 0;
+    left: -1px;
+    top: 3px;
+    bottom: 3px;
     width: 2px;
-    background: var(--nav-accent-color);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--nav-accent-color) 56%, transparent);
+    background: #ffffff;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.9), 0 0 14px rgba(255, 255, 255, 0.4);
     opacity: 0;
     transition: opacity 0.14s ease;
   }
 
   :global([data-theme="tron-encom-os"]) .section-nav .nav-icon {
-    color: color-mix(in srgb, var(--nav-accent-color) 78%, var(--fg-primary, #f5f7fa));
-    text-shadow: 0 0 7px color-mix(in srgb, var(--nav-accent-color) 34%, transparent);
+    color: var(--fg-secondary, #8a94a0);
     opacity: 0.82;
   }
 
-  :global([data-theme="tron-encom-os"]) .section-nav button:hover {
-    background:
-      linear-gradient(90deg, color-mix(in srgb, var(--nav-accent-color) 12%, transparent), rgba(255, 255, 255, 0.018));
-    border-color: color-mix(in srgb, var(--nav-accent-color) 42%, var(--led-line-s, rgba(216, 221, 230, 0.45)));
+  :global([data-theme="tron-encom-os"]) .section-nav > button:hover {
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02) 70%, transparent);
+    border-color: rgba(255, 255, 255, 0.18);
     color: var(--fg-primary, #f5f7fa);
-    box-shadow: 0 0 12px color-mix(in srgb, var(--nav-accent-color) 12%, transparent);
-  }
-
-  :global([data-theme="tron-encom-os"]) .section-nav button.active {
-    background:
-      linear-gradient(90deg, color-mix(in srgb, var(--nav-accent-color) 18%, transparent), rgba(255, 255, 255, 0.035));
-    border-color: color-mix(in srgb, var(--nav-accent-color) 70%, var(--led-line, #d8dde6));
-    color: var(--accent, #ffffff);
     box-shadow:
-      0 0 14px color-mix(in srgb, var(--nav-accent-color) 22%, transparent),
-      inset 0 0 12px rgba(255, 255, 255, 0.035);
+      inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+      0 0 14px rgba(255, 255, 255, 0.15),
+      inset 0 0 18px rgba(255, 255, 255, 0.06);
   }
 
-  :global([data-theme="tron-encom-os"]) .section-nav button.active::before,
-  :global([data-theme="tron-encom-os"]) .section-nav button:hover::before {
+  :global([data-theme="tron-encom-os"]) .section-nav > button:hover .nav-icon {
+    color: #ffffff;
+    opacity: 1;
+    text-shadow: 0 0 3px rgba(255, 255, 255, 0.6);
+  }
+
+  :global([data-theme="tron-encom-os"]) .section-nav > button.active {
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03) 70%, transparent);
+    border-color: rgba(255, 255, 255, 0.25);
+    color: #ffffff;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.25),
+      0 0 20px rgba(255, 255, 255, 0.22),
+      inset 0 0 24px rgba(255, 255, 255, 0.08);
+    text-shadow: 0 0 3px rgba(255, 255, 255, 0.3);
+  }
+
+  :global([data-theme="tron-encom-os"]) .section-nav > button.active .nav-icon {
+    color: #ffffff;
+    opacity: 1;
+    text-shadow: 0 0 3px rgba(255, 255, 255, 0.6);
+  }
+
+  :global([data-theme="tron-encom-os"]) .section-nav > button.active::before,
+  :global([data-theme="tron-encom-os"]) .section-nav > button:hover::before {
     opacity: 1;
   }
 
   :global([data-theme="tron-encom-os"]) .text-input,
-  :global([data-theme="tron-encom-os"]) input[type="text"],
-  :global([data-theme="tron-encom-os"]) select {
+  :global([data-theme="tron-encom-os"]) input[type="text"] {
     border: 1px solid var(--led-line, #d8dde6);
     border-radius: 0;
     background:
@@ -2460,12 +4402,13 @@
   }
 
   :global([data-theme="tron-encom-os"]) .text-input:focus,
-  :global([data-theme="tron-encom-os"]) input[type="text"]:focus,
-  :global([data-theme="tron-encom-os"]) select:focus {
-    border-color: color-mix(in srgb, var(--home-neon-green, #00ffb2) 74%, var(--led-line, #d8dde6));
+  :global([data-theme="tron-encom-os"]) input[type="text"]:focus {
+    border-color: #ffffff;
     box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--home-neon-green, #00ffb2) 20%, transparent),
-      0 0 14px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.14);
+      0 0 0 1px rgba(255, 255, 255, 0.18),
+      0 0 12px 2px rgba(255, 255, 255, 0.6),
+      0 0 28px 4px rgba(255, 255, 255, 0.3);
+    outline: none;
   }
 
   :global([data-theme="tron-encom-os"]) .primary-btn,
@@ -2476,45 +4419,16 @@
     border-radius: 0;
     border: 1px solid var(--led-line, #d8dde6);
     background: transparent;
-    color: var(--fg-primary, #f5f7fa);
+    color: var(--fg-secondary, #8a94a0);
     font-family: 'JetBrains Mono', ui-monospace, monospace;
     text-transform: uppercase;
-    letter-spacing: 0.12em;
-    font-size: 11px;
-  }
-
-  :global([data-theme="tron-encom-os"]) .primary-btn {
-    border-color: color-mix(in srgb, var(--home-neon-green, #00ffb2) 64%, var(--led-line, #d8dde6));
-    background: color-mix(in srgb, var(--home-neon-green, #00ffb2) 8%, transparent);
-    color: color-mix(in srgb, var(--home-neon-green, #00ffb2) 64%, var(--fg-primary, #f5f7fa));
-    box-shadow: 0 0 12px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.14);
-  }
-
-  :global([data-theme="tron-encom-os"]) .primary-btn--start {
-    border-color: var(--home-neon-green, #00ffb2);
-    background:
-      linear-gradient(90deg, rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.18), rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.055)),
-      rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.02);
-    color: #d8fff1;
-    text-shadow: 0 0 9px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.38);
+    letter-spacing: 0.22em;
+    font-size: 10px;
     box-shadow:
-      0 0 0 1px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.2),
-      0 0 18px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.32),
-      0 0 42px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.14),
-      inset 0 0 18px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.09);
-  }
-
-  :global([data-theme="tron-encom-os"]) .ghost-btn:not(.ghost-btn--danger) {
-    border-color: color-mix(in srgb, var(--c-amber, #ffa94d) 42%, var(--led-line, #d8dde6));
-    color: color-mix(in srgb, var(--c-amber, #ffa94d) 54%, var(--fg-primary, #f5f7fa));
-    background: color-mix(in srgb, var(--c-amber, #ffa94d) 4%, transparent);
-  }
-
-  :global([data-theme="tron-encom-os"]) .inline-btn,
-  :global([data-theme="tron-encom-os"]) .icon-btn,
-  :global([data-theme="tron-encom-os"]) .chip {
-    border-color: color-mix(in srgb, var(--led-line, #d8dde6) 72%, var(--fg-muted, #4a5260));
-    background: color-mix(in srgb, var(--accent-dim, #c8cfd8) 3%, transparent);
+      0 0 0 1px rgba(255, 255, 255, 0.06),
+      0 0 6px 1px rgba(255, 255, 255, 0.22),
+      0 0 14px 2px rgba(255, 255, 255, 0.1);
+    transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
   }
 
   :global([data-theme="tron-encom-os"]) .primary-btn:hover,
@@ -2522,24 +4436,69 @@
   :global([data-theme="tron-encom-os"]) .inline-btn:hover,
   :global([data-theme="tron-encom-os"]) .icon-btn:hover,
   :global([data-theme="tron-encom-os"]) .chip:hover {
-    background: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+    border-color: #ffffff;
+    background: var(--bg-elevated, #0b0f14);
     box-shadow:
-      0 0 10px rgba(255, 255, 255, 0.16),
-      inset 0 0 10px rgba(255, 255, 255, 0.04);
+      0 0 0 1px rgba(255, 255, 255, 0.18),
+      0 0 12px 2px rgba(255, 255, 255, 0.6),
+      0 0 28px 4px rgba(255, 255, 255, 0.3),
+      0 0 56px 10px rgba(255, 255, 255, 0.14);
   }
 
-  :global([data-theme="tron-encom-os"]) .primary-btn:hover {
-    border-color: var(--home-neon-green, #00ffb2);
+  :global([data-theme="tron-encom-os"]) .primary-btn--start {
+    border-color: var(--home-action-accent, #ffa94d);
+    color: #ffd19a;
+    text-shadow: 0 0 6px rgba(var(--home-action-accent-rgb, 255, 169, 77), 0.5);
+    background:
+      linear-gradient(180deg, rgba(var(--home-action-accent-rgb, 255, 169, 77), 0.08), transparent 60%),
+      var(--bg-panel, #05070a);
     box-shadow:
-      0 0 18px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.32),
-      inset 0 0 14px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.09);
+      0 0 0 1px rgba(var(--home-action-accent-rgb, 255, 169, 77), 0.35),
+      0 0 10px 2px rgba(var(--home-action-accent-rgb, 255, 169, 77), 0.4),
+      0 0 24px 4px rgba(var(--home-action-accent-rgb, 255, 169, 77), 0.2),
+      inset 0 0 14px rgba(var(--home-action-accent-rgb, 255, 169, 77), 0.06);
+  }
+
+  :global([data-theme="tron-encom-os"]) .primary-btn--start:hover {
+    color: #ffffff;
+    border-color: #ffd9a8;
+    background:
+      linear-gradient(180deg, rgba(var(--home-action-accent-rgb, 255, 169, 77), 0.14), transparent 60%),
+      var(--bg-elevated, #0b0f14);
+    box-shadow:
+      0 0 0 1px rgba(var(--home-action-accent-rgb, 255, 169, 77), 0.5),
+      0 0 16px 3px rgba(var(--home-action-accent-rgb, 255, 169, 77), 0.55),
+      0 0 36px 6px rgba(var(--home-action-accent-rgb, 255, 169, 77), 0.28),
+      inset 0 0 18px rgba(var(--home-action-accent-rgb, 255, 169, 77), 0.1);
+  }
+
+  :global([data-theme="tron-encom-os"]) .ghost-btn:not(.ghost-btn--danger) {
+    border-color: var(--led-line-s, #6e7682);
+    color: var(--fg-muted, #4a5260);
+    box-shadow: none;
   }
 
   :global([data-theme="tron-encom-os"]) .ghost-btn:not(.ghost-btn--danger):hover {
-    border-color: var(--c-amber, #ffa94d);
+    color: var(--fg-secondary, #8a94a0);
+    border-color: var(--led-line, #d8dde6);
     box-shadow:
-      0 0 16px rgba(255, 169, 77, 0.18),
-      inset 0 0 12px rgba(255, 169, 77, 0.055);
+      0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 0 8px 1px rgba(255, 255, 255, 0.35),
+      0 0 18px 2px rgba(255, 255, 255, 0.18);
+  }
+
+  :global([data-theme="tron-encom-os"]) .ghost-btn--danger {
+    border-color: rgba(255, 90, 106, 0.55);
+    color: var(--c-red, #ff3a4c);
+    box-shadow: 0 0 6px rgba(255, 90, 106, 0.2);
+  }
+
+  :global([data-theme="tron-encom-os"]) .ghost-btn--danger:hover {
+    background: rgba(255, 90, 106, 0.06);
+    border-color: rgba(255, 90, 106, 0.8);
+    box-shadow: 0 0 10px rgba(255, 90, 106, 0.35);
+    color: #ff8a96;
   }
 
   :global([data-theme="tron-encom-os"]) .status-chip {
@@ -2558,38 +4517,10 @@
   }
 
   :global([data-theme="tron-encom-os"]) .summary-item em {
-    color: color-mix(in srgb, var(--home-neon-green, #00ffb2) 58%, var(--fg-primary, #f5f7fa));
-    text-shadow: 0 0 8px rgba(var(--home-neon-green-rgb, 0, 255, 178), 0.22);
-  }
-
-  @keyframes encom-home-aurora {
-    0% {
-      transform: translate3d(-2%, -1%, 0) scale(1);
-      opacity: 0.52;
-    }
-    45% {
-      transform: translate3d(4%, 2%, 0) scale(1.05);
-      opacity: 0.68;
-    }
-    100% {
-      transform: translate3d(-1%, 5%, 0) scale(1.1);
-      opacity: 0.58;
-    }
-  }
-
-  @keyframes encom-home-aurora-secondary {
-    0% {
-      transform: translate3d(2%, 4%, 0) scale(1.04);
-      opacity: 0.3;
-    }
-    52% {
-      transform: translate3d(-4%, -2%, 0) scale(1.12);
-      opacity: 0.44;
-    }
-    100% {
-      transform: translate3d(3%, -5%, 0) scale(1.02);
-      opacity: 0.34;
-    }
+    color: #ffffff;
+    text-shadow: 0 0 4px rgba(255, 255, 255, 0.45), 0 0 12px rgba(255, 255, 255, 0.18);
+    font-style: normal;
+    font-weight: 500;
   }
 
   :global([data-theme="tron-encom-os"]) .nav-footer {
@@ -2604,5 +4535,26 @@
 
   :global([data-theme="tron-encom-os"]) .error-text {
     color: var(--c-red, #ff3a4c);
+  }
+
+  @media (max-width: 1100px) {
+    .home-overlay {
+      align-items: flex-start;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    .home-shell {
+      min-height: auto;
+    }
+
+    .home-content {
+      overflow: visible;
+    }
+
+    :global([data-theme="tron-encom-os"]) .home-overlay {
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
   }
 </style>

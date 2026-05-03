@@ -71,6 +71,9 @@ Write commands (require identity):
   swarm-mcp ui prompt --target <node|instance|pty> <content...> [--no-enter] [--scope <path>] [--wait <seconds>] [--json]
   swarm-mcp ui move --target <node|instance|pty> --x <n> --y <n> [--scope <path>] [--wait <seconds>] [--json]
   swarm-mcp ui organize [--kind grid] [--scope <path>] [--wait <seconds>] [--json]
+  swarm-mcp ui export-layout [--scope <path>] [--out <file>] [--wait <seconds>] [--json]
+  swarm-mcp ui screenshot [--out <file>] [--scope <path>] [--wait <seconds>] [--json]
+  swarm-mcp ui proof-pack [--scope <path>] [--surface <name>] [--note "..."] [--out <file>] [--wait <seconds>] [--json]
 
 Identity:
   <who> is a UUID, UUID prefix, or a unique substring of an instance label.

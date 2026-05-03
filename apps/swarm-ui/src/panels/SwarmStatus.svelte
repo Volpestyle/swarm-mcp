@@ -10,6 +10,7 @@
 <script lang="ts">
   import {
     activeScope,
+    allInstances,
     availableScopes,
     instances,
     scopeSelection,
@@ -17,11 +18,24 @@
     swarmSummary,
   } from '../stores/swarm';
   import { formatScopeLabel } from '../stores/startup';
-  import { deregisterOfflineInstances, killAllAgentSessions, pendingPtyCount } from '../stores/pty';
+  import {
+    bindings,
+    clearStalePtySession,
+    deregisterOfflineInstances,
+    killAllAgentSessions,
+    pendingPtyCount,
+    ptySessions,
+  } from '../stores/pty';
   import { confirm } from '../lib/confirm';
+  import { isOrphanAgentPty, ptyMatchesScope } from '../lib/ptyRecovery';
 
   let clearingOffline = false;
   let killingAll = false;
+  let orphanPtyCount = 0;
+
+  $: orphanPtyCount = [...$ptySessions.values()].filter(
+    (pty) => isOrphanAgentPty(pty, $allInstances, $bindings) && ptyMatchesScope(pty, $activeScope),
+  ).length;
 
   function handleScopeChange(event: Event): void {
     const target = event.currentTarget as HTMLSelectElement;
@@ -46,6 +60,11 @@
           targetIds.push(inst.id);
         }
       }
+      for (const pty of $ptySessions.values()) {
+        if (!isOrphanAgentPty(pty, $allInstances, $bindings)) continue;
+        if (!ptyMatchesScope(pty, $activeScope)) continue;
+        await clearStalePtySession(pty.id);
+      }
       await deregisterOfflineInstances(targetIds, $activeScope);
     } catch (err) {
       console.error('[SwarmStatus] failed to clear offline instances:', err);
@@ -58,17 +77,17 @@
     if (killingAll) return;
     const targets = Array.from($instances.values());
     if (targets.length === 0) return;
-    const scopeLabel = shortScope($activeScope);
+    const channelLabel = shortScope($activeScope);
     const ok = await confirm({
       title: 'Kill agents',
-      message: `Kill ${targets.length} agent${targets.length === 1 ? '' : 's'} in ${scopeLabel}? This SIGTERMs their processes and clears every row.`,
+      message: `Kill ${targets.length} agent${targets.length === 1 ? '' : 's'} in ${channelLabel}? This SIGTERMs their processes and clears every row.`,
       confirmLabel: 'Kill all',
       danger: true,
     });
     if (!ok) return;
     killingAll = true;
     try {
-      await killAllAgentSessions($activeScope);
+      await killAllAgentSessions($activeScope, targets.map((instance) => instance.id));
     } catch (err) {
       console.error('[SwarmStatus] kill-all failed:', err);
     } finally {
@@ -79,10 +98,10 @@
 
 <div class="swarm-status-bar">
   <div class="status-group scope-group">
-    <span class="status-label">scope</span>
+    <span class="status-label">channel</span>
     <select class="scope-select" value={$scopeSelection} on:change={handleScopeChange}>
       <option value="auto">auto</option>
-      <option value="all">all scopes</option>
+      <option value="all">all channels</option>
       {#each $availableScopes as scope (scope)}
         <option value={scope}>{shortScope(scope)}</option>
       {/each}
@@ -137,18 +156,21 @@
     <span class="status-label">stale</span>
   </div>
 
-  {#if $swarmSummary.offline + $swarmSummary.stale > 0}
+  {#if $swarmSummary.offline + $swarmSummary.stale + orphanPtyCount > 0}
     <span class="divider">|</span>
     <div class="status-group offline-group">
       <span class="status-dot-inline offline"></span>
       <span class="status-value">{$swarmSummary.offline}</span>
       <span class="status-label">offline</span>
+      {#if orphanPtyCount > 0}
+        <span class="status-label">+ {orphanPtyCount} orphan PTY{orphanPtyCount === 1 ? '' : 's'}</span>
+      {/if}
       <button
         class="clear-offline"
         disabled={clearingOffline}
         title={clearingOffline
           ? 'Clearing…'
-          : 'Deregister every stale/offline instance in this scope'}
+          : 'Clear every stale/offline instance and orphan PTY in this channel'}
         on:click={handleClearOffline}
       >
         <!-- Trash icon mirrored from NodeHeader so the visual intent is

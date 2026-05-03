@@ -1,5 +1,5 @@
-use std::thread;
 use std::time::Duration;
+use std::{fs, path::PathBuf, thread};
 
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -13,6 +13,7 @@ use crate::{
     model::{GraphPosition, Instance, PtySession},
     pty::PtyManager,
     swarm::get_swarm_state,
+    system_load::{self, KillTarget},
     writes::{self, UiCommandRecord},
 };
 
@@ -40,6 +41,11 @@ struct SendPromptPayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct KillInstancePayload {
+    instance_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct MoveNodePayload {
     target: String,
     x: f64,
@@ -49,6 +55,40 @@ struct MoveNodePayload {
 #[derive(Debug, Deserialize)]
 struct OrganizeNodesPayload {
     kind: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExportLayoutPayload {
+    scope: Option<String>,
+    out: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ScreenshotPayload {
+    out: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProofPackPayload {
+    out: Option<String>,
+    note: Option<String>,
+    surface: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BrowserOpenPayload {
+    url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BrowserCaptureSnapshotPayload {
+    context_id: Option<String>,
+    tab_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BrowserClosePayload {
+    context_id: Option<String>,
 }
 
 pub fn start_ui_command_worker<R: Runtime + 'static>(app_handle: AppHandle<R>) {
@@ -154,6 +194,23 @@ fn execute_command<R: Runtime>(
                 "bytes": data.len(),
             }))
         }
+        "kill_instance" => {
+            let payload: KillInstancePayload = serde_json::from_str(&record.payload)
+                .map_err(|err| format!("invalid kill_instance payload: {err}"))?;
+            let instance_id = payload.instance_id.trim();
+            if instance_id.is_empty() {
+                return Err("instance_id is required".to_owned());
+            }
+            let binder = app_handle.state::<Binder>();
+            let result = tauri::async_runtime::block_on(system_load::kill_target_internal(
+                &binder,
+                KillTarget::BoundInstance {
+                    instance_id: instance_id.to_owned(),
+                },
+            ))
+            .map_err(|err| err.to_string())?;
+            serde_json::to_value(result).map_err(|err| format!("failed to serialize result: {err}"))
+        }
         "move_node" => {
             let payload: MoveNodePayload = serde_json::from_str(&record.payload)
                 .map_err(|err| format!("invalid move_node payload: {err}"))?;
@@ -201,8 +258,205 @@ fn execute_command<R: Runtime>(
                 "node_count": layout.nodes.len(),
             }))
         }
+        "ui.export-layout" => {
+            let payload: ExportLayoutPayload = serde_json::from_str(&record.payload)
+                .map_err(|err| format!("invalid ui.export-layout payload: {err}"))?;
+            let export_scope = payload
+                .scope
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(&record.scope);
+            let layout = writes::load_ui_layout(conn, export_scope)?;
+            let path = resolve_artifact_path(payload.out.as_deref(), "swarm-ui-layout", "json")?;
+            let exported_at_ms = unix_millis();
+            let body = json!({
+                "version": 1,
+                "exportedAtUnixMs": exported_at_ms,
+                "scope": export_scope,
+                "layout": layout,
+            });
+            write_json_artifact(&path, &body)?;
+            Ok(json!({
+                "ok": true,
+                "path": path.to_string_lossy(),
+                "scope": export_scope,
+                "node_count": body
+                    .get("layout")
+                    .and_then(|value| value.get("nodes"))
+                    .and_then(|value| value.as_object())
+                    .map(|nodes| nodes.len())
+                    .unwrap_or(0),
+            }))
+        }
+        "ui.screenshot" => {
+            let payload: ScreenshotPayload = serde_json::from_str(&record.payload)
+                .map_err(|err| format!("invalid ui.screenshot payload: {err}"))?;
+            let _requested_path = payload.out.as_deref();
+            Ok(json!({
+                "ok": false,
+                "error": "window screenshot capture unavailable in this runtime",
+            }))
+        }
+        "ui.proof-pack" => {
+            let payload: ProofPackPayload = serde_json::from_str(&record.payload)
+                .map_err(|err| format!("invalid ui.proof-pack payload: {err}"))?;
+            let generated_at_ms = unix_millis();
+            let path =
+                resolve_artifact_path(payload.out.as_deref(), "swarm-ui-proof-pack", "json")?;
+            let surface = payload
+                .surface
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("cli");
+            let note = payload
+                .note
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let body = json!({
+                "version": 1,
+                "kind": "swarm-ui-proof-pack",
+                "generatedAtUnixMs": generated_at_ms,
+                "surface": surface,
+                "note": note,
+                "scope": record.scope,
+                "source": "ui.proof-pack",
+                "command": {
+                    "id": record.id,
+                    "createdBy": record.created_by,
+                },
+                "evidence": {
+                    "screenshot": {
+                        "ok": false,
+                        "error": "window screenshot capture unavailable in this runtime",
+                    },
+                    "visual": {
+                        "semanticSnapshot": [],
+                        "scrollContainers": [],
+                        "themeVariables": {},
+                        "note": "The CLI command path can write the proof-pack artifact, but DOM evidence requires the Project Task Board button inside swarm-ui.",
+                    },
+                },
+                "reviewSignals": [{
+                    "id": "cli-dom-evidence-unavailable",
+                    "status": "warn",
+                    "title": "CLI proof pack has no DOM snapshot",
+                    "detail": "Use the Project Task Board Capture proof pack button for semantic UI bounds, text, theme variables, and scroll containers.",
+                }],
+                "artifact": {
+                    "kind": "swarm-ui-proof-pack-artifact",
+                    "writtenAtUnixMs": generated_at_ms,
+                    "path": path.to_string_lossy(),
+                },
+            });
+            write_json_artifact(&path, &body)?;
+            let byte_count = fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0);
+            Ok(json!({
+                "ok": true,
+                "path": path.to_string_lossy(),
+                "scope": record.scope,
+                "surface": surface,
+                "byte_count": byte_count,
+            }))
+        }
+        "browser.open" => {
+            let payload: BrowserOpenPayload = serde_json::from_str(&record.payload)
+                .map_err(|err| format!("invalid browser.open payload: {err}"))?;
+            let catalog = crate::ui_commands::ui_open_browser_context(
+                record.scope.clone(),
+                payload.url.filter(|url| !url.trim().is_empty()),
+            )
+            .map_err(|err| err.to_string())?;
+            serde_json::to_value(catalog)
+                .map_err(|err| format!("failed to serialize result: {err}"))
+        }
+        "browser.import-active-tab" => {
+            let catalog = crate::ui_commands::ui_import_front_chrome_tab(record.scope.clone())
+                .map_err(|err| err.to_string())?;
+            serde_json::to_value(catalog)
+                .map_err(|err| format!("failed to serialize result: {err}"))
+        }
+        "browser.capture-snapshot" => {
+            let payload: BrowserCaptureSnapshotPayload = serde_json::from_str(&record.payload)
+                .map_err(|err| format!("invalid browser.capture-snapshot payload: {err}"))?;
+            let context_id = payload
+                .context_id
+                .filter(|id| !id.trim().is_empty())
+                .map_or_else(|| latest_open_browser_context_id(conn, &record.scope), Ok)?;
+            let tab_id = payload.tab_id.filter(|id| !id.trim().is_empty());
+            let catalog =
+                tauri::async_runtime::block_on(crate::ui_commands::ui_capture_browser_snapshot(
+                    record.scope.clone(),
+                    context_id,
+                    tab_id,
+                ))
+                .map_err(|err| err.to_string())?;
+            serde_json::to_value(catalog)
+                .map_err(|err| format!("failed to serialize result: {err}"))
+        }
+        "browser.close" => {
+            let payload: BrowserClosePayload = serde_json::from_str(&record.payload)
+                .map_err(|err| format!("invalid browser.close payload: {err}"))?;
+            let context_id = payload
+                .context_id
+                .filter(|id| !id.trim().is_empty())
+                .map_or_else(|| latest_open_browser_context_id(conn, &record.scope), Ok)?;
+            let catalog =
+                crate::ui_commands::ui_close_browser_context(record.scope.clone(), context_id)
+                    .map_err(|err| err.to_string())?;
+            serde_json::to_value(catalog)
+                .map_err(|err| format!("failed to serialize result: {err}"))
+        }
         other => Err(format!("unsupported ui command kind: {other}")),
     }
+}
+
+fn latest_open_browser_context_id(conn: &Connection, scope: &str) -> Result<String, String> {
+    writes::list_browser_contexts(conn, scope)?
+        .into_iter()
+        .find(|context| context.status == "open")
+        .map(|context| context.id)
+        .ok_or_else(|| "no open browser context in this scope".to_owned())
+}
+
+fn unix_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
+}
+
+fn resolve_artifact_path(
+    requested: Option<&str>,
+    stem: &str,
+    extension: &str,
+) -> Result<PathBuf, String> {
+    if let Some(raw) = requested.map(str::trim).filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(raw));
+    }
+
+    let base = dirs::home_dir()
+        .ok_or_else(|| "failed to resolve home directory for artifacts".to_owned())?
+        .join(".swarm-mcp")
+        .join("artifacts");
+    Ok(base.join(format!("{stem}-{}.{}", unix_millis(), extension)))
+}
+
+fn write_json_artifact(path: &PathBuf, value: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "failed to create artifact directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    let raw = serde_json::to_string_pretty(value)
+        .map_err(|err| format!("failed to serialize artifact: {err}"))?;
+    fs::write(path, raw)
+        .map_err(|err| format!("failed to write artifact {}: {err}", path.display()))
 }
 
 fn current_node_ids_for_scope<R: Runtime>(

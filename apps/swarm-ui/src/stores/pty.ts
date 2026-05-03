@@ -26,13 +26,35 @@ import type {
   RolePresetSummary,
   SystemLoadSnapshot,
 } from '../lib/types';
+import { buildBootstrapPrompt } from '../lib/bootstrapPrompt';
+import { buildHarnessLabel, withCodexMcpEnv } from '../lib/codexLaunchCommand';
+import {
+  formatLaunchPreflightFailure,
+  preflightLaunchCommand,
+  type LaunchCommandPreflight,
+} from '../lib/launchPreflight';
 import { reconcilePtyCatalog } from '../lib/ptyCatalog';
+import { removeInstancesFromLocalState } from './swarm';
 import { resolveHarnessCommand } from './harnessAliases';
 
 const HARNESS_AUTOTYPE_MIN_DELAY_MS = 200;
 const PTY_READY_TIMEOUT_MS = 1500;
 const SWARM_BOOTSTRAP_DELAY_MS = 1400;
 export const LOCAL_PTY_LEASE_HOLDER = 'local:swarm-ui';
+
+function isMissingInstanceError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /instance .+ not found/i.test(message);
+}
+
+function dropInstanceBindings(instanceIds: Iterable<string>): void {
+  const targets = new Set([...instanceIds].map((id) => id.trim()).filter(Boolean));
+  if (targets.size === 0) return;
+  bindings.update((state) => ({
+    pending: state.pending,
+    resolved: state.resolved.filter(([id]) => !targets.has(id)),
+  }));
+}
 
 type ReadyGate = {
   ready: boolean;
@@ -41,6 +63,12 @@ type ReadyGate = {
 };
 
 const ptyReadyGates = new Map<string, ReadyGate>();
+
+type SwarmMcpServerConfig = {
+  command: string;
+  args: string[];
+  source: string;
+};
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -92,39 +120,38 @@ async function autoTypeCommandWhenReady(
   await writeToPty(ptyId, encoded);
 }
 
-function buildBootstrapPrompt(
+function shellQuote(value: string): string {
+  return `'${value.split("'").join("'\\''")}'`;
+}
+
+async function codexLaunchScriptCommand(
+  instanceId: string | null,
+  launchCommand: string,
+): Promise<string> {
+  if (!instanceId) return launchCommand;
+  const scriptPath = await invoke<string>('ui_write_codex_launch_script', {
+    instanceId,
+    command: launchCommand,
+  });
+  return `printf '\\033[3J\\033[2J\\033[H'; zsh ${shellQuote(scriptPath)}`;
+}
+
+async function resolveSwarmMcpServer(
   cwd: string,
-  role: string | null,
-  bootstrapInstructions: string | null,
-): string {
-  const base =
-    `Use the swarm register tool with directory="${cwd}". ` +
-    'Then call whoami, list_instances, poll_messages, and list_tasks.';
-
-  const roleLine = role
-    ? role === 'planner'
-      ? ' You are the planner. Coordinate work through swarm tasks and use wait_for_activity when idle.'
-      : role === 'implementer'
-        ? ' You are the implementer. Claim appropriate tasks, execute them, and use wait_for_activity when idle.'
-        : role === 'reviewer'
-          ? ' You are the reviewer. Focus on review tasks and use wait_for_activity when idle.'
-          : role === 'researcher'
-            ? ' You are the researcher. Focus on research tasks and use wait_for_activity when idle.'
-            : ' Use wait_for_activity when idle.'
-    : ' Use wait_for_activity when idle.';
-
-  const extraInstructions = bootstrapInstructions?.trim();
-  if (!extraInstructions) {
-    return `${base}${roleLine}`;
-  }
-
-  return `${base}${roleLine}\nSaved launcher profile:\n${extraInstructions}`;
+  scope: string | null,
+): Promise<SwarmMcpServerConfig> {
+  return invoke<SwarmMcpServerConfig>('ui_resolve_swarm_mcp_server', {
+    cwd,
+    scope,
+  });
 }
 
 async function autoBootstrapHarnessWhenReady(
   ptyId: string,
   cwd: string,
+  scope: string | null,
   role: string | null,
+  label: string | null,
   bootstrapInstructions: string | null,
 ): Promise<void> {
   await Promise.all([
@@ -132,7 +159,13 @@ async function autoBootstrapHarnessWhenReady(
     delay(HARNESS_AUTOTYPE_MIN_DELAY_MS + SWARM_BOOTSTRAP_DELAY_MS),
   ]);
 
-  const prompt = buildBootstrapPrompt(cwd, role, bootstrapInstructions);
+  const prompt = buildBootstrapPrompt({
+    cwd,
+    scope,
+    role,
+    label,
+    bootstrapInstructions,
+  });
   const encoded = new TextEncoder().encode(`${prompt}\n`);
   await writeToPty(ptyId, encoded);
 }
@@ -528,6 +561,26 @@ export async function closePty(id: string): Promise<void> {
 }
 
 /**
+ * Clear a stale/orphan PTY row from the daemon without presenting it as a
+ * process-tree kill. If the daemon no longer knows about the session, refresh
+ * the catalog and only surface the error when the PTY still exists locally.
+ */
+export async function clearStalePtySession(id: string): Promise<void> {
+  try {
+    await closePty(id);
+  } catch (err) {
+    try {
+      await refreshPtyCatalog();
+    } catch (refreshErr) {
+      console.warn('[pty] failed to refresh catalog after stale PTY clear:', refreshErr);
+    }
+    if (get(ptySessions).has(id)) {
+      throw err;
+    }
+  }
+}
+
+/**
  * Get the current ring buffer contents for a PTY session.
  * Used for reconnect/remount to replay recent output.
  *
@@ -562,6 +615,13 @@ export interface SpawnShellOptions {
    * instructions without expanding the backend launch contract.
    */
   bootstrapInstructions?: string;
+  /**
+   * Optional preflight result from the caller. When present and matching the
+   * command we are about to type, spawnShell reuses it instead of probing the
+   * login shell a second time.
+   */
+  launchPreflight?: LaunchCommandPreflight;
+  skipLaunchPreflight?: boolean;
 }
 
 /**
@@ -585,6 +645,21 @@ export async function spawnShell(
   const trimmedLabel = options.label?.trim() || null;
   const trimmedName = options.name?.trim() || null;
   const trimmedBootstrapInstructions = options.bootstrapInstructions?.trim() || null;
+  const launchCommandBase =
+    trimmedHarnessCommand || (trimmedHarness ? resolveHarnessCommand(trimmedHarness) : '');
+
+  if (launchCommandBase && !options.skipLaunchPreflight) {
+    const launchPreflight = options.launchPreflight?.command.trim() === launchCommandBase
+      ? options.launchPreflight
+      : await preflightLaunchCommand({
+          command: launchCommandBase,
+          cwd,
+          harness: trimmedHarness,
+        });
+    if (!launchPreflight.ok) {
+      throw new Error(formatLaunchPreflightFailure(launchPreflight));
+    }
+  }
 
   const result = await invoke<ShellSpawnResult>('spawn_shell', {
     cwd,
@@ -597,7 +672,7 @@ export async function spawnShell(
 
   const session: PtySession = {
     id: result.pty_id,
-    command: trimmedHarness ?? '$SHELL',
+    command: trimmedHarnessCommand ?? trimmedHarness ?? '$SHELL',
     cwd,
     started_at: Date.now(),
     exit_code: null,
@@ -614,20 +689,57 @@ export async function spawnShell(
     resolveBinding(result.instance_id, result.pty_id);
   }
 
-  if (trimmedHarness) {
-    const launchCommand = trimmedHarnessCommand || resolveHarnessCommand(trimmedHarness);
+  const launchLabel = buildHarnessLabel({
+    harness: trimmedHarness,
+    role: trimmedRole,
+    name: trimmedName,
+    label: trimmedLabel,
+  });
+  const bootstrapPrompt = trimmedHarness
+    ? buildBootstrapPrompt({
+        cwd,
+        scope: trimmedScope,
+        role: trimmedRole,
+        label: launchLabel,
+        bootstrapInstructions: trimmedBootstrapInstructions,
+      })
+    : null;
+  const swarmMcpServer = trimmedHarness === 'codex'
+    ? await resolveSwarmMcpServer(cwd, trimmedScope)
+    : null;
+  const configuredLaunchCommand = trimmedHarness === 'codex'
+    ? withCodexMcpEnv(launchCommandBase, {
+        instanceId: result.instance_id,
+        directory: cwd,
+        fileRoot: cwd,
+        scope: trimmedScope,
+        label: launchLabel,
+        initialPrompt: bootstrapPrompt,
+        mcpCommand: swarmMcpServer?.command,
+        mcpArgs: swarmMcpServer?.args,
+        startupMode: 'standby',
+      })
+    : launchCommandBase;
+  const launchCommand = trimmedHarness === 'codex'
+    ? await codexLaunchScriptCommand(result.instance_id, configuredLaunchCommand)
+    : configuredLaunchCommand;
 
+  if (launchCommand) {
     void autoTypeCommandWhenReady(
       result.pty_id,
       launchCommand,
     ).catch((err) => {
       console.warn('[pty] failed to auto-type harness into shell:', err);
     });
+  }
 
+  if (trimmedHarness && trimmedHarness !== 'codex') {
     void autoBootstrapHarnessWhenReady(
       result.pty_id,
       cwd,
+      trimmedScope,
       trimmedRole,
+      launchLabel,
       trimmedBootstrapInstructions,
     ).catch((err) => {
       console.warn('[pty] failed to auto-bootstrap harness session:', err);
@@ -685,6 +797,45 @@ export async function respawnInstance(instanceId: string): Promise<RespawnResult
   return result;
 }
 
+export async function respawnInstanceInProject(
+  instanceId: string,
+  directory: string,
+  scope: string | null,
+): Promise<RespawnResult> {
+  const result = await invoke<RespawnResult>('respawn_instance_in_project', {
+    instanceId,
+    directory,
+    scope,
+  });
+
+  const session: PtySession = {
+    id: result.pty_id,
+    command: result.harness ?? 'agent',
+    cwd: directory,
+    started_at: Date.now(),
+    exit_code: null,
+    bound_instance_id: result.instance_id,
+    launch_token: result.token,
+    cols: 120,
+    rows: 40,
+    lease: null,
+  };
+
+  upsertSession(session);
+  resolveBinding(result.instance_id, result.pty_id);
+
+  if (result.harness) {
+    void autoTypeCommandWhenReady(
+      result.pty_id,
+      resolveHarnessCommand(result.harness),
+    ).catch((err: unknown) => {
+      console.warn('[pty] failed to auto-type harness on project respawn:', err);
+    });
+  }
+
+  return result;
+}
+
 /**
  * Remove a disconnected instance row from swarm.db. Used when the user
  * clicks the trash button on a stale/offline node whose PTY is already
@@ -692,13 +843,15 @@ export async function respawnInstance(instanceId: string): Promise<RespawnResult
  * session, or a child process killed outside the UI.
  */
 export async function deregisterInstance(instanceId: string): Promise<void> {
-  await invoke('ui_deregister_instance', { instanceId });
+  try {
+    await invoke('ui_deregister_instance', { instanceId });
+  } catch (err) {
+    if (!isMissingInstanceError(err)) throw err;
+  }
   // Drop the binder mapping on our side immediately so the bound: node
   // disappears from the graph without waiting for the swarm:update tick.
-  bindings.update((state) => ({
-    pending: state.pending,
-    resolved: state.resolved.filter(([id]) => id !== instanceId),
-  }));
+  dropInstanceBindings([instanceId]);
+  removeInstancesFromLocalState([instanceId]);
 }
 
 /**
@@ -712,10 +865,16 @@ export async function deregisterInstance(instanceId: string): Promise<void> {
  * Gate this with a confirm dialog — it's destructive.
  */
 export async function killInstance(instanceId: string): Promise<void> {
-  await killSessionTree({
-    kind: 'bound_instance',
-    instance_id: instanceId,
-  });
+  try {
+    await killSessionTree({
+      kind: 'bound_instance',
+      instance_id: instanceId,
+    });
+  } catch (err) {
+    if (!isMissingInstanceError(err)) throw err;
+    dropInstanceBindings([instanceId]);
+    removeInstancesFromLocalState([instanceId]);
+  }
 }
 
 export async function scanSystemLoad(
@@ -727,6 +886,7 @@ export async function scanSystemLoad(
 export async function killSessionTree(target: KillTarget): Promise<KillResult> {
   const result = await invoke<KillResult>('ui_kill_session_tree', { target });
   dropKilledBindings(result);
+  removeInstancesFromLocalState(result.deregistered_instances);
   try {
     await refreshPtyCatalog();
   } catch (err) {
@@ -737,16 +897,23 @@ export async function killSessionTree(target: KillTarget): Promise<KillResult> {
 
 export async function killAllAgentSessions(
   scope: string | null = null,
+  visibleInstanceIds: Iterable<string> = [],
 ): Promise<KillSummary> {
   const result = await invoke<KillSummary>('ui_kill_all_agent_sessions', { scope });
+  const visibleIds = [...new Set([...visibleInstanceIds].map((id) => id.trim()).filter(Boolean))];
+  const locallyRemovedIds = new Set(result.deregistered_instances);
+  if (result.skipped_targets === 0) {
+    for (const id of visibleIds) locallyRemovedIds.add(id);
+  }
   bindings.update((state) => ({
     pending: state.pending.filter(([, ptyId]) => !result.closed_ptys.includes(ptyId)),
     resolved: state.resolved.filter(
       ([instanceId, ptyId]) =>
-        !result.deregistered_instances.includes(instanceId)
+        !locallyRemovedIds.has(instanceId)
         && !result.closed_ptys.includes(ptyId),
     ),
   }));
+  removeInstancesFromLocalState(locallyRemovedIds);
   try {
     await refreshPtyCatalog();
   } catch (err) {
@@ -776,6 +943,18 @@ export async function broadcastOperatorMessage(
 }
 
 /**
+ * Send an operator-authored direct message to one registered agent in `scope`.
+ * Returns `false` when the recipient disappeared before the backend write.
+ */
+export async function sendOperatorMessage(
+  scope: string,
+  recipient: string,
+  content: string,
+): Promise<boolean> {
+  return await invoke<boolean>('ui_send_message', { scope, recipient, content });
+}
+
+/**
  * Fan out a Ctrl-C (soft interrupt) to every bound PTY in `scope`. Used by the
  * Conversation panel's "Stop" button. Only PTYs owned by this UI session are
  * signalled — externally adopted instances the UI never bound to are skipped.
@@ -802,11 +981,13 @@ export async function sendScopeSigint(scope: string): Promise<number> {
  * decided the row is gone.
  */
 export async function forceDeregisterInstance(instanceId: string): Promise<void> {
-  await invoke('ui_force_deregister_instance', { instanceId });
-  bindings.update((state) => ({
-    pending: state.pending,
-    resolved: state.resolved.filter(([id]) => id !== instanceId),
-  }));
+  try {
+    await invoke('ui_force_deregister_instance', { instanceId });
+  } catch (err) {
+    if (!isMissingInstanceError(err)) throw err;
+  }
+  dropInstanceBindings([instanceId]);
+  removeInstancesFromLocalState([instanceId]);
 }
 
 function dropKilledBindings(result: KillResult): void {
@@ -839,6 +1020,7 @@ export async function deregisterOfflineInstances(
   const ptyMap = get(ptySessions);
 
   let removed = 0;
+  const locallyRemovedIds = new Set<string>();
 
   for (const instanceId of targetIds) {
     const ptyId = resolvedByInstance.get(instanceId);
@@ -853,6 +1035,7 @@ export async function deregisterOfflineInstances(
     // disappears from the graph.
     try {
       await closePty(ptyId);
+      locallyRemovedIds.add(instanceId);
       removed += 1;
     } catch (err) {
       console.warn('[pty] failed to close PTY during offline sweep:', err);
@@ -863,10 +1046,14 @@ export async function deregisterOfflineInstances(
     removed += await invoke<number>('ui_deregister_offline_instances', {
       scope: scope ?? null,
     });
+    for (const id of targetIds) locallyRemovedIds.add(id);
   } catch (err) {
     console.error('[pty] bulk deregister failed:', err);
     throw err;
   }
+
+  dropInstanceBindings(locallyRemovedIds);
+  removeInstancesFromLocalState(locallyRemovedIds);
 
   return removed;
 }

@@ -7,7 +7,7 @@ function makePty(id: string): PtySession {
   return {
     id,
     command: 'claude',
-    cwd: '/Users/example/Desktop',
+    cwd: '/Users/mathewfrazier/Desktop',
     started_at: 1_776_888_000_000,
     exit_code: null,
     bound_instance_id: null,

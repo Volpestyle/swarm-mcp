@@ -320,11 +320,6 @@ impl PtyManager {
     ) {
         let stream_handle = handle.clone();
         let task = tauri::async_runtime::spawn(async move {
-            let mut open_stream_log = daemon::RetryLogThrottle::default();
-            let mut subscribe_log = daemon::RetryLogThrottle::default();
-            let mut attach_log = daemon::RetryLogThrottle::default();
-            let mut read_log = daemon::RetryLogThrottle::default();
-
             loop {
                 if stream_handle.is_closed() {
                     return;
@@ -332,17 +327,13 @@ impl PtyManager {
 
                 match daemon::open_stream().await {
                     Ok(mut socket) => {
-                        open_stream_log.reset();
                         if let Err(err) = daemon::subscribe(&mut socket).await {
-                            subscribe_log.warn(|| {
-                                format!(
-                                    "[pty] failed to subscribe daemon stream for {pty_id}: {err}"
-                                )
-                            });
+                            eprintln!(
+                                "[pty] failed to subscribe daemon stream for {pty_id}: {err}"
+                            );
                             tokio::time::sleep(STREAM_RETRY_DELAY).await;
                             continue;
                         }
-                        subscribe_log.reset();
                         if let Err(err) = daemon::send_frame(
                             &mut socket,
                             &swarm_protocol::Frame::new(FramePayload::PtyAttach(PtyAttachFrame {
@@ -352,27 +343,19 @@ impl PtyManager {
                         )
                         .await
                         {
-                            attach_log.warn(|| {
-                                format!(
-                                    "[pty] failed to attach daemon PTY stream for {pty_id}: {err}"
-                                )
-                            });
+                            eprintln!(
+                                "[pty] failed to attach daemon PTY stream for {pty_id}: {err}"
+                            );
                             tokio::time::sleep(STREAM_RETRY_DELAY).await;
                             continue;
                         }
-                        attach_log.reset();
 
                         loop {
                             let frame = match daemon::read_frame(&mut socket).await {
-                                Ok(Some(frame)) => {
-                                    read_log.reset();
-                                    frame
-                                }
+                                Ok(Some(frame)) => frame,
                                 Ok(None) => break,
                                 Err(err) => {
-                                    read_log.warn(|| {
-                                        format!("[pty] daemon PTY stream error for {pty_id}: {err}")
-                                    });
+                                    eprintln!("[pty] daemon PTY stream error for {pty_id}: {err}");
                                     break;
                                 }
                             };
@@ -402,9 +385,7 @@ impl PtyManager {
                         }
                     }
                     Err(err) => {
-                        open_stream_log.warn(|| {
-                            format!("[pty] failed to open daemon stream for {pty_id}: {err}")
-                        });
+                        eprintln!("[pty] failed to open daemon stream for {pty_id}: {err}");
                     }
                 }
 

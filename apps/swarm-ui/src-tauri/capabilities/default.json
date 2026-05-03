@@ -7,6 +7,8 @@
     "core:default",
     "core:app:default",
     "core:event:default",
-    "core:window:default"
+    "core:window:default",
+    "core:webview:allow-create-webview-window",
+    "dialog:allow-open"
   ]
 }

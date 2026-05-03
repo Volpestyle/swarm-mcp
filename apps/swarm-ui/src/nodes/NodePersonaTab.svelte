@@ -188,6 +188,7 @@
   }
 
   .identity-card {
+    position: relative;
     display: grid;
     grid-template-columns: 68px minmax(0, 1fr) 68px;
     align-items: center;
@@ -206,6 +207,26 @@
     backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.12);
     -webkit-backdrop-filter: blur(var(--surface-blur, 20px)) saturate(1.12);
     box-sizing: border-box;
+    overflow: hidden;
+  }
+
+  .identity-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .identity-card::after {
+    content: '';
+    position: absolute;
+    left: 92px;
+    right: 92px;
+    bottom: 9px;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
   }
 
   .persona-chip {
@@ -436,6 +457,22 @@
     box-shadow:
       var(--led-halo-x, 0 0 18px rgba(255, 255, 255, 0.35)),
       0 18px 44px rgba(0, 0, 0, 0.62);
+  }
+
+  :global([data-theme="tron-encom-os"]) .identity-card::before {
+    border: 1px solid rgba(255, 255, 255, 0.42);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+      inset 0 0 26px rgba(255, 255, 255, 0.035);
+  }
+
+  :global([data-theme="tron-encom-os"]) .identity-card::after {
+    left: 96px;
+    right: 96px;
+    bottom: 11px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.62), transparent);
+    filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.42));
   }
 
   :global([data-theme="tron-encom-os"]) .persona-chip {

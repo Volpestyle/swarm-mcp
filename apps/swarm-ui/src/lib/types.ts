@@ -19,6 +19,7 @@ import type {
   TaskStatus,
   TaskType,
 } from './generated/protocol';
+import type { AgentListenerHealth } from './agentListenerHealth';
 
 export type {
   Annotation,
@@ -32,14 +33,155 @@ export type {
   TaskStatus,
   TaskType,
 } from './generated/protocol';
+export type { AgentListenerHealth } from './agentListenerHealth';
 
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
 
-export type NodeType = 'instance' | 'pty' | 'bound';
+export type NodeType = 'instance' | 'pty' | 'bound' | 'browser';
 
 export type EdgeType = 'connection';
+
+export type AgentCardMode = 'overview' | 'terminal' | 'tasks' | 'context' | 'history';
+
+export interface AgentRuntimeProfile {
+  instanceId: string;
+  name: string;
+  role: string;
+  persona: string;
+  mission: string;
+  skills: string;
+  permissions: string;
+  updatedAt: number;
+}
+
+export interface AgentDisplayState {
+  name: string;
+  role: string;
+  provider: string;
+  persona: string | null;
+  mission: string;
+  skills: string;
+  permissions: string;
+  taskCount: number;
+  lockCount: number;
+  unreadMessages: number;
+  listenerLabel: string;
+}
+
+export interface ProjectBoundary {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ProjectSpace {
+  id: string;
+  name: string;
+  root: string;
+  color: string;
+  additionalRoots: string[];
+  notes: string;
+  scope: string | null;
+  boundary: ProjectBoundary;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProjectMembership {
+  projectId: string;
+  instanceId: string;
+  attachedAt: number;
+}
+
+export type AssetKind = 'image' | 'screenshot' | 'note' | 'folder' | 'protocol' | 'reference';
+
+export interface ProjectAsset {
+  id: string;
+  projectId: string;
+  kind: AssetKind;
+  title: string;
+  path: string | null;
+  content: string | null;
+  description: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ProjectInventoryEntryType = 'file' | 'folder' | 'symlink' | 'other';
+
+export type ProjectInventoryCategory =
+  | 'folder'
+  | 'image'
+  | 'richText'
+  | 'text'
+  | 'code'
+  | 'document'
+  | 'archive'
+  | 'media'
+  | 'file'
+  | 'symlink'
+  | 'other';
+
+export interface ProjectInventoryEntry {
+  projectId: string;
+  root: string;
+  path: string;
+  name: string;
+  entryType: ProjectInventoryEntryType;
+  category: ProjectInventoryCategory;
+  extension: string;
+  sizeBytes: number | null;
+  modifiedAt: number;
+}
+
+export interface AssetAttachment {
+  assetId: string;
+  targetType: 'agent' | 'project' | 'protocol';
+  targetId: string;
+  attachedAt: number;
+}
+
+// ---------------------------------------------------------------------------
+// Protocols — Phase 7 Task 3
+//
+// A protocol is a declarative workflow — agent roles, tasks, approvals, and
+// the relationships between them. Protocols are rendered in their own view
+// (ProtocolView.svelte, Phase 7 Task 4) so they don't clutter the live agent
+// graph. The shape is intentionally narrow: just nodes + labeled edges. The
+// editor (Phase 7 Task 4) is form-based for v1 — drag editing is deferred.
+// ---------------------------------------------------------------------------
+
+export type ProtocolNodeKind = 'agent-role' | 'task' | 'approval' | 'asset' | 'note';
+
+export interface ProtocolNode {
+  id: string;
+  label: string;
+  kind: ProtocolNodeKind;
+}
+
+export interface ProtocolEdge {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+}
+
+export interface ProjectProtocol {
+  id: string;
+  projectId: string;
+  name: string;
+  nodes: ProtocolNode[];
+  edges: ProtocolEdge[];
+}
+
+export interface ProjectNodeAccent {
+  id: string;
+  name: string;
+  color: string;
+}
 
 export interface PtyLease {
   holder: string;
@@ -93,6 +235,59 @@ export interface SwarmUpdate {
   kv: KvEntry[];
   events: Event[];
   ui_meta: Record<string, unknown> | null;
+}
+
+export interface BrowserContext {
+  scope: string;
+  id: string;
+  ownerInstanceId: string | null;
+  endpoint: string;
+  host: string;
+  port: number;
+  profileDir: string;
+  pid: number | null;
+  startUrl: string;
+  status: 'open' | 'closed' | string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface BrowserTab {
+  scope: string;
+  contextId: string;
+  tabId: string;
+  tabType: string;
+  url: string;
+  title: string;
+  active: boolean;
+  updatedAt: number;
+}
+
+export interface BrowserSnapshotElement {
+  tag: string;
+  role: string | null;
+  text: string;
+  selector: string;
+}
+
+export interface BrowserSnapshot {
+  id: string;
+  scope: string;
+  contextId: string;
+  tabId: string;
+  url: string;
+  title: string;
+  text: string;
+  elements: BrowserSnapshotElement[];
+  screenshotPath: string | null;
+  createdBy: string | null;
+  createdAt: number;
+}
+
+export interface BrowserCatalog {
+  contexts: BrowserContext[];
+  tabs: BrowserTab[];
+  snapshots: BrowserSnapshot[];
 }
 
 /** Returned by `get_binding_state` */
@@ -289,7 +484,7 @@ export interface SwarmEdge {
 // ---------------------------------------------------------------------------
 
 /** Node shape expected by @xyflow/svelte */
-export type XYFlowNode = FlowNode<SwarmNodeData, 'terminal'>;
+export type XYFlowNode = FlowNode<SwarmNodeData, 'terminal' | 'browser'>;
 
 /** Data payload carried by each XYFlow node */
 export type SwarmNodeData = Record<string, unknown> & {
@@ -304,6 +499,14 @@ export type SwarmNodeData = Record<string, unknown> & {
   assignedTasks: Task[];
   /** Tasks requested by this instance */
   requestedTasks: Task[];
+  /** Unread incoming swarm messages still waiting for this instance to poll. */
+  unreadMessages: number;
+  /** Listener/readiness state derived from poll/wait audit events. */
+  listenerHealth: AgentListenerHealth;
+  /** Agent-first presentation data used by overview cards. */
+  agentDisplay: AgentDisplayState;
+  /** Project visual accent applied after the agent is attached to a project. */
+  project: ProjectNodeAccent | null;
   /**
    * Optional human-friendly identifier extracted from the swarm label's
    * `name:<value>` token. When set, the node header shows this in place of
@@ -314,6 +517,12 @@ export type SwarmNodeData = Record<string, unknown> & {
   mobileControlled: boolean;
   /** Lease holder string such as `local:swarm-ui` or `device:abc123`. */
   mobileLeaseHolder: string | null;
+  /** Browser context rendered as a canvas node, if this is a browser node. */
+  browserContext: BrowserContext | null;
+  /** Tabs for this browser context. */
+  browserTabs: BrowserTab[];
+  /** Recent snapshots for this browser context. */
+  browserSnapshots: BrowserSnapshot[];
 };
 
 /**
@@ -383,6 +592,7 @@ export interface TerminalHandle {
   id: string;
   write: (data: Uint8Array | string) => void;
   refit: () => void;
+  repaint: () => void;
   setTheme: (theme: TerminalTheme) => void;
   getSize: () => { cols: number; rows: number };
   setViewportSize: (cols: number, rows: number) => void;
@@ -403,10 +613,24 @@ export interface SavedLayout {
 
 export type ThemeProfileId =
   | 'tron-encom-os'
+  | 'liquid-glass-cool'
+  | 'liquid-glass-warm'
   | 'ghostty-dark'
   | 'solar-dusk'
   | 'arctic-console'
   | 'operator-amber';
+
+/**
+ * macOS NSVisualEffectMaterial identifier sent to the
+ * `ui_set_window_vibrancy` Tauri command. Liquid Glass themes apply
+ * 'hud_window' vibrancy at activation; everything else clears it (null) so
+ * the window is genuinely transparent through to the desktop.
+ */
+export type WindowVibrancyMaterial =
+  | 'hud_window'
+  | 'sidebar'
+  | 'under_window_background'
+  | null;
 
 /**
  * Encom-only chrome tokens for the "Tron Encom OS" theme.
@@ -457,7 +681,7 @@ export interface EncomChrome {
   accentAmber: string;
   accentRed: string;
   accentViolet: string;
-  /** "Tron green" — reserved for strong operator actions and imagery. */
+  /** "Tron green" — reserved for 3D/imagery only, never UI chrome. */
   accentTron: string;
   /** Color of the radial-dot grid behind everything. Maps to --grid-color. */
   gridColor: string;
@@ -465,6 +689,7 @@ export interface EncomChrome {
 
 export interface ThemeAppearance {
   defaultBackgroundOpacity: number;
+  defaultBackdropBlur: number;
   canvasRgb: [number, number, number];
   panelRgb: [number, number, number];
   sidebarRgb: [number, number, number];
@@ -512,6 +737,26 @@ export interface ThemeProfile {
   chrome?: EncomChrome;
 }
 
+export type LaunchTrustPosture =
+  | 'trusted-local'
+  | 'safe-review'
+  | 'research'
+  | 'visual-design'
+  | 'custom';
+
+export type LaunchScopeMode = 'follow-canvas' | 'fresh-project' | 'custom';
+
+export interface LaunchProfile {
+  id: string;
+  name: string;
+  description: string;
+  harness: string;
+  command: string;
+  trustPosture: LaunchTrustPosture;
+  defaultRole: string;
+  defaultScopeMode: LaunchScopeMode;
+}
+
 export interface StartupLaunchDefaults {
   harness: string;
   role: string;
@@ -522,8 +767,10 @@ export interface StartupPreferences {
   recentDirectories: string[];
   selectedDirectory: string;
   launchDefaults: StartupLaunchDefaults;
+  selectedLaunchProfileId: string;
   themeProfileId: ThemeProfileId;
   backgroundOpacityOverride: number | null;
+  backdropBlurOverride: number | null;
 }
 
 export interface AgentProfileDraft {
@@ -543,9 +790,27 @@ export interface AgentProfileDraft {
   permissions: string;
   launchCommand: string;
   customInstructions: string;
+  emoji: string;
+  roleAccent: string;
+  tierRank: number;
 }
 
 export interface AgentProfile extends AgentProfileDraft {
+  id: string;
+  updatedAt: number;
+}
+
+export interface AgentTeamMember {
+  profileId: string | null;
+  profile: AgentProfileDraft;
+}
+
+export interface AgentTeamDraft {
+  name: string;
+  members: AgentTeamMember[];
+}
+
+export interface AgentTeam extends AgentTeamDraft {
   id: string;
   updatedAt: number;
 }
@@ -556,6 +821,10 @@ export type RecoverySessionAction =
   | 'remove'
   | 'cleanup_orphan';
 
+export type RecoverySessionKind =
+  | 'instance'
+  | 'orphan_pty';
+
 export type RecoverySessionStatus =
   | 'adopting'
   | 'online'
@@ -564,6 +833,9 @@ export type RecoverySessionStatus =
 
 export interface RecoverySessionItem {
   id: string;
+  kind: RecoverySessionKind;
+  instanceId: string | null;
+  ptyId: string | null;
   scope: string;
   directory: string;
   label: string | null;

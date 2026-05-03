@@ -4,6 +4,7 @@
   import { agentProfiles, selectedAgentProfileId } from '../stores/agentProfiles';
   import { harnessAliases } from '../stores/harnessAliases';
   import { formatScopeLabel } from '../stores/startup';
+  import { STANDARD_AGENT_ROLE_PRESETS, rolePresetForRole } from '../lib/agentRolePresets';
 
   const dispatch = createEventDispatcher<{
     launchProfile: { profileId: string };
@@ -43,7 +44,7 @@
   }
 
   function scopeValue(profile: AgentProfile): string {
-    if (!profile.scope.trim()) return 'Follow current canvas scope';
+    if (!profile.scope.trim()) return 'Follow current canvas channel';
     return profile.scope.includes('#fresh-')
       ? `${formatScopeLabel(profile.scope)} · ${profile.scope}`
       : profile.scope;
@@ -51,6 +52,23 @@
 </script>
 
 <div class="agent-library">
+  <section class="role-reference" aria-label="Role definitions">
+    <div class="role-reference-heading">
+      <h3>Role Definitions</h3>
+      <p>Saved agents use these launch-label contracts after registration.</p>
+    </div>
+    <div class="role-reference-grid">
+      {#each STANDARD_AGENT_ROLE_PRESETS as preset (preset.id)}
+        <article class="role-reference-card" style="--agent-color: {preset.accent}">
+          <span>{preset.emoji}</span>
+          <strong>{preset.label}</strong>
+          <code>role:{preset.role}</code>
+          <p>{preset.definition}</p>
+        </article>
+      {/each}
+    </div>
+  </section>
+
   {#if $agentProfiles.length === 0}
     <article class="empty-card">
       <h3>No saved agents yet</h3>
@@ -71,7 +89,9 @@
               <div class="pill-row">
                 <span class="meta-pill">{profile.harness || 'shell'}</span>
                 {#if profile.role}
-                  <span class="meta-pill">{profile.role}</span>
+                  <span class="meta-pill" title={rolePresetForRole(profile.role).description}>
+                    {rolePresetForRole(profile.role).label} ({profile.role})
+                  </span>
                 {/if}
                 {#if profile.nodeName}
                   <span class="meta-pill">node:{profile.nodeName}</span>
@@ -99,7 +119,7 @@
               <code class="mono detail-code">{detailValue(profile.workingDirectory, 'Not set')}</code>
             </div>
             <div class="detail-block">
-              <span class="detail-label">Scope</span>
+              <span class="detail-label">Channel</span>
               <p class="detail-text">{scopeValue(profile)}</p>
             </div>
             <div class="detail-block">
@@ -154,6 +174,74 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
+  }
+
+  .role-reference {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .role-reference-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    gap: 16px;
+  }
+
+  .role-reference-heading h3,
+  .role-reference-heading p {
+    margin: 0;
+  }
+
+  .role-reference-heading h3 {
+    color: var(--terminal-fg, #d4d4d4);
+  }
+
+  .role-reference-heading p {
+    color: color-mix(in srgb, var(--terminal-fg) 62%, transparent);
+    font-size: 12px;
+  }
+
+  .role-reference-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 10px;
+  }
+
+  .role-reference-card {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 5px 9px;
+    align-items: center;
+    border: 1px solid color-mix(in srgb, var(--agent-color, #00f060) 38%, var(--node-border));
+    border-left-width: 3px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--agent-color, #00f060) 7%, var(--node-bg));
+    padding: 10px;
+  }
+
+  .role-reference-card > span {
+    grid-row: span 2;
+    font-size: 24px;
+  }
+
+  .role-reference-card strong {
+    color: var(--terminal-fg, #d4d4d4);
+  }
+
+  .role-reference-card code {
+    color: color-mix(in srgb, var(--terminal-fg) 58%, transparent);
+    font-size: 10px;
+  }
+
+  .role-reference-card p {
+    grid-column: 1 / -1;
+    margin: 3px 0 0;
+    color: color-mix(in srgb, var(--terminal-fg) 70%, transparent);
+    font-size: 12px;
+    line-height: 1.45;
   }
 
   .agent-card,

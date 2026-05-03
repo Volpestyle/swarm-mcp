@@ -22,8 +22,10 @@ type Flags = {
   role?: string;
   label?: string;
   kind?: string;
+  surface?: string;
   x?: number;
   y?: number;
+  out?: string;
   wait?: number;
   enter: boolean;
 };
@@ -56,8 +58,10 @@ function parseFlags(argv: string[]): Flags {
     if (a === "--role") { flags.role = argv[++i]; continue; }
     if (a === "--label") { flags.label = argv[++i]; continue; }
     if (a === "--kind") { flags.kind = argv[++i]; continue; }
+    if (a === "--surface") { flags.surface = argv[++i]; continue; }
     if (a === "--x") { flags.x = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--y") { flags.y = parseFloat(argv[++i] ?? ""); continue; }
+    if (a === "--out") { flags.out = argv[++i]; continue; }
     if (a === "--wait") { flags.wait = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--no-enter") { flags.enter = false; continue; }
     if (a.startsWith("--")) throw new Error(`Unknown flag: ${a}`);
@@ -124,6 +128,17 @@ function resolveOptionalIdentity(scope: string, flags: Flags): string | null {
   if (explicit) return resolveInstanceRef(explicit, insts);
   if (insts.length === 1) return insts[0].id;
   return null;
+}
+
+function resolveUiCommandCreator(scope: string, flags: Flags): string | null {
+  if (flags.as) return resolveIdentity(scope, flags);
+  const envId = process.env.SWARM_MCP_INSTANCE_ID;
+  if (!envId) return resolveOptionalIdentity(scope, flags);
+  try {
+    return resolveInstanceRef(envId, instancesInScope(scope));
+  } catch {
+    return null;
+  }
 }
 
 function printJson(obj: unknown) {
@@ -213,7 +228,7 @@ async function enqueueUiCommand(
     scope,
     kind,
     payload,
-    resolveOptionalIdentity(scope, flags),
+    resolveUiCommandCreator(scope, flags),
   );
   const row = await maybeWaitForUiCommand(id, flags, fallbackSeconds);
   if (!row) throw new Error(`ui command ${id} disappeared`);
@@ -606,6 +621,24 @@ async function cmdUi(flags: Flags) {
     );
   }
 
+  if (sub === "kill") {
+    if (!flags.target) {
+      throw new Error(
+        "ui kill --target <instance-id-or-label> [--scope <path>] [--wait <seconds>]",
+      );
+    }
+    const scope = resolveScope(flags);
+    const instanceId = resolveInstanceRef(flags.target, instancesInScope(scope));
+    return enqueueUiCommand(
+      scope,
+      "kill_instance",
+      {
+        instance_id: instanceId,
+      },
+      flags,
+    );
+  }
+
   if (sub === "move") {
     if (!flags.target || !Number.isFinite(flags.x) || !Number.isFinite(flags.y)) {
       throw new Error(
@@ -632,6 +665,45 @@ async function cmdUi(flags: Flags) {
       "organize_nodes",
       {
         kind: flags.kind ?? "grid",
+      },
+      flags,
+    );
+  }
+
+  if (sub === "export-layout") {
+    const scope = resolveScope(flags);
+    return enqueueUiCommand(
+      scope,
+      "ui.export-layout",
+      {
+        scope,
+        out: flags.out ?? null,
+      },
+      flags,
+    );
+  }
+
+  if (sub === "screenshot") {
+    const scope = resolveScope(flags);
+    return enqueueUiCommand(
+      scope,
+      "ui.screenshot",
+      {
+        out: flags.out ?? null,
+      },
+      flags,
+    );
+  }
+
+  if (sub === "proof-pack") {
+    const scope = resolveScope(flags);
+    return enqueueUiCommand(
+      scope,
+      "ui.proof-pack",
+      {
+        out: flags.out ?? null,
+        note: flags.note ?? null,
+        surface: flags.surface ?? "cli",
       },
       flags,
     );

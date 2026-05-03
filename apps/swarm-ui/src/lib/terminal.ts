@@ -10,7 +10,8 @@
 // - Lifecycle is tied to Svelte onMount/onDestroy in TerminalNode.svelte.
 // =============================================================================
 
-import { init, Terminal } from 'ghostty-web';
+import { Ghostty, Terminal } from 'ghostty-web';
+import ghosttyWasmUrl from 'ghostty-web/ghostty-vt.wasm?url';
 import { get } from 'svelte/store';
 import type { TerminalHandle, TerminalOptions, TerminalTheme } from './types';
 import { appearance } from '../stores/appearance';
@@ -26,21 +27,21 @@ const DEFAULT_FONT_FAMILY = 'Monaco, Menlo, "Courier New", monospace';
 const DEFAULT_THEME: Required<TerminalTheme> = get(appearance).terminalTheme;
 
 let handleCounter = 0;
-let initPromise: Promise<void> | null = null;
+let ghosttyPromise: Promise<Ghostty> | null = null;
 
 function parsePixels(value: string): number {
   return Number.parseInt(value, 10) || 0;
 }
 
 /** Loads the ghostty-web WASM module once. Shared across all terminals. */
-function ensureInit(): Promise<void> {
-  if (!initPromise) {
-    initPromise = init().catch((err) => {
-      initPromise = null;
+function ensureGhostty(): Promise<Ghostty> {
+  if (!ghosttyPromise) {
+    ghosttyPromise = Ghostty.load(ghosttyWasmUrl).catch((err) => {
+      ghosttyPromise = null;
       throw err;
     });
   }
-  return initPromise;
+  return ghosttyPromise;
 }
 
 /** Create a ghostty-web terminal attached to `container`. */
@@ -48,12 +49,13 @@ export async function createTerminal(
   container: HTMLElement,
   options?: TerminalOptions,
 ): Promise<TerminalHandle> {
-  await ensureInit();
+  const ghostty = await ensureGhostty();
 
   const id = `term-${++handleCounter}`;
   const resolved = resolveOptions(options);
 
   const term = new Terminal({
+    ghostty,
     fontSize: resolved.fontSize,
     fontFamily: resolved.fontFamily,
     allowTransparency: true,
@@ -140,6 +142,7 @@ export async function createTerminal(
     id,
     write: (data) => term.write(data),
     refit: () => fitToContainer(),
+    repaint,
     setTheme: (theme) => {
       if (!term.renderer) {
         return;

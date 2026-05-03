@@ -414,10 +414,8 @@ pub(crate) async fn kill_target_internal(
             };
 
             if let Some(pty_id) = binder.resolved_pty_for(trimmed) {
-                if info.pid <= 0 {
-                    if daemon::close_pty(&pty_id, true).await.is_ok() {
-                        result.closed_ptys.push(pty_id);
-                    }
+                if daemon::close_pty(&pty_id, true).await.is_ok() {
+                    result.closed_ptys.push(pty_id);
                 }
             }
 
@@ -425,7 +423,12 @@ pub(crate) async fn kill_target_internal(
                 let processes = load_processes().map_err(AppError::Operation)?;
                 let by_pid = index_processes_by_pid(&processes);
                 if let Some(process) = by_pid.get(&(info.pid as i32)) {
-                    if let Some(reason) = protected_reason_for_group(&processes, process.pgid) {
+                    let group = processes
+                        .iter()
+                        .filter(|member| member.pgid == process.pgid)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if let Some(reason) = protected_reason_for_group(&group, process.pgid) {
                         result.note = Some(reason);
                     } else {
                         let killed = kill_process_group(process.pgid).await?;
@@ -435,7 +438,11 @@ pub(crate) async fn kill_target_internal(
             }
 
             let conn = writes::open_rw().map_err(AppError::Operation)?;
-            writes::deregister_instance(&conn, trimmed).map_err(AppError::Operation)?;
+            match writes::deregister_instance(&conn, trimmed) {
+                Ok(()) => {}
+                Err(err) if err.contains("not found") => {}
+                Err(err) => return Err(AppError::Operation(err)),
+            }
             binder.unbind(trimmed);
             result.deregistered_instances.push(trimmed.to_owned());
             result.terminated_pids.sort_unstable();
@@ -2094,7 +2101,7 @@ mod tests {
     #[test]
     fn parse_process_line_preserves_full_command_and_start_time() {
         let process = parse_process_line(
-            "30591 30390 30591 ttys017 16:19:55 0.2 15240 /Users/example/.local/bin/claude --dangerously-skip-permissions",
+            "30591 30390 30591 ttys017 16:19:55 0.2 15240 /Users/mathewfrazier/.local/bin/claude --dangerously-skip-permissions",
             1_776_829_600,
         )
         .expect("process line should parse");
@@ -2106,7 +2113,7 @@ mod tests {
         assert_eq!(process.elapsed_seconds, 58_795);
         assert_eq!(
             process.command,
-            "/Users/example/.local/bin/claude --dangerously-skip-permissions"
+            "/Users/mathewfrazier/.local/bin/claude --dangerously-skip-permissions"
         );
         assert_eq!(process.started_at_epoch, 1_776_770_805);
     }
@@ -2177,7 +2184,7 @@ mod tests {
         let threads = vec![
             CodexThreadRecord {
                 id: "thread-1".into(),
-                cwd: "/Users/example/projects/swarm-mcp".into(),
+                cwd: "/Users/mathewfrazier/Desktop/swarm-mcp-active".into(),
                 model_provider: Some("openai".into()),
                 model: Some("gpt-5.4".into()),
                 tokens_used: 1_000,
@@ -2187,7 +2194,7 @@ mod tests {
             },
             CodexThreadRecord {
                 id: "thread-2".into(),
-                cwd: "/Users/example/projects/swarm-mcp".into(),
+                cwd: "/Users/mathewfrazier/Desktop/swarm-mcp-active".into(),
                 model_provider: Some("openai".into()),
                 model: Some("gpt-5.4".into()),
                 tokens_used: 2_000,
@@ -2198,7 +2205,7 @@ mod tests {
         ];
 
         let linked = link_codex_thread(
-            Some("/Users/example/projects/swarm-mcp"),
+            Some("/Users/mathewfrazier/Desktop/swarm-mcp-active"),
             1_776_887_900,
             1_776_888_100,
             &threads,
@@ -2206,7 +2213,7 @@ mod tests {
         assert_eq!(linked.map(|thread| thread.id.as_str()), Some("thread-1"));
 
         let ambiguous = link_codex_thread(
-            Some("/Users/example/projects/swarm-mcp"),
+            Some("/Users/mathewfrazier/Desktop/swarm-mcp-active"),
             1_776_699_900,
             1_776_888_100,
             &threads,

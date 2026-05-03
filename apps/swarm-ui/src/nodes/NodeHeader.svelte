@@ -5,9 +5,16 @@
   Used as the top bar of every TerminalNode card.
 -->
 <script lang="ts">
-  import type { Lock, NodeType, InstanceStatus, Task } from '../lib/types';
-  import { killInstance, killPtySession, respawnInstance } from '../stores/pty';
+  import type {
+    AgentListenerHealth,
+    Lock,
+    NodeType,
+    InstanceStatus,
+    Task,
+  } from '../lib/types';
+  import { clearStalePtySession, killInstance, killPtySession, respawnInstance } from '../stores/pty';
   import { confirm } from '../lib/confirm';
+  import { defaultPersonaForRole } from '../lib/persona';
   import { createEventDispatcher } from 'svelte';
 
   export let role: string = '';
@@ -17,6 +24,17 @@
   export let nodeType: NodeType = 'instance';
   export let assignedTasks: Task[] = [];
   export let locks: Lock[] = [];
+  export let unreadMessages: number = 0;
+  export let listenerHealth: AgentListenerHealth = {
+    status: 'unknown',
+    label: 'Unverified',
+    detail: 'No listener telemetry has been observed yet.',
+    lastPollAt: null,
+    lastWaitAt: null,
+    lastWaitReturnAt: null,
+    unreadMessages: 0,
+    activeTaskCount: 0,
+  };
   export let ptyId: string | null = null;
   export let launchToken: string | null = null;
   /**
@@ -24,9 +42,12 @@
    * instance UUID prefix in the header label.
    */
   export let displayName: string | null = null;
+  export let persona: string | null = null;
+  export let provider: string | null = null;
   export let mobileControlled: boolean = false;
   export let mobileLeaseHolder: string | null = null;
   export let compact: boolean = false;
+  export let projectColor: string = '';
   /**
    * `false` while this node's instance row was UI-pre-created and the
    * child process inside the PTY hasn't yet called `swarm.register`. The
@@ -45,7 +66,11 @@
   // Determine the role class for badge styling
   $: roleClass = getRoleClass(role);
   $: displayLabel = deriveDisplayLabel(displayName, instanceId, launchToken, ptyId);
+  $: identityEmoji = persona?.trim() || defaultPersonaForRole(role);
+  $: providerLabel = provider?.trim() || 'agent';
+  $: cwdLabel = formatCwdLabel(cwd);
   $: statusLabel = getStatusLabel(status);
+  $: hierarchyNumber = `#${deriveAgentNumber(instanceId ?? displayName ?? launchToken ?? ptyId ?? role ?? providerLabel)}`;
   $: activeTaskCount = assignedTasks.filter(
     (t) => t.status === 'in_progress' || t.status === 'claimed' || t.status === 'open'
   ).length;
@@ -61,6 +86,7 @@
     nodeType === 'instance' &&
     instanceId !== null &&
     (status === 'offline' || status === 'stale');
+  $: isClearableStalePty = nodeType === 'pty' && ptyId !== null && status === 'stale';
   // Show the respawn button only on instance-only nodes whose heartbeat has
   // aged out — meaning the owning process is gone and reviving the swarm
   // row with a fresh PTY is useful. Online externals are excluded so we
@@ -71,10 +97,16 @@
     (status === 'offline' || status === 'stale');
   $: canClose = Boolean(ptyId) || canRemoveInstance;
   $: canFullscreen = Boolean(ptyId);
+  $: closeLabel = !canClose
+    ? 'Close unavailable for this node'
+    : isClearableStalePty
+      ? 'Clear stale node'
+      : 'Close agent window';
   let respawning = false;
   $: mobileTooltip = mobileLeaseHolder
     ? `Controlled from mobile (${mobileLeaseHolder})`
     : 'Controlled from mobile';
+  $: listenerTooltip = listenerHealth.detail;
 
   function deriveDisplayLabel(
     name: string | null,
@@ -110,9 +142,30 @@
     return 'custom';
   }
 
+  function formatCwdLabel(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    const parts = trimmed.split('/').filter(Boolean);
+    if (parts.length <= 2) return trimmed;
+    return parts.slice(-2).join('/');
+  }
+
+  function deriveAgentNumber(value: string | null): number {
+    if (!value) return 1;
+    let hash = 0;
+    for (let i = 0; i < value.length; i += 1) {
+      hash = (hash * 31 + value.charCodeAt(i)) % 97;
+    }
+    return hash + 1;
+  }
+
   async function handleStop() {
     if (ptyId) {
       try {
+        if (isClearableStalePty) {
+          await clearStalePtySession(ptyId);
+          return;
+        }
         await killPtySession(ptyId);
       } catch (err) {
         console.error('[NodeHeader] failed to kill PTY session tree:', err);
@@ -162,13 +215,16 @@
   }
 </script>
 
-<div class="node-header">
+<div
+  class="node-header"
+  class:project-accented={Boolean(projectColor)}
+>
   <div class="traffic-lights" role="group" aria-label="Window controls">
     <button
       type="button"
       class="light red"
-      title={canClose ? 'Close agent window' : 'Close unavailable for this node'}
-      aria-label="Close agent window"
+      title={closeLabel}
+      aria-label={closeLabel}
       disabled={!canClose}
       on:click|stopPropagation={handleTrafficClose}
     ></button>
@@ -190,16 +246,31 @@
     ></button>
   </div>
 
+  <button
+    type="button"
+    class="node-agent-chip"
+    class:compact-active={compact}
+    title={compact ? 'Expand agent card' : 'Collapse to agent chip'}
+    aria-label={compact ? 'Expand agent card' : 'Collapse agent card'}
+    on:click|stopPropagation={() => dispatch('compact')}
+  >
+    {#if projectColor}
+      <span class="node-project-square" aria-hidden="true"></span>
+    {/if}
+    <span class="node-agent-emoji" aria-hidden="true">{identityEmoji}</span>
+    <span class="node-agent-copy">
+      <strong title={instanceId ?? 'Pending'}>{displayLabel}</strong>
+      <em>{providerLabel}{role ? ` / ${role}` : ''}</em>
+    </span>
+    <span class="node-agent-rank" title="Hierarchy slot pending">{hierarchyNumber}</span>
+  </button>
+
   {#if role}
     <span class="role-badge {roleClass}">{role}</span>
   {/if}
 
-  <span class="node-label" title={instanceId ?? 'Pending'}>
-    {displayLabel}
-  </span>
-
   {#if cwd}
-    <span class="node-cwd" title={cwd}>{cwd}</span>
+    <span class="node-cwd" title={cwd}>{cwdLabel}</span>
   {/if}
 
   {#if mobileControlled}
@@ -235,6 +306,22 @@
   {#if activeTaskCount > 0}
     <span class="task-count-badge">{activeTaskCount}</span>
   {/if}
+
+  {#if unreadMessages > 0}
+    <span
+      class="unread-badge"
+      title={`${unreadMessages} unread swarm message${unreadMessages === 1 ? '' : 's'} waiting for this agent to poll`}
+    >
+      {unreadMessages} unread
+    </span>
+  {/if}
+
+  <span
+    class="listener-badge {listenerHealth.status}"
+    title={listenerTooltip}
+  >
+    {listenerHealth.label}
+  </span>
 
   {#if lockCount > 0}
     <span class="lock-badge" title={`Locked: ${lockTooltip}`}>

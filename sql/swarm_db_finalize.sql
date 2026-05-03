@@ -35,3 +35,9 @@ CREATE INDEX IF NOT EXISTS events_created_at_idx
   ON events(created_at);
 CREATE INDEX IF NOT EXISTS ui_commands_scope_status_id_idx
   ON ui_commands(scope, status, id);
+CREATE INDEX IF NOT EXISTS browser_contexts_scope_status_idx
+  ON browser_contexts(scope, status, updated_at);
+CREATE INDEX IF NOT EXISTS browser_tabs_scope_context_idx
+  ON browser_tabs(scope, context_id, updated_at);
+CREATE INDEX IF NOT EXISTS browser_snapshots_scope_context_created_idx
+  ON browser_snapshots(scope, context_id, created_at);

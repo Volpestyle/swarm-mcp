@@ -11,7 +11,11 @@ import type {
   Task,
   Message,
   Lock,
+  Event,
   BindingState,
+  BrowserContext,
+  BrowserSnapshot,
+  BrowserTab,
   Position,
   XYFlowNode,
   XYFlowEdge,
@@ -19,6 +23,8 @@ import type {
   ConnectionEdgeData,
   ConnectionDep,
 } from './types';
+import { deriveAgentListenerHealth } from './agentListenerHealth';
+import { buildAgentDisplayState } from './agentIdentity';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -45,22 +51,36 @@ export function buildGraph(
   tasks: Map<string, Task>,
   messages: Message[],
   locks: Lock[],
+  events: Event[],
   bindings: BindingState,
   activeScope: string | null,
   savedLayout?: Record<string, Position>,
+  browserContexts: BrowserContext[] = [],
+  browserTabs: BrowserTab[] = [],
+  browserSnapshots: BrowserSnapshot[] = [],
+  allInstances: Map<string, Instance> = instances,
 ): { nodes: XYFlowNode[]; edges: XYFlowEdge[] } {
   // Build lookup sets for binding resolution
   const resolvedInstanceIds = new Set<string>();
   const resolvedPtyIds = new Set<string>();
 
   for (const [instanceId, ptyId] of bindings.resolved) {
-    if (!instances.has(instanceId)) continue;
+    if (!instances.has(instanceId)) {
+      if (allInstances.has(instanceId)) {
+        resolvedPtyIds.add(ptyId);
+      }
+      continue;
+    }
     resolvedInstanceIds.add(instanceId);
     resolvedPtyIds.add(ptyId);
   }
 
   // Build lock index: instance_id -> locks
   const locksByInstance = groupBy(locks, (l) => l.instance_id);
+  const unreadByRecipient = groupBy(
+    messages.filter((message) => message.recipient && !message.read),
+    (message) => message.recipient ?? '',
+  );
 
   // Build task indexes
   const tasksByAssignee = groupBy([...tasks.values()], (t) => t.assignee ?? '');
@@ -81,6 +101,9 @@ export function buildGraph(
       locks: locksByInstance.get(instanceId) ?? [],
       assignedTasks: tasksByAssignee.get(instanceId) ?? [],
       requestedTasks: tasksByRequester.get(instanceId) ?? [],
+      unreadMessages: unreadByRecipient.get(instanceId)?.length ?? 0,
+      events,
+      activeScope,
       savedLayout,
       autoIndex: autoIndex++,
     }));
@@ -95,6 +118,9 @@ export function buildGraph(
       locks: locksByInstance.get(id) ?? [],
       assignedTasks: tasksByAssignee.get(id) ?? [],
       requestedTasks: tasksByRequester.get(id) ?? [],
+      unreadMessages: unreadByRecipient.get(id)?.length ?? 0,
+      events,
+      activeScope,
       savedLayout,
       autoIndex: autoIndex++,
     }));
@@ -116,6 +142,23 @@ export function buildGraph(
       locks: [],
       assignedTasks: [],
       requestedTasks: [],
+      unreadMessages: 0,
+      events,
+      activeScope,
+      savedLayout,
+      autoIndex: autoIndex++,
+    }));
+  }
+
+  // 4. Managed browser contexts are first-class canvas nodes. The actual
+  // Chrome surface is still OS-managed, but the context, tabs, and snapshots
+  // live in swarm.db and should be visible on the graph like agents.
+  for (const context of browserContexts) {
+    if (activeScope !== null && context.scope !== activeScope) continue;
+    if (context.status === 'closed') continue;
+    const contextTabs = browserTabs.filter((tab) => tab.contextId === context.id);
+    const contextSnapshots = browserSnapshots.filter((snapshot) => snapshot.contextId === context.id);
+    nodes.push(makeBrowserNode(context, contextTabs, contextSnapshots, {
       savedLayout,
       autoIndex: autoIndex++,
     }));
@@ -158,6 +201,14 @@ interface MakeNodeOpts {
   locks: Lock[];
   assignedTasks: Task[];
   requestedTasks: Task[];
+  unreadMessages: number;
+  events: Event[];
+  activeScope: string | null;
+  savedLayout?: Record<string, Position>;
+  autoIndex: number;
+}
+
+interface MakeBrowserNodeOpts {
   savedLayout?: Record<string, Position>;
   autoIndex: number;
 }
@@ -175,6 +226,24 @@ function makeNode(
   const displayName = deriveDisplayName(instance);
   const mobileControlled = isMobileControlledPty(pty);
   const preferredSize = derivePreferredNodeSize(nodeType, pty);
+  const listenerHealth = deriveAgentListenerHealth({
+    instance,
+    activeScope: opts.activeScope,
+    unreadMessages: opts.unreadMessages,
+    assignedTasks: opts.assignedTasks,
+    events: opts.events,
+  });
+  const agentDisplay = buildAgentDisplayState({
+    nodeType,
+    instance,
+    pty,
+    label,
+    displayName,
+    taskCount: opts.assignedTasks.length,
+    lockCount: opts.locks.length,
+    unreadMessages: opts.unreadMessages,
+    listenerLabel: listenerHealth.label,
+  });
 
   const data: SwarmNodeData = {
     nodeType,
@@ -185,9 +254,16 @@ function makeNode(
     locks: opts.locks,
     assignedTasks: opts.assignedTasks,
     requestedTasks: opts.requestedTasks,
+    unreadMessages: opts.unreadMessages,
+    listenerHealth,
+    agentDisplay,
+    project: null,
     displayName,
     mobileControlled,
     mobileLeaseHolder: pty?.lease?.holder ?? null,
+    browserContext: null,
+    browserTabs: [],
+    browserSnapshots: [],
   };
 
   return {
@@ -202,6 +278,67 @@ function makeNode(
     // hardcoded width/height) lets NodeResizer author the DOM size cleanly.
     width: preferredSize?.width ?? 760,
     height: preferredSize?.height ?? 620,
+  };
+}
+
+function makeBrowserNode(
+  context: BrowserContext,
+  tabs: BrowserTab[],
+  snapshots: BrowserSnapshot[],
+  opts: MakeBrowserNodeOpts,
+): XYFlowNode {
+  const nodeId = `browser:${context.id}`;
+  const activeTab = tabs.find((tab) => tab.active) ?? tabs[0] ?? null;
+  const label = activeTab?.title?.trim() || activeTab?.url?.trim() || context.startUrl || 'Browser';
+  const data: SwarmNodeData = {
+    nodeType: 'browser',
+    instance: null,
+    ptySession: null,
+    label,
+    status: context.status === 'open' ? 'online' : 'offline',
+    locks: [],
+    assignedTasks: [],
+    requestedTasks: [],
+    unreadMessages: 0,
+    listenerHealth: {
+      status: context.status === 'open' ? 'listening' : 'offline',
+      label: context.status === 'open' ? 'Managed' : 'Closed',
+      detail: activeTab?.url ?? context.startUrl,
+      lastPollAt: null,
+      lastWaitAt: null,
+      lastWaitReturnAt: null,
+      unreadMessages: 0,
+      activeTaskCount: 0,
+    },
+    agentDisplay: {
+      name: 'Browser',
+      role: 'browser',
+      provider: 'chrome',
+      persona: null,
+      mission: activeTab?.url ?? context.startUrl,
+      skills: '',
+      permissions: 'managed',
+      taskCount: 0,
+      lockCount: 0,
+      unreadMessages: 0,
+      listenerLabel: context.status,
+    },
+    project: null,
+    displayName: 'Browser',
+    mobileControlled: false,
+    mobileLeaseHolder: null,
+    browserContext: context,
+    browserTabs: tabs,
+    browserSnapshots: snapshots,
+  };
+
+  return {
+    id: nodeId,
+    type: 'browser',
+    position: resolvePosition(nodeId, opts.savedLayout, opts.autoIndex),
+    data,
+    width: 560,
+    height: 420,
   };
 }
 
@@ -267,6 +404,7 @@ function deriveStatus(
 ): 'online' | 'stale' | 'offline' | 'pending' {
   if (instance) return instance.status;
   if (nodeType === 'pty') {
+    if (pty?.bound_instance_id) return 'pending';
     // PTYs carrying a launch token are waiting to bind to a swarm instance.
     // Shells have no token and are just live local processes.
     return pty?.launch_token ? 'pending' : 'online';

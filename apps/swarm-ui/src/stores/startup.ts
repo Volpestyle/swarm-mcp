@@ -3,6 +3,7 @@ import type {
   BindingState,
   Instance,
   KvEntry,
+  PtySession,
   RecoveryScopeSummary,
   RecoverySessionItem,
   StartupLaunchDefaults,
@@ -10,8 +11,9 @@ import type {
   ThemeProfile,
   ThemeProfileId,
 } from '../lib/types';
+import { harnessFromCommand, isOrphanAgentPty } from '../lib/ptyRecovery';
 import { getThemeProfile, themeProfiles } from '../lib/themeProfiles';
-import { bindings } from './pty';
+import { bindings, ptySessions } from './pty';
 import { allInstances, allKvEntries, uiMeta } from './swarm';
 
 const STORAGE_KEY = 'swarm-ui.startup-preferences';
@@ -31,12 +33,14 @@ export const DEFAULT_STARTUP_PREFERENCES: StartupPreferences = {
   recentDirectories: [],
   selectedDirectory: '',
   launchDefaults: DEFAULT_LAUNCH_DEFAULTS,
-  // Tron Encom OS (rev 0.7) is the default for fresh installs as of the
+  selectedLaunchProfileId: 'trusted-local',
+  // Tron Encom Clear (rev 0.7) is the default for fresh installs as of the
   // visual overhaul. Existing users keep their saved preference because
   // `loadStartupPreferences()` reads from localStorage first and only falls
   // back to this default when no value is stored.
   themeProfileId: 'tron-encom-os',
   backgroundOpacityOverride: null,
+  backdropBlurOverride: null,
 };
 
 function clampBackgroundOpacity(value: number | null | undefined): number | null {
@@ -47,6 +51,16 @@ function clampBackgroundOpacity(value: number | null | undefined): number | null
     return DEFAULT_STARTUP_PREFERENCES.backgroundOpacityOverride;
   }
   return Math.min(1, Math.max(0, value));
+}
+
+function clampBackdropBlur(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (!Number.isFinite(value)) {
+    return DEFAULT_STARTUP_PREFERENCES.backdropBlurOverride;
+  }
+  return Math.min(100, Math.max(0, Math.round(value)));
 }
 
 function normalizeLaunchDefaults(
@@ -139,9 +153,17 @@ export function normalizeStartupPreferences(
         ? legacy.selectedDirectory.trim()
         : DEFAULT_STARTUP_PREFERENCES.selectedDirectory,
     launchDefaults: normalizeLaunchDefaults(value?.launchDefaults ?? legacy.launchDefaults),
+    selectedLaunchProfileId: typeof value?.selectedLaunchProfileId === 'string'
+      ? value.selectedLaunchProfileId.trim()
+      : typeof legacy.selectedLaunchProfileId === 'string'
+        ? legacy.selectedLaunchProfileId.trim()
+        : DEFAULT_STARTUP_PREFERENCES.selectedLaunchProfileId,
     themeProfileId: getThemeProfile(themeProfileId).id,
     backgroundOpacityOverride: clampBackgroundOpacity(
       value?.backgroundOpacityOverride ?? legacy.backgroundOpacityOverride ?? null,
+    ),
+    backdropBlurOverride: clampBackdropBlur(
+      value?.backdropBlurOverride ?? legacy.backdropBlurOverride ?? null,
     ),
   };
 }
@@ -260,12 +282,16 @@ function sessionAction(
 export function buildRecoverySessionItems(
   instanceMap: Map<string, Instance>,
   bindingState: BindingState,
+  ptyMap: Map<string, PtySession> = new Map(),
 ): RecoverySessionItem[] {
-  const items = [...instanceMap.values()].map((instance) => {
+  const items: RecoverySessionItem[] = [...instanceMap.values()].map((instance): RecoverySessionItem => {
     const harness = parseHarnessFromLabel(instance.label ?? null);
     const boundPtyId = bindingState.resolved.find(([instanceId]) => instanceId === instance.id)?.[1] ?? null;
     return {
       id: instance.id,
+      kind: 'instance',
+      instanceId: instance.id,
+      ptyId: boundPtyId,
       scope: instance.scope,
       directory: instance.directory,
       label: instance.label ?? null,
@@ -277,6 +303,25 @@ export function buildRecoverySessionItems(
       boundPtyId,
     };
   });
+
+  for (const pty of ptyMap.values()) {
+    if (!isOrphanAgentPty(pty, instanceMap, bindingState)) continue;
+    items.push({
+      id: pty.id,
+      kind: 'orphan_pty',
+      instanceId: null,
+      ptyId: pty.id,
+      scope: pty.cwd,
+      directory: pty.cwd,
+      label: null,
+      displayName: null,
+      harness: harnessFromCommand(pty.command),
+      adopted: false,
+      status: 'stale',
+      action: 'cleanup_orphan',
+      boundPtyId: null,
+    });
+  }
 
   const order = new Map<RecoverySessionItem['status'], number>([
     ['adopting', 0],
@@ -400,6 +445,12 @@ function createStartupPreferencesStore() {
         }),
       }));
     },
+    setSelectedLaunchProfileId(value: string) {
+      update((current) => ({
+        ...current,
+        selectedLaunchProfileId: value.trim(),
+      }));
+    },
     setThemeProfile(themeProfileId: ThemeProfileId) {
       update((current) => ({
         ...current,
@@ -410,6 +461,12 @@ function createStartupPreferencesStore() {
       update((current) => ({
         ...current,
         backgroundOpacityOverride: clampBackgroundOpacity(value),
+      }));
+    },
+    setBackdropBlurOverride(value: number | null) {
+      update((current) => ({
+        ...current,
+        backdropBlurOverride: clampBackdropBlur(value),
       }));
     },
     reset() {
@@ -430,8 +487,9 @@ export const recoveryLayoutScopes = derived(
 );
 
 export const recoverySessionItems = derived(
-  [allInstances, bindings],
-  ([$instances, $bindings]) => buildRecoverySessionItems($instances, $bindings),
+  [allInstances, bindings, ptySessions],
+  ([$instances, $bindings, $ptySessions]) =>
+    buildRecoverySessionItems($instances, $bindings, $ptySessions),
 );
 
 export const recoveryScopeSummaries = derived(

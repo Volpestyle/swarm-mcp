@@ -1,45 +1,10 @@
-# swarm-mcp - experimental-frazier
+# swarm-mcp
 
 MCP server that lets multiple coding-agent sessions on the same machine discover each other and collaborate through a shared SQLite database.
 
 Each session spawns its own swarm-mcp server process via stdio. They all share one SQLite file at `~/.swarm-mcp/swarm.db` by default. No daemon needed.
 
 [GitHub](https://github.com/Volpestyle/swarm-mcp)
-
-![FrazierCode Agentic branch artwork](./docs/assets/fraziercode-tron-2.jpg)
-
-This README describes the `experimental-frazier` branch. The upstream `main` branch should stay the clean shared swarm-mcp foundation; this branch is the FrazierCode operator/UI experiment built on top of it.
-
-## What is different in this branch
-
-- **Desktop-first operator shell:** `swarm-ui` opens into a more guided home and graph workflow, with the Tron Encom OS visual profile, a top status strip, a right-side mode rail, overlay panels, compact node handling, and fullscreen terminal workspaces.
-- **Launch and agent profiles:** the launcher now supports saved agent profiles with working directory, scope, harness, role, mission/context/memory fields, custom launch command, and harness alias settings.
-- **Better graph navigation:** nodes can be inspected from the canvas, connection handles can create visual intent links, edges consolidate messages/tasks/dependencies, and the inspector gives a richer node/edge summary.
-- **Conversation and operator controls:** the branch adds a conversation feed, operator broadcast path, scoped Ctrl-C fan-out, and clearer kill/remove semantics so destructive UI actions target the real process path instead of only deleting a database row.
-- **Recovery and diagnostics:** startup recovery surfaces recent scopes/layouts, cleanup actions for stale or orphaned rows, and an Analyze tab that separates live swarm rows, detached helpers, OS process load, exact usage attribution, and estimated cost.
-- **Mobile/daemon plumbing:** the branch carries additional PTY catalog reconciliation, mobile pairing surfaces, daemon launch refinements, and backend commands needed by the richer UI.
-
-## How to navigate compared to main
-
-1. Run the desktop UI from `apps/swarm-ui` with `bunx tauri dev`.
-2. Start on **Home** to pick a recent directory/scope, recover a saved layout, or launch into a fresh canvas.
-3. Use the right mode rail: **Launch** for profiles and spawning, **Chat** for operator messages, **Inspect** for selected nodes/edges, **Analyze** for process/session cleanup, **Mobile** for pairing, and **Settings** for theme/harness/runtime preferences.
-4. Click a node or edge to open **Inspect**. Use node handle dots for visual connection intent; use real message/task tools for durable swarm coordination.
-5. If the graph looks wrong after kills or restarts, use **Analyze** and the Home cleanup actions before trusting the canvas. The live session database remains `~/.swarm-mcp/swarm.db`.
-
-## Upload hygiene for this branch
-
-- Live agent sessions, messages, tasks, and layouts are not committed; they live in `~/.swarm-mcp/swarm.db`, which is ignored by git.
-- Local operator notes such as `Agents.md`, `DEVNOTES.md`, and `docs/superpowers/` are ignored so personal paths and scratch planning docs do not ride along with branch uploads.
-- Branch artwork is committed in `docs/assets/` for GitHub and in `apps/swarm-ui/src/assets/` for the Startup/Home hero and FrazierCode/About panel.
-- OpenAI/Anthropic PNG logos, folder chrome art, and emoji personas are bundled with the app branch assets so cloned checkouts render the intended visual identity without extra assembly.
-- Any tests that need path-like fixtures should use generic sample paths, not a real user home directory.
-
-## Edge cases to keep in mind
-
-- The Analyze tab includes cost estimates from a local price catalog. Treat those as operational estimates, not billing truth, and refresh the catalog before relying on exact dollar values.
-- Build checks do not prove visual click-through. After pushing, still run the app and manually test Home, Launch, Inspect, Chat, Analyze, Settings, node kill, and stale cleanup.
-- GitHub branch selection matters: this README is intended for `experimental-frazier`, not upstream `main`.
 
 ---
 
@@ -55,6 +20,42 @@ bun install
 ```
 
 Add the server to your coding agent using that host's MCP config format. Bun is the simplest dev/runtime path because the examples use `bun run`, but the built `dist/*.js` entrypoints also run under Node 20+ with `better-sqlite3`.
+
+### Desktop launch
+
+`swarm-ui` can now be launched as a bundled macOS desktop app. Launch profiles control the harness command, trust posture, and startup behavior shown in Home and Launcher.
+
+### Fast swarm-ui dev loop
+
+For Svelte/layout/style work, use the local browser loop before paying the full desktop-app cost:
+
+```sh
+cd apps/swarm-ui
+bun run dev -- --host 127.0.0.1
+```
+
+Open `http://127.0.0.1:1420/` with the in-app browser/Browser plugin when available. If that tool is not exposed in the current agent host, use the local Playwright CLI wrapper for snapshots, clicks, and screenshots:
+
+```sh
+export PWCLI="$HOME/.codex/skills/playwright/scripts/playwright_cli.sh"
+bash "$PWCLI" open http://127.0.0.1:1420
+bash "$PWCLI" snapshot
+bash "$PWCLI" click <ref>
+bash "$PWCLI" screenshot
+```
+
+This is local browser automation. Screenshots and snapshots stay on the machine unless an agent explicitly uploads or shares them. Treat `.playwright-cli/` and similar outputs as temporary QA artifacts and delete them before handoff unless you intentionally need to preserve evidence.
+
+`swarm-ui` has a hybrid live-update model:
+
+- Frontend Svelte/CSS/TypeScript changes hot-refresh through Vite. If `bunx tauri dev` is running, the Tauri dev window usually receives these frontend updates without a full app restart.
+- Swarm state changes through MCP tools, CLI commands, or UI commands are live because the Rust watcher polls the shared SQLite DB and pushes updates into the frontend.
+- Rust/Tauri backend changes, new Tauri command registration, PTY daemon changes, Tauri config, bundle metadata, icons, and native-window behavior require restarting `bunx tauri dev` or rebuilding/relaunching the app.
+- The bundled Dock app is not a live-edit surface. Use it for product smoke checks after a debug build.
+
+Use `cd apps/swarm-ui && bunx tauri dev` when the change needs proof inside the Tauri shell: Rust IPC, PTYs, native windows, app storage, Dock/bundle behavior, or macOS integration. Plain Vite mode may show expected Tauri API warnings because it is not running inside the desktop shell, but it is the fastest loop for visual iteration.
+
+When editing while the app is in use, classify the change first. Frontend-only edits can ride HMR and then get a visual pass. DB/state-only changes should appear through the watcher; try an in-app refresh before restarting. Rust/native/config edits cross a restart boundary, so save state and restart/rebuild intentionally.
 
 ### Codex (`~/.codex/config.toml`)
 

@@ -18,8 +18,8 @@ use hyper_util::rt::TokioIo;
 use hyper_util::service::TowerToHyperService;
 use rand::RngCore;
 use rcgen::generate_simple_self_signed;
-use rustls_pemfile as pemfile;
 use rusqlite::{Connection, OptionalExtension, params};
+use rustls_pemfile as pemfile;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -1348,12 +1348,8 @@ fn reclaim_offline_unadopted_instances(
     let conn = open_swarm_rw(path)?;
     let cutoff = now_secs().saturating_sub(swarm_protocol::state::INSTANCE_OFFLINE_AFTER_SECS);
     let mut stmt = conn
-        .prepare(
-            "SELECT id FROM instances WHERE COALESCE(adopted, 1) = 0 AND heartbeat < ?",
-        )
-        .map_err(|err| {
-            internal_response(format!("failed to query unadopted instances: {err}"))
-        })?;
+        .prepare("SELECT id FROM instances WHERE COALESCE(adopted, 1) = 0 AND heartbeat < ?")
+        .map_err(|err| internal_response(format!("failed to query unadopted instances: {err}")))?;
     let candidates: Vec<String> = stmt
         .query_map(params![cutoff], |row| row.get::<_, String>(0))
         .map_err(|err| {
@@ -1402,7 +1398,9 @@ async fn unadopted_instance_reclaimer(state: AppState) {
         match reclaim_offline_unadopted_instances(&state.config.swarm_db_path, &live_bound) {
             Ok(0) => {}
             Ok(deleted) => info!(deleted, "reclaimed unadopted instance rows"),
-            Err(response) => warn!(status = %response.status(), "unadopted instance reclaim failed"),
+            Err(response) => {
+                warn!(status = %response.status(), "unadopted instance reclaim failed")
+            }
         }
     }
 }

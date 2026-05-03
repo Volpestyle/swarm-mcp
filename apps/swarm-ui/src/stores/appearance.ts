@@ -1,13 +1,46 @@
 import { derived } from 'svelte/store';
-import type { TerminalTheme, ThemeProfile, ThemeProfileId } from '../lib/types';
+import type {
+  EncomChrome,
+  TerminalTheme,
+  ThemeProfile,
+  ThemeProfileId,
+  WindowVibrancyMaterial,
+} from '../lib/types';
 import { getThemeProfile } from '../lib/themeProfiles';
 import { startupPreferences } from './startup';
+
+// Per-theme macOS vibrancy material. A non-zero Backdrop Blur override applies
+// native vibrancy so the frosted-glass backdrop can blur the desktop behind
+// the transparent Tauri window. Themes can opt into a material; themes without
+// one use HudWindow when the slider is above zero.
+export const THEME_VIBRANCY: Record<ThemeProfileId, WindowVibrancyMaterial> = {
+  'tron-encom-os': null,
+  'liquid-glass-cool': 'hud_window',
+  'liquid-glass-warm': 'hud_window',
+  'ghostty-dark': null,
+  'solar-dusk': null,
+  'arctic-console': null,
+  'operator-amber': null,
+};
+
+export function resolveWindowVibrancyMaterial(
+  themeProfileId: ThemeProfileId,
+  backdropBlur: number,
+): WindowVibrancyMaterial {
+  if (clampBackdropBlur(backdropBlur) <= 0) {
+    return null;
+  }
+
+  return THEME_VIBRANCY[themeProfileId] ?? 'hud_window';
+}
 
 export interface AppearanceState {
   themeProfileId: ThemeProfileId;
   themeProfile: ThemeProfile;
   backgroundOpacity: number;
   backgroundOpacityOverride: number | null;
+  backdropBlur: number;
+  backdropBlurOverride: number | null;
   terminalTheme: Required<TerminalTheme>;
 }
 
@@ -19,13 +52,104 @@ function clampBackgroundOpacity(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
+function clampBackdropBlur(value: number): number {
+  return Math.min(100, Math.max(0, value));
+}
+
+export function resolveBackdropBlurPixels(backdropBlur: number): {
+  surface: string;
+  sidebar: string;
+} {
+  const blur = clampBackdropBlur(backdropBlur);
+  if (blur <= 0) {
+    return {
+      surface: '0px',
+      sidebar: '0px',
+    };
+  }
+
+  const surfacePx = Math.round(blur * 0.42);
+  return {
+    surface: `${surfacePx}px`,
+    sidebar: `${surfacePx + 14}px`,
+  };
+}
+
+function parseHexColor(value: string): [number, number, number] | null {
+  const match = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+
+  const hex = match[1].length === 3
+    ? [...match[1]].map((char) => `${char}${char}`).join('')
+    : match[1];
+
+  return [
+    Number.parseInt(hex.slice(0, 2), 16),
+    Number.parseInt(hex.slice(2, 4), 16),
+    Number.parseInt(hex.slice(4, 6), 16),
+  ];
+}
+
+function alphaHexColor(value: string, alpha: number): string {
+  const rgb = parseHexColor(value);
+  if (!rgb) {
+    return value;
+  }
+
+  return rgba(rgb[0], rgb[1], rgb[2], clampBackgroundOpacity(alpha));
+}
+
+export function resolveBackgroundSurfaceAlphas(backgroundOpacity: number): {
+  canvas: number;
+  panel: number;
+  sidebar: number;
+  node: number;
+  header: number;
+  border: number;
+} {
+  const opacity = clampBackgroundOpacity(backgroundOpacity);
+  return {
+    canvas: opacity,
+    panel: opacity,
+    sidebar: opacity,
+    node: opacity,
+    header: opacity,
+    border: Math.min(0.82, Math.max(0.12, 0.12 + opacity * 0.7)),
+  };
+}
+
+export function resolveChromeBackgroundSurfaces(
+  chrome: EncomChrome,
+  backgroundOpacity: number,
+): {
+  bgBase: string;
+  bgPanel: string;
+  bgElevated: string;
+  bgInput: string;
+} {
+  const surfaceAlphas = resolveBackgroundSurfaceAlphas(backgroundOpacity);
+
+  return {
+    bgBase: alphaHexColor(chrome.bgBase, surfaceAlphas.canvas),
+    bgPanel: alphaHexColor(chrome.bgPanel, surfaceAlphas.panel),
+    bgElevated: alphaHexColor(chrome.bgElevated, surfaceAlphas.panel),
+    bgInput: alphaHexColor(chrome.bgInput, surfaceAlphas.node),
+  };
+}
+
 export function resolveAppearanceState(
   themeProfileId: ThemeProfileId,
   backgroundOpacityOverride: number | null,
+  backdropBlurOverride: number | null,
 ): AppearanceState {
   const themeProfile = getThemeProfile(themeProfileId);
   const backgroundOpacity = clampBackgroundOpacity(
     backgroundOpacityOverride ?? themeProfile.appearance.defaultBackgroundOpacity,
+  );
+  const backdropBlur = clampBackdropBlur(
+    backdropBlurOverride ?? themeProfile.appearance.defaultBackdropBlur,
   );
 
   return {
@@ -33,6 +157,8 @@ export function resolveAppearanceState(
     themeProfile,
     backgroundOpacity,
     backgroundOpacityOverride,
+    backdropBlur,
+    backdropBlurOverride,
     terminalTheme: themeProfile.terminal,
   };
 }
@@ -48,42 +174,22 @@ function applyAppearance(state: AppearanceState): void {
   // [data-theme="tron-encom-os"]. This is what lets the Encom font, dotted
   // grid, and sharp-corner overrides apply without affecting legacy themes.
   root.dataset.theme = state.themeProfileId;
-  const isEncom = state.themeProfileId === 'tron-encom-os';
-  const canvasOpacity = isEncom
-    ? state.backgroundOpacity
-    : Math.min(0.18, 0.02 + state.backgroundOpacity * 0.16);
-  const panelOpacity = isEncom
-    ? Math.min(0.94, Math.max(0.02, 0.02 + state.backgroundOpacity * 0.92))
-    : Math.min(0.88, Math.max(0.1, 0.1 + state.backgroundOpacity * 0.78));
-  const nodeOpacity = isEncom
-    ? Math.min(0.94, Math.max(0.03, 0.03 + state.backgroundOpacity * 0.89))
-    : Math.min(0.9, Math.max(0.12, 0.12 + state.backgroundOpacity * 0.76));
-  const headerOpacity = isEncom
-    ? Math.min(0.96, Math.max(0.02, 0.02 + state.backgroundOpacity * 0.94))
-    : Math.min(0.92, Math.max(0.08, 0.08 + state.backgroundOpacity * 0.82));
-  const borderOpacity = isEncom
-    ? Math.min(0.74, Math.max(0.08, 0.08 + state.backgroundOpacity * 0.66))
-    : Math.min(0.62, Math.max(0.12, 0.12 + state.backgroundOpacity * 0.5));
-  const sidebarOpacity = isEncom
-    ? Math.min(0.82, Math.max(0.02, 0.02 + state.backgroundOpacity * 0.8))
-    : Math.min(0.56, Math.max(0.08, 0.08 + state.backgroundOpacity * 0.48));
-  const blurStrength = Math.round(24 + (1 - state.backgroundOpacity) * 18);
-  const surfaceBlur = state.backgroundOpacity < 0.99 ? `${blurStrength}px` : '0px';
-  const sidebarBlur = state.backgroundOpacity < 0.99 ? `${blurStrength + 14}px` : '0px';
+  const surfaceAlphas = resolveBackgroundSurfaceAlphas(state.backgroundOpacity);
+  const blurPixels = resolveBackdropBlurPixels(state.backdropBlur);
 
-  root.style.setProperty('--canvas-bg', rgba(...palette.canvasRgb, canvasOpacity));
-  root.style.setProperty('--panel-bg', rgba(...palette.panelRgb, panelOpacity));
-  root.style.setProperty('--sidebar-bg', rgba(...palette.sidebarRgb, sidebarOpacity));
-  root.style.setProperty('--sidebar-blur', sidebarBlur);
-  root.style.setProperty('--node-bg', rgba(...palette.nodeRgb, nodeOpacity));
-  root.style.setProperty('--node-header-bg', rgba(...palette.nodeHeaderRgb, headerOpacity));
-  root.style.setProperty('--node-border', rgba(...palette.nodeBorderRgb, borderOpacity));
+  root.style.setProperty('--canvas-bg', rgba(...palette.canvasRgb, surfaceAlphas.canvas));
+  root.style.setProperty('--panel-bg', rgba(...palette.panelRgb, surfaceAlphas.panel));
+  root.style.setProperty('--sidebar-bg', rgba(...palette.sidebarRgb, surfaceAlphas.sidebar));
+  root.style.setProperty('--sidebar-blur', blurPixels.sidebar);
+  root.style.setProperty('--node-bg', rgba(...palette.nodeRgb, surfaceAlphas.node));
+  root.style.setProperty('--node-header-bg', rgba(...palette.nodeHeaderRgb, surfaceAlphas.header));
+  root.style.setProperty('--node-border', rgba(...palette.nodeBorderRgb, surfaceAlphas.border));
   root.style.setProperty('--node-border-selected', palette.nodeBorderSelected);
   root.style.setProperty('--node-border-mobile', palette.nodeBorderMobile);
   root.style.setProperty('--node-title-fg', palette.nodeTitleFg);
   root.style.setProperty('--node-status-muted', palette.nodeStatusMuted);
   root.style.setProperty('--node-status-muted-dot', palette.nodeStatusMutedDot);
-  root.style.setProperty('--surface-blur', surfaceBlur);
+  root.style.setProperty('--surface-blur', blurPixels.surface);
 
   root.style.setProperty('--terminal-bg', state.terminalTheme.background);
   root.style.setProperty('--terminal-fg', state.terminalTheme.foreground);
@@ -124,10 +230,11 @@ function applyAppearance(state: AppearanceState): void {
     root.style.setProperty('--led-halo-x', chrome.ledHaloBright);
     root.style.setProperty('--glow', chrome.glow);
     root.style.setProperty('--glow-s', chrome.glowSoft);
-    root.style.setProperty('--bg-base', chrome.bgBase);
-    root.style.setProperty('--bg-panel', chrome.bgPanel);
-    root.style.setProperty('--bg-elevated', chrome.bgElevated);
-    root.style.setProperty('--bg-input', chrome.bgInput);
+    const chromeSurfaces = resolveChromeBackgroundSurfaces(chrome, state.backgroundOpacity);
+    root.style.setProperty('--bg-base', chromeSurfaces.bgBase);
+    root.style.setProperty('--bg-panel', chromeSurfaces.bgPanel);
+    root.style.setProperty('--bg-elevated', chromeSurfaces.bgElevated);
+    root.style.setProperty('--bg-input', chromeSurfaces.bgInput);
     root.style.setProperty('--fg-primary', chrome.fgPrimary);
     root.style.setProperty('--fg-secondary', chrome.fgSecondary);
     root.style.setProperty('--fg-muted', chrome.fgMuted);
@@ -170,11 +277,37 @@ export const appearance = derived(startupPreferences, ($preferences) =>
   resolveAppearanceState(
     $preferences.themeProfileId,
     $preferences.backgroundOpacityOverride,
+    $preferences.backdropBlurOverride,
   ),
 );
+
+// Tracks the last vibrancy material actually sent to Tauri so we don't fire
+// the invoke on every CSS-var update (subscribe runs on every prefs change).
+let lastVibrancyMaterial: WindowVibrancyMaterial | undefined;
+
+async function syncWindowVibrancy(
+  themeProfileId: ThemeProfileId,
+  backdropBlur: number,
+): Promise<void> {
+  const material = resolveWindowVibrancyMaterial(themeProfileId, backdropBlur);
+  if (material === lastVibrancyMaterial) {
+    return;
+  }
+  lastVibrancyMaterial = material;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('ui_set_window_vibrancy', { material });
+  } catch (err) {
+    // Non-Tauri environments (tests, web preview) are expected to throw on
+    // the dynamic import or the invoke. Stay silent — vibrancy is a native
+    // chrome effect with no web equivalent.
+    console.debug('[appearance] vibrancy sync skipped:', err);
+  }
+}
 
 if (typeof window !== 'undefined') {
   appearance.subscribe((value) => {
     applyAppearance(value);
+    void syncWindowVibrancy(value.themeProfileId, value.backdropBlur);
   });
 }

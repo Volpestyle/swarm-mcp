@@ -194,6 +194,7 @@ class TerminalSurface {
 
       this.handleSessionUpdate(this.currentSession ?? getPtySessionSnapshot(this.ptyId));
       void this.syncViewportToPty();
+      markPtyTerminalReady(this.ptyId);
       this.focusInListener = () => {
         if (this.mobileControlled) return;
         void this.syncViewportToPty();
@@ -234,7 +235,6 @@ class TerminalSurface {
         writeToTerminal(this.handle, buffer);
       }
 
-      markPtyTerminalReady(this.ptyId);
     })().catch((err) => {
       this.initPromise = null;
       throw err;
@@ -251,6 +251,10 @@ class TerminalSurface {
     }
     refitTerminal(this.handle);
     void this.syncViewportToPty();
+  }
+
+  private repaint(): void {
+    this.handle?.repaint();
   }
 
   private release(anchor: HTMLElement): void {
@@ -278,7 +282,11 @@ class TerminalSurface {
     if (this.disposed || this.attachedAnchor !== anchor) return;
 
     this.refit();
+    this.repaint();
+    this.focus();
     await nextAnimationFrame();
+    this.refit();
+    this.repaint();
   }
 
   private async forwardInput(

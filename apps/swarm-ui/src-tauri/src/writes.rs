@@ -18,7 +18,11 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::{
-    model::{GraphPosition, INSTANCE_STALE_AFTER_SECS, SavedLayout},
+    model::{
+        AssetAttachment, BrowserContext, BrowserSnapshot, BrowserSnapshotElement, BrowserTab,
+        GraphPosition, INSTANCE_STALE_AFTER_SECS, ProjectAsset, ProjectBoundary, ProjectMembership,
+        ProjectSpace, SavedLayout,
+    },
     swarm::swarm_db_path,
 };
 
@@ -163,6 +167,56 @@ fn rebuild_kv_table(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|err| format!("failed to rebuild kv table: {err}"))?;
     Ok(())
+}
+
+fn ensure_project_tables(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS ui_projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          root TEXT NOT NULL,
+          color TEXT NOT NULL DEFAULT '#ffffff',
+          additional_roots TEXT NOT NULL DEFAULT '[]',
+          notes TEXT NOT NULL DEFAULT '',
+          scope TEXT,
+          boundary_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS ui_project_memberships (
+          project_id TEXT NOT NULL,
+          instance_id TEXT NOT NULL,
+          attached_at INTEGER NOT NULL,
+          PRIMARY KEY (project_id, instance_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS ui_project_assets (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          title TEXT NOT NULL,
+          path TEXT,
+          content TEXT,
+          description TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS ui_asset_attachments (
+          asset_id TEXT NOT NULL,
+          target_type TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          attached_at INTEGER NOT NULL,
+          PRIMARY KEY (asset_id, target_type, target_id)
+        );
+        "#,
+    )
+    .map_err(|err| format!("failed to ensure project tables: {err}"))?;
+
+    add_column_if_missing(conn, "ui_projects", "notes TEXT NOT NULL DEFAULT ''")?;
+    add_column_if_missing(conn, "ui_projects", "color TEXT NOT NULL DEFAULT '#ffffff'")
 }
 
 fn ensure_columns(conn: &Connection) -> Result<(), String> {
@@ -494,6 +548,7 @@ fn ensure_schema(conn: &Connection) -> Result<(), String> {
 
     ensure_columns(conn)?;
     rebuild_kv_table(conn)?;
+    ensure_project_tables(conn)?;
 
     conn.execute_batch(SWARM_DB_FINALIZE_SQL)
         .map_err(|err| format!("failed to finalize schema: {err}"))?;
@@ -633,6 +688,746 @@ pub fn delete_unadopted_instance(conn: &Connection, instance_id: &str) -> Result
             params![instance_id],
         )
         .map_err(|err| format!("failed to delete unadopted instance: {err}"))?;
+    Ok(deleted > 0)
+}
+
+pub fn retarget_instance_runtime_context(
+    conn: &Connection,
+    instance_id: &str,
+    directory: &str,
+    explicit_scope: Option<&str>,
+) -> Result<bool, String> {
+    let dir_path = PathBuf::from(directory);
+    let root = git_root(&dir_path);
+    let scope = match explicit_scope {
+        Some(value) if !value.trim().is_empty() => PathBuf::from(value.trim()),
+        _ => root.clone(),
+    };
+
+    let updated = conn
+        .execute(
+            "UPDATE instances SET scope = ?, directory = ?, root = ?, file_root = ? WHERE id = ?",
+            params![
+                scope.to_string_lossy(),
+                dir_path.to_string_lossy(),
+                root.to_string_lossy(),
+                dir_path.to_string_lossy(),
+                instance_id,
+            ],
+        )
+        .map_err(|err| format!("failed to retarget instance {instance_id}: {err}"))?;
+
+    Ok(updated > 0)
+}
+
+fn read_project_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectSpace> {
+    let additional_roots_raw: String = row.get(4)?;
+    let boundary_raw: String = row.get(7)?;
+    let additional_roots =
+        serde_json::from_str::<Vec<String>>(&additional_roots_raw).map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(err))
+        })?;
+    let boundary = serde_json::from_str::<ProjectBoundary>(&boundary_raw).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(err))
+    })?;
+
+    Ok(ProjectSpace {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        root: row.get(2)?,
+        color: row.get(3)?,
+        additional_roots,
+        notes: row.get(5)?,
+        scope: row.get(6)?,
+        boundary,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
+}
+
+pub fn list_projects(conn: &Connection) -> Result<Vec<ProjectSpace>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, root, color, additional_roots, notes, scope, boundary_json, created_at, updated_at
+             FROM ui_projects
+             ORDER BY name COLLATE NOCASE ASC, updated_at DESC, id ASC",
+        )
+        .map_err(|err| format!("failed to prepare project listing: {err}"))?;
+    let rows = stmt
+        .query_map([], read_project_row)
+        .map_err(|err| format!("failed to query projects: {err}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read project row: {err}"))
+}
+
+pub fn load_project(conn: &Connection, project_id: &str) -> Result<Option<ProjectSpace>, String> {
+    conn.query_row(
+        "SELECT id, name, root, color, additional_roots, notes, scope, boundary_json, created_at, updated_at
+         FROM ui_projects
+         WHERE id = ?",
+        params![project_id],
+        read_project_row,
+    )
+    .optional()
+    .map_err(|err| format!("failed to load project {project_id}: {err}"))
+}
+
+pub fn save_project(conn: &Connection, project: &ProjectSpace) -> Result<ProjectSpace, String> {
+    let additional_roots = serde_json::to_string(&project.additional_roots)
+        .map_err(|err| format!("failed to encode project roots: {err}"))?;
+    let boundary = serde_json::to_string(&project.boundary)
+        .map_err(|err| format!("failed to encode project boundary: {err}"))?;
+
+    conn.execute(
+        r#"
+        INSERT INTO ui_projects
+          (id, name, root, color, additional_roots, notes, scope, boundary_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          root = excluded.root,
+          color = excluded.color,
+          additional_roots = excluded.additional_roots,
+          notes = excluded.notes,
+          scope = excluded.scope,
+          boundary_json = excluded.boundary_json,
+          updated_at = excluded.updated_at
+        "#,
+        params![
+            project.id,
+            project.name,
+            project.root,
+            project.color,
+            additional_roots,
+            project.notes,
+            project.scope,
+            boundary,
+            project.created_at,
+            project.updated_at,
+        ],
+    )
+    .map_err(|err| format!("failed to save project {}: {err}", project.id))?;
+
+    load_project(conn, &project.id)?.ok_or_else(|| format!("project {} was not saved", project.id))
+}
+
+pub fn delete_project(conn: &Connection, project_id: &str) -> Result<bool, String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("failed to begin project delete tx: {err}"))?;
+    tx.execute(
+        "DELETE FROM ui_project_memberships WHERE project_id = ?",
+        params![project_id],
+    )
+    .map_err(|err| format!("failed to delete project memberships for {project_id}: {err}"))?;
+    tx.execute(
+        "DELETE FROM ui_asset_attachments
+         WHERE asset_id IN (SELECT id FROM ui_project_assets WHERE project_id = ?)",
+        params![project_id],
+    )
+    .map_err(|err| format!("failed to delete project asset attachments for {project_id}: {err}"))?;
+    tx.execute(
+        "DELETE FROM ui_project_assets WHERE project_id = ?",
+        params![project_id],
+    )
+    .map_err(|err| format!("failed to delete project assets for {project_id}: {err}"))?;
+    let deleted = tx
+        .execute("DELETE FROM ui_projects WHERE id = ?", params![project_id])
+        .map_err(|err| format!("failed to delete project {project_id}: {err}"))?;
+    tx.commit()
+        .map_err(|err| format!("failed to commit project delete tx: {err}"))?;
+    Ok(deleted > 0)
+}
+
+fn read_project_asset_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectAsset> {
+    Ok(ProjectAsset {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        kind: row.get(2)?,
+        title: row.get(3)?,
+        path: row.get(4)?,
+        content: row.get(5)?,
+        description: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+    })
+}
+
+pub fn list_project_assets(
+    conn: &Connection,
+    project_id: &str,
+) -> Result<Vec<ProjectAsset>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, project_id, kind, title, path, content, description, created_at, updated_at
+             FROM ui_project_assets
+             WHERE project_id = ?
+             ORDER BY title COLLATE NOCASE ASC, updated_at DESC, id ASC",
+        )
+        .map_err(|err| format!("failed to prepare project asset listing: {err}"))?;
+    let rows = stmt
+        .query_map(params![project_id], read_project_asset_row)
+        .map_err(|err| format!("failed to query project assets: {err}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read project asset row: {err}"))
+}
+
+pub fn load_project_asset(
+    conn: &Connection,
+    asset_id: &str,
+) -> Result<Option<ProjectAsset>, String> {
+    conn.query_row(
+        "SELECT id, project_id, kind, title, path, content, description, created_at, updated_at
+         FROM ui_project_assets
+         WHERE id = ?",
+        params![asset_id],
+        read_project_asset_row,
+    )
+    .optional()
+    .map_err(|err| format!("failed to load project asset {asset_id}: {err}"))
+}
+
+pub fn save_project_asset(conn: &Connection, asset: &ProjectAsset) -> Result<ProjectAsset, String> {
+    if load_project(conn, &asset.project_id)?.is_none() {
+        return Err(format!("project {} not found", asset.project_id));
+    }
+
+    conn.execute(
+        r#"
+        INSERT INTO ui_project_assets
+          (id, project_id, kind, title, path, content, description, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          project_id = excluded.project_id,
+          kind = excluded.kind,
+          title = excluded.title,
+          path = excluded.path,
+          content = excluded.content,
+          description = excluded.description,
+          updated_at = excluded.updated_at
+        "#,
+        params![
+            asset.id,
+            asset.project_id,
+            asset.kind,
+            asset.title,
+            asset.path,
+            asset.content,
+            asset.description,
+            asset.created_at,
+            asset.updated_at,
+        ],
+    )
+    .map_err(|err| format!("failed to save project asset {}: {err}", asset.id))?;
+
+    load_project_asset(conn, &asset.id)?
+        .ok_or_else(|| format!("project asset {} was not saved", asset.id))
+}
+
+pub fn delete_project_asset(conn: &Connection, asset_id: &str) -> Result<bool, String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("failed to begin project asset delete tx: {err}"))?;
+    tx.execute(
+        "DELETE FROM ui_asset_attachments WHERE asset_id = ?",
+        params![asset_id],
+    )
+    .map_err(|err| format!("failed to delete attachments for asset {asset_id}: {err}"))?;
+    let deleted = tx
+        .execute(
+            "DELETE FROM ui_project_assets WHERE id = ?",
+            params![asset_id],
+        )
+        .map_err(|err| format!("failed to delete project asset {asset_id}: {err}"))?;
+    tx.commit()
+        .map_err(|err| format!("failed to commit project asset delete tx: {err}"))?;
+    Ok(deleted > 0)
+}
+
+fn read_browser_context_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserContext> {
+    Ok(BrowserContext {
+        scope: row.get(0)?,
+        id: row.get(1)?,
+        owner_instance_id: row.get(2)?,
+        endpoint: row.get(3)?,
+        host: row.get(4)?,
+        port: row.get(5)?,
+        profile_dir: row.get(6)?,
+        pid: row.get(7)?,
+        start_url: row.get(8)?,
+        status: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
+}
+
+pub fn save_browser_context(
+    conn: &Connection,
+    context: &BrowserContext,
+) -> Result<BrowserContext, String> {
+    conn.execute(
+        r#"
+        INSERT INTO browser_contexts
+          (scope, id, owner_instance_id, endpoint, host, port, profile_dir, pid, start_url, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope, id) DO UPDATE SET
+          owner_instance_id = excluded.owner_instance_id,
+          endpoint = excluded.endpoint,
+          host = excluded.host,
+          port = excluded.port,
+          profile_dir = excluded.profile_dir,
+          pid = excluded.pid,
+          start_url = excluded.start_url,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+        "#,
+        params![
+            context.scope,
+            context.id,
+            context.owner_instance_id,
+            context.endpoint,
+            context.host,
+            context.port,
+            context.profile_dir,
+            context.pid,
+            context.start_url,
+            context.status,
+            context.created_at,
+            context.updated_at,
+        ],
+    )
+    .map_err(|err| format!("failed to save browser context {}: {err}", context.id))?;
+
+    let saved = load_browser_context(conn, &context.scope, &context.id)?
+        .ok_or_else(|| format!("browser context {} was not saved", context.id))?;
+    emit_event(
+        conn,
+        &context.scope,
+        "browser.context.upserted",
+        context.owner_instance_id.as_deref(),
+        Some(&context.id),
+        Some(json!({
+            "endpoint": &context.endpoint,
+            "status": &context.status,
+        })),
+    )?;
+    Ok(saved)
+}
+
+pub fn load_browser_context(
+    conn: &Connection,
+    scope: &str,
+    context_id: &str,
+) -> Result<Option<BrowserContext>, String> {
+    conn.query_row(
+        "SELECT scope, id, owner_instance_id, endpoint, host, port, profile_dir, pid, start_url, status, created_at, updated_at
+         FROM browser_contexts
+         WHERE scope = ? AND id = ?",
+        params![scope, context_id],
+        read_browser_context_row,
+    )
+    .optional()
+    .map_err(|err| format!("failed to load browser context {context_id}: {err}"))
+}
+
+pub fn close_browser_context(
+    conn: &Connection,
+    scope: &str,
+    context_id: &str,
+    updated_at: i64,
+) -> Result<bool, String> {
+    let updated = conn
+        .execute(
+            "UPDATE browser_contexts
+             SET status = 'closed', pid = NULL, updated_at = ?
+             WHERE scope = ? AND id = ?",
+            params![updated_at, scope, context_id],
+        )
+        .map_err(|err| format!("failed to close browser context {context_id}: {err}"))?;
+    if updated > 0 {
+        emit_event(
+            conn,
+            scope,
+            "browser.context.closed",
+            None,
+            Some(context_id),
+            None,
+        )?;
+    }
+    Ok(updated > 0)
+}
+
+pub fn list_browser_contexts(
+    conn: &Connection,
+    scope: &str,
+) -> Result<Vec<BrowserContext>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT scope, id, owner_instance_id, endpoint, host, port, profile_dir, pid, start_url, status, created_at, updated_at
+             FROM browser_contexts
+             WHERE scope = ?
+             ORDER BY updated_at DESC, created_at DESC, id ASC",
+        )
+        .map_err(|err| format!("failed to prepare browser context listing: {err}"))?;
+    let rows = stmt
+        .query_map(params![scope], read_browser_context_row)
+        .map_err(|err| format!("failed to query browser contexts: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read browser context row: {err}"))
+}
+
+fn read_browser_tab_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserTab> {
+    let active: i64 = row.get(6)?;
+    Ok(BrowserTab {
+        scope: row.get(0)?,
+        context_id: row.get(1)?,
+        tab_id: row.get(2)?,
+        tab_type: row.get(3)?,
+        url: row.get(4)?,
+        title: row.get(5)?,
+        active: active != 0,
+        updated_at: row.get(7)?,
+    })
+}
+
+pub fn list_browser_tabs(conn: &Connection, scope: &str) -> Result<Vec<BrowserTab>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT scope, context_id, tab_id, type, url, title, active, updated_at
+             FROM browser_tabs
+             WHERE scope = ?
+             ORDER BY context_id ASC, active DESC, updated_at DESC, tab_id ASC",
+        )
+        .map_err(|err| format!("failed to prepare browser tab listing: {err}"))?;
+    let rows = stmt
+        .query_map(params![scope], read_browser_tab_row)
+        .map_err(|err| format!("failed to query browser tabs: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read browser tab row: {err}"))
+}
+
+pub fn record_browser_tabs(
+    conn: &Connection,
+    scope: &str,
+    context_id: &str,
+    tabs: &[BrowserTab],
+    updated_at: i64,
+) -> Result<Vec<BrowserTab>, String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("failed to begin browser tab tx: {err}"))?;
+
+    if tabs.is_empty() {
+        tx.execute(
+            "DELETE FROM browser_tabs WHERE scope = ? AND context_id = ?",
+            params![scope, context_id],
+        )
+        .map_err(|err| format!("failed to clear browser tabs for {context_id}: {err}"))?;
+    } else {
+        let tab_ids = tabs
+            .iter()
+            .map(|tab| tab.tab_id.clone())
+            .collect::<Vec<_>>();
+        let placeholders = vec!["?"; tab_ids.len()].join(",");
+        let sql = format!(
+            "DELETE FROM browser_tabs
+             WHERE scope = ? AND context_id = ? AND tab_id NOT IN ({placeholders})"
+        );
+        let mut params = vec![scope.to_string(), context_id.to_string()];
+        params.extend(tab_ids);
+        tx.execute(&sql, rusqlite::params_from_iter(params))
+            .map_err(|err| format!("failed to prune browser tabs for {context_id}: {err}"))?;
+
+        for tab in tabs {
+            tx.execute(
+                "INSERT INTO browser_tabs
+                   (scope, context_id, tab_id, type, url, title, active, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(scope, context_id, tab_id) DO UPDATE SET
+                   type = excluded.type,
+                   url = excluded.url,
+                   title = excluded.title,
+                   active = excluded.active,
+                   updated_at = excluded.updated_at",
+                params![
+                    scope,
+                    context_id,
+                    tab.tab_id,
+                    tab.tab_type,
+                    tab.url,
+                    tab.title,
+                    if tab.active { 1 } else { 0 },
+                    updated_at,
+                ],
+            )
+            .map_err(|err| format!("failed to save browser tab {}: {err}", tab.tab_id))?;
+        }
+    }
+
+    tx.commit()
+        .map_err(|err| format!("failed to commit browser tab tx: {err}"))?;
+    emit_event(
+        conn,
+        scope,
+        "browser.tabs.updated",
+        None,
+        Some(context_id),
+        Some(json!({ "count": tabs.len() })),
+    )?;
+    Ok(list_browser_tabs(conn, scope)?
+        .into_iter()
+        .filter(|tab| tab.context_id == context_id)
+        .collect())
+}
+
+fn parse_browser_snapshot_elements(raw: &str) -> Vec<BrowserSnapshotElement> {
+    serde_json::from_str(raw).unwrap_or_default()
+}
+
+fn read_browser_snapshot_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserSnapshot> {
+    let elements_json: String = row.get(7)?;
+    Ok(BrowserSnapshot {
+        id: row.get(0)?,
+        scope: row.get(1)?,
+        context_id: row.get(2)?,
+        tab_id: row.get(3)?,
+        url: row.get(4)?,
+        title: row.get(5)?,
+        text: row.get(6)?,
+        elements: parse_browser_snapshot_elements(&elements_json),
+        screenshot_path: row.get(8)?,
+        created_by: row.get(9)?,
+        created_at: row.get(10)?,
+    })
+}
+
+pub fn list_browser_snapshots(
+    conn: &Connection,
+    scope: &str,
+    limit: usize,
+) -> Result<Vec<BrowserSnapshot>, String> {
+    let bounded_limit = i64::try_from(limit.clamp(1, 200)).unwrap_or(40);
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, scope, context_id, tab_id, url, title, text, elements_json, screenshot_path, created_by, created_at
+             FROM browser_snapshots
+             WHERE scope = ?
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?",
+        )
+        .map_err(|err| format!("failed to prepare browser snapshot listing: {err}"))?;
+    let rows = stmt
+        .query_map(params![scope, bounded_limit], read_browser_snapshot_row)
+        .map_err(|err| format!("failed to query browser snapshots: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read browser snapshot row: {err}"))
+}
+
+pub fn record_browser_snapshot(
+    conn: &Connection,
+    snapshot: &BrowserSnapshot,
+) -> Result<BrowserSnapshot, String> {
+    let elements_json = serde_json::to_string(&snapshot.elements)
+        .map_err(|err| format!("failed to serialize browser snapshot elements: {err}"))?;
+    conn.execute(
+        "INSERT INTO browser_snapshots
+           (id, scope, context_id, tab_id, url, title, text, elements_json, screenshot_path, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        params![
+            snapshot.id,
+            snapshot.scope,
+            snapshot.context_id,
+            snapshot.tab_id,
+            snapshot.url,
+            snapshot.title,
+            snapshot.text,
+            elements_json,
+            snapshot.screenshot_path,
+            snapshot.created_by,
+            snapshot.created_at,
+        ],
+    )
+    .map_err(|err| format!("failed to record browser snapshot {}: {err}", snapshot.id))?;
+    emit_event(
+        conn,
+        &snapshot.scope,
+        "browser.snapshot.captured",
+        snapshot.created_by.as_deref(),
+        Some(&snapshot.context_id),
+        Some(json!({
+            "snapshot_id": &snapshot.id,
+            "tab_id": &snapshot.tab_id,
+            "text_length": snapshot.text.len(),
+            "elements": snapshot.elements.len(),
+            "screenshot_path": &snapshot.screenshot_path,
+        })),
+    )?;
+
+    let mut snapshots = list_browser_snapshots(conn, &snapshot.scope, 200)?
+        .into_iter()
+        .filter(|entry| entry.id == snapshot.id)
+        .collect::<Vec<_>>();
+    snapshots
+        .pop()
+        .ok_or_else(|| format!("browser snapshot {} was not saved", snapshot.id))
+}
+
+pub fn list_asset_attachments(
+    conn: &Connection,
+    project_id: Option<&str>,
+) -> Result<Vec<AssetAttachment>, String> {
+    let sql = match project_id {
+        Some(_) => {
+            "SELECT attachment.asset_id, attachment.target_type, attachment.target_id, attachment.attached_at
+             FROM ui_asset_attachments attachment
+             JOIN ui_project_assets asset ON asset.id = attachment.asset_id
+             WHERE asset.project_id = ?
+             ORDER BY attachment.attached_at ASC, attachment.asset_id ASC"
+        }
+        None => {
+            "SELECT asset_id, target_type, target_id, attached_at
+             FROM ui_asset_attachments
+             ORDER BY attached_at ASC, asset_id ASC"
+        }
+    };
+    let mut stmt = conn
+        .prepare(sql)
+        .map_err(|err| format!("failed to prepare asset attachment listing: {err}"))?;
+    let read = |row: &rusqlite::Row<'_>| {
+        Ok(AssetAttachment {
+            asset_id: row.get(0)?,
+            target_type: row.get(1)?,
+            target_id: row.get(2)?,
+            attached_at: row.get(3)?,
+        })
+    };
+    let rows = match project_id {
+        Some(id) => stmt
+            .query_map(params![id], read)
+            .map_err(|err| format!("failed to query asset attachments: {err}"))?,
+        None => stmt
+            .query_map([], read)
+            .map_err(|err| format!("failed to query asset attachments: {err}"))?,
+    };
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read asset attachment row: {err}"))
+}
+
+pub fn attach_asset(
+    conn: &Connection,
+    asset_id: &str,
+    target_type: &str,
+    target_id: &str,
+    attached_at: i64,
+) -> Result<AssetAttachment, String> {
+    if load_project_asset(conn, asset_id)?.is_none() {
+        return Err(format!("project asset {asset_id} not found"));
+    }
+
+    conn.execute(
+        r#"
+        INSERT INTO ui_asset_attachments (asset_id, target_type, target_id, attached_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(asset_id, target_type, target_id) DO UPDATE SET attached_at = excluded.attached_at
+        "#,
+        params![asset_id, target_type, target_id, attached_at],
+    )
+    .map_err(|err| {
+        format!("failed to attach project asset {asset_id} to {target_type}:{target_id}: {err}")
+    })?;
+
+    Ok(AssetAttachment {
+        asset_id: asset_id.to_owned(),
+        target_type: target_type.to_owned(),
+        target_id: target_id.to_owned(),
+        attached_at,
+    })
+}
+
+pub fn detach_asset(
+    conn: &Connection,
+    asset_id: &str,
+    target_type: &str,
+    target_id: &str,
+) -> Result<bool, String> {
+    let deleted = conn
+        .execute(
+            "DELETE FROM ui_asset_attachments WHERE asset_id = ? AND target_type = ? AND target_id = ?",
+            params![asset_id, target_type, target_id],
+        )
+        .map_err(|err| {
+            format!("failed to detach project asset {asset_id} from {target_type}:{target_id}: {err}")
+        })?;
+    Ok(deleted > 0)
+}
+
+pub fn list_project_memberships(conn: &Connection) -> Result<Vec<ProjectMembership>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT project_id, instance_id, attached_at
+             FROM ui_project_memberships
+             ORDER BY attached_at ASC, project_id ASC, instance_id ASC",
+        )
+        .map_err(|err| format!("failed to prepare project membership listing: {err}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ProjectMembership {
+                project_id: row.get(0)?,
+                instance_id: row.get(1)?,
+                attached_at: row.get(2)?,
+            })
+        })
+        .map_err(|err| format!("failed to query project memberships: {err}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read project membership row: {err}"))
+}
+
+pub fn attach_instance_to_project(
+    conn: &Connection,
+    project_id: &str,
+    instance_id: &str,
+    attached_at: i64,
+) -> Result<ProjectMembership, String> {
+    if load_project(conn, project_id)?.is_none() {
+        return Err(format!("project {project_id} not found"));
+    }
+
+    conn.execute(
+        r#"
+        INSERT INTO ui_project_memberships (project_id, instance_id, attached_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(project_id, instance_id) DO UPDATE SET attached_at = excluded.attached_at
+        "#,
+        params![project_id, instance_id, attached_at],
+    )
+    .map_err(|err| {
+        format!("failed to attach instance {instance_id} to project {project_id}: {err}")
+    })?;
+
+    Ok(ProjectMembership {
+        project_id: project_id.to_owned(),
+        instance_id: instance_id.to_owned(),
+        attached_at,
+    })
+}
+
+pub fn detach_instance_from_project(
+    conn: &Connection,
+    project_id: &str,
+    instance_id: &str,
+) -> Result<bool, String> {
+    let deleted = conn
+        .execute(
+            "DELETE FROM ui_project_memberships WHERE project_id = ? AND instance_id = ?",
+            params![project_id, instance_id],
+        )
+        .map_err(|err| {
+            format!("failed to detach instance {instance_id} from project {project_id}: {err}")
+        })?;
     Ok(deleted > 0)
 }
 
@@ -827,6 +1622,43 @@ pub fn list_scope_instance_ids(conn: &Connection, scope: &str) -> Result<Vec<Str
     Ok(ids)
 }
 
+fn list_scope_message_recipient_ids(conn: &Connection, scope: &str) -> Result<Vec<String>, String> {
+    let active_cutoff = now_secs().saturating_sub(INSTANCE_STALE_AFTER_SECS);
+    let mut stmt = conn
+        .prepare(
+            "SELECT id FROM instances
+             WHERE scope = ? AND heartbeat >= ? AND COALESCE(adopted, 1) = 1
+             ORDER BY registered_at ASC, id ASC",
+        )
+        .map_err(|err| format!("failed to prepare active recipient listing: {err}"))?;
+    let rows = stmt
+        .query_map(params![scope, active_cutoff], |row| row.get::<_, String>(0))
+        .map_err(|err| format!("failed to query active recipients in scope: {err}"))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row.map_err(|err| format!("failed to read active recipient row: {err}"))?);
+    }
+    Ok(ids)
+}
+
+fn is_active_message_recipient(
+    conn: &Connection,
+    scope: &str,
+    recipient: &str,
+) -> Result<bool, String> {
+    let active_cutoff = now_secs().saturating_sub(INSTANCE_STALE_AFTER_SECS);
+    conn.query_row(
+        "SELECT 1 FROM instances
+         WHERE scope = ? AND id = ? AND heartbeat >= ? AND COALESCE(adopted, 1) = 1
+         LIMIT 1",
+        params![scope, recipient, active_cutoff],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|row| row.is_some())
+    .map_err(|err| format!("failed to verify active recipient {recipient}: {err}"))
+}
+
 /// Write one message row per recipient in `scope`, with the operator as the
 /// sender. Mirrors `src/messages.ts::broadcast` exactly (one row per recipient,
 /// then a `message.broadcast` event) so the UI's ConnectionEdge animations and
@@ -844,7 +1676,7 @@ pub fn broadcast_from_operator(
     sender_label: &str,
     content: &str,
 ) -> Result<usize, String> {
-    let recipients = list_scope_instance_ids(conn, scope)?;
+    let recipients = list_scope_message_recipient_ids(conn, scope)?;
     if recipients.is_empty() {
         return Ok(0);
     }
@@ -880,6 +1712,52 @@ pub fn broadcast_from_operator(
         .map_err(|err| format!("failed to commit operator-broadcast tx: {err}"))?;
 
     Ok(recipients.len())
+}
+
+/// Write one operator-authored direct message to a single recipient in `scope`.
+/// Returns `false` when the recipient is not currently registered in that
+/// scope, which lets the UI show a targeted validation error instead of
+/// silently writing a message no agent can poll.
+pub fn send_from_operator(
+    conn: &Connection,
+    scope: &str,
+    sender_label: &str,
+    recipient: &str,
+    content: &str,
+) -> Result<bool, String> {
+    if !is_active_message_recipient(conn, scope, recipient)? {
+        return Ok(false);
+    }
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("failed to begin operator-send tx: {err}"))?;
+
+    tx.execute(
+        "INSERT INTO messages (scope, sender, recipient, content) VALUES (?, ?, ?, ?)",
+        params![scope, sender_label, recipient, content],
+    )
+    .map_err(|err| format!("failed to insert operator direct message row: {err}"))?;
+
+    tx.execute(
+        "INSERT INTO events (scope, type, actor, subject, payload) VALUES (?, 'message.sent', ?, ?, ?)",
+        params![
+            scope,
+            sender_label,
+            recipient,
+            json!({
+                "length": content.len(),
+                "operator": true,
+            })
+            .to_string()
+        ],
+    )
+    .map_err(|err| format!("failed to record message.sent event: {err}"))?;
+
+    tx.commit()
+        .map_err(|err| format!("failed to commit operator-send tx: {err}"))?;
+
+    Ok(true)
 }
 
 /// Returns whether the instance row has been adopted by the child process.
@@ -1126,6 +2004,7 @@ pub fn remove_task_dependency(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{BrowserContext, ProjectBoundary, ProjectSpace};
     use rusqlite::Connection;
 
     /// Minimal legacy schema used only to verify migration behavior.
@@ -1200,6 +2079,319 @@ mod tests {
 
         // Idempotent — second call should be a no-op.
         ensure_adopted_column(&conn).unwrap();
+    }
+
+    #[test]
+    fn browser_catalog_rows_round_trip() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let saved = save_browser_context(
+            &conn,
+            &BrowserContext {
+                scope: "scope-a".into(),
+                id: "ctx-a".into(),
+                owner_instance_id: None,
+                endpoint: "http://127.0.0.1:9444".into(),
+                host: "127.0.0.1".into(),
+                port: 9444,
+                profile_dir: "/tmp/browser-profile".into(),
+                pid: Some(42),
+                start_url: "https://example.com".into(),
+                status: "open".into(),
+                created_at: 100,
+                updated_at: 100,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(saved.id, "ctx-a");
+        assert_eq!(list_browser_contexts(&conn, "scope-a").unwrap().len(), 1);
+        assert!(close_browser_context(&conn, "scope-a", "ctx-a", 103).unwrap());
+        let closed = load_browser_context(&conn, "scope-a", "ctx-a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(closed.status, "closed");
+        assert_eq!(closed.pid, None);
+        assert_eq!(closed.updated_at, 103);
+
+        conn.execute(
+            "INSERT INTO browser_tabs (scope, context_id, tab_id, type, url, title, active, updated_at)
+             VALUES ('scope-a', 'ctx-a', 'stale-tab', 'page', 'https://stale.example', 'Stale', 0, 99)",
+            [],
+        )
+        .unwrap();
+        record_browser_tabs(
+            &conn,
+            "scope-a",
+            "ctx-a",
+            &[BrowserTab {
+                scope: "scope-a".into(),
+                context_id: "ctx-a".into(),
+                tab_id: "tab-a".into(),
+                tab_type: "page".into(),
+                url: "https://example.com".into(),
+                title: "Example".into(),
+                active: true,
+                updated_at: 101,
+            }],
+            101,
+        )
+        .unwrap();
+        let tabs = list_browser_tabs(&conn, "scope-a").unwrap();
+        assert_eq!(tabs.len(), 1);
+        assert!(tabs[0].active);
+        assert_eq!(tabs[0].tab_type, "page");
+
+        record_browser_snapshot(
+            &conn,
+            &BrowserSnapshot {
+                id: "snap-a".into(),
+                scope: "scope-a".into(),
+                context_id: "ctx-a".into(),
+                tab_id: "tab-a".into(),
+                url: "https://example.com".into(),
+                title: "Example".into(),
+                text: "Hello".into(),
+                elements: vec![BrowserSnapshotElement {
+                    tag: "button".into(),
+                    role: None,
+                    text: "Go".into(),
+                    selector: "button".into(),
+                }],
+                screenshot_path: None,
+                created_by: None,
+                created_at: 102,
+            },
+        )
+        .unwrap();
+        let snapshots = list_browser_snapshots(&conn, "scope-a", 10).unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].elements[0].text, "Go");
+
+        let mut stmt = conn
+            .prepare("SELECT type FROM events WHERE scope = 'scope-a' ORDER BY id ASC")
+            .unwrap();
+        let event_types = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            event_types,
+            vec![
+                "browser.context.upserted",
+                "browser.context.closed",
+                "browser.tabs.updated",
+                "browser.snapshot.captured",
+            ]
+        );
+    }
+
+    #[test]
+    fn project_space_round_trips_boundary_and_roots() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let saved = save_project(
+            &conn,
+            &ProjectSpace {
+                id: "project-alpha".into(),
+                name: "Alpha".into(),
+                root: "/tmp/alpha".into(),
+                color: "#35f2ff".into(),
+                additional_roots: vec!["/tmp/alpha/assets".into()],
+                notes: "Launch window notes".into(),
+                scope: Some("/tmp/alpha#phase4".into()),
+                boundary: ProjectBoundary {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 800.0,
+                    height: 500.0,
+                },
+                created_at: 100,
+                updated_at: 200,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(saved.id, "project-alpha");
+        assert_eq!(
+            saved.additional_roots,
+            vec!["/tmp/alpha/assets".to_string()]
+        );
+        assert_eq!(saved.color, "#35f2ff");
+        assert_eq!(saved.notes, "Launch window notes");
+        assert_eq!(saved.boundary.width, 800.0);
+
+        let projects = list_projects(&conn).unwrap();
+        assert_eq!(projects, vec![saved]);
+    }
+
+    #[test]
+    fn project_memberships_attach_detach_and_delete_with_project() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        save_project(
+            &conn,
+            &ProjectSpace {
+                id: "project-alpha".into(),
+                name: "Alpha".into(),
+                root: "/tmp/alpha".into(),
+                color: "#ffffff".into(),
+                additional_roots: vec![],
+                notes: String::new(),
+                scope: None,
+                boundary: ProjectBoundary {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 800.0,
+                    height: 500.0,
+                },
+                created_at: 100,
+                updated_at: 200,
+            },
+        )
+        .unwrap();
+
+        attach_instance_to_project(&conn, "project-alpha", "agent-1", 300).unwrap();
+        let memberships = list_project_memberships(&conn).unwrap();
+        assert_eq!(memberships.len(), 1);
+        assert_eq!(memberships[0].project_id, "project-alpha");
+        assert_eq!(memberships[0].instance_id, "agent-1");
+
+        assert!(detach_instance_from_project(&conn, "project-alpha", "agent-1").unwrap());
+        assert!(list_project_memberships(&conn).unwrap().is_empty());
+
+        attach_instance_to_project(&conn, "project-alpha", "agent-1", 400).unwrap();
+        assert!(delete_project(&conn, "project-alpha").unwrap());
+        assert!(list_projects(&conn).unwrap().is_empty());
+        assert!(list_project_memberships(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn project_assets_round_trip_and_delete_with_attachments() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+        let image_path = std::env::temp_dir().join(format!("swarm-ui-hero-{}.png", now_millis()));
+        std::fs::write(&image_path, b"fake png bytes").unwrap();
+
+        save_project(
+            &conn,
+            &ProjectSpace {
+                id: "project-alpha".into(),
+                name: "Alpha".into(),
+                root: "/tmp/alpha".into(),
+                color: "#ffffff".into(),
+                additional_roots: vec![],
+                notes: String::new(),
+                scope: None,
+                boundary: ProjectBoundary {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 800.0,
+                    height: 500.0,
+                },
+                created_at: 100,
+                updated_at: 200,
+            },
+        )
+        .unwrap();
+
+        let saved = save_project_asset(
+            &conn,
+            &ProjectAsset {
+                id: "asset-1".into(),
+                project_id: "project-alpha".into(),
+                kind: "image".into(),
+                title: "Hero reference".into(),
+                path: Some(image_path.to_string_lossy().into_owned()),
+                content: None,
+                description: "Use as startup mood reference".into(),
+                created_at: 100,
+                updated_at: 200,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(saved.kind, "image");
+        assert_eq!(
+            saved.path.as_deref(),
+            Some(image_path.to_string_lossy().as_ref())
+        );
+
+        let assets = list_project_assets(&conn, "project-alpha").unwrap();
+        assert_eq!(assets, vec![saved]);
+
+        attach_asset(&conn, "asset-1", "agent", "agent-1", 300).unwrap();
+        let attachments = list_asset_attachments(&conn, Some("project-alpha")).unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].target_id, "agent-1");
+
+        assert!(delete_project_asset(&conn, "asset-1").unwrap());
+        assert!(
+            list_project_assets(&conn, "project-alpha")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            list_asset_attachments(&conn, Some("project-alpha"))
+                .unwrap()
+                .is_empty()
+        );
+        let _ = std::fs::remove_file(image_path);
+    }
+
+    #[test]
+    fn project_asset_save_requires_existing_project() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let err = save_project_asset(
+            &conn,
+            &ProjectAsset {
+                id: "asset-1".into(),
+                project_id: "missing-project".into(),
+                kind: "image".into(),
+                title: "Hero reference".into(),
+                path: Some("/tmp/hero.png".into()),
+                content: None,
+                description: String::new(),
+                created_at: 100,
+                updated_at: 200,
+            },
+        )
+        .unwrap_err();
+
+        assert!(err.contains("project missing-project not found"));
+    }
+
+    #[test]
+    fn retarget_instance_runtime_context_updates_scope_and_directory() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted)
+             VALUES ('agent-1', '/tmp/old', '/tmp/old', '/tmp/old', '/tmp/old', 0, 'provider:codex', 1)",
+            [],
+        )
+        .unwrap();
+
+        let updated =
+            retarget_instance_runtime_context(&conn, "agent-1", "/tmp", Some("/tmp#project"))
+                .unwrap();
+        assert!(updated);
+
+        let row: (String, String, String) = conn
+            .query_row(
+                "SELECT scope, directory, file_root FROM instances WHERE id = 'agent-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("/tmp#project".into(), "/tmp".into(), "/tmp".into()));
     }
 
     #[test]
@@ -1468,6 +2660,62 @@ mod tests {
         );
 
         assert_eq!(instance_adoption_state(&conn, "missing").unwrap(), None);
+    }
+
+    #[test]
+    fn operator_broadcast_only_targets_active_recipients() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let stale_heartbeat = now_secs() - INSTANCE_STALE_AFTER_SECS - 1;
+        conn.execute(
+            "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, heartbeat, adopted)
+             VALUES
+             ('active', 's', '/tmp', '/tmp', '/tmp', 1, 'role:reviewer', unixepoch(), 1),
+             ('stale', 's', '/tmp', '/tmp', '/tmp', 2, 'role:reviewer', ?, 1),
+             ('adopting', 's', '/tmp', '/tmp', '/tmp', 0, 'role:reviewer', unixepoch(), 0)",
+            params![stale_heartbeat],
+        )
+        .unwrap();
+
+        let recipients = broadcast_from_operator(&conn, "s", "operator:s", "hello").unwrap();
+        assert_eq!(recipients, 1);
+
+        let rows: Vec<String> = conn
+            .prepare("SELECT recipient FROM messages ORDER BY id ASC")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(rows, vec!["active".to_string()]);
+    }
+
+    #[test]
+    fn operator_direct_send_rejects_stale_or_missing_recipients() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let stale_heartbeat = now_secs() - INSTANCE_STALE_AFTER_SECS - 1;
+        conn.execute(
+            "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, heartbeat, adopted)
+             VALUES
+             ('active', 's', '/tmp', '/tmp', '/tmp', 1, 'role:reviewer', unixepoch(), 1),
+             ('stale', 's', '/tmp', '/tmp', '/tmp', 2, 'role:reviewer', ?, 1),
+             ('adopting', 's', '/tmp', '/tmp', '/tmp', 0, 'role:reviewer', unixepoch(), 0)",
+            params![stale_heartbeat],
+        )
+        .unwrap();
+
+        assert!(send_from_operator(&conn, "s", "operator:s", "active", "go").unwrap());
+        assert!(!send_from_operator(&conn, "s", "operator:s", "stale", "go").unwrap());
+        assert!(!send_from_operator(&conn, "s", "operator:s", "adopting", "go").unwrap());
+        assert!(!send_from_operator(&conn, "s", "operator:s", "missing", "go").unwrap());
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[test]

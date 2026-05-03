@@ -31,43 +31,6 @@ pub type DaemonWebSocket = WebSocketStream<UnixStream>;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const STARTUP_POLL_INTERVAL: Duration = Duration::from_millis(250);
-const RETRY_LOG_INTERVAL: Duration = Duration::from_secs(10);
-
-#[derive(Debug, Default)]
-pub struct RetryLogThrottle {
-    last_log: Option<Instant>,
-    suppressed: u32,
-}
-
-impl RetryLogThrottle {
-    pub fn warn<F>(&mut self, message: F)
-    where
-        F: FnOnce() -> String,
-    {
-        let now = Instant::now();
-        let should_log = self
-            .last_log
-            .is_none_or(|last_log| now.duration_since(last_log) >= RETRY_LOG_INTERVAL);
-
-        if !should_log {
-            self.suppressed = self.suppressed.saturating_add(1);
-            return;
-        }
-
-        let suppressed = std::mem::take(&mut self.suppressed);
-        self.last_log = Some(now);
-        if suppressed > 0 {
-            eprintln!("{} (suppressed {suppressed} repeats)", message());
-        } else {
-            eprintln!("{}", message());
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.last_log = None;
-        self.suppressed = 0;
-    }
-}
 
 pub fn socket_path() -> Result<PathBuf, String> {
     let base = swarm_db_path()?
@@ -151,7 +114,6 @@ fn server_launch_plan() -> Option<ServerLaunchPlan> {
         current_exe_server_path(),
         workspace_server_binary_candidates(),
         workspace_manifest_path(),
-        cfg!(debug_assertions),
     )
 }
 
@@ -180,19 +142,12 @@ fn server_launch_plan_with(
     current_exe_server: Option<PathBuf>,
     workspace_binary_candidates: Vec<PathBuf>,
     workspace_manifest: Option<PathBuf>,
-    prefer_cargo_manifest: bool,
 ) -> Option<ServerLaunchPlan> {
     if let Some(path) = env_override.filter(|path| path.is_file()) {
         return Some(ServerLaunchPlan::Binary(path));
     }
 
     let workspace_manifest = workspace_manifest.filter(|path| path.is_file());
-    if prefer_cargo_manifest {
-        if let Some(manifest_path) = workspace_manifest.clone() {
-            return Some(ServerLaunchPlan::Cargo { manifest_path });
-        }
-    }
-
     if let Some(path) = current_exe_server.filter(|path| path.is_file()) {
         return Some(ServerLaunchPlan::Binary(path));
     }
@@ -249,7 +204,7 @@ mod tests {
     }
 
     #[test]
-    fn server_launch_plan_prefers_cargo_manifest_for_debug_builds() {
+    fn server_launch_plan_prefers_existing_binary_before_cargo() {
         let current_bin = temp_path("current-bin");
         let manifest_path = temp_path("manifest");
         std::fs::write(&current_bin, "").expect("current binary stub should be created");
@@ -260,8 +215,20 @@ mod tests {
             Some(current_bin.clone()),
             vec![],
             Some(manifest_path.clone()),
-            true,
         );
+
+        assert_eq!(plan, Some(ServerLaunchPlan::Binary(current_bin.clone())));
+
+        let _ = std::fs::remove_file(current_bin);
+        let _ = std::fs::remove_file(manifest_path);
+    }
+
+    #[test]
+    fn server_launch_plan_falls_back_to_cargo_when_no_binary_exists() {
+        let manifest_path = temp_path("manifest");
+        std::fs::write(&manifest_path, "").expect("manifest stub should be created");
+
+        let plan = server_launch_plan_with(None, None, vec![], Some(manifest_path.clone()));
 
         assert_eq!(
             plan,
@@ -270,7 +237,6 @@ mod tests {
             })
         );
 
-        let _ = std::fs::remove_file(current_bin);
         let _ = std::fs::remove_file(manifest_path);
     }
 
@@ -286,7 +252,6 @@ mod tests {
             None,
             vec![],
             Some(manifest_path.clone()),
-            true,
         );
 
         assert_eq!(plan, Some(ServerLaunchPlan::Binary(override_bin.clone())));
