@@ -42,17 +42,11 @@ export function set(scope: string, key: string, value: string, actor?: string | 
     type: "kv.set",
     actor: actor ?? null,
     subject: key,
-    payload: { value, length: value.length },
+    payload: { length: value.length },
   });
 }
 
 export function del(scope: string, key: string, actor?: string | null) {
-  // Snapshot the prior value before deletion so the audit row preserves what
-  // was there. After the DELETE the row is gone; without this we'd lose the
-  // ability to reconstruct what the key held.
-  const prior = db
-    .query("SELECT value FROM kv WHERE scope = ? AND key = ?")
-    .get(scope, key) as { value: string } | null;
   const result = db.run("DELETE FROM kv WHERE scope = ? AND key = ?", [scope, key]);
   if (result.changes > 0) {
     touch(scope);
@@ -61,9 +55,6 @@ export function del(scope: string, key: string, actor?: string | null) {
       type: "kv.deleted",
       actor: actor ?? null,
       subject: key,
-      payload: prior
-        ? { prior_value: prior.value, prior_length: prior.value.length }
-        : null,
     });
   }
 }
@@ -86,8 +77,7 @@ export function append(scope: string, key: string, value: string, actor?: string
       arr = [];
     }
 
-    const appended = JSON.parse(value);
-    arr.push(appended);
+    arr.push(JSON.parse(value));
     const merged = JSON.stringify(arr);
 
     db.run(
@@ -101,7 +91,7 @@ export function append(scope: string, key: string, value: string, actor?: string
       type: "kv.appended",
       actor: actor ?? null,
       subject: key,
-      payload: { appended, length: arr.length },
+      payload: { length: arr.length },
     });
 
     return arr.length;

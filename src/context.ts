@@ -30,7 +30,7 @@ export function annotate(
       type: "context.annotated",
       actor: instance,
       subject: file,
-      payload: { annotation_type: type, id, content },
+      payload: { annotation_type: type, id },
     });
   }
   return id;
@@ -47,14 +47,6 @@ export function lock(
     [scope, file, instance],
   );
 
-  // Pull non-lock annotations from peers so the caller doesn't need a
-  // separate read round-trip before editing.
-  const annotations = db
-    .query(
-      "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND file = ? AND type != 'lock' ORDER BY created_at DESC, id DESC",
-    )
-    .all(scope, file);
-
   try {
     const id = annotate(instance, scope, file, "lock", content);
     emit({
@@ -62,9 +54,9 @@ export function lock(
       type: "context.lock_acquired",
       actor: instance,
       subject: file,
-      payload: { id, content },
+      payload: { id },
     });
-    return { ok: true as const, id, annotations };
+    return { ok: true as const, id };
   } catch (err) {
     if (
       !(err instanceof Error) ||
@@ -78,7 +70,7 @@ export function lock(
         "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND file = ? AND type = 'lock'",
       )
       .get(scope, file);
-    return { error: "File is already locked", active, annotations };
+    return { error: "File is already locked", active };
   }
 }
 
@@ -116,32 +108,6 @@ export function clearLocks(instance: string, scope: string, file: string) {
       payload: { released: result.changes },
     });
   }
-}
-
-/** Release all locks the given instance holds on the listed files. */
-export function releaseInstanceLocksForFiles(
-  instance: string,
-  scope: string,
-  files: string[],
-) {
-  let released = 0;
-  for (const file of files) {
-    const result = db.run(
-      "DELETE FROM context WHERE scope = ? AND file = ? AND type = 'lock' AND instance_id = ?",
-      [scope, file, instance],
-    );
-    if (result.changes > 0) {
-      released += result.changes;
-      emit({
-        scope,
-        type: "context.lock_released",
-        actor: instance,
-        subject: file,
-        payload: { released: result.changes, reason: "task_terminal" },
-      });
-    }
-  }
-  return released;
 }
 
 export function cleanup() {

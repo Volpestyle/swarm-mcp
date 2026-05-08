@@ -1,0 +1,158 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+}
+
+body {
+  margin: 0;
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   TRON ENCOM OS — root scope
+   Applied when appearance.ts sets `<html data-theme="tron-encom-os">`.
+   These rules layer on top of the standard CSS vars set by appearance.ts.
+   They are scoped so the four legacy themes are completely unaffected.
+   See `lib/themeProfiles.ts` for the chrome token values.
+   ──────────────────────────────────────────────────────────────────────── */
+
+[data-theme="tron-encom-os"] {
+  /* Sharp corners across the board (mock has zero radius). Components
+     reading --node-radius / --panel-radius pick this up automatically. */
+  --node-radius: 0px;
+  --panel-radius: 0px;
+  --button-radius: 0px;
+}
+
+[data-theme="tron-encom-os"] body {
+  background: var(--bg-base);
+  color: var(--fg-primary);
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Dotted radial-gradient grid behind everything. ::before keeps it
+   non-interactive and below all UI z-indexes. */
+[data-theme="tron-encom-os"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: radial-gradient(var(--grid-color) 1px, transparent 1.2px);
+  background-size: 26px 26px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* HUD type — uppercase, wide tracking. Use by adding the `.hud-label`
+   utility class on any chip/label that should read as a HUD readout. */
+[data-theme="tron-encom-os"] .hud-label {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  text-shadow: var(--glow-s);
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+   LIQUID GLASS — shared root scope (cool + warm)
+   Applied when appearance.ts sets `<html data-theme="liquid-glass-cool">`
+   or `<html data-theme="liquid-glass-warm">`. Sourced from Claude Design
+   "Swarm-UI · Liquid Glass" (v1 cool, v2 warm). Cool and warm share the
+   structural design language and differ only in canvas tint + ambient
+   wash color. Vibrancy (HudWindow) is applied at runtime by appearance.ts
+   via ui_set_window_vibrancy so the macOS frosted-glass backdrop reads
+   correctly under translucent panels.
+   ──────────────────────────────────────────────────────────────────────── */
+
+[data-theme="liquid-glass-cool"],
+[data-theme="liquid-glass-warm"] {
+  /* 18px rounded corners — matches the rx=18 on the Claude Design SVG cards.
+     Components reading these vars pick up the new radii automatically; any
+     component still hard-coded to a value can be migrated to read the var. */
+  --node-radius: 18px;
+  --panel-radius: 18px;
+  --button-radius: 12px;
+  /* Glass surface tokens — used by chrome-aware components for the
+     translucent-white-on-dark card treatment that defines this design. */
+  --glass-fill: rgba(255, 255, 255, 0.05);
+  --glass-stroke: rgba(255, 255, 255, 0.18);
+  --glass-stroke-active: rgba(255, 255, 255, 0.6);
+}
+
+[data-theme="liquid-glass-cool"] body,
+[data-theme="liquid-glass-warm"] body {
+  background: var(--bg-base);
+  color: var(--fg-primary);
+  /* SF-Pro-leaning system stack — the design uses Apple system type, not the
+     monospaced JetBrains Mono used by Tron. */
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Segoe UI", Roboto, system-ui, sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.005em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Ambient radial wash from the bottom of the window. Cool uses pale blue,
+   warm uses amber — both fade to transparent at the top so the canvas
+   tint dominates the upper half. ::before keeps it non-interactive and
+   below all UI z-indexes. */
+[data-theme="liquid-glass-cool"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 700px 380px at 50% 100%,
+    rgba(188, 214, 255, 0.55) 0%,
+    rgba(188, 214, 255, 0.1) 60%,
+    rgba(188, 214, 255, 0) 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+[data-theme="liquid-glass-warm"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 700px 380px at 50% 100%,
+    rgba(255, 170, 80, 0.65) 0%,
+    rgba(255, 170, 80, 0.15) 60%,
+    rgba(255, 170, 80, 0) 100%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* HUD type — Liquid Glass uses mixed case + tighter tracking (vs. Tron's
+   uppercase wide-tracking treatment) to match the SF-Pro feel of the
+   reference. The .hud-label class is shared so components don't need
+   theme-specific markup. */
+[data-theme="liquid-glass-cool"] .hud-label,
+[data-theme="liquid-glass-warm"] .hud-label {
+  text-transform: none;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  text-shadow: var(--glow-s);
+}

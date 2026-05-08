@@ -84,9 +84,9 @@ For high-risk changes or work needing human sign-off:
 
 When an implementer finishes a task and sends a `review` task back to you:
 
-- `claim_task` — this transitions the review to `in_progress` for you.
+- `claim_task` immediately.
 - Read the implementer's `result` on the completed implementation task. Expect a JSON object with `files_changed`, `test_status`, and `summary` when available; fall back to treating `result` as a plain string.
-- For each changed file you want to inspect, call `lock_file` — its response includes the implementer's annotations on the file. (You can skip locking when only reading and no peer is editing.)
+- `check_file` to read annotations the implementer left.
 - Inspect the changed files.
 
 If approved:

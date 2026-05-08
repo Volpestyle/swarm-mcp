@@ -9,9 +9,6 @@ CREATE TABLE IF NOT EXISTS devices (
   revoked_at INTEGER
 );
 
-CREATE INDEX IF NOT EXISTS devices_client_device_active_idx
-  ON devices(client_device_id, revoked_at, last_seen_at, created_at);
-
 CREATE TABLE IF NOT EXISTS tokens (
   id TEXT PRIMARY KEY,
   device_id TEXT NOT NULL,

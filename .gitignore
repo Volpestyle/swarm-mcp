@@ -5,8 +5,13 @@ crates/*/target/
 apps/swarm-ui/src-tauri/target/
 apps/swarm-server/target/
 nvim.log
-excalidraw.log
 *.db
 *.db-wal
 *.db-shm
 .DS_Store
+.playwright-cli/
+output/
+**/.chrome-profile/
+apps/swarm-ui/src-tauri/icons/* 2.png
+apps/swarm-ui/src-tauri/icons/* 3.png
+apps/swarm-ui/src-tauri/gen/schemas/desktop-schema 2.json

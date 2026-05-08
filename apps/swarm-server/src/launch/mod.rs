@@ -9,8 +9,22 @@ use swarm_protocol::rpc::SpawnPtyRequest;
 
 use crate::error::ServerError;
 
-const DEFAULT_ROLES: &[&str] = &["planner", "implementer", "reviewer", "researcher"];
-const HARNESSES: &[&str] = &["shell", "claude", "codex", "opencode"];
+const DEFAULT_ROLES: &[&str] = &[
+    "planner",
+    "implementer",
+    "builder",
+    "reviewer",
+    "researcher",
+    "designer",
+    "operator",
+    "architect",
+    "majordomo",
+    "debugger",
+    "qa",
+    "tester",
+    "scribe",
+];
+const HARNESSES: &[&str] = &["shell", "claude", "codex", "hermes", "openclaw", "opencode"];
 const DEFAULT_PATH_SEGMENTS: &[&str] = &[
     "/opt/homebrew/bin",
     "/usr/local/bin",
@@ -39,7 +53,6 @@ pub struct LaunchPlan {
     pub scope: Option<String>,
     pub label: Option<String>,
     pub name: Option<String>,
-    pub initial_input: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +89,21 @@ impl LaunchConfig {
     }
 }
 
+fn canonical_role_name(role: &str) -> String {
+    let normalized = role
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['_', ' '], "-")
+        .replace('/', "-");
+    match normalized.as_str() {
+        "grand-architect" | "grandarchitect" | "majordomo-grand-architect" => {
+            "majordomo".to_owned()
+        }
+        "generalist" | "all-purpose" | "allpurpose" => "operator".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
 impl Default for LaunchConfig {
     fn default() -> Self {
         Self::load()
@@ -96,11 +124,16 @@ pub fn build_launch_plan(
     let mut env = HashMap::new();
     env.insert("TERM".to_owned(), "xterm-256color".to_owned());
     env.insert("PATH".to_owned(), merged_path());
+    env.insert("SWARM_MCP_DIRECTORY".to_owned(), request.cwd.clone());
+    env.insert("SWARM_MCP_FILE_ROOT".to_owned(), request.cwd.clone());
 
-    for (key, value) in &request.env {
-        if let Some((key, value)) = normalize_env_pair(key, value)? {
-            env.insert(key, value);
-        }
+    if let Some(instance_id) = request
+        .instance_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        env.insert("SWARM_MCP_INSTANCE_ID".to_owned(), instance_id.to_owned());
     }
 
     if let Some(scope) = request
@@ -119,55 +152,21 @@ pub fn build_launch_plan(
     {
         env.insert("SWARM_MCP_LABEL".to_owned(), label.to_owned());
     }
-    if let Some(instance_id) = request
-        .instance_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        env.insert("SWARM_MCP_INSTANCE_ID".to_owned(), instance_id.to_owned());
-        env.insert("SWARM_MCP_DIRECTORY".to_owned(), request.cwd.clone());
-        env.insert("SWARM_MCP_FILE_ROOT".to_owned(), request.cwd.clone());
-    }
 
-    let direct_harness = harness != "shell"
-        && (!request.args.is_empty()
-            || request
-                .initial_input
-                .as_deref()
-                .is_some_and(|value| !value.is_empty()));
-
-    let (command, args, display_command, bootstrap_command) = if harness == "shell" {
-        (shell.clone(), request.args.clone(), shell, None)
-    } else if direct_harness {
-        env.insert("SWARM_SERVER_HARNESS".to_owned(), harness.to_owned());
-        env.insert(
-            "SWARM_UI_ROLE".to_owned(),
-            role.clone().unwrap_or_else(|| harness.to_owned()),
-        );
-        (
-            harness.to_owned(),
-            request.args.clone(),
-            harness.to_owned(),
-            None,
-        )
+    let (command, display_command, bootstrap_command) = if harness == "shell" {
+        (shell.clone(), shell, None)
     } else {
         env.insert("SWARM_SERVER_HARNESS".to_owned(), harness.to_owned());
         env.insert(
             "SWARM_UI_ROLE".to_owned(),
             role.clone().unwrap_or_else(|| harness.to_owned()),
         );
-        (
-            shell.clone(),
-            Vec::new(),
-            harness.to_owned(),
-            Some(harness.to_owned()),
-        )
+        (shell.clone(), harness.to_owned(), Some(harness.to_owned()))
     };
 
     Ok(LaunchPlan {
         command,
-        args,
+        args: Vec::new(),
         cwd: request.cwd.clone(),
         env,
         display_command,
@@ -176,31 +175,7 @@ pub fn build_launch_plan(
         scope: request.scope.clone(),
         label: request.label.clone(),
         name,
-        initial_input: request.initial_input.clone(),
     })
-}
-
-fn normalize_env_pair(key: &str, value: &str) -> Result<Option<(String, String)>, ServerError> {
-    let key = key.trim();
-    if key.is_empty() {
-        return Ok(None);
-    }
-
-    if key.contains('=') || key.contains('\0') || value.contains('\0') {
-        return Err(ServerError::validation(format!(
-            "invalid environment override: {key}"
-        )));
-    }
-
-    if !key.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
-        || key.chars().next().is_some_and(|c| c.is_ascii_digit())
-    {
-        return Err(ServerError::validation(format!(
-            "invalid environment override: {key}"
-        )));
-    }
-
-    Ok(Some((key.to_owned(), value.to_owned())))
 }
 
 fn read_launch_config_file() -> Option<LaunchConfigFile> {
@@ -266,8 +241,9 @@ fn validate_role(
         return Ok(None);
     };
 
-    if launch_config.is_known(role) {
-        Ok(Some(role.to_owned()))
+    let canonical = canonical_role_name(role);
+    if launch_config.is_known(&canonical) {
+        Ok(Some(canonical))
     } else {
         Err(ServerError::validation(format!("unknown role: {role}")))
     }
@@ -336,9 +312,6 @@ mod tests {
             instance_id: None,
             cols: None,
             rows: None,
-            args: Vec::new(),
-            env: Default::default(),
-            initial_input: None,
         }
     }
 
@@ -355,54 +328,85 @@ mod tests {
 
     #[test]
     fn launch_plan_for_harness_bootstraps_inside_shell() {
-        let plan = build_launch_plan(&request("codex"), &LaunchConfig::load()).unwrap();
+        let mut req = request("codex");
+        req.instance_id = Some("inst-123".to_owned());
+        let plan = build_launch_plan(&req, &LaunchConfig::load()).unwrap();
         assert_eq!(plan.display_command, "codex");
         assert_eq!(plan.bootstrap_command.as_deref(), Some("codex"));
-        assert_eq!(plan.command, shell_path());
-        assert!(plan.args.is_empty());
         assert_eq!(
             plan.env.get("SWARM_SERVER_HARNESS").map(String::as_str),
             Some("codex")
         );
-    }
-
-    #[test]
-    fn launch_plan_for_harness_args_runs_harness_directly() {
-        let mut request = request("codex");
-        request.args = vec!["exec".to_owned(), "fix it".to_owned()];
-        request
-            .env
-            .insert("SWARM_DB_PATH".to_owned(), "/tmp/swarm.db".to_owned());
-
-        let plan = build_launch_plan(&request, &LaunchConfig::load()).unwrap();
-
-        assert_eq!(plan.command, "codex");
-        assert_eq!(plan.args, vec!["exec".to_owned(), "fix it".to_owned()]);
-        assert!(plan.bootstrap_command.is_none());
-        assert_eq!(
-            plan.env.get("SWARM_DB_PATH").map(String::as_str),
-            Some("/tmp/swarm.db")
-        );
-    }
-
-    #[test]
-    fn launch_plan_injects_preassigned_instance_env() {
-        let mut request = request("claude");
-        request.instance_id = Some("inst-123".to_owned());
-
-        let plan = build_launch_plan(&request, &LaunchConfig::load()).unwrap();
-
         assert_eq!(
             plan.env.get("SWARM_MCP_INSTANCE_ID").map(String::as_str),
             Some("inst-123")
         );
         assert_eq!(
             plan.env.get("SWARM_MCP_DIRECTORY").map(String::as_str),
-            Some(request.cwd.as_str())
+            Some(req.cwd.as_str())
         );
         assert_eq!(
             plan.env.get("SWARM_MCP_FILE_ROOT").map(String::as_str),
-            Some(request.cwd.as_str())
+            Some(req.cwd.as_str())
+        );
+        assert_eq!(
+            plan.env.get("SWARM_MCP_SCOPE").map(String::as_str),
+            Some("swarm-mcp")
+        );
+        assert_eq!(
+            plan.env.get("SWARM_MCP_LABEL").map(String::as_str),
+            Some("provider:codex")
+        );
+    }
+
+    #[test]
+    fn launch_plan_accepts_all_ui_harnesses() {
+        for harness in ["claude", "codex", "hermes", "openclaw", "opencode"] {
+            let req = request(harness);
+            let plan = build_launch_plan(&req, &LaunchConfig::load()).unwrap();
+            assert_eq!(plan.display_command, harness);
+            assert_eq!(plan.bootstrap_command.as_deref(), Some(harness));
+            assert_eq!(
+                plan.env.get("SWARM_SERVER_HARNESS").map(String::as_str),
+                Some(harness)
+            );
+        }
+    }
+
+    #[test]
+    fn launch_config_includes_ui_role_presets() {
+        let config = LaunchConfig::load();
+        for role in [
+            "planner",
+            "implementer",
+            "builder",
+            "reviewer",
+            "researcher",
+            "designer",
+            "operator",
+            "architect",
+            "majordomo",
+            "debugger",
+            "qa",
+            "tester",
+            "scribe",
+        ] {
+            assert!(config.is_known(role), "missing role {role}");
+        }
+    }
+
+    #[test]
+    fn validate_role_accepts_common_aliases() {
+        let config = LaunchConfig {
+            roles: vec!["majordomo".into(), "operator".into()],
+        };
+        assert_eq!(
+            validate_role(Some("Grand Architect"), &config).unwrap(),
+            Some("majordomo".to_owned())
+        );
+        assert_eq!(
+            validate_role(Some("all purpose"), &config).unwrap(),
+            Some("operator".to_owned())
         );
     }
 

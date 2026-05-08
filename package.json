@@ -8,21 +8,18 @@
   "files": [
     "dist",
     "skills",
+    "commands",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "start": "node dist/cli.js",
-    "dev:server": "cargo run --manifest-path apps/swarm-server/Cargo.toml",
-    "dev:ui": "cd apps/swarm-ui && SWARM_UI_MANAGE_DAEMON=0 bunx tauri dev",
-    "dev:ui:managed": "cd apps/swarm-ui && bunx tauri dev",
-    "generate:protocol": "node scripts/generate-protocol-types.mjs",
-    "build": "node scripts/generate-protocol-types.mjs && esbuild src/cli.ts src/index.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --packages=external --loader:.sql=text --banner:js='#!/usr/bin/env node'",
+    "build": "esbuild src/cli.ts src/index.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --packages=external --loader:.sql=text --banner:js='#!/usr/bin/env node'",
     "check:ui": "cd apps/swarm-ui && bun run check && bun run build",
     "test:server": "cargo test --manifest-path apps/swarm-server/Cargo.toml",
     "test:tauri": "cargo test --manifest-path apps/swarm-ui/src-tauri/Cargo.toml",
-    "typecheck": "node scripts/generate-protocol-types.mjs && tsc --noEmit",
-    "test": "node scripts/generate-protocol-types.mjs && bun test",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
     "check": "bun run typecheck && bun run test && bun run build && bun run check:ui && bun run test:server && bun run test:tauri",
     "prepack": "bun run build"
   },

@@ -1,5 +1,5 @@
 import { runInit } from "./init";
-import { isSubcommand } from "./subcommands";
+import { run as runCmd, SUBCOMMANDS } from "./cmd";
 
 const [, , subcommand, ...rest] = process.argv;
 
@@ -21,8 +21,7 @@ async function main() {
     return;
   }
 
-  if (isSubcommand(subcommand)) {
-    const { run: runCmd } = await import("./cmd");
+  if (SUBCOMMANDS.includes(subcommand)) {
     await runCmd(subcommand, rest);
     return;
   }
@@ -38,13 +37,14 @@ function printHelp() {
 Usage:
   swarm-mcp             Start the MCP server over stdio (default).
   swarm-mcp serve       Same as above.
-  swarm-mcp init        Install MCP config + bundled skills into the current directory.
+  swarm-mcp init        Install MCP config + skills into the current directory.
   swarm-mcp help        Show this message.
 
 Init flags:
-  --force               Overwrite existing skill files.
+  --force               Overwrite existing skills / commands.
   --dir <path>          Install into <path> instead of the current directory.
   --no-skills           Skip copying skills.
+  --no-commands         Skip copying slash commands.
 
 Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
   swarm-mcp inspect [--scope <path>] [--json]
@@ -67,10 +67,15 @@ Write commands (require identity):
   swarm-mcp unlock <file>                [--as <who>]
   swarm-mcp ui list      [--scope <path>] [--status <status>] [--limit N] [--json]
   swarm-mcp ui get <id>  [--json]
-  swarm-mcp ui spawn <cwd> [--harness <claude|codex|opencode>] [--role <role>] [--label <tokens>] [--scope <path>] [--wait <seconds>] [--json]
+  swarm-mcp ui spawn <cwd> [--harness <claude|codex|hermes|openclaw|opencode>] [--role <role>] [--label <tokens>] [--scope <path>] [--wait <seconds>] [--json]
   swarm-mcp ui prompt --target <node|instance|pty> <content...> [--no-enter] [--scope <path>] [--wait <seconds>] [--json]
   swarm-mcp ui move --target <node|instance|pty> --x <n> --y <n> [--scope <path>] [--wait <seconds>] [--json]
   swarm-mcp ui organize [--kind grid] [--scope <path>] [--wait <seconds>] [--json]
+  swarm-mcp ui export-layout [--scope <path>] [--out <file>] [--wait <seconds>] [--json]
+  swarm-mcp ui screenshot [--out <file>] [--scope <path>] [--wait <seconds>] [--json]
+  swarm-mcp ui proof-pack [--scope <path>] [--surface <name>] [--note "..."] [--out <file>] [--wait <seconds>] [--json]
+  swarm-mcp ui visual-atlas --out <dir> [--json]
+  swarm-mcp ui operator-verify --out <dir> [--scope <path>] [--json]
 
 Identity:
   <who> is a UUID, UUID prefix, or a unique substring of an instance label.

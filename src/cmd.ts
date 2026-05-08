@@ -5,7 +5,8 @@ import * as messages from "./messages";
 import * as registry from "./registry";
 import * as ui from "./ui";
 import { scope as scopeFor } from "./paths";
-import { SUBCOMMANDS, type Subcommand } from "./subcommands";
+import { runOperatorVerifyCli } from "./operatorVerifyCli";
+import { runVisualAtlasCli } from "./visualAtlasCli";
 
 type Flags = {
   positional: string[];
@@ -23,8 +24,10 @@ type Flags = {
   role?: string;
   label?: string;
   kind?: string;
+  surface?: string;
   x?: number;
   y?: number;
+  out?: string;
   wait?: number;
   enter: boolean;
 };
@@ -57,8 +60,10 @@ function parseFlags(argv: string[]): Flags {
     if (a === "--role") { flags.role = argv[++i]; continue; }
     if (a === "--label") { flags.label = argv[++i]; continue; }
     if (a === "--kind") { flags.kind = argv[++i]; continue; }
+    if (a === "--surface") { flags.surface = argv[++i]; continue; }
     if (a === "--x") { flags.x = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--y") { flags.y = parseFloat(argv[++i] ?? ""); continue; }
+    if (a === "--out") { flags.out = argv[++i]; continue; }
     if (a === "--wait") { flags.wait = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--no-enter") { flags.enter = false; continue; }
     if (a.startsWith("--")) throw new Error(`Unknown flag: ${a}`);
@@ -125,6 +130,17 @@ function resolveOptionalIdentity(scope: string, flags: Flags): string | null {
   if (explicit) return resolveInstanceRef(explicit, insts);
   if (insts.length === 1) return insts[0].id;
   return null;
+}
+
+function resolveUiCommandCreator(scope: string, flags: Flags): string | null {
+  if (flags.as) return resolveIdentity(scope, flags);
+  const envId = process.env.SWARM_MCP_INSTANCE_ID;
+  if (!envId) return resolveOptionalIdentity(scope, flags);
+  try {
+    return resolveInstanceRef(envId, instancesInScope(scope));
+  } catch {
+    return null;
+  }
 }
 
 function printJson(obj: unknown) {
@@ -214,7 +230,7 @@ async function enqueueUiCommand(
     scope,
     kind,
     payload,
-    resolveOptionalIdentity(scope, flags),
+    resolveUiCommandCreator(scope, flags),
   );
   const row = await maybeWaitForUiCommand(id, flags, fallbackSeconds);
   if (!row) throw new Error(`ui command ${id} disappeared`);
@@ -569,7 +585,7 @@ async function cmdUi(flags: Flags) {
     const cwd = rest[0];
     if (!cwd) {
       throw new Error(
-        "ui spawn <cwd> [--harness <claude|codex|opencode>] [--role <role>] [--label <tokens>] [--scope <path>] [--wait <seconds>]",
+        "ui spawn <cwd> [--harness <claude|codex|hermes|openclaw|opencode>] [--role <role>] [--label <tokens>] [--scope <path>] [--wait <seconds>]",
       );
     }
     const scope = scopeFor(cwd, flags.scope);
@@ -607,6 +623,24 @@ async function cmdUi(flags: Flags) {
     );
   }
 
+  if (sub === "kill") {
+    if (!flags.target) {
+      throw new Error(
+        "ui kill --target <instance-id-or-label> [--scope <path>] [--wait <seconds>]",
+      );
+    }
+    const scope = resolveScope(flags);
+    const instanceId = resolveInstanceRef(flags.target, instancesInScope(scope));
+    return enqueueUiCommand(
+      scope,
+      "kill_instance",
+      {
+        instance_id: instanceId,
+      },
+      flags,
+    );
+  }
+
   if (sub === "move") {
     if (!flags.target || !Number.isFinite(flags.x) || !Number.isFinite(flags.y)) {
       throw new Error(
@@ -638,6 +672,68 @@ async function cmdUi(flags: Flags) {
     );
   }
 
+  if (sub === "export-layout") {
+    const scope = resolveScope(flags);
+    return enqueueUiCommand(
+      scope,
+      "ui.export-layout",
+      {
+        scope,
+        out: flags.out ?? null,
+      },
+      flags,
+    );
+  }
+
+  if (sub === "screenshot") {
+    const scope = resolveScope(flags);
+    return enqueueUiCommand(
+      scope,
+      "ui.screenshot",
+      {
+        out: flags.out ?? null,
+      },
+      flags,
+    );
+  }
+
+  if (sub === "proof-pack") {
+    const scope = resolveScope(flags);
+    return enqueueUiCommand(
+      scope,
+      "ui.proof-pack",
+      {
+        out: flags.out ?? null,
+        note: flags.note ?? null,
+        surface: flags.surface ?? "cli",
+      },
+      flags,
+    );
+  }
+
+  if (sub === "visual-atlas") {
+    if (!flags.out) {
+      throw new Error("ui visual-atlas requires --out <path>");
+    }
+    await runVisualAtlasCli({
+      out: flags.out,
+      json: flags.json,
+    });
+    return;
+  }
+
+  if (sub === "operator-verify") {
+    if (!flags.out) {
+      throw new Error("ui operator-verify requires --out <path>");
+    }
+    await runOperatorVerifyCli({
+      out: flags.out,
+      json: flags.json,
+      scope: flags.scope,
+    });
+    return;
+  }
+
   throw new Error(`Unknown ui subcommand: ${sub}`);
 }
 
@@ -645,7 +741,7 @@ async function cmdUi(flags: Flags) {
 // Dispatcher
 // ---------------------------------------------------------------------------
 
-const HANDLERS: Record<Subcommand, (flags: Flags) => void | Promise<void>> = {
+const HANDLERS: Record<string, (flags: Flags) => void | Promise<void>> = {
   instances: cmdInstances,
   messages: cmdMessages,
   tasks: cmdTasks,
@@ -658,10 +754,12 @@ const HANDLERS: Record<Subcommand, (flags: Flags) => void | Promise<void>> = {
   inspect: cmdInspect,
   ui: cmdUi,
 };
-export { SUBCOMMANDS };
 
-export async function run(subcommand: Subcommand, argv: string[]) {
+export const SUBCOMMANDS = Object.keys(HANDLERS);
+
+export async function run(subcommand: string, argv: string[]) {
   const handler = HANDLERS[subcommand];
+  if (!handler) throw new Error(`Unknown subcommand: ${subcommand}`);
   // Drop stale instances before any read/write so the CLI sees the same world a live agent would.
   registry.prune();
   try {

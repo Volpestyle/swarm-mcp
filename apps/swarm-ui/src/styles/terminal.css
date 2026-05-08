@@ -1,0 +1,2585 @@
+/* =============================================================================
+ * terminal.css — Terminal container and node styling
+ *
+ * Styles for terminal node cards, status indicators, and the ghostty-web /
+ * xterm.js mount point. Uses CSS custom properties for theming.
+ *
+ * Agent 4's Svelte components import this file for terminal-specific styles.
+ * Tailwind handles layout; this file handles terminal-domain styles.
+ * ============================================================================= */
+
+/* ---------------------------------------------------------------------------
+ * Theme variables
+ * --------------------------------------------------------------------------- */
+
+:root {
+  --font-mono: 'JetBrains Mono', Menlo, Monaco, 'Cascadia Code', monospace;
+
+  --canvas-bg: rgba(17, 17, 27, 0.15);
+  --panel-bg: rgba(30, 30, 46, 0.68);
+  --sidebar-bg: rgba(30, 30, 46, 0.20);
+  --sidebar-blur: 40px;
+
+  /* Terminal colors — must stay opaque; ghostty-web's canvas compositor
+     accumulates alpha paints, which ghosts prior frames on clear/selection.
+     Values match the ghostty-web demo (#1e1e1e / #d4d4d4). */
+  --terminal-bg: #1e1e1e;
+  --terminal-fg: #d4d4d4;
+  --terminal-cursor: #d4d4d4;
+  --terminal-selection: #33467c;
+
+  /* Node chrome colors — tuned to match the ghostty-web demo window:
+     solid #1e1e1e terminal body, flat #2d2d2d title bar, #1a1a1a hairline. */
+  --node-bg: #1e1e1e;
+  --node-border: #1a1a1a;
+  --node-border-selected: #89b4fa;
+  --node-border-mobile: #f9e2af;
+  --node-header-bg: #2d2d2d;
+  --node-header-border: #1a1a1a;
+  --node-title-fg: #e5e5e5;
+  --node-status-muted: #888;
+  --node-status-muted-dot: #666;
+  --surface-blur: 20px;
+
+  /* Status dot colors */
+  --status-online: #a6e3a1;
+  --status-stale: #f9e2af;
+  --status-offline: #6c7086;
+  --status-pending: #89b4fa;
+
+  /* Task edge colors */
+  --edge-task-open: #cdd6f4;
+  --edge-task-in-progress: #f9e2af;
+  --edge-task-done: #a6e3a1;
+  --edge-task-failed: #f38ba8;
+  --edge-task-cancelled: #6c7086;
+
+  /* Message edge */
+  --edge-message: #89b4fa;
+
+  /* Dependency edge */
+  --edge-dep-blocked: #6c7086;
+  --edge-dep-satisfied: #a6e3a1;
+
+  /* Badge colors */
+  --badge-planner: #cba6f7;
+  --badge-implementer: #89b4fa;
+  --badge-reviewer: #a6e3a1;
+  --badge-researcher: #f9e2af;
+  --badge-shell: #6c7086;
+  --badge-custom: #f5c2e7;
+
+  /* Dimensions — defaults; actual size is driven by xyflow's NodeResizer.
+     12px corner radius matches the ghostty-web demo window. */
+  --node-width: 800px;
+  --node-min-height: 520px;
+  --node-header-height: 44px;
+  --node-border-radius: 12px;
+  --terminal-border-radius: 6px;
+}
+
+/* ---------------------------------------------------------------------------
+ * NodeResizer handles — corners + edges for drag-to-resize
+ * --------------------------------------------------------------------------- */
+
+:global(.resize-line) {
+  border-color: color-mix(in srgb, var(--node-border-selected) 55%, transparent);
+  border-width: 1.5px;
+}
+
+:global(.svelte-flow__resize-control.handle.resize-handle) {
+  width: 16px;
+  height: 16px;
+  background: var(--node-border-selected);
+  border: 2px solid var(--node-header-bg);
+  border-radius: 2px;
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.32),
+    0 0 12px color-mix(in srgb, var(--node-border-selected) 42%, transparent);
+  z-index: 22;
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease,
+    box-shadow 0.14s ease;
+}
+
+:global(.svelte-flow__resize-control.handle.resize-handle:hover) {
+  background: color-mix(in srgb, var(--node-border-selected) 82%, white 18%);
+  border-color: var(--terminal-fg, #c0caf5);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--node-border-selected) 18%, transparent),
+    0 0 18px color-mix(in srgb, var(--node-border-selected) 62%, transparent);
+}
+
+:global(.svelte-flow__resize-control.handle.resize-handle.top.left),
+:global(.svelte-flow__resize-control.handle.resize-handle.bottom.right) {
+  cursor: nwse-resize;
+}
+
+:global(.svelte-flow__resize-control.handle.resize-handle.top.right),
+:global(.svelte-flow__resize-control.handle.resize-handle.bottom.left) {
+  cursor: nesw-resize;
+}
+
+:global(.svelte-flow__resize-control.handle.resize-handle.left),
+:global(.svelte-flow__resize-control.handle.resize-handle.right) {
+  cursor: ew-resize;
+}
+
+:global(.svelte-flow__resize-control.handle.resize-handle.top),
+:global(.svelte-flow__resize-control.handle.resize-handle.bottom) {
+  cursor: ns-resize;
+}
+
+/* ---------------------------------------------------------------------------
+ * Connection handles — drag-to-connect port dots
+ *
+ * Default state is subtle so the dots don't compete with the node chrome.
+ * While `.canvas-area.connection-active` is set (a connection drag is in
+ * flight), every handle and every terminal-node glow so the user can see
+ * which targets are valid. Source nodes also hover-pulse to reinforce that
+ * the gesture is actionable.
+ * --------------------------------------------------------------------------- */
+
+:global(.svelte-flow__handle) {
+  width: 10px;
+  height: 10px;
+  background: rgba(137, 180, 250, 0.55);
+  border: 1.5px solid var(--node-header-bg);
+  box-shadow: 0 0 0 0 rgba(137, 180, 250, 0);
+  transition: transform 0.14s ease, background 0.14s ease,
+    box-shadow 0.18s ease, border-color 0.14s ease;
+}
+
+:global(.svelte-flow__handle:hover) {
+  background: var(--node-border-selected, #89b4fa);
+  box-shadow: 0 0 0 3px rgba(137, 180, 250, 0.35),
+    0 0 14px rgba(137, 180, 250, 0.55);
+  transform: scale(1.3);
+}
+
+:global(.svelte-flow__handle.connectingfrom),
+:global(.svelte-flow__handle.connectingto) {
+  background: var(--node-border-selected, #89b4fa);
+  box-shadow: 0 0 0 4px rgba(137, 180, 250, 0.45),
+    0 0 18px rgba(137, 180, 250, 0.7);
+  transform: scale(1.45);
+}
+
+.canvas-area.connection-active :global(.svelte-flow__handle) {
+  background: var(--node-border-selected, #89b4fa);
+  box-shadow: 0 0 0 3px rgba(137, 180, 250, 0.3),
+    0 0 14px rgba(137, 180, 250, 0.55);
+  transform: scale(1.25);
+}
+
+.canvas-area.connection-active :global(.svelte-flow__node .terminal-node) {
+  border-color: color-mix(
+    in srgb,
+    var(--node-border-selected, #89b4fa) 65%,
+    transparent
+  );
+  box-shadow: 0 0 0 2px rgba(137, 180, 250, 0.35),
+    0 0 28px rgba(137, 180, 250, 0.25),
+    0 20px 60px rgba(0, 0, 0, 0.55);
+}
+
+/* The edge XYFlow renders while the user is mid-drag. */
+:global(.svelte-flow__connection path) {
+  stroke: var(--node-border-selected, #89b4fa);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  filter: drop-shadow(0 0 6px rgba(137, 180, 250, 0.55));
+}
+
+/* User-drawn edges from the drag-to-connect gesture. Solid, dim blue so
+   they read as "intent" rather than a live message channel. */
+:global(.svelte-flow__edge.user-connection .svelte-flow__edge-path) {
+  stroke: var(--node-border-selected, #89b4fa);
+  stroke-width: 1.6;
+  stroke-dasharray: 5 5;
+  opacity: 0.7;
+}
+
+:global(.svelte-flow__edge.user-connection.selected .svelte-flow__edge-path) {
+  stroke-width: 2.2;
+  opacity: 1;
+  filter: drop-shadow(0 0 6px rgba(137, 180, 250, 0.55));
+}
+
+/* Tron connection ports: larger white LED squares with enough glow to read
+   as real cable anchors on a black canvas. */
+[data-theme="tron-encom-os"] .svelte-flow__handle {
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border: 3px solid var(--led-line-x, #ffffff);
+  border-radius: 2px;
+  background: var(--bg-base, #000000);
+  cursor: crosshair;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.28),
+    0 0 12px rgba(255, 255, 255, 0.55),
+    0 0 28px rgba(255, 255, 255, 0.2);
+  z-index: 12;
+}
+
+[data-theme="tron-encom-os"] .svelte-flow__handle:hover {
+  background: var(--led-line-x, #ffffff);
+  border-color: var(--led-line-x, #ffffff);
+  box-shadow:
+    0 0 0 4px rgba(255, 255, 255, 0.24),
+    0 0 18px rgba(255, 255, 255, 0.75),
+    0 0 42px rgba(255, 255, 255, 0.34);
+}
+
+[data-theme="tron-encom-os"] .svelte-flow__handle.connectingfrom,
+[data-theme="tron-encom-os"] .svelte-flow__handle.connectingto,
+[data-theme="tron-encom-os"] .canvas-area.connection-active .svelte-flow__handle {
+  background: var(--led-line-x, #ffffff);
+  border-color: var(--led-line-x, #ffffff);
+  box-shadow:
+    0 0 0 5px rgba(255, 255, 255, 0.24),
+    0 0 22px rgba(255, 255, 255, 0.82),
+    0 0 54px rgba(255, 255, 255, 0.38);
+}
+
+[data-theme="tron-encom-os"] .svelte-flow__handle-left {
+  transform: translate(-50%, -50%) !important;
+}
+
+[data-theme="tron-encom-os"] .svelte-flow__handle-right {
+  transform: translate(50%, -50%) !important;
+}
+
+[data-theme="tron-encom-os"] .svelte-flow__handle-top {
+  transform: translate(-50%, -50%) !important;
+}
+
+[data-theme="tron-encom-os"] .svelte-flow__handle-bottom {
+  transform: translate(-50%, 50%) !important;
+}
+
+[data-theme="tron-encom-os"] .canvas-area.connection-active .svelte-flow__node .terminal-node {
+  border-color: var(--led-line-x, #ffffff);
+  box-shadow:
+    var(--led-halo-x, 0 0 28px rgba(255, 255, 255, 0.45)),
+    0 24px 72px rgba(0, 0, 0, 0.68);
+}
+
+[data-theme="tron-encom-os"] .svelte-flow__connection path {
+  stroke: var(--led-line-x, #ffffff);
+  stroke-width: 3;
+  stroke-dasharray: 7 4;
+  filter:
+    drop-shadow(0 0 8px rgba(255, 255, 255, 0.72))
+    drop-shadow(0 0 20px rgba(255, 255, 255, 0.34));
+}
+
+[data-theme="tron-encom-os"] .svelte-flow__edge.user-connection .svelte-flow__edge-path {
+  stroke: var(--led-line-x, #ffffff);
+  stroke-width: 2.8;
+  opacity: 0.92;
+  filter:
+    drop-shadow(0 0 8px rgba(255, 255, 255, 0.72))
+    drop-shadow(0 0 20px rgba(255, 255, 255, 0.28));
+}
+
+[data-theme="tron-encom-os"] .svelte-flow__edge.user-connection.selected .svelte-flow__edge-path {
+  stroke-width: 3.4;
+  opacity: 1;
+  filter:
+    drop-shadow(0 0 12px rgba(255, 255, 255, 0.88))
+    drop-shadow(0 0 30px rgba(255, 255, 255, 0.42));
+}
+
+/* ---------------------------------------------------------------------------
+ * Terminal node card
+ * --------------------------------------------------------------------------- */
+
+.terminal-node {
+  width: 100%;
+  height: 100%;
+  min-width: 320px;
+  min-height: 240px;
+  box-sizing: border-box;
+  background: var(--node-bg);
+  border: 1px solid var(--node-border);
+  border-radius: var(--node-border-radius);
+  /* overflow: hidden on the children (header + terminal-container) handles the
+     rounded-corner clipping; the node itself must stay visible so NodeResizer's
+     edge/corner handles don't get clipped. */
+  display: flex;
+  flex-direction: column;
+  /* Explicit positioning context so the absolutely-positioned NodePersonaTab
+     anchors to this card's top edge (and not to a possibly-different XYFlow
+     wrapper rect, depending on internals). */
+  position: relative;
+  /* Beefy drop shadow from the ghostty-web demo — the cards need presence
+     against the xyflow canvas just like the demo's lone window does against
+     its gradient backdrop. */
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.terminal-node.compact {
+  min-width: 0;
+  min-height: 54px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.terminal-node.compact .persona-tab {
+  display: none;
+}
+
+.terminal-node:hover {
+  border-color: color-mix(in srgb, var(--node-border-selected) 50%, transparent);
+}
+
+.terminal-node.selected {
+  border-color: var(--node-border-selected);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-border-selected) 25%, transparent),
+              0 20px 60px rgba(0, 0, 0, 0.55);
+}
+
+.terminal-node.mobile-controlled {
+  border-color: color-mix(in srgb, var(--node-border-mobile) 70%, var(--node-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-border-mobile) 18%, transparent),
+              0 20px 60px rgba(0, 0, 0, 0.55);
+}
+
+.terminal-node.mobile-controlled .node-header {
+  background: color-mix(in srgb, var(--node-border-mobile) 10%, var(--node-header-bg));
+  border-bottom-color: color-mix(in srgb, var(--node-border-mobile) 30%, var(--node-header-border));
+}
+
+.terminal-node.mobile-controlled.selected {
+  border-color: color-mix(in srgb, var(--node-border-mobile) 78%, var(--node-border-selected));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-border-mobile) 26%, transparent),
+              0 20px 60px rgba(0, 0, 0, 0.58);
+}
+
+[data-theme="tron-encom-os"] .terminal-node {
+  background: var(--bg-base, #000000);
+  border: 3px solid var(--led-line-x, #ffffff);
+  border-radius: 0;
+  box-shadow:
+    var(--led-halo, 0 0 18px rgba(255, 255, 255, 0.32)),
+    0 24px 72px rgba(0, 0, 0, 0.64);
+}
+
+[data-theme="tron-encom-os"] .terminal-node:hover {
+  border-color: var(--led-line-x, #ffffff);
+  box-shadow:
+    var(--led-halo-x, 0 0 28px rgba(255, 255, 255, 0.45)),
+    0 24px 72px rgba(0, 0, 0, 0.68);
+}
+
+[data-theme="tron-encom-os"] .terminal-node.selected {
+  border-color: var(--led-line-x, #ffffff);
+  box-shadow:
+    var(--led-halo-x, 0 0 28px rgba(255, 255, 255, 0.45)),
+    0 0 0 1px rgba(255, 255, 255, 0.44),
+    0 28px 84px rgba(0, 0, 0, 0.72);
+}
+
+[data-theme="tron-encom-os"] .terminal-node.mobile-controlled,
+[data-theme="tron-encom-os"] .terminal-node.mobile-controlled.selected {
+  border-color: var(--led-line-x, #ffffff);
+  box-shadow:
+    var(--led-halo-x, 0 0 28px rgba(255, 255, 255, 0.45)),
+    inset 0 0 0 1px color-mix(in srgb, var(--c-amber, #ffa94d) 58%, transparent),
+    0 28px 84px rgba(0, 0, 0, 0.72);
+}
+
+[data-theme="tron-encom-os"] .svelte-flow__resize-control.line.resize-line {
+  border-color: var(--led-line-x, #ffffff);
+  border-width: 3px;
+  filter:
+    drop-shadow(0 0 8px rgba(255, 255, 255, 0.55))
+    drop-shadow(0 0 18px rgba(255, 255, 255, 0.2));
+}
+
+[data-theme="tron-encom-os"] .svelte-flow__resize-control.handle.resize-handle {
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--led-line-x, #ffffff);
+  border-radius: 0;
+  background: var(--bg-base, #000000);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.3),
+    0 0 14px rgba(255, 255, 255, 0.72),
+    0 0 36px rgba(255, 255, 255, 0.24);
+}
+
+[data-theme="tron-encom-os"] .svelte-flow__resize-control.handle.resize-handle:hover {
+  background: var(--led-line-x, #ffffff);
+  border-color: var(--led-line-x, #ffffff);
+  box-shadow:
+    0 0 0 5px rgba(255, 255, 255, 0.18),
+    0 0 22px rgba(255, 255, 255, 0.9),
+    0 0 48px rgba(255, 255, 255, 0.36);
+}
+
+/* ---------------------------------------------------------------------------
+ * Node header chrome
+ * --------------------------------------------------------------------------- */
+
+.node-header {
+  min-height: var(--node-header-height);
+  padding: 9px 11px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--node-border-selected) 8%, transparent), transparent 42%),
+    color-mix(in srgb, var(--node-header-bg) 94%, black 6%);
+  border-bottom: 1px solid var(--node-header-border);
+  border-radius: var(--node-border-radius) var(--node-border-radius) 0 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  user-select: none;
+  cursor: grab;
+  font-family: var(--font-mono);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.node-header:active {
+  cursor: grabbing;
+}
+
+/* Selected: subtle accent tint on the flat surface — enough to tie into the
+   selected border without breaking the flat look. */
+.terminal-node.selected .node-header {
+  background: color-mix(in srgb, var(--node-border-selected) 7%, var(--node-header-bg));
+  border-bottom-color: color-mix(in srgb, var(--node-border-selected) 35%, var(--node-header-border));
+}
+
+[data-theme="tron-encom-os"] .node-header {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.1), transparent 22%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.065), transparent 55%),
+    var(--bg-base, #000000);
+  border-bottom: 2px solid var(--led-line-x, #ffffff);
+  border-radius: 0;
+  min-height: 50px;
+  padding: 7px 12px;
+  gap: 10px;
+  box-shadow:
+    inset 0 -1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 0 18px rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="tron-encom-os"] .terminal-node.selected .node-header,
+[data-theme="tron-encom-os"] .terminal-node.mobile-controlled .node-header {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.12), transparent 24%),
+    var(--bg-base, #000000);
+  border-bottom-color: var(--led-line-x, #ffffff);
+}
+
+.terminal-node.project-attached {
+  border-color: var(--node-project-color, var(--node-border-selected));
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--node-project-color, #89b4fa) 24%, transparent),
+    0 0 28px color-mix(in srgb, var(--node-project-color, #89b4fa) 24%, transparent),
+    0 20px 60px rgba(0, 0, 0, 0.55);
+}
+
+.terminal-node.project-attached:hover,
+.terminal-node.project-attached.selected,
+.terminal-node.project-attached.mobile-controlled,
+.terminal-node.project-attached.mobile-controlled.selected {
+  border-color: var(--node-project-color, var(--node-border-selected));
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--node-project-color, #89b4fa) 34%, transparent),
+    0 0 34px color-mix(in srgb, var(--node-project-color, #89b4fa) 34%, transparent),
+    0 24px 72px rgba(0, 0, 0, 0.6);
+}
+
+.terminal-node.project-attached .node-header,
+.terminal-node.project-attached.selected .node-header,
+.terminal-node.project-attached.mobile-controlled .node-header {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--node-project-color, #89b4fa) 18%, transparent), transparent 46%),
+    color-mix(in srgb, var(--node-header-bg) 94%, black 6%);
+  border-bottom-color: color-mix(in srgb, var(--node-project-color, #89b4fa) 72%, var(--node-header-border));
+}
+
+.terminal-node.project-attached .svelte-flow__handle {
+  background: color-mix(in srgb, var(--node-project-color, #89b4fa) 65%, transparent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--node-project-color, #89b4fa) 22%, transparent),
+    0 0 14px color-mix(in srgb, var(--node-project-color, #89b4fa) 52%, transparent);
+}
+
+[data-theme="tron-encom-os"] .terminal-node.project-attached,
+[data-theme="tron-encom-os"] .terminal-node.project-attached:hover,
+[data-theme="tron-encom-os"] .terminal-node.project-attached.selected,
+[data-theme="tron-encom-os"] .terminal-node.project-attached.mobile-controlled,
+[data-theme="tron-encom-os"] .terminal-node.project-attached.mobile-controlled.selected {
+  border-color: color-mix(in srgb, var(--node-project-color, var(--led-line-x, #ffffff)) 86%, white 14%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--node-project-color, #ffffff) 52%, transparent),
+    0 0 24px color-mix(in srgb, var(--node-project-color, #ffffff) 54%, transparent),
+    0 0 62px color-mix(in srgb, var(--node-project-color, #ffffff) 24%, transparent),
+    0 28px 84px rgba(0, 0, 0, 0.72);
+}
+
+[data-theme="tron-encom-os"] .terminal-node.project-attached .node-header,
+[data-theme="tron-encom-os"] .terminal-node.project-attached.selected .node-header,
+[data-theme="tron-encom-os"] .terminal-node.project-attached.mobile-controlled .node-header {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--node-project-color, #ffffff) 18%, transparent), transparent 28%),
+    var(--bg-base, #000000);
+  border-bottom-color: color-mix(in srgb, var(--node-project-color, #ffffff) 82%, white 10%);
+  box-shadow:
+    inset 0 -1px 0 color-mix(in srgb, var(--node-project-color, #ffffff) 34%, transparent),
+    0 0 18px color-mix(in srgb, var(--node-project-color, #ffffff) 18%, transparent);
+}
+
+.terminal-node.compact.project-attached {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+[data-theme="tron-encom-os"] .terminal-node.compact.project-attached {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+[data-theme="tron-encom-os"] .terminal-node.project-attached .svelte-flow__handle {
+  border-color: var(--node-project-color, var(--led-line-x, #ffffff));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--node-project-color, #ffffff) 34%, transparent),
+    0 0 14px color-mix(in srgb, var(--node-project-color, #ffffff) 72%, transparent),
+    0 0 36px color-mix(in srgb, var(--node-project-color, #ffffff) 28%, transparent);
+}
+
+[data-theme="tron-encom-os"] .terminal-node.project-attached .svelte-flow__resize-control.line.resize-line,
+[data-theme="tron-encom-os"] .terminal-node.project-attached .svelte-flow__resize-control.handle.resize-handle {
+  border-color: var(--node-project-color, var(--led-line-x, #ffffff));
+}
+
+[data-theme="tron-encom-os"] .traffic-lights {
+  height: 34px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 11px 0 2px;
+  border-right: 1px solid rgba(255, 255, 255, 0.34);
+}
+
+[data-theme="tron-encom-os"] .traffic-lights .light {
+  width: 24px;
+  height: 24px;
+  border-radius: 0;
+  border-color: currentColor;
+  background: color-mix(in srgb, currentColor 18%, #000000 82%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.055),
+    0 0 10px color-mix(in srgb, currentColor 42%, transparent);
+}
+
+[data-theme="tron-encom-os"] .traffic-lights .light::after {
+  content: '';
+  display: none;
+}
+
+[data-theme="tron-encom-os"] .traffic-lights .light.red {
+  color: #ff5f70;
+}
+
+[data-theme="tron-encom-os"] .traffic-lights .light.yellow {
+  color: #ffd166;
+}
+
+[data-theme="tron-encom-os"] .traffic-lights .light.green {
+  color: #5cff9d;
+}
+
+[data-theme="tron-encom-os"] .traffic-lights .light:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 0 12px currentColor;
+}
+
+[data-theme="tron-encom-os"] .node-agent-chip {
+  height: 38px;
+  max-width: 310px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 10px;
+  padding: 3px 13px 3px 4px;
+  border-radius: 0;
+  border-color: rgba(255, 255, 255, 0.46);
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.115), transparent 62%),
+    #030303;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.045),
+    0 0 10px rgba(255, 255, 255, 0.14);
+}
+
+[data-theme="tron-encom-os"] .node-agent-chip:hover,
+[data-theme="tron-encom-os"] .node-agent-chip.compact-active {
+  border-color: #ffffff;
+  box-shadow:
+    inset 0 0 12px rgba(255, 255, 255, 0.08),
+    0 0 18px rgba(255, 255, 255, 0.3);
+}
+
+[data-theme="tron-encom-os"] .node-agent-emoji {
+  width: 30px;
+  height: 30px;
+  border-radius: 0;
+  background: #000000;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  font-size: 18px;
+  text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
+}
+
+[data-theme="tron-encom-os"] .node-agent-copy strong {
+  color: #ffffff;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
+}
+
+[data-theme="tron-encom-os"] .node-agent-copy em {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+}
+
+[data-theme="tron-encom-os"] .node-header > .role-badge {
+  display: none;
+}
+
+[data-theme="tron-encom-os"] .node-cwd {
+  flex: 1 1 160px;
+  max-width: 280px;
+  height: 30px;
+  margin-left: 0;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  border-left: 1px solid rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.46);
+  direction: ltr;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+[data-theme="tron-encom-os"] .connection-status {
+  margin-left: 0;
+  height: 30px;
+  padding: 0 6px;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+[data-theme="tron-encom-os"] .listener-badge,
+[data-theme="tron-encom-os"] .unread-badge,
+[data-theme="tron-encom-os"] .task-count-badge,
+[data-theme="tron-encom-os"] .lock-badge,
+[data-theme="tron-encom-os"] .adopting-badge,
+[data-theme="tron-encom-os"] .mobile-lease-badge {
+  border-radius: 0;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+}
+
+[data-theme="tron-encom-os"] .node-controls {
+  height: 34px;
+  gap: 4px;
+  margin-left: 0;
+  padding-left: 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+[data-theme="tron-encom-os"] .node-controls button {
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 0;
+  color: rgba(255, 255, 255, 0.48);
+  background: #020202;
+}
+
+[data-theme="tron-encom-os"] .node-controls button:hover {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.58);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.18);
+}
+
+/* macOS-style traffic lights — interactive node controls that mirror the
+   native chrome affordance while still reading as part of the card header. */
+.traffic-lights {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.traffic-lights .light {
+  width: 24px;
+  height: 24px;
+  border-radius: 2px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--terminal-fg) 28%, transparent);
+  background: color-mix(in srgb, var(--node-bg) 74%, rgba(255, 255, 255, 0.08));
+  color: color-mix(in srgb, var(--terminal-fg) 68%, transparent);
+  appearance: none;
+  cursor: pointer;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease, opacity 0.14s ease;
+}
+
+.traffic-lights .light::before {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.traffic-lights .light.red::before {
+  content: '×';
+}
+
+.traffic-lights .light.yellow::before {
+  content: '−';
+}
+
+.traffic-lights .light.green::before {
+  content: '□';
+}
+
+.traffic-lights .light:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--terminal-fg) 56%, transparent);
+  background: color-mix(in srgb, var(--terminal-fg) 10%, var(--node-bg));
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.055);
+}
+
+.traffic-lights .light:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(137, 180, 250, 0.8);
+}
+
+.traffic-lights .light:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.traffic-lights .light.red {
+  border-color: color-mix(in srgb, #ff5f70 74%, transparent);
+  background: color-mix(in srgb, #ff5f70 18%, var(--node-bg));
+  color: #ff8d9a;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+}
+
+.traffic-lights .light.yellow {
+  border-color: color-mix(in srgb, #ffd166 70%, transparent);
+  background: color-mix(in srgb, #ffd166 16%, var(--node-bg));
+  color: #ffe199;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+}
+
+.traffic-lights .light.yellow.active {
+  border-color: color-mix(in srgb, var(--terminal-fg) 54%, transparent);
+  background: color-mix(in srgb, var(--terminal-fg) 10%, var(--node-bg));
+}
+
+.traffic-lights .light.green {
+  border-color: color-mix(in srgb, #5cff9d 70%, transparent);
+  background: color-mix(in srgb, #5cff9d 15%, var(--node-bg));
+  color: #95ffbd;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+}
+
+.node-agent-chip {
+  min-width: 0;
+  max-width: 240px;
+  height: 30px;
+  display: inline-grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 2px 10px 2px 3px;
+  border: 1px solid color-mix(in srgb, var(--node-border-selected) 28%, transparent);
+  border-radius: 5px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--node-border-selected) 12%, transparent), transparent 58%),
+    color-mix(in srgb, var(--node-bg) 70%, transparent);
+  color: var(--terminal-fg);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  flex: 0 1 auto;
+}
+
+.node-header.project-accented .node-agent-chip {
+  position: relative;
+  grid-template-columns: 24px minmax(0, 1fr);
+  overflow: visible;
+  border-color: color-mix(in srgb, var(--node-project-color, #89b4fa) 64%, transparent);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--node-project-color, #89b4fa) 16%, transparent), transparent 72%),
+    color-mix(in srgb, var(--node-project-color, #89b4fa) 10%, var(--node-bg));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--node-project-color, #89b4fa) 18%, transparent),
+    0 0 14px color-mix(in srgb, var(--node-project-color, #89b4fa) 20%, transparent);
+}
+
+.node-header.project-accented .node-agent-chip:hover,
+.node-header.project-accented .node-agent-chip.compact-active {
+  border-color: color-mix(in srgb, var(--node-project-color, #89b4fa) 82%, white 12%);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--node-project-color, #89b4fa) 22%, transparent), transparent 70%),
+    color-mix(in srgb, var(--node-project-color, #89b4fa) 14%, var(--node-bg));
+}
+
+.node-agent-chip:hover,
+.node-agent-chip.compact-active {
+  border-color: color-mix(in srgb, var(--node-border-selected) 52%, transparent);
+  background: color-mix(in srgb, var(--node-border-selected) 12%, var(--node-bg));
+}
+
+.node-project-square {
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border: 1px solid color-mix(in srgb, var(--node-project-color, #89b4fa) 72%, rgba(255, 255, 255, 0.2));
+  border-radius: 1px;
+  background: var(--node-project-color, #89b4fa);
+  box-shadow:
+    0 0 8px color-mix(in srgb, var(--node-project-color, #89b4fa) 80%, transparent),
+    0 0 20px color-mix(in srgb, var(--node-project-color, #89b4fa) 28%, transparent);
+  transform: translateY(-50%);
+}
+
+.node-agent-emoji {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 15px;
+  overflow: hidden;
+}
+
+.node-agent-emoji img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.node-agent-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.node-agent-copy strong,
+.node-agent-copy em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-agent-copy strong {
+  color: color-mix(in srgb, var(--terminal-fg) 94%, transparent);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.node-agent-copy em {
+  color: color-mix(in srgb, var(--terminal-fg) 56%, transparent);
+  font-size: 8.5px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.node-agent-rank {
+  display: none;
+  color: color-mix(in srgb, var(--terminal-fg) 86%, transparent);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.terminal-node.compact .node-header {
+  min-height: 52px;
+  height: 52px;
+  padding: 0;
+  background: transparent;
+  border-bottom: 0;
+  border-radius: 0;
+  box-shadow: none;
+  gap: 0;
+  cursor: pointer;
+}
+
+.terminal-node.compact .traffic-lights,
+.terminal-node.compact .role-badge,
+.terminal-node.compact .node-cwd,
+.terminal-node.compact .mobile-lease-badge,
+.terminal-node.compact .adopting-badge,
+.terminal-node.compact .task-count-badge,
+.terminal-node.compact .unread-badge,
+.terminal-node.compact .listener-badge,
+.terminal-node.compact .lock-badge,
+.terminal-node.compact .connection-status,
+.terminal-node.compact .node-controls {
+  display: none;
+}
+
+.terminal-node.compact .node-agent-chip {
+  width: 100%;
+  max-width: none;
+  height: 42px;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  gap: 6px;
+  padding: 4px 8px 4px 5px;
+  border-color: color-mix(in srgb, var(--terminal-fg) 72%, transparent);
+  border-radius: 3px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.075), transparent 70%),
+    rgba(0, 0, 0, 0.86);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.38),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.terminal-node.compact .node-header.project-accented .node-agent-chip {
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  border-color: var(--node-project-color, var(--terminal-fg));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--node-project-color, #89b4fa) 48%, transparent),
+    0 0 16px color-mix(in srgb, var(--node-project-color, #89b4fa) 38%, transparent),
+    0 0 34px color-mix(in srgb, var(--node-project-color, #89b4fa) 16%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--node-project-color, #89b4fa) 16%, transparent);
+}
+
+.terminal-node.compact .node-project-square {
+  left: -10px;
+  width: 9px;
+  height: 9px;
+  border-color: color-mix(in srgb, var(--node-project-color, #89b4fa) 84%, white 16%);
+  box-shadow:
+    0 0 10px color-mix(in srgb, var(--node-project-color, #89b4fa) 78%, transparent),
+    0 0 22px color-mix(in srgb, var(--node-project-color, #89b4fa) 30%, transparent);
+}
+
+.terminal-node.compact .node-agent-emoji {
+  width: 26px;
+  height: 26px;
+  border-radius: 2px;
+}
+
+.terminal-node.compact .node-agent-copy strong {
+  display: none;
+}
+
+.terminal-node.compact .node-agent-copy em {
+  color: color-mix(in srgb, var(--terminal-fg) 88%, transparent);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.terminal-node.compact .node-agent-rank {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Connection status on the right — matches the ghostty-web demo exactly:
+   auto-margin push, 11px muted text, 6px gap, 6px dot, green when online. */
+.connection-status {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--node-status-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.connection-text {
+  white-space: nowrap;
+  letter-spacing: 0.2px;
+}
+
+.connection-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--node-status-muted-dot);
+  flex-shrink: 0;
+}
+
+.connection-dot.online {
+  background: #27c93f;
+}
+
+.connection-dot.stale {
+  background: var(--status-stale);
+}
+
+.connection-dot.offline {
+  background: var(--node-status-muted-dot);
+}
+
+.connection-dot.pending {
+  background: var(--status-pending);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Role badge — outlined tag with subtle tinted fill. Minimal, no uppercase. */
+.role-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  line-height: 1.5;
+}
+
+.role-badge.planner      { color: var(--badge-planner);      background: color-mix(in srgb, var(--badge-planner) 7%, transparent);      border-color: color-mix(in srgb, var(--badge-planner) 28%, transparent); }
+.role-badge.implementer  { color: var(--badge-implementer);  background: color-mix(in srgb, var(--badge-implementer) 7%, transparent);  border-color: color-mix(in srgb, var(--badge-implementer) 28%, transparent); }
+.role-badge.reviewer     { color: var(--badge-reviewer);     background: color-mix(in srgb, var(--badge-reviewer) 7%, transparent);     border-color: color-mix(in srgb, var(--badge-reviewer) 28%, transparent); }
+.role-badge.researcher   { color: var(--badge-researcher);   background: color-mix(in srgb, var(--badge-researcher) 7%, transparent);   border-color: color-mix(in srgb, var(--badge-researcher) 28%, transparent); }
+.role-badge.shell        { color: var(--badge-shell);        background: color-mix(in srgb, var(--badge-shell) 10%, transparent);       border-color: color-mix(in srgb, var(--badge-shell) 32%, transparent); }
+.role-badge.custom       { color: var(--badge-custom);       background: color-mix(in srgb, var(--badge-custom) 7%, transparent);       border-color: color-mix(in srgb, var(--badge-custom) 28%, transparent); }
+
+.mobile-lease-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--node-border-mobile);
+  background: color-mix(in srgb, var(--node-border-mobile) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--node-border-mobile) 32%, transparent);
+  flex-shrink: 0;
+}
+
+.mobile-lease-icon {
+  display: block;
+}
+
+/* Title label matching the ghostty-web demo — same sans-serif, 13px,
+   #e5e5e5, 0.3px letter-spacing. Displayname/instance ID both read cleanly
+   in the system font at this size; pure hex is rare enough that the
+   monospace trade-off isn't worth losing the demo match. */
+.node-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--node-title-fg);
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* CWD path — hugs the right side via auto margin so it sits next to the
+   badges/controls. Shrinks first (with ellipsis) on narrow nodes so the
+   instance label stays intact. direction:rtl + unicode-bidi:plaintext
+   truncates from the *start* of the path so the trailing segment (usually
+   the project dir) stays visible — e.g. `…ystyle/swarm-test`. */
+.node-cwd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--node-status-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
+}
+
+/* Active task count badge — outlined to match role badge */
+.task-count-badge {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1.55;
+  background: color-mix(in srgb, var(--edge-task-in-progress) 7%, transparent);
+  color: var(--edge-task-in-progress);
+  border: 1px solid color-mix(in srgb, var(--edge-task-in-progress) 28%, transparent);
+  flex-shrink: 0;
+}
+
+.unread-badge {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.6;
+  background: color-mix(in srgb, var(--edge-message) 10%, transparent);
+  color: var(--edge-message);
+  border: 1px solid color-mix(in srgb, var(--edge-message) 36%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--edge-message) 20%, transparent);
+  flex-shrink: 0;
+}
+
+.listener-badge {
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.6;
+  flex-shrink: 0;
+  color: var(--node-status-muted);
+  background: color-mix(in srgb, var(--node-status-muted) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--node-status-muted) 28%, transparent);
+}
+
+.listener-badge.listening,
+.listener-badge.polled {
+  color: var(--status-online);
+  background: color-mix(in srgb, var(--status-online) 8%, transparent);
+  border-color: color-mix(in srgb, var(--status-online) 30%, transparent);
+}
+
+.listener-badge.working {
+  color: var(--edge-task-in-progress);
+  background: color-mix(in srgb, var(--edge-task-in-progress) 8%, transparent);
+  border-color: color-mix(in srgb, var(--edge-task-in-progress) 30%, transparent);
+}
+
+.listener-badge.needs_poll,
+.listener-badge.scope_mismatch {
+  color: var(--edge-task-failed);
+  background: color-mix(in srgb, var(--edge-task-failed) 9%, transparent);
+  border-color: color-mix(in srgb, var(--edge-task-failed) 34%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--edge-task-failed) 18%, transparent);
+}
+
+.listener-badge.unregistered,
+.listener-badge.adopting {
+  color: var(--status-pending);
+  background: color-mix(in srgb, var(--status-pending) 8%, transparent);
+  border-color: color-mix(in srgb, var(--status-pending) 30%, transparent);
+}
+
+.listener-badge.offline {
+  color: var(--status-offline);
+  background: color-mix(in srgb, var(--status-offline) 8%, transparent);
+  border-color: color-mix(in srgb, var(--status-offline) 30%, transparent);
+}
+
+/* Lock badge: surfaces context.lock_acquired state at a glance so the user
+   can see who holds locks without opening the Inspector. */
+.lock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px 0 5px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 500;
+  line-height: 1.55;
+  background: color-mix(in srgb, var(--status-stale) 7%, transparent);
+  color: var(--status-stale);
+  border: 1px solid color-mix(in srgb, var(--status-stale) 28%, transparent);
+  flex-shrink: 0;
+}
+
+.lock-badge .lock-icon {
+  display: block;
+}
+
+/* Pending-adoption indicator: instance row pre-created by swarm-ui but the
+   child process inside the PTY hasn't called swarm.register yet. Messages
+   sent to this node are queued in swarm.db but won't be consumed until the
+   child adopts. */
+.adopting-badge {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1.6;
+  background: color-mix(in srgb, var(--status-pending) 7%, transparent);
+  color: var(--status-pending);
+  border: 1px solid color-mix(in srgb, var(--status-pending) 30%, transparent);
+  flex-shrink: 0;
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+/* Header control buttons */
+.node-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.node-controls button {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: #6c7086;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.node-controls button.copy-all {
+  width: auto;
+  min-width: 70px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--node-border-selected) 28%, transparent);
+  background: color-mix(in srgb, var(--node-border-selected) 8%, transparent);
+  color: color-mix(in srgb, var(--terminal-fg) 78%, transparent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.node-controls button.copy-all:hover {
+  border-color: color-mix(in srgb, var(--node-border-selected) 58%, transparent);
+  background: color-mix(in srgb, var(--node-border-selected) 14%, transparent);
+  color: var(--terminal-fg);
+}
+
+.node-controls button.copy-all.copied {
+  border-color: color-mix(in srgb, var(--status-online) 72%, transparent);
+  background: color-mix(in srgb, var(--status-online) 18%, transparent);
+  color: var(--status-online);
+}
+
+.node-controls button.copy-all.failed {
+  border-color: color-mix(in srgb, var(--edge-task-failed) 72%, transparent);
+  background: color-mix(in srgb, var(--edge-task-failed) 18%, transparent);
+  color: var(--edge-task-failed);
+}
+
+[data-theme="tron-encom-os"] .node-controls button.copy-all {
+  width: auto;
+  min-width: 78px;
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 9.5px;
+}
+
+[data-theme="tron-encom-os"] .node-controls button.copy-all:hover {
+  border-color: rgba(255, 255, 255, 0.72);
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.24);
+}
+
+.node-controls button:hover {
+  background: color-mix(in srgb, var(--terminal-fg) 8%, transparent);
+  color: var(--terminal-fg);
+}
+
+.node-controls button.stop:hover {
+  background: color-mix(in srgb, var(--edge-task-failed) 12%, transparent);
+  color: var(--edge-task-failed);
+}
+
+.node-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------------------
+ * Agent-first card body
+ * --------------------------------------------------------------------------- */
+
+.agent-card-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--node-header-bg) 52%, transparent), transparent 72px),
+    color-mix(in srgb, var(--terminal-bg) 96%, black 4%);
+  border-radius: 0 0 var(--terminal-border-radius) var(--terminal-border-radius);
+  overflow: hidden;
+}
+
+.agent-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--node-header-bg) 76%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--node-header-border) 82%, transparent);
+  flex-shrink: 0;
+}
+
+.agent-mode-tabs button {
+  min-width: 0;
+  height: 26px;
+  border: 1px solid color-mix(in srgb, var(--node-border) 42%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--node-bg) 42%, transparent);
+  color: color-mix(in srgb, var(--terminal-fg) 56%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: inherit;
+}
+
+.agent-mode-tabs button:hover:not(:disabled),
+.agent-mode-tabs button.active {
+  color: var(--terminal-fg);
+  background: color-mix(in srgb, var(--node-border-selected) 13%, transparent);
+  border-color: color-mix(in srgb, var(--node-border-selected) 44%, transparent);
+}
+
+.agent-mode-tabs button:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.agent-overview,
+.agent-detail-view {
+  flex: 1;
+  min-height: 0;
+  padding: 14px;
+  overflow: auto;
+  color: var(--terminal-fg);
+}
+
+.agent-command-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 11px;
+  align-items: stretch;
+  min-height: 104px;
+  padding: 12px;
+  margin-bottom: 10px;
+  border: 1px solid color-mix(in srgb, var(--node-border) 74%, transparent);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 38%),
+    color-mix(in srgb, var(--node-bg) 80%, transparent);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.025),
+    0 18px 40px rgba(0, 0, 0, 0.24);
+  overflow: hidden;
+}
+
+.agent-command-card::before {
+  content: '';
+  position: absolute;
+  inset: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.035);
+  pointer-events: none;
+}
+
+.agent-summary-card {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 116px;
+}
+
+.agent-card-actions {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  min-width: 88px;
+}
+
+.agent-card-actions button {
+  height: 26px;
+  border: 1px solid color-mix(in srgb, var(--node-border-selected) 38%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--node-border-selected) 10%, black);
+  color: color-mix(in srgb, var(--terminal-fg) 82%, transparent);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.agent-card-actions button:hover,
+.agent-card-actions button:focus-visible {
+  border-color: color-mix(in srgb, var(--node-border-selected) 70%, transparent);
+  color: var(--terminal-fg);
+  outline: none;
+}
+
+.agent-card-actions button.danger {
+  border-color: color-mix(in srgb, var(--edge-task-failed, #ff5d73) 45%, transparent);
+  color: color-mix(in srgb, var(--edge-task-failed, #ff5d73) 72%, var(--terminal-fg));
+}
+
+.agent-portrait {
+  min-width: 68px;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 8px;
+}
+
+.agent-avatar {
+  width: 68px;
+  height: 68px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--node-border-selected) 36%, transparent);
+  background:
+    radial-gradient(circle at 32% 20%, rgba(255, 255, 255, 0.2), transparent 34%),
+    color-mix(in srgb, var(--node-border-selected) 11%, black 89%);
+  font-size: 32px;
+  box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.04);
+}
+
+.agent-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.agent-save-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  height: 25px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--node-border-selected) 42%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--node-border-selected) 13%, black);
+  color: color-mix(in srgb, var(--terminal-fg) 88%, transparent);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.agent-save-button:hover,
+.agent-save-button:focus-visible {
+  border-color: color-mix(in srgb, var(--node-border-selected) 72%, transparent);
+  background: color-mix(in srgb, var(--node-border-selected) 22%, black);
+  outline: none;
+}
+
+.agent-save-button.inline-save {
+  position: static;
+  height: 26px;
+}
+
+.agent-save-message {
+  margin-top: 6px;
+  color: color-mix(in srgb, var(--status-online, #00f060) 80%, var(--terminal-fg));
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.agent-provider-tag,
+.agent-eyebrow,
+.agent-runtime-chip span,
+.agent-summary-grid span,
+.agent-kv-grid span {
+  color: color-mix(in srgb, var(--terminal-fg) 48%, transparent);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.agent-provider-tag {
+  max-width: 68px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.agent-title-block {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+}
+
+.agent-title-block h3,
+.agent-detail-view h3 {
+  margin: 0;
+  color: var(--terminal-fg);
+  font-size: 20px;
+  font-weight: 760;
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+
+.agent-title-block p {
+  margin: 0;
+  color: color-mix(in srgb, var(--terminal-fg) 72%, transparent);
+  font-size: 11.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.agent-signal-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.signal-pill {
+  min-width: 0;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--node-border) 52%, transparent);
+  border-radius: 4px;
+  padding: 0 7px;
+  background: rgba(255, 255, 255, 0.025);
+  color: color-mix(in srgb, var(--terminal-fg) 64%, transparent);
+  font-size: 9.5px;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.signal-pill.online,
+.signal-pill.listener {
+  color: var(--status-online);
+  border-color: color-mix(in srgb, var(--status-online) 34%, transparent);
+}
+
+.signal-pill.stale {
+  color: var(--status-stale);
+  border-color: color-mix(in srgb, var(--status-stale) 34%, transparent);
+}
+
+.signal-pill.unread {
+  color: var(--status-pending);
+  border-color: color-mix(in srgb, var(--status-pending) 34%, transparent);
+}
+
+.agent-runtime-chip {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px;
+  border-left: 1px solid color-mix(in srgb, var(--node-border) 52%, transparent);
+}
+
+.agent-runtime-chip strong {
+  min-width: 0;
+  color: color-mix(in srgb, var(--terminal-fg) 88%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.agent-work-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(84px, 0.24fr);
+  gap: 12px;
+  align-items: stretch;
+  margin-bottom: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--status-pending) 32%, var(--node-border));
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 6% 14%, color-mix(in srgb, var(--status-pending) 10%, transparent), transparent 46%),
+    color-mix(in srgb, var(--node-bg) 84%, black 16%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035),
+    0 14px 32px rgba(0, 0, 0, 0.22);
+}
+
+.agent-activity-panel {
+  grid-template-columns: 76px minmax(0, 1fr) minmax(98px, 0.28fr);
+}
+
+.work-folder-pulse {
+  width: 76px;
+  min-height: 76px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--status-pending) 46%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--status-pending) 8%, black);
+  animation: folder-work-pulse 2.2s ease-in-out infinite;
+}
+
+.work-folder-pulse img {
+  width: 58px;
+  height: 58px;
+  object-fit: contain;
+  filter:
+    brightness(1.36)
+    contrast(1.2)
+    drop-shadow(0 0 10px color-mix(in srgb, var(--status-pending) 42%, transparent));
+}
+
+.work-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+}
+
+.work-copy h4 {
+  margin: 0;
+  color: color-mix(in srgb, var(--terminal-fg) 96%, transparent);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-copy p {
+  margin: 0;
+  color: color-mix(in srgb, var(--terminal-fg) 76%, transparent);
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.work-copy p span {
+  display: block;
+  margin-top: 2px;
+  color: color-mix(in srgb, var(--terminal-fg) 48%, transparent);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.work-step-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 6px;
+  padding-left: 11px;
+  border-left: 1px solid color-mix(in srgb, var(--status-pending) 32%, transparent);
+}
+
+.work-step-panel span {
+  color: color-mix(in srgb, var(--status-pending) 88%, transparent);
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.work-step-panel strong {
+  color: color-mix(in srgb, var(--terminal-fg) 66%, transparent);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.usage-panel svg {
+  width: 100%;
+  height: 34px;
+  margin-top: 2px;
+}
+
+.usage-panel polyline {
+  fill: none;
+  stroke: color-mix(in srgb, var(--status-pending) 78%, #ffffff 22%);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--status-pending) 38%, transparent));
+}
+
+.agent-icon-usage-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.activity-icon-stack {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.activity-icon-stack span {
+  width: 29px;
+  height: 29px;
+  display: grid;
+  place-items: center;
+  margin-right: -6px;
+  border: 1px solid color-mix(in srgb, var(--node-border-selected) 38%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--node-bg) 88%, black 12%);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.26);
+}
+
+.activity-icon-stack img {
+  width: 21px;
+  height: 21px;
+  object-fit: contain;
+}
+
+.usage-chip {
+  min-width: 0;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--node-border) 42%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--node-bg) 70%, black 30%);
+  color: color-mix(in srgb, var(--terminal-fg) 68%, transparent);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+.agent-brief-rail {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.agent-brief-rail span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--node-border) 48%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--node-bg) 78%, black 22%);
+}
+
+.agent-brief-rail em {
+  color: color-mix(in srgb, var(--terminal-fg) 46%, transparent);
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.agent-brief-rail strong {
+  min-width: 0;
+  color: color-mix(in srgb, var(--terminal-fg) 86%, transparent);
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes folder-work-pulse {
+  0%, 100% {
+    box-shadow:
+      inset 0 0 18px color-mix(in srgb, var(--status-pending) 8%, transparent),
+      0 0 10px color-mix(in srgb, var(--status-pending) 20%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 26px color-mix(in srgb, var(--status-pending) 18%, transparent),
+      0 0 22px color-mix(in srgb, var(--status-pending) 42%, transparent);
+  }
+}
+
+.agent-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.agent-stats span,
+.agent-summary-grid > div,
+.agent-kv-grid,
+.agent-task-row {
+  --panel-tone: var(--terminal-fg);
+  border: 1px solid color-mix(in srgb, var(--node-border) 58%, transparent);
+  border-radius: 7px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--panel-tone) 8%, transparent), transparent 48%),
+    color-mix(in srgb, var(--node-bg) 80%, black 20%);
+}
+
+.agent-stats span[data-tone="cyan"],
+.agent-summary-grid > div[data-tone="cyan"] {
+  --panel-tone: var(--status-pending);
+  border-color: color-mix(in srgb, var(--panel-tone) 42%, transparent);
+}
+
+.agent-stats span[data-tone="amber"],
+.agent-summary-grid > div[data-tone="amber"] {
+  --panel-tone: var(--status-stale);
+  border-color: color-mix(in srgb, var(--panel-tone) 42%, transparent);
+}
+
+.agent-stats span[data-tone="green"],
+.agent-summary-grid > div[data-tone="green"] {
+  --panel-tone: var(--status-online);
+  border-color: color-mix(in srgb, var(--panel-tone) 38%, transparent);
+}
+
+.agent-stats span[data-tone="red"],
+.agent-summary-grid > div[data-tone="red"] {
+  --panel-tone: var(--edge-task-failed);
+  border-color: color-mix(in srgb, var(--panel-tone) 38%, transparent);
+}
+
+.agent-summary-grid > div[data-tone="violet"] {
+  --panel-tone: var(--badge-planner);
+  border-color: color-mix(in srgb, var(--panel-tone) 38%, transparent);
+}
+
+.agent-stats span {
+  min-width: 0;
+  padding: 10px 9px;
+  color: color-mix(in srgb, var(--panel-tone) 78%, var(--terminal-fg) 22%);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.agent-stats em {
+  display: block;
+  margin-bottom: 3px;
+  color: color-mix(in srgb, var(--panel-tone) 62%, var(--terminal-fg) 38%);
+  font-style: normal;
+  font-size: 15px;
+  font-weight: 760;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.agent-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.agent-summary-grid > div {
+  min-width: 0;
+  padding: 11px;
+}
+
+.agent-summary-grid p {
+  margin: 6px 0 0;
+  color: color-mix(in srgb, var(--terminal-fg) 88%, transparent);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.agent-terminal-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: var(--terminal-bg);
+}
+
+.agent-detail-view h3 {
+  margin-bottom: 12px;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.agent-empty {
+  margin: 0;
+  color: color-mix(in srgb, var(--terminal-fg) 58%, transparent);
+  font-size: 12px;
+}
+
+.agent-task-list,
+.agent-lock-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-task-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+}
+
+.agent-task-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--terminal-fg);
+  font-size: 12px;
+}
+
+.agent-task-meta,
+.task-status {
+  color: color-mix(in srgb, var(--terminal-fg) 54%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.task-status.open,
+.task-status.claimed {
+  color: var(--edge-task-open);
+}
+
+.task-status.in_progress {
+  color: var(--edge-task-in-progress);
+}
+
+.task-status.done {
+  color: var(--edge-task-done);
+}
+
+.task-status.failed {
+  color: var(--edge-task-failed);
+}
+
+.agent-kv-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 12px;
+  padding: 12px;
+}
+
+.agent-kv-grid strong {
+  min-width: 0;
+  color: color-mix(in srgb, var(--terminal-fg) 76%, transparent);
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.agent-lock-list {
+  margin-top: 10px;
+}
+
+.agent-lock-list code {
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--node-header-bg) 65%, transparent);
+  color: color-mix(in srgb, var(--terminal-fg) 72%, transparent);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+[data-theme="tron-encom-os"] .agent-card-shell {
+  background: #000;
+}
+
+[data-theme="tron-encom-os"] .agent-mode-tabs {
+  gap: 8px;
+  background: #050505;
+  border-bottom: 2px solid var(--led-line, rgba(255, 255, 255, 0.7));
+}
+
+[data-theme="tron-encom-os"] .agent-mode-tabs button {
+  border-radius: 0;
+  border-color: rgba(255, 255, 255, 0.34);
+  background: #030303;
+  color: rgba(255, 255, 255, 0.62);
+  letter-spacing: 0.16em;
+}
+
+[data-theme="tron-encom-os"] .agent-mode-tabs button:hover:not(:disabled),
+[data-theme="tron-encom-os"] .agent-mode-tabs button.active {
+  color: #ffffff;
+  border-color: #ffffff;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow:
+    inset 0 0 10px rgba(255, 255, 255, 0.05),
+    0 0 11px rgba(255, 255, 255, 0.28);
+  text-shadow: var(--glow-s, 0 0 3px rgba(255, 255, 255, 0.3));
+}
+
+[data-theme="tron-encom-os"] .agent-command-card,
+[data-theme="tron-encom-os"] .agent-work-panel,
+[data-theme="tron-encom-os"] .agent-stats span,
+[data-theme="tron-encom-os"] .agent-summary-grid > div,
+[data-theme="tron-encom-os"] .agent-brief-rail span,
+[data-theme="tron-encom-os"] .agent-kv-grid,
+[data-theme="tron-encom-os"] .agent-task-row {
+  border-radius: 0;
+  border-color: rgba(255, 255, 255, 0.54);
+  background: #020202;
+}
+
+[data-theme="tron-encom-os"] .agent-command-card {
+  border-width: 2px;
+  box-shadow:
+    var(--led-halo, 0 0 12px rgba(255, 255, 255, 0.26)),
+    inset 0 0 32px rgba(255, 255, 255, 0.03);
+}
+
+[data-theme="tron-encom-os"] .agent-work-panel {
+  border-width: 2px;
+  border-color: color-mix(in srgb, var(--status-pending) 58%, #ffffff 42%);
+  background:
+    radial-gradient(circle at 5% 12%, color-mix(in srgb, var(--status-pending) 20%, transparent), transparent 46%),
+    #020202;
+  box-shadow:
+    0 0 16px color-mix(in srgb, var(--status-pending) 32%, transparent),
+    inset 0 0 26px rgba(255, 255, 255, 0.035);
+}
+
+[data-theme="tron-encom-os"] .work-folder-pulse {
+  border-radius: 0;
+  border: 2px solid color-mix(in srgb, var(--status-pending) 70%, #ffffff 30%);
+  background: #000000;
+}
+
+[data-theme="tron-encom-os"] .work-step-panel {
+  border-left-color: color-mix(in srgb, var(--status-pending) 54%, transparent);
+}
+
+[data-theme="tron-encom-os"] .agent-command-card::before {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+[data-theme="tron-encom-os"] .agent-avatar {
+  border-radius: 0;
+  border: 2px solid #ffffff;
+  background: #000;
+  box-shadow: 0 0 14px rgba(255, 255, 255, 0.36);
+  text-shadow: var(--glow, 0 0 8px rgba(255, 255, 255, 0.45));
+}
+
+[data-theme="tron-encom-os"] .agent-title-block h3 {
+  color: #ffffff;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-shadow: var(--glow, 0 0 8px rgba(255, 255, 255, 0.45));
+}
+
+[data-theme="tron-encom-os"] .agent-provider-tag,
+[data-theme="tron-encom-os"] .agent-eyebrow,
+[data-theme="tron-encom-os"] .agent-runtime-chip span,
+[data-theme="tron-encom-os"] .agent-summary-grid span,
+[data-theme="tron-encom-os"] .agent-brief-rail em,
+[data-theme="tron-encom-os"] .agent-kv-grid span {
+  color: rgba(255, 255, 255, 0.76);
+}
+
+[data-theme="tron-encom-os"] .agent-summary-grid p,
+[data-theme="tron-encom-os"] .agent-title-block p,
+[data-theme="tron-encom-os"] .agent-runtime-chip strong,
+[data-theme="tron-encom-os"] .agent-brief-rail strong,
+[data-theme="tron-encom-os"] .work-copy h4 {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+[data-theme="tron-encom-os"] .compact-agent-chip {
+  border-radius: 0;
+  border-color: rgba(255, 255, 255, 0.52);
+  background: #020202;
+}
+
+[data-theme="tron-encom-os"] .compact-agent-emoji {
+  border-radius: 0;
+  border-color: rgba(255, 255, 255, 0.46);
+  background: #000000;
+}
+
+/* ---------------------------------------------------------------------------
+ * Terminal container (ghostty-web / xterm.js mount point)
+ * --------------------------------------------------------------------------- */
+
+.terminal-container {
+  flex: 1;
+  overflow: hidden;
+  background: var(--terminal-bg);
+  border-radius: 0 0 var(--terminal-border-radius) var(--terminal-border-radius);
+  backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
+  -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
+  position: relative;
+  min-height: 0;
+  cursor: text;
+}
+
+.terminal-suspended {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(137, 180, 250, 0.08), transparent 55%),
+    linear-gradient(180deg, rgba(17, 17, 27, 0.92), rgba(24, 24, 37, 0.96));
+  border-radius: 0 0 var(--terminal-border-radius) var(--terminal-border-radius);
+}
+
+.terminal-suspended-chip {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--node-border-selected) 35%, transparent);
+  background: color-mix(in srgb, var(--node-border-selected) 12%, transparent);
+  color: color-mix(in srgb, var(--terminal-fg) 90%, transparent);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.terminal-container,
+.terminal-container * {
+  pointer-events: auto;
+}
+
+.terminal-compact-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 16px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(137, 180, 250, 0.12), transparent 38%),
+    linear-gradient(180deg, rgba(18, 18, 28, 0.98), rgba(24, 24, 37, 0.94));
+  border-radius: 0 0 var(--terminal-border-radius) var(--terminal-border-radius);
+}
+
+.compact-agent-chip {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--node-border-selected) 34%, transparent);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--node-border-selected) 12%, transparent), transparent 54%),
+    rgba(255, 255, 255, 0.035);
+}
+
+.compact-agent-emoji {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--node-border-selected) 36%, transparent);
+  background: color-mix(in srgb, var(--node-border-selected) 9%, black);
+  font-size: 24px;
+}
+
+.compact-agent-chip span:last-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.compact-agent-chip strong,
+.compact-agent-chip em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-agent-chip strong {
+  color: color-mix(in srgb, var(--terminal-fg) 94%, transparent);
+  font-size: 15px;
+  line-height: 1.1;
+}
+
+.compact-agent-chip em {
+  color: color-mix(in srgb, var(--terminal-fg) 54%, transparent);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.compact-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.compact-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #bac2de;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.compact-pill.status.online {
+  color: #a6e3a1;
+  border-color: color-mix(in srgb, #a6e3a1 35%, transparent);
+  background: color-mix(in srgb, #a6e3a1 10%, transparent);
+}
+
+.compact-pill.status.pending {
+  color: #89b4fa;
+  border-color: color-mix(in srgb, #89b4fa 35%, transparent);
+  background: color-mix(in srgb, #89b4fa 10%, transparent);
+}
+
+.compact-pill.status.stale {
+  color: #f9e2af;
+  border-color: color-mix(in srgb, #f9e2af 35%, transparent);
+  background: color-mix(in srgb, #f9e2af 10%, transparent);
+}
+
+.compact-pill.status.offline {
+  color: #bac2de;
+  border-color: color-mix(in srgb, #bac2de 24%, transparent);
+  background: color-mix(in srgb, #bac2de 8%, transparent);
+}
+
+.compact-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.compact-stat {
+  min-width: 0;
+  padding: 10px 10px 9px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.compact-stat-label {
+  display: block;
+  margin-bottom: 4px;
+  color: #7f849c;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.compact-stat-value {
+  display: block;
+  color: #e6e9ef;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-detail {
+  color: #a6adc8;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ghostty-web sizes its own canvas based on the (cols, rows) it's told to
+   render. We deliberately do NOT force width/height on its root — forcing
+   100% stretches the canvas bitmap and distorts glyphs when the container
+   size and the grid size get out of sync. The ResizeObserver in
+   `createTerminal()` keeps the grid in step with the container. */
+
+/* xterm.js specific overrides */
+.terminal-container .xterm {
+  padding: 4px 0 4px 8px;
+}
+
+.terminal-container .xterm-viewport {
+  overflow-y: auto;
+}
+
+.terminal-container .xterm-screen {
+  width: 100% !important;
+}
+
+/* ---------------------------------------------------------------------------
+ * Instance metadata card (shown when no PTY is present)
+ * --------------------------------------------------------------------------- */
+
+.instance-meta-card {
+  flex: 1;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: #a6adc8;
+}
+
+.instance-meta-card .meta-row {
+  display: flex;
+  gap: 8px;
+}
+
+.instance-meta-card .meta-label {
+  color: #6c7086;
+  font-weight: 500;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.instance-meta-card .meta-value {
+  color: var(--terminal-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+ * Edge label tooltips
+ * --------------------------------------------------------------------------- */
+
+.edge-tooltip {
+  position: absolute;
+  padding: 4px 8px;
+  background: var(--node-bg);
+  border: 1px solid var(--node-border);
+  border-radius: 6px;
+  backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
+  -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.1);
+  font-size: 11px;
+  color: var(--terminal-fg);
+  pointer-events: none;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 10;
+}
+
+/* ---------------------------------------------------------------------------
+ * Animated message edge dashes
+ * --------------------------------------------------------------------------- */
+
+@keyframes dash-flow {
+  to { stroke-dashoffset: -20; }
+}
+
+.message-edge-path {
+  stroke: var(--edge-message);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  fill: none;
+  /* animation-duration is set inline per-edge from MessageEdge.svelte based
+     on how recently the two nodes exchanged messages. */
+  animation: dash-flow 1s linear infinite;
+}
+
+/* Most recent traffic (< 10s) — thicker line */
+.message-edge-path.active {
+  stroke-width: 2.5;
+}
+
+/* No activity in the last 10 min — drop the animation and desaturate */
+.message-edge-path.stale {
+  animation: none;
+  opacity: 0.4;
+}
+
+/* Real-time message pulse: triggered by an `events:new` message.sent /
+   message.broadcast row, decays via the transition over PULSE_DECAY_MS
+   in ConnectionEdge.svelte. The drop-shadow draws the eye even when the
+   underlying path is already animating dashes. */
+.message-edge-path.pulsing {
+  filter: drop-shadow(0 0 6px var(--edge-message));
+  stroke-width: 3.5;
+  transition: filter 1.1s ease-out, stroke-width 1.1s ease-out;
+}
+
+/* Packet: one SVG <circle> per new message, animated along the edge path
+   via <animateMotion>. The flow comes from spawning/removing them in
+   MessageEdge.svelte, not from a looping CSS animation. */
+.message-packet {
+  fill: var(--edge-message);
+  filter: drop-shadow(0 0 4px var(--edge-message));
+  opacity: 0.95;
+  pointer-events: none;
+}
+
+/* System packets ([auto]/[signal:*]/sender=system) — neutral grey so the
+   eye doesn't read them as peer chat. */
+.message-packet.system {
+  fill: #6c7086;
+  filter: drop-shadow(0 0 3px rgba(108, 112, 134, 0.6));
+  opacity: 0.75;
+}
+
+/* ── Tron Encom OS edge overrides ──────────────────────────────────────
+   Bright white-LED cable strings. These are intentionally stronger than the
+   legacy blue dashes so connections read from across the canvas. */
+[data-theme="tron-encom-os"] .message-edge-path {
+  stroke-width: 2.6;
+  stroke-dasharray: 6 4;
+  filter:
+    drop-shadow(0 0 7px rgba(255, 255, 255, 0.72))
+    drop-shadow(0 0 18px rgba(255, 255, 255, 0.3));
+}
+
+[data-theme="tron-encom-os"] .message-edge-path.active {
+  stroke-width: 3.2;
+  filter:
+    drop-shadow(0 0 10px rgba(255, 255, 255, 0.84))
+    drop-shadow(0 0 26px rgba(255, 255, 255, 0.38));
+}
+
+[data-theme="tron-encom-os"] .message-edge-path.stale {
+  filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.42));
+  opacity: 0.48;
+}
+
+[data-theme="tron-encom-os"] .message-edge-path.pulsing {
+  filter:
+    drop-shadow(0 0 14px rgba(255, 255, 255, 0.92))
+    drop-shadow(0 0 34px rgba(255, 255, 255, 0.46));
+  stroke-width: 4.2;
+}
+
+[data-theme="tron-encom-os"] .message-packet {
+  fill: #ffffff;
+  filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.7));
+}
+
+[data-theme="tron-encom-os"] .message-packet.system {
+  fill: #8a94a0;
+  filter: drop-shadow(0 0 3px rgba(138, 148, 160, 0.6));
+}
+
+/* ---------------------------------------------------------------------------
+ * Task edge styles
+ * --------------------------------------------------------------------------- */
+
+.task-edge-path {
+  stroke-width: 2;
+  fill: none;
+}
+
+.task-edge-path.open { stroke: var(--edge-task-open); }
+.task-edge-path.claimed { stroke: var(--edge-task-in-progress); }
+.task-edge-path.in_progress { stroke: var(--edge-task-in-progress); }
+.task-edge-path.done { stroke: var(--edge-task-done); }
+.task-edge-path.failed { stroke: var(--edge-task-failed); }
+.task-edge-path.cancelled { stroke: var(--edge-task-cancelled); }
+.task-edge-path.blocked { stroke: var(--edge-task-cancelled); }
+.task-edge-path.approval_required { stroke: var(--edge-task-in-progress); }
+
+.task-edge-label {
+  font-size: 10px;
+  fill: #a6adc8;
+  dominant-baseline: middle;
+  text-anchor: middle;
+}
+
+/* ---------------------------------------------------------------------------
+ * Dependency edge styles
+ * --------------------------------------------------------------------------- */
+
+.dependency-edge-path {
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  fill: none;
+}
+
+.dependency-edge-path.blocked {
+  stroke: var(--edge-dep-blocked);
+}
+
+.dependency-edge-path.satisfied {
+  stroke: var(--edge-dep-satisfied);
+}

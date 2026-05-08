@@ -50,14 +50,8 @@ function release(ids: string[]) {
 export function prune() {
   const cutoff = now() - STALE;
   const stale = db
-    .query("SELECT id, scope, label, pid, heartbeat FROM instances WHERE heartbeat < ?")
-    .all(cutoff) as Array<{
-      id: string;
-      scope: string;
-      label: string | null;
-      pid: number | null;
-      heartbeat: number;
-    }>;
+    .query("SELECT id, scope, label FROM instances WHERE heartbeat < ?")
+    .all(cutoff) as Array<{ id: string; scope: string; label: string | null }>;
 
   if (stale.length) {
     const ids = stale.map((item) => item.id);
@@ -88,12 +82,7 @@ export function prune() {
           type: "instance.stale_reclaimed",
           actor: "system",
           subject: item.id,
-          payload: {
-            label: item.label,
-            pid: item.pid,
-            last_heartbeat: item.heartbeat,
-            reclaim_threshold_secs: STALE,
-          },
+          payload: { label: item.label },
         });
       }
 
@@ -127,24 +116,6 @@ export function prune() {
               "INSERT INTO messages (scope, sender, recipient, content) VALUES (?, ?, ?, ?)",
               [scope, "system", recipient.id, content],
             );
-          }
-
-          // Mirror the auto-broadcast into the audit log so the events
-          // surface tells the same story the agents see in their inboxes.
-          if (recipients.length > 0) {
-            emit({
-              scope,
-              type: "message.broadcast",
-              actor: "system",
-              subject: null,
-              payload: {
-                content,
-                recipients: recipients.length,
-                length: content.length,
-                reason: "stale_reclaim",
-                released_tasks: scopeTasks.map((t) => t.id),
-              },
-            });
           }
         }
       }
@@ -216,14 +187,7 @@ export function register(
         type: "instance.registered",
         actor: adopted.id,
         subject: adopted.id,
-        payload: {
-          label: nextLabel,
-          adopted: true,
-          pid: process.pid,
-          directory: adopted.directory,
-          root: adopted.root,
-          file_root: adopted.file_root,
-        },
+        payload: { label: nextLabel, adopted: true, pid: process.pid },
       });
       planner.ensureOwner({
         id: adopted.id,
@@ -257,14 +221,7 @@ export function register(
     type: "instance.registered",
     actor: row.id,
     subject: row.id,
-    payload: {
-      label: row.label,
-      adopted: false,
-      pid: row.pid,
-      directory: row.directory,
-      root: row.root,
-      file_root: row.file_root,
-    },
+    payload: { label: row.label, adopted: false, pid: row.pid },
   });
 
   planner.ensureOwner({ id: row.id, scope: row.scope, label: row.label });
@@ -285,13 +242,8 @@ export function get(id: string) {
 
 export function deregister(id: string) {
   const item = db
-    .query("SELECT id, scope, label, pid FROM instances WHERE id = ?")
-    .get(id) as {
-      id: string;
-      scope: string;
-      label: string | null;
-      pid: number | null;
-    } | null;
+    .query("SELECT id, scope, label FROM instances WHERE id = ?")
+    .get(id) as { id: string; scope: string; label: string | null } | null;
 
   release([id]);
   db.run("DELETE FROM instances WHERE id = ?", [id]);
@@ -302,7 +254,7 @@ export function deregister(id: string) {
       type: "instance.deregistered",
       actor: item.id,
       subject: item.id,
-      payload: { label: item.label, pid: item.pid },
+      payload: { label: item.label },
     });
     planner.refreshOwner(item.scope);
   }

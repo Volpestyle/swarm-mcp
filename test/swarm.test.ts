@@ -56,13 +56,6 @@ function regPlanner(name: string, scope: string) {
   );
 }
 
-describe("database schema", () => {
-  test("bootstrap stamps the shared schema version", () => {
-    const row = db.query("PRAGMA user_version").get() as { user_version: number };
-    expect(row.user_version).toBe(1);
-  });
-});
-
 describe("messages", () => {
   test("broadcast fans out per recipient and stays inside scope", () => {
     const a = reg("one", "scope-a");
@@ -167,7 +160,7 @@ describe("scope", () => {
 });
 
 describe("tasks", () => {
-  test("claiming is single-winner, transitions to in_progress, and updates are ownership checked", () => {
+  test("claiming is single-winner and updates are ownership checked", () => {
     const requester = reg("requester", "scope-a");
     const assignee = reg("assignee", "scope-a");
     const other = reg("other", "scope-a");
@@ -175,76 +168,19 @@ describe("tasks", () => {
     const { id } = req(requester.id, requester.scope, "review", "Check change");
 
     expect(tasks.claim(id, assignee.scope, assignee.id)).toEqual({ ok: true });
-    expect(tasks.get(id, assignee.scope)?.status).toBe("in_progress");
-
     expect(tasks.claim(id, other.scope, other.id)).toEqual({
-      error: "Task is already in_progress",
+      error: "Task is already claimed",
     });
-    expect(tasks.update(id, other.scope, other.id, "done")).toEqual({
+    expect(tasks.update(id, other.scope, other.id, "in_progress")).toEqual({
       error: "Only the assignee can update this task",
     });
+    expect(
+      tasks.update(id, assignee.scope, assignee.id, "in_progress"),
+    ).toEqual({ ok: true });
     expect(
       tasks.update(id, assignee.scope, assignee.id, "done", "done"),
     ).toEqual({ ok: true });
     expect(tasks.get(id, assignee.scope)?.status).toBe("done");
-  });
-
-  test("pre-assigned task is started by the assignee via claim_task", () => {
-    const requester = reg("requester", "scope-a");
-    const assignee = reg("assignee", "scope-a");
-    const other = reg("other", "scope-a");
-
-    const { id, status } = req(
-      requester.id,
-      requester.scope,
-      "implement",
-      "Pre-assigned",
-      { assignee: assignee.id },
-    );
-    expect(status).toBe("claimed");
-
-    // Other instances cannot start it
-    expect(tasks.claim(id, other.scope, other.id)).toEqual({
-      error: "Task is already claimed",
-    });
-
-    // Assignee starts it directly via claim_task
-    expect(tasks.claim(id, assignee.scope, assignee.id)).toEqual({ ok: true });
-    expect(tasks.get(id, assignee.scope)?.status).toBe("in_progress");
-  });
-
-  test("claiming open work is blocked until unread messages are polled", () => {
-    const planner = reg("planner", "scope-a");
-    const worker = reg("worker", "scope-a");
-    const { id } = req(planner.id, planner.scope, "implement", "Build thing");
-
-    messages.send(planner.id, planner.scope, worker.id, "Stop and read context first");
-
-    expect(tasks.claim(id, worker.scope, worker.id)).toMatchObject({
-      error: expect.stringContaining("Unread messages pending (1)"),
-      unread_message_count: 1,
-      latest_message_sender: planner.id,
-    });
-    expect(tasks.get(id, worker.scope)).toMatchObject({
-      status: "open",
-      assignee: null,
-    });
-
-    expect(messages.poll(worker.id, worker.scope)).toHaveLength(1);
-    expect(tasks.claim(id, worker.scope, worker.id)).toEqual({ ok: true });
-  });
-
-  test("claiming can explicitly override the unread-message guard", () => {
-    const planner = reg("planner", "scope-a");
-    const worker = reg("worker", "scope-a");
-    const { id } = req(planner.id, planner.scope, "implement", "Build thing");
-
-    messages.send(planner.id, planner.scope, worker.id, "Non-blocking note");
-
-    expect(
-      tasks.claim(id, worker.scope, worker.id, { ignoreUnreadMessages: true }),
-    ).toEqual({ ok: true });
-    expect(messages.peek(worker.id, worker.scope)).toHaveLength(1);
   });
 
   test("stale assignees are released and their locks are removed", () => {
@@ -483,7 +419,7 @@ describe("dependencies", () => {
     expect((result as { error: string }).error).toContain("not found");
   });
 
-  test("blocked tasks cannot be moved to a terminal status by a non-owner", () => {
+  test("blocked tasks cannot be moved to in_progress", () => {
     const a = reg("planner", "scope-a");
     const w = reg("worker", "scope-a");
 
@@ -492,8 +428,7 @@ describe("dependencies", () => {
       depends_on: [t1],
     });
 
-    // Non-cancellation update on blocked task is rejected
-    const result = tasks.update(t2, a.scope, w.id, "done");
+    const result = tasks.update(t2, a.scope, w.id, "in_progress");
     expect(result).toHaveProperty("error");
     expect((result as { error: string }).error).toContain("blocked");
   });
@@ -633,7 +568,7 @@ describe("approval", () => {
     expect(tasks.get(id, a.scope)?.status).toBe("cancelled");
   });
 
-  test("approval_required tasks cannot be moved to done before approval", () => {
+  test("approval_required tasks cannot be moved to in_progress", () => {
     const a = reg("planner", "scope-a");
     const w = reg("worker", "scope-a");
 
@@ -641,7 +576,7 @@ describe("approval", () => {
       approval_required: true,
     });
 
-    const result = tasks.update(id, a.scope, w.id, "done");
+    const result = tasks.update(id, a.scope, w.id, "in_progress");
     expect(result).toHaveProperty("error");
     expect((result as { error: string }).error).toContain("approval_required");
   });

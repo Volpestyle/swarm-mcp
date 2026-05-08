@@ -1,0 +1,2903 @@
+// =============================================================================
+// writes.rs — UI-initiated writes to swarm.db
+//
+// Mirror of `src/messages.ts` and friends from the MCP server, reimplemented in
+// Rust so the UI can write without going through an MCP stdio round-trip.
+//
+// Architectural rule: this module is the *only* place in the Tauri backend that
+// opens a read-write connection to swarm.db. Validation lives in the Tauri
+// command layer (see `ui_commands.rs`), not here — matching how the Bun side
+// keeps `messages.ts` dumb and validates in `index.ts`.
+// =============================================================================
+
+use std::fs::create_dir_all;
+use std::path::{Path, PathBuf};
+
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use serde_json::{Value, json};
+use uuid::Uuid;
+
+use crate::{
+    model::{
+        AssetAttachment, BrowserContext, BrowserSnapshot, BrowserSnapshotElement, BrowserTab,
+        GraphPosition, INSTANCE_STALE_AFTER_SECS, ProjectAsset, ProjectBoundary, ProjectMembership,
+        ProjectSpace, SavedLayout,
+    },
+    swarm::swarm_db_path,
+};
+
+const PLANNER_OWNER_KEY: &str = "owner/planner";
+const UI_LAYOUT_KEY: &str = "ui/layout";
+const SWARM_DB_BOOTSTRAP_SQL: &str = include_str!("../../../../sql/swarm_db_bootstrap.sql");
+const SWARM_DB_FINALIZE_SQL: &str = include_str!("../../../../sql/swarm_db_finalize.sql");
+const COLUMN_MIGRATIONS: &[(&str, &str)] = &[
+    ("instances", "scope TEXT NOT NULL DEFAULT ''"),
+    ("instances", "root TEXT NOT NULL DEFAULT ''"),
+    ("instances", "file_root TEXT NOT NULL DEFAULT ''"),
+    ("instances", "adopted INTEGER NOT NULL DEFAULT 1"),
+    ("messages", "scope TEXT NOT NULL DEFAULT ''"),
+    ("tasks", "scope TEXT NOT NULL DEFAULT ''"),
+    ("tasks", "changed_at INTEGER NOT NULL DEFAULT 0"),
+    ("tasks", "priority INTEGER NOT NULL DEFAULT 0"),
+    ("tasks", "depends_on TEXT"),
+    ("tasks", "idempotency_key TEXT"),
+    ("tasks", "parent_task_id TEXT"),
+    ("context", "scope TEXT NOT NULL DEFAULT ''"),
+];
+
+fn now_secs() -> i64 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    i64::try_from(secs).unwrap_or(i64::MAX)
+}
+
+fn now_millis() -> i64 {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    i64::try_from(millis).unwrap_or(i64::MAX)
+}
+
+/// Open a read-write connection to the shared swarm.db.
+///
+/// Uses the same path resolution as the read-only watcher (env var override,
+/// else `~/.swarm-mcp/swarm.db`). Sets a 3s busy timeout to match the Bun
+/// side's pragma so concurrent writers don't error out under normal contention.
+pub fn open_rw() -> Result<Connection, String> {
+    let path = swarm_db_path()?;
+    open_rw_at(&path)
+}
+
+/// Open a read-write connection at an explicit path. Exposed for tests.
+pub fn open_rw_at(path: &Path) -> Result<Connection, String> {
+    if let Some(parent) = path.parent() {
+        create_dir_all(parent).map_err(|err| {
+            format!(
+                "failed to create swarm db directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|err| format!("failed to open swarm db rw at {}: {err}", path.display()))?;
+
+    conn.busy_timeout(std::time::Duration::from_millis(3000))
+        .map_err(|err| format!("failed to set busy_timeout: {err}"))?;
+
+    ensure_schema(&conn)?;
+
+    Ok(conn)
+}
+
+fn table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        [table],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|row| row.is_some())
+    .map_err(|err| format!("failed to inspect sqlite_master for {table}: {err}"))
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|err| format!("failed to inspect schema for {table}: {err}"))?;
+    let mut rows = stmt
+        .query([])
+        .map_err(|err| format!("failed to query schema for {table}: {err}"))?;
+    while let Some(row) = rows
+        .next()
+        .map_err(|err| format!("failed to read schema row for {table}: {err}"))?
+    {
+        let name: String = row
+            .get(1)
+            .map_err(|err| format!("failed to read column name for {table}: {err}"))?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn add_column_if_missing(conn: &Connection, table: &str, spec: &str) -> Result<(), String> {
+    let name = spec
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| format!("invalid column spec: {spec}"))?;
+    if column_exists(conn, table, name)? {
+        return Ok(());
+    }
+
+    conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {spec}"), [])
+        .map_err(|err| format!("failed to add {table}.{name}: {err}"))?;
+    Ok(())
+}
+
+fn rebuild_kv_table(conn: &Connection) -> Result<(), String> {
+    if !table_exists(conn, "kv")? || column_exists(conn, "kv", "scope")? {
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE kv_next (
+          scope TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          PRIMARY KEY (scope, key)
+        );
+        INSERT INTO kv_next (scope, key, value, updated_at)
+        SELECT '', key, value, updated_at
+        FROM kv;
+        DROP TABLE kv;
+        ALTER TABLE kv_next RENAME TO kv;
+        "#,
+    )
+    .map_err(|err| format!("failed to rebuild kv table: {err}"))?;
+    Ok(())
+}
+
+fn ensure_project_tables(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS ui_projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          root TEXT NOT NULL,
+          color TEXT NOT NULL DEFAULT '#ffffff',
+          additional_roots TEXT NOT NULL DEFAULT '[]',
+          notes TEXT NOT NULL DEFAULT '',
+          scope TEXT,
+          boundary_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS ui_project_memberships (
+          project_id TEXT NOT NULL,
+          instance_id TEXT NOT NULL,
+          attached_at INTEGER NOT NULL,
+          PRIMARY KEY (project_id, instance_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS ui_project_assets (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          title TEXT NOT NULL,
+          path TEXT,
+          content TEXT,
+          description TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS ui_asset_attachments (
+          asset_id TEXT NOT NULL,
+          target_type TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          attached_at INTEGER NOT NULL,
+          PRIMARY KEY (asset_id, target_type, target_id)
+        );
+        "#,
+    )
+    .map_err(|err| format!("failed to ensure project tables: {err}"))?;
+
+    add_column_if_missing(conn, "ui_projects", "notes TEXT NOT NULL DEFAULT ''")?;
+    add_column_if_missing(conn, "ui_projects", "color TEXT NOT NULL DEFAULT '#ffffff'")
+}
+
+fn ensure_columns(conn: &Connection) -> Result<(), String> {
+    for (table, spec) in COLUMN_MIGRATIONS {
+        add_column_if_missing(conn, table, spec)?;
+    }
+    Ok(())
+}
+
+fn touch_kv_scope(conn: &Connection, scope: &str) -> Result<(), String> {
+    let changed_at = now_millis();
+    conn.execute(
+        r#"
+        INSERT INTO kv_scope_updates (scope, changed_at) VALUES (?, ?)
+        ON CONFLICT(scope) DO UPDATE SET changed_at =
+          CASE
+            WHEN excluded.changed_at > kv_scope_updates.changed_at THEN excluded.changed_at
+            ELSE kv_scope_updates.changed_at + 1
+          END
+        "#,
+        params![scope, changed_at],
+    )
+    .map_err(|err| format!("failed to touch kv scope update for {scope}: {err}"))?;
+    Ok(())
+}
+
+fn kv_set_value(conn: &Connection, scope: &str, key: &str, value: &str) -> Result<(), String> {
+    conn.execute(
+        r#"
+        INSERT INTO kv (scope, key, value, updated_at) VALUES (?, ?, ?, unixepoch())
+        ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        "#,
+        params![scope, key, value],
+    )
+    .map_err(|err| format!("failed to set kv {scope}/{key}: {err}"))?;
+    touch_kv_scope(conn, scope)
+}
+
+fn kv_delete_value(conn: &Connection, scope: &str, key: &str) -> Result<(), String> {
+    let deleted = conn
+        .execute(
+            "DELETE FROM kv WHERE scope = ? AND key = ?",
+            params![scope, key],
+        )
+        .map_err(|err| format!("failed to delete kv {scope}/{key}: {err}"))?;
+    if deleted > 0 {
+        touch_kv_scope(conn, scope)?;
+    }
+    Ok(())
+}
+
+fn kv_get_value(conn: &Connection, scope: &str, key: &str) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT value FROM kv WHERE scope = ? AND key = ?",
+        params![scope, key],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|err| format!("failed to read kv {scope}/{key}: {err}"))
+}
+
+pub struct UiCommandRecord {
+    pub id: i64,
+    pub scope: String,
+    pub created_by: Option<String>,
+    pub kind: String,
+    pub payload: String,
+}
+
+pub fn claim_next_ui_command(
+    conn: &Connection,
+    worker_id: &str,
+) -> Result<Option<UiCommandRecord>, String> {
+    loop {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|err| format!("failed to begin ui command tx: {err}"))?;
+        let row = tx
+            .query_row(
+                "SELECT id, scope, created_by, kind, payload
+                 FROM ui_commands
+                 WHERE status = 'pending'
+                 ORDER BY id ASC
+                 LIMIT 1",
+                [],
+                |row| {
+                    Ok(UiCommandRecord {
+                        id: row.get(0)?,
+                        scope: row.get(1)?,
+                        created_by: row.get(2)?,
+                        kind: row.get(3)?,
+                        payload: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|err| format!("failed to query next ui command: {err}"))?;
+
+        let Some(record) = row else {
+            tx.commit()
+                .map_err(|err| format!("failed to commit empty ui command tx: {err}"))?;
+            return Ok(None);
+        };
+
+        let updated = tx
+            .execute(
+                "UPDATE ui_commands
+                 SET status = 'running', claimed_by = ?, started_at = unixepoch()
+                 WHERE id = ? AND status = 'pending'",
+                params![worker_id, record.id],
+            )
+            .map_err(|err| format!("failed to claim ui command {}: {err}", record.id))?;
+
+        tx.commit()
+            .map_err(|err| format!("failed to commit ui command claim: {err}"))?;
+
+        if updated == 1 {
+            emit_event(
+                conn,
+                &record.scope,
+                "ui.command.started",
+                Some(worker_id),
+                Some(&record.kind),
+                Some(json!({ "command_id": record.id, "created_by": record.created_by })),
+            )?;
+            return Ok(Some(record));
+        }
+    }
+}
+
+pub fn complete_ui_command(
+    conn: &Connection,
+    record: &UiCommandRecord,
+    result: &Value,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE ui_commands
+         SET status = 'done', result = ?, error = NULL, completed_at = unixepoch()
+         WHERE id = ?",
+        params![result.to_string(), record.id],
+    )
+    .map_err(|err| format!("failed to complete ui command {}: {err}", record.id))?;
+    emit_event(
+        conn,
+        &record.scope,
+        "ui.command.completed",
+        record.created_by.as_deref(),
+        Some(&record.kind),
+        Some(json!({ "command_id": record.id, "result": result })),
+    )
+}
+
+pub fn fail_ui_command(
+    conn: &Connection,
+    record: &UiCommandRecord,
+    error: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE ui_commands
+         SET status = 'failed', error = ?, completed_at = unixepoch()
+         WHERE id = ?",
+        params![error, record.id],
+    )
+    .map_err(|err| format!("failed to fail ui command {}: {err}", record.id))?;
+    emit_event(
+        conn,
+        &record.scope,
+        "ui.command.failed",
+        record.created_by.as_deref(),
+        Some(&record.kind),
+        Some(json!({ "command_id": record.id, "error": error })),
+    )
+}
+
+pub fn load_ui_layout(conn: &Connection, scope: &str) -> Result<SavedLayout, String> {
+    let Some(raw) = kv_get_value(conn, scope, UI_LAYOUT_KEY)? else {
+        return Ok(SavedLayout::default());
+    };
+    serde_json::from_str(&raw).map_err(|err| format!("failed to parse {UI_LAYOUT_KEY}: {err}"))
+}
+
+pub fn save_ui_layout(conn: &Connection, scope: &str, layout: &SavedLayout) -> Result<(), String> {
+    let raw = serde_json::to_string(layout)
+        .map_err(|err| format!("failed to serialize {UI_LAYOUT_KEY}: {err}"))?;
+    kv_set_value(conn, scope, UI_LAYOUT_KEY, &raw)
+}
+
+pub fn set_ui_layout_position(
+    conn: &Connection,
+    scope: &str,
+    node_id: &str,
+    position: GraphPosition,
+) -> Result<SavedLayout, String> {
+    let mut layout = load_ui_layout(conn, scope)?;
+    layout.nodes.insert(node_id.to_owned(), position);
+    save_ui_layout(conn, scope, &layout)?;
+    Ok(layout)
+}
+
+fn has_role(label: Option<&str>, role: &str) -> bool {
+    label
+        .unwrap_or_default()
+        .split_whitespace()
+        .any(|token| token == format!("role:{role}"))
+}
+
+fn active_planner(
+    conn: &Connection,
+    scope: &str,
+    instance_id: &str,
+) -> Result<Option<(String, Option<String>)>, String> {
+    let row = conn
+        .query_row(
+            "SELECT id, label FROM instances WHERE id = ? AND scope = ?",
+            params![instance_id, scope],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()
+        .map_err(|err| format!("failed to read planner instance {instance_id}: {err}"))?;
+
+    Ok(row.filter(|(_, label)| has_role(label.as_deref(), "planner")))
+}
+
+fn next_planner(
+    conn: &Connection,
+    scope: &str,
+) -> Result<Option<(String, Option<String>)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, label FROM instances WHERE scope = ? ORDER BY registered_at ASC, id ASC",
+        )
+        .map_err(|err| format!("failed to prepare planner lookup for {scope}: {err}"))?;
+
+    let rows = stmt
+        .query_map([scope], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })
+        .map_err(|err| format!("failed to query planners for {scope}: {err}"))?;
+
+    for row in rows {
+        let (id, label) = row.map_err(|err| format!("failed to read planner row: {err}"))?;
+        if has_role(label.as_deref(), "planner") {
+            return Ok(Some((id, label)));
+        }
+    }
+
+    Ok(None)
+}
+
+fn refresh_planner_owner(conn: &Connection, scope: &str) -> Result<(), String> {
+    let current = kv_get_value(conn, scope, PLANNER_OWNER_KEY)?;
+    if let Some(raw) = current {
+        let parsed = serde_json::from_str::<Value>(&raw).ok();
+        if let Some(instance_id) = parsed
+            .as_ref()
+            .and_then(|value| value.get("instance_id"))
+            .and_then(Value::as_str)
+        {
+            if active_planner(conn, scope, instance_id)?.is_some() {
+                return Ok(());
+            }
+        }
+    }
+
+    if let Some((id, label)) = next_planner(conn, scope)? {
+        let payload = json!({
+            "instance_id": id,
+            "label": label,
+            "assigned_at": now_millis(),
+        });
+        kv_set_value(conn, scope, PLANNER_OWNER_KEY, &payload.to_string())?;
+    } else {
+        kv_delete_value(conn, scope, PLANNER_OWNER_KEY)?;
+    }
+
+    Ok(())
+}
+
+fn emit_event(
+    conn: &Connection,
+    scope: &str,
+    event_type: &str,
+    actor: Option<&str>,
+    subject: Option<&str>,
+    payload: Option<Value>,
+) -> Result<(), String> {
+    let payload_text = payload.map(|value| value.to_string());
+    conn.execute(
+        "INSERT INTO events (scope, type, actor, subject, payload) VALUES (?, ?, ?, ?, ?)",
+        params![scope, event_type, actor, subject, payload_text],
+    )
+    .map_err(|err| format!("failed to write event {event_type}: {err}"))?;
+    Ok(())
+}
+
+fn dependency_state(
+    conn: &Connection,
+    scope: &str,
+    dep_ids: &[String],
+) -> Result<&'static str, String> {
+    if dep_ids.is_empty() {
+        return Ok("ready");
+    }
+
+    let mut all_done = true;
+    for dep_id in dep_ids {
+        let status = conn
+            .query_row(
+                "SELECT status FROM tasks WHERE id = ? AND scope = ?",
+                params![dep_id, scope],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|err| format!("failed to read dependency {dep_id}: {err}"))?;
+
+        match status.as_deref() {
+            Some("failed") | Some("cancelled") => return Ok("failed"),
+            Some("done") => {}
+            _ => all_done = false,
+        }
+    }
+
+    Ok(if all_done { "ready" } else { "blocked" })
+}
+
+fn ensure_schema(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(SWARM_DB_BOOTSTRAP_SQL)
+        .map_err(|err| format!("failed to bootstrap schema: {err}"))?;
+
+    ensure_columns(conn)?;
+    rebuild_kv_table(conn)?;
+    ensure_project_tables(conn)?;
+
+    conn.execute_batch(SWARM_DB_FINALIZE_SQL)
+        .map_err(|err| format!("failed to finalize schema: {err}"))?;
+
+    Ok(())
+}
+
+/// Ensure the `instances.adopted` column exists on the shared swarm.db.
+///
+/// The Bun-side `src/db.ts` adds this column at startup, but swarm-ui can
+/// launch before any MCP client has ever opened the DB. Running an
+/// idempotent ALTER here guarantees the column is present before any write
+/// that references it.
+pub fn ensure_adopted_column(conn: &Connection) -> Result<(), String> {
+    ensure_schema(conn)
+}
+
+/// Walk upward from `dir` looking for a `.git` entry, returning the first
+/// directory that contains one. Falls back to `dir` itself if none is found.
+///
+/// Mirrors `root()` in `src/paths.ts` so UI-computed scopes match what the
+/// adopting child process would compute for the same directory.
+pub fn git_root(dir: &Path) -> PathBuf {
+    let start = dir.to_path_buf();
+    let mut cur = start.clone();
+    loop {
+        if cur.join(".git").exists() {
+            return cur;
+        }
+        match cur.parent() {
+            Some(parent) if parent != cur => cur = parent.to_path_buf(),
+            _ => return start,
+        }
+    }
+}
+
+pub struct PendingInstance {
+    pub id: String,
+    pub scope: String,
+    pub directory: String,
+    pub root: String,
+    pub file_root: String,
+}
+
+/// Pre-create an unadopted instance row owned by the UI.
+///
+/// The child process inside the spawned PTY will `swarm.register` with
+/// `SWARM_MCP_INSTANCE_ID=<id>` and adopt this row (flipping `adopted = 1`).
+/// Until then, the UI keeps the row's `heartbeat` fresh via
+/// [`heartbeat_unadopted_instance`] so it stays visible and is not pruned
+/// by the Bun side's 30s stale sweep.
+pub fn create_pending_instance(
+    conn: &Connection,
+    directory: &str,
+    explicit_scope: Option<&str>,
+    label: Option<&str>,
+    file_root: Option<&str>,
+) -> Result<PendingInstance, String> {
+    let dir_path = PathBuf::from(directory);
+    let root = git_root(&dir_path);
+    let scope = match explicit_scope {
+        Some(value) if !value.trim().is_empty() => PathBuf::from(value.trim()),
+        _ => root.clone(),
+    };
+    let file_root_path = match file_root {
+        Some(value) if !value.trim().is_empty() => PathBuf::from(value.trim()),
+        _ => dir_path.clone(),
+    };
+
+    let row = PendingInstance {
+        id: Uuid::new_v4().to_string(),
+        scope: scope.to_string_lossy().into_owned(),
+        directory: dir_path.to_string_lossy().into_owned(),
+        root: root.to_string_lossy().into_owned(),
+        file_root: file_root_path.to_string_lossy().into_owned(),
+    };
+
+    // pid=0 is the UI's marker for "child has not adopted yet". The child
+    // overwrites it with its own pid during `register`.
+    conn.execute(
+        "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted)
+         VALUES (?, ?, ?, ?, ?, 0, ?, 0)",
+        params![
+            row.id,
+            row.scope,
+            row.directory,
+            row.root,
+            row.file_root,
+            label
+        ],
+    )
+    .map_err(|err| format!("failed to pre-create instance row: {err}"))?;
+
+    Ok(row)
+}
+
+/// Overwrite an instance's `label` column with the given string. Returns
+/// `true` if the row existed and was updated, `false` if no row matched
+/// `instance_id`. Used by `ui_set_instance_label` to persist the per-agent
+/// persona emoji in the existing comma-token label format
+/// (e.g. `name:foo role:planner persona:🦉`) — no schema migration needed
+/// since labels are already free-form strings.
+pub fn update_instance_label(
+    conn: &Connection,
+    instance_id: &str,
+    label: &str,
+) -> Result<bool, String> {
+    let updated = conn
+        .execute(
+            "UPDATE instances SET label = ? WHERE id = ?",
+            params![label, instance_id],
+        )
+        .map_err(|err| format!("failed to update instance label: {err}"))?;
+    Ok(updated > 0)
+}
+
+/// Refresh an unadopted instance's heartbeat. No-op if the row has already
+/// been adopted or no longer exists.
+pub fn heartbeat_unadopted_instance(conn: &Connection, instance_id: &str) -> Result<bool, String> {
+    let updated = conn
+        .execute(
+            "UPDATE instances SET heartbeat = unixepoch() WHERE id = ? AND adopted = 0",
+            params![instance_id],
+        )
+        .map_err(|err| format!("failed to heartbeat instance: {err}"))?;
+    Ok(updated > 0)
+}
+
+/// Delete an unadopted instance row. Used on PTY exit to clean up a row the
+/// child never adopted. No-op if the child has already adopted (at which
+/// point the child owns the row's lifecycle and will call
+/// `swarm.deregister` itself on shutdown).
+pub fn delete_unadopted_instance(conn: &Connection, instance_id: &str) -> Result<bool, String> {
+    let deleted = conn
+        .execute(
+            "DELETE FROM instances WHERE id = ? AND adopted = 0",
+            params![instance_id],
+        )
+        .map_err(|err| format!("failed to delete unadopted instance: {err}"))?;
+    Ok(deleted > 0)
+}
+
+pub fn retarget_instance_runtime_context(
+    conn: &Connection,
+    instance_id: &str,
+    directory: &str,
+    explicit_scope: Option<&str>,
+) -> Result<bool, String> {
+    let dir_path = PathBuf::from(directory);
+    let root = git_root(&dir_path);
+    let scope = match explicit_scope {
+        Some(value) if !value.trim().is_empty() => PathBuf::from(value.trim()),
+        _ => root.clone(),
+    };
+
+    let updated = conn
+        .execute(
+            "UPDATE instances SET scope = ?, directory = ?, root = ?, file_root = ? WHERE id = ?",
+            params![
+                scope.to_string_lossy(),
+                dir_path.to_string_lossy(),
+                root.to_string_lossy(),
+                dir_path.to_string_lossy(),
+                instance_id,
+            ],
+        )
+        .map_err(|err| format!("failed to retarget instance {instance_id}: {err}"))?;
+
+    Ok(updated > 0)
+}
+
+fn read_project_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectSpace> {
+    let additional_roots_raw: String = row.get(4)?;
+    let boundary_raw: String = row.get(7)?;
+    let additional_roots =
+        serde_json::from_str::<Vec<String>>(&additional_roots_raw).map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(err))
+        })?;
+    let boundary = serde_json::from_str::<ProjectBoundary>(&boundary_raw).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(err))
+    })?;
+
+    Ok(ProjectSpace {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        root: row.get(2)?,
+        color: row.get(3)?,
+        additional_roots,
+        notes: row.get(5)?,
+        scope: row.get(6)?,
+        boundary,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
+}
+
+pub fn list_projects(conn: &Connection) -> Result<Vec<ProjectSpace>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, root, color, additional_roots, notes, scope, boundary_json, created_at, updated_at
+             FROM ui_projects
+             ORDER BY name COLLATE NOCASE ASC, updated_at DESC, id ASC",
+        )
+        .map_err(|err| format!("failed to prepare project listing: {err}"))?;
+    let rows = stmt
+        .query_map([], read_project_row)
+        .map_err(|err| format!("failed to query projects: {err}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read project row: {err}"))
+}
+
+pub fn load_project(conn: &Connection, project_id: &str) -> Result<Option<ProjectSpace>, String> {
+    conn.query_row(
+        "SELECT id, name, root, color, additional_roots, notes, scope, boundary_json, created_at, updated_at
+         FROM ui_projects
+         WHERE id = ?",
+        params![project_id],
+        read_project_row,
+    )
+    .optional()
+    .map_err(|err| format!("failed to load project {project_id}: {err}"))
+}
+
+pub fn save_project(conn: &Connection, project: &ProjectSpace) -> Result<ProjectSpace, String> {
+    let additional_roots = serde_json::to_string(&project.additional_roots)
+        .map_err(|err| format!("failed to encode project roots: {err}"))?;
+    let boundary = serde_json::to_string(&project.boundary)
+        .map_err(|err| format!("failed to encode project boundary: {err}"))?;
+
+    conn.execute(
+        r#"
+        INSERT INTO ui_projects
+          (id, name, root, color, additional_roots, notes, scope, boundary_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name,
+          root = excluded.root,
+          color = excluded.color,
+          additional_roots = excluded.additional_roots,
+          notes = excluded.notes,
+          scope = excluded.scope,
+          boundary_json = excluded.boundary_json,
+          updated_at = excluded.updated_at
+        "#,
+        params![
+            project.id,
+            project.name,
+            project.root,
+            project.color,
+            additional_roots,
+            project.notes,
+            project.scope,
+            boundary,
+            project.created_at,
+            project.updated_at,
+        ],
+    )
+    .map_err(|err| format!("failed to save project {}: {err}", project.id))?;
+
+    load_project(conn, &project.id)?.ok_or_else(|| format!("project {} was not saved", project.id))
+}
+
+pub fn delete_project(conn: &Connection, project_id: &str) -> Result<bool, String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("failed to begin project delete tx: {err}"))?;
+    tx.execute(
+        "DELETE FROM ui_project_memberships WHERE project_id = ?",
+        params![project_id],
+    )
+    .map_err(|err| format!("failed to delete project memberships for {project_id}: {err}"))?;
+    tx.execute(
+        "DELETE FROM ui_asset_attachments
+         WHERE asset_id IN (SELECT id FROM ui_project_assets WHERE project_id = ?)",
+        params![project_id],
+    )
+    .map_err(|err| format!("failed to delete project asset attachments for {project_id}: {err}"))?;
+    tx.execute(
+        "DELETE FROM ui_project_assets WHERE project_id = ?",
+        params![project_id],
+    )
+    .map_err(|err| format!("failed to delete project assets for {project_id}: {err}"))?;
+    let deleted = tx
+        .execute("DELETE FROM ui_projects WHERE id = ?", params![project_id])
+        .map_err(|err| format!("failed to delete project {project_id}: {err}"))?;
+    tx.commit()
+        .map_err(|err| format!("failed to commit project delete tx: {err}"))?;
+    Ok(deleted > 0)
+}
+
+fn read_project_asset_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectAsset> {
+    Ok(ProjectAsset {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        kind: row.get(2)?,
+        title: row.get(3)?,
+        path: row.get(4)?,
+        content: row.get(5)?,
+        description: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+    })
+}
+
+pub fn list_project_assets(
+    conn: &Connection,
+    project_id: &str,
+) -> Result<Vec<ProjectAsset>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, project_id, kind, title, path, content, description, created_at, updated_at
+             FROM ui_project_assets
+             WHERE project_id = ?
+             ORDER BY title COLLATE NOCASE ASC, updated_at DESC, id ASC",
+        )
+        .map_err(|err| format!("failed to prepare project asset listing: {err}"))?;
+    let rows = stmt
+        .query_map(params![project_id], read_project_asset_row)
+        .map_err(|err| format!("failed to query project assets: {err}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read project asset row: {err}"))
+}
+
+pub fn load_project_asset(
+    conn: &Connection,
+    asset_id: &str,
+) -> Result<Option<ProjectAsset>, String> {
+    conn.query_row(
+        "SELECT id, project_id, kind, title, path, content, description, created_at, updated_at
+         FROM ui_project_assets
+         WHERE id = ?",
+        params![asset_id],
+        read_project_asset_row,
+    )
+    .optional()
+    .map_err(|err| format!("failed to load project asset {asset_id}: {err}"))
+}
+
+pub fn save_project_asset(conn: &Connection, asset: &ProjectAsset) -> Result<ProjectAsset, String> {
+    if load_project(conn, &asset.project_id)?.is_none() {
+        return Err(format!("project {} not found", asset.project_id));
+    }
+
+    conn.execute(
+        r#"
+        INSERT INTO ui_project_assets
+          (id, project_id, kind, title, path, content, description, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          project_id = excluded.project_id,
+          kind = excluded.kind,
+          title = excluded.title,
+          path = excluded.path,
+          content = excluded.content,
+          description = excluded.description,
+          updated_at = excluded.updated_at
+        "#,
+        params![
+            asset.id,
+            asset.project_id,
+            asset.kind,
+            asset.title,
+            asset.path,
+            asset.content,
+            asset.description,
+            asset.created_at,
+            asset.updated_at,
+        ],
+    )
+    .map_err(|err| format!("failed to save project asset {}: {err}", asset.id))?;
+
+    load_project_asset(conn, &asset.id)?
+        .ok_or_else(|| format!("project asset {} was not saved", asset.id))
+}
+
+pub fn delete_project_asset(conn: &Connection, asset_id: &str) -> Result<bool, String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("failed to begin project asset delete tx: {err}"))?;
+    tx.execute(
+        "DELETE FROM ui_asset_attachments WHERE asset_id = ?",
+        params![asset_id],
+    )
+    .map_err(|err| format!("failed to delete attachments for asset {asset_id}: {err}"))?;
+    let deleted = tx
+        .execute(
+            "DELETE FROM ui_project_assets WHERE id = ?",
+            params![asset_id],
+        )
+        .map_err(|err| format!("failed to delete project asset {asset_id}: {err}"))?;
+    tx.commit()
+        .map_err(|err| format!("failed to commit project asset delete tx: {err}"))?;
+    Ok(deleted > 0)
+}
+
+fn read_browser_context_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserContext> {
+    Ok(BrowserContext {
+        scope: row.get(0)?,
+        id: row.get(1)?,
+        owner_instance_id: row.get(2)?,
+        endpoint: row.get(3)?,
+        host: row.get(4)?,
+        port: row.get(5)?,
+        profile_dir: row.get(6)?,
+        pid: row.get(7)?,
+        start_url: row.get(8)?,
+        status: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
+}
+
+pub fn save_browser_context(
+    conn: &Connection,
+    context: &BrowserContext,
+) -> Result<BrowserContext, String> {
+    conn.execute(
+        r#"
+        INSERT INTO browser_contexts
+          (scope, id, owner_instance_id, endpoint, host, port, profile_dir, pid, start_url, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope, id) DO UPDATE SET
+          owner_instance_id = excluded.owner_instance_id,
+          endpoint = excluded.endpoint,
+          host = excluded.host,
+          port = excluded.port,
+          profile_dir = excluded.profile_dir,
+          pid = excluded.pid,
+          start_url = excluded.start_url,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+        "#,
+        params![
+            context.scope,
+            context.id,
+            context.owner_instance_id,
+            context.endpoint,
+            context.host,
+            context.port,
+            context.profile_dir,
+            context.pid,
+            context.start_url,
+            context.status,
+            context.created_at,
+            context.updated_at,
+        ],
+    )
+    .map_err(|err| format!("failed to save browser context {}: {err}", context.id))?;
+
+    let saved = load_browser_context(conn, &context.scope, &context.id)?
+        .ok_or_else(|| format!("browser context {} was not saved", context.id))?;
+    emit_event(
+        conn,
+        &context.scope,
+        "browser.context.upserted",
+        context.owner_instance_id.as_deref(),
+        Some(&context.id),
+        Some(json!({
+            "endpoint": &context.endpoint,
+            "status": &context.status,
+        })),
+    )?;
+    Ok(saved)
+}
+
+pub fn load_browser_context(
+    conn: &Connection,
+    scope: &str,
+    context_id: &str,
+) -> Result<Option<BrowserContext>, String> {
+    conn.query_row(
+        "SELECT scope, id, owner_instance_id, endpoint, host, port, profile_dir, pid, start_url, status, created_at, updated_at
+         FROM browser_contexts
+         WHERE scope = ? AND id = ?",
+        params![scope, context_id],
+        read_browser_context_row,
+    )
+    .optional()
+    .map_err(|err| format!("failed to load browser context {context_id}: {err}"))
+}
+
+pub fn close_browser_context(
+    conn: &Connection,
+    scope: &str,
+    context_id: &str,
+    updated_at: i64,
+) -> Result<bool, String> {
+    let updated = conn
+        .execute(
+            "UPDATE browser_contexts
+             SET status = 'closed', pid = NULL, updated_at = ?
+             WHERE scope = ? AND id = ?",
+            params![updated_at, scope, context_id],
+        )
+        .map_err(|err| format!("failed to close browser context {context_id}: {err}"))?;
+    if updated > 0 {
+        emit_event(
+            conn,
+            scope,
+            "browser.context.closed",
+            None,
+            Some(context_id),
+            None,
+        )?;
+    }
+    Ok(updated > 0)
+}
+
+pub fn delete_browser_context(
+    conn: &Connection,
+    scope: &str,
+    context_id: &str,
+) -> Result<bool, String> {
+    let tabs_deleted = conn
+        .execute(
+            "DELETE FROM browser_tabs WHERE scope = ? AND context_id = ?",
+            params![scope, context_id],
+        )
+        .map_err(|err| format!("failed to delete browser tabs for {context_id}: {err}"))?;
+    let snapshots_deleted = conn
+        .execute(
+            "DELETE FROM browser_snapshots WHERE scope = ? AND context_id = ?",
+            params![scope, context_id],
+        )
+        .map_err(|err| format!("failed to delete browser snapshots for {context_id}: {err}"))?;
+    let contexts_deleted = conn
+        .execute(
+            "DELETE FROM browser_contexts WHERE scope = ? AND id = ?",
+            params![scope, context_id],
+        )
+        .map_err(|err| format!("failed to delete browser context {context_id}: {err}"))?;
+
+    if contexts_deleted > 0 {
+        emit_event(
+            conn,
+            scope,
+            "browser.context.closed",
+            None,
+            Some(context_id),
+            Some(json!({
+                "deleted": true,
+                "tabs_deleted": tabs_deleted,
+                "snapshots_deleted": snapshots_deleted,
+            })),
+        )?;
+    }
+
+    Ok(contexts_deleted > 0)
+}
+
+pub fn list_browser_contexts(
+    conn: &Connection,
+    scope: &str,
+) -> Result<Vec<BrowserContext>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT scope, id, owner_instance_id, endpoint, host, port, profile_dir, pid, start_url, status, created_at, updated_at
+             FROM browser_contexts
+             WHERE scope = ?
+             ORDER BY updated_at DESC, created_at DESC, id ASC",
+        )
+        .map_err(|err| format!("failed to prepare browser context listing: {err}"))?;
+    let rows = stmt
+        .query_map(params![scope], read_browser_context_row)
+        .map_err(|err| format!("failed to query browser contexts: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read browser context row: {err}"))
+}
+
+fn read_browser_tab_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserTab> {
+    let active: i64 = row.get(6)?;
+    Ok(BrowserTab {
+        scope: row.get(0)?,
+        context_id: row.get(1)?,
+        tab_id: row.get(2)?,
+        tab_type: row.get(3)?,
+        url: row.get(4)?,
+        title: row.get(5)?,
+        active: active != 0,
+        updated_at: row.get(7)?,
+    })
+}
+
+pub fn list_browser_tabs(conn: &Connection, scope: &str) -> Result<Vec<BrowserTab>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT scope, context_id, tab_id, type, url, title, active, updated_at
+             FROM browser_tabs
+             WHERE scope = ?
+             ORDER BY context_id ASC, active DESC, updated_at DESC, tab_id ASC",
+        )
+        .map_err(|err| format!("failed to prepare browser tab listing: {err}"))?;
+    let rows = stmt
+        .query_map(params![scope], read_browser_tab_row)
+        .map_err(|err| format!("failed to query browser tabs: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read browser tab row: {err}"))
+}
+
+pub fn record_browser_tabs(
+    conn: &Connection,
+    scope: &str,
+    context_id: &str,
+    tabs: &[BrowserTab],
+    updated_at: i64,
+) -> Result<Vec<BrowserTab>, String> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("failed to begin browser tab tx: {err}"))?;
+
+    if tabs.is_empty() {
+        tx.execute(
+            "DELETE FROM browser_tabs WHERE scope = ? AND context_id = ?",
+            params![scope, context_id],
+        )
+        .map_err(|err| format!("failed to clear browser tabs for {context_id}: {err}"))?;
+    } else {
+        let tab_ids = tabs
+            .iter()
+            .map(|tab| tab.tab_id.clone())
+            .collect::<Vec<_>>();
+        let placeholders = vec!["?"; tab_ids.len()].join(",");
+        let sql = format!(
+            "DELETE FROM browser_tabs
+             WHERE scope = ? AND context_id = ? AND tab_id NOT IN ({placeholders})"
+        );
+        let mut params = vec![scope.to_string(), context_id.to_string()];
+        params.extend(tab_ids);
+        tx.execute(&sql, rusqlite::params_from_iter(params))
+            .map_err(|err| format!("failed to prune browser tabs for {context_id}: {err}"))?;
+
+        for tab in tabs {
+            tx.execute(
+                "INSERT INTO browser_tabs
+                   (scope, context_id, tab_id, type, url, title, active, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(scope, context_id, tab_id) DO UPDATE SET
+                   type = excluded.type,
+                   url = excluded.url,
+                   title = excluded.title,
+                   active = excluded.active,
+                   updated_at = excluded.updated_at",
+                params![
+                    scope,
+                    context_id,
+                    tab.tab_id,
+                    tab.tab_type,
+                    tab.url,
+                    tab.title,
+                    if tab.active { 1 } else { 0 },
+                    updated_at,
+                ],
+            )
+            .map_err(|err| format!("failed to save browser tab {}: {err}", tab.tab_id))?;
+        }
+    }
+
+    tx.commit()
+        .map_err(|err| format!("failed to commit browser tab tx: {err}"))?;
+    emit_event(
+        conn,
+        scope,
+        "browser.tabs.updated",
+        None,
+        Some(context_id),
+        Some(json!({ "count": tabs.len() })),
+    )?;
+    Ok(list_browser_tabs(conn, scope)?
+        .into_iter()
+        .filter(|tab| tab.context_id == context_id)
+        .collect())
+}
+
+fn parse_browser_snapshot_elements(raw: &str) -> Vec<BrowserSnapshotElement> {
+    serde_json::from_str(raw).unwrap_or_default()
+}
+
+fn read_browser_snapshot_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BrowserSnapshot> {
+    let elements_json: String = row.get(7)?;
+    Ok(BrowserSnapshot {
+        id: row.get(0)?,
+        scope: row.get(1)?,
+        context_id: row.get(2)?,
+        tab_id: row.get(3)?,
+        url: row.get(4)?,
+        title: row.get(5)?,
+        text: row.get(6)?,
+        elements: parse_browser_snapshot_elements(&elements_json),
+        screenshot_path: row.get(8)?,
+        created_by: row.get(9)?,
+        created_at: row.get(10)?,
+    })
+}
+
+pub fn list_browser_snapshots(
+    conn: &Connection,
+    scope: &str,
+    limit: usize,
+) -> Result<Vec<BrowserSnapshot>, String> {
+    let bounded_limit = i64::try_from(limit.clamp(1, 200)).unwrap_or(40);
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, scope, context_id, tab_id, url, title, text, elements_json, screenshot_path, created_by, created_at
+             FROM browser_snapshots
+             WHERE scope = ?
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?",
+        )
+        .map_err(|err| format!("failed to prepare browser snapshot listing: {err}"))?;
+    let rows = stmt
+        .query_map(params![scope, bounded_limit], read_browser_snapshot_row)
+        .map_err(|err| format!("failed to query browser snapshots: {err}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read browser snapshot row: {err}"))
+}
+
+pub fn record_browser_snapshot(
+    conn: &Connection,
+    snapshot: &BrowserSnapshot,
+) -> Result<BrowserSnapshot, String> {
+    let elements_json = serde_json::to_string(&snapshot.elements)
+        .map_err(|err| format!("failed to serialize browser snapshot elements: {err}"))?;
+    conn.execute(
+        "INSERT INTO browser_snapshots
+           (id, scope, context_id, tab_id, url, title, text, elements_json, screenshot_path, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        params![
+            snapshot.id,
+            snapshot.scope,
+            snapshot.context_id,
+            snapshot.tab_id,
+            snapshot.url,
+            snapshot.title,
+            snapshot.text,
+            elements_json,
+            snapshot.screenshot_path,
+            snapshot.created_by,
+            snapshot.created_at,
+        ],
+    )
+    .map_err(|err| format!("failed to record browser snapshot {}: {err}", snapshot.id))?;
+    emit_event(
+        conn,
+        &snapshot.scope,
+        "browser.snapshot.captured",
+        snapshot.created_by.as_deref(),
+        Some(&snapshot.context_id),
+        Some(json!({
+            "snapshot_id": &snapshot.id,
+            "tab_id": &snapshot.tab_id,
+            "text_length": snapshot.text.len(),
+            "elements": snapshot.elements.len(),
+            "screenshot_path": &snapshot.screenshot_path,
+        })),
+    )?;
+
+    let mut snapshots = list_browser_snapshots(conn, &snapshot.scope, 200)?
+        .into_iter()
+        .filter(|entry| entry.id == snapshot.id)
+        .collect::<Vec<_>>();
+    snapshots
+        .pop()
+        .ok_or_else(|| format!("browser snapshot {} was not saved", snapshot.id))
+}
+
+pub fn list_asset_attachments(
+    conn: &Connection,
+    project_id: Option<&str>,
+) -> Result<Vec<AssetAttachment>, String> {
+    let sql = match project_id {
+        Some(_) => {
+            "SELECT attachment.asset_id, attachment.target_type, attachment.target_id, attachment.attached_at
+             FROM ui_asset_attachments attachment
+             JOIN ui_project_assets asset ON asset.id = attachment.asset_id
+             WHERE asset.project_id = ?
+             ORDER BY attachment.attached_at ASC, attachment.asset_id ASC"
+        }
+        None => {
+            "SELECT asset_id, target_type, target_id, attached_at
+             FROM ui_asset_attachments
+             ORDER BY attached_at ASC, asset_id ASC"
+        }
+    };
+    let mut stmt = conn
+        .prepare(sql)
+        .map_err(|err| format!("failed to prepare asset attachment listing: {err}"))?;
+    let read = |row: &rusqlite::Row<'_>| {
+        Ok(AssetAttachment {
+            asset_id: row.get(0)?,
+            target_type: row.get(1)?,
+            target_id: row.get(2)?,
+            attached_at: row.get(3)?,
+        })
+    };
+    let rows = match project_id {
+        Some(id) => stmt
+            .query_map(params![id], read)
+            .map_err(|err| format!("failed to query asset attachments: {err}"))?,
+        None => stmt
+            .query_map([], read)
+            .map_err(|err| format!("failed to query asset attachments: {err}"))?,
+    };
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read asset attachment row: {err}"))
+}
+
+pub fn attach_asset(
+    conn: &Connection,
+    asset_id: &str,
+    target_type: &str,
+    target_id: &str,
+    attached_at: i64,
+) -> Result<AssetAttachment, String> {
+    if load_project_asset(conn, asset_id)?.is_none() {
+        return Err(format!("project asset {asset_id} not found"));
+    }
+
+    conn.execute(
+        r#"
+        INSERT INTO ui_asset_attachments (asset_id, target_type, target_id, attached_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(asset_id, target_type, target_id) DO UPDATE SET attached_at = excluded.attached_at
+        "#,
+        params![asset_id, target_type, target_id, attached_at],
+    )
+    .map_err(|err| {
+        format!("failed to attach project asset {asset_id} to {target_type}:{target_id}: {err}")
+    })?;
+
+    Ok(AssetAttachment {
+        asset_id: asset_id.to_owned(),
+        target_type: target_type.to_owned(),
+        target_id: target_id.to_owned(),
+        attached_at,
+    })
+}
+
+pub fn detach_asset(
+    conn: &Connection,
+    asset_id: &str,
+    target_type: &str,
+    target_id: &str,
+) -> Result<bool, String> {
+    let deleted = conn
+        .execute(
+            "DELETE FROM ui_asset_attachments WHERE asset_id = ? AND target_type = ? AND target_id = ?",
+            params![asset_id, target_type, target_id],
+        )
+        .map_err(|err| {
+            format!("failed to detach project asset {asset_id} from {target_type}:{target_id}: {err}")
+        })?;
+    Ok(deleted > 0)
+}
+
+pub fn list_project_memberships(conn: &Connection) -> Result<Vec<ProjectMembership>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT project_id, instance_id, attached_at
+             FROM ui_project_memberships
+             ORDER BY attached_at ASC, project_id ASC, instance_id ASC",
+        )
+        .map_err(|err| format!("failed to prepare project membership listing: {err}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(ProjectMembership {
+                project_id: row.get(0)?,
+                instance_id: row.get(1)?,
+                attached_at: row.get(2)?,
+            })
+        })
+        .map_err(|err| format!("failed to query project memberships: {err}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read project membership row: {err}"))
+}
+
+pub fn attach_instance_to_project(
+    conn: &Connection,
+    project_id: &str,
+    instance_id: &str,
+    attached_at: i64,
+) -> Result<ProjectMembership, String> {
+    if load_project(conn, project_id)?.is_none() {
+        return Err(format!("project {project_id} not found"));
+    }
+
+    conn.execute(
+        r#"
+        INSERT INTO ui_project_memberships (project_id, instance_id, attached_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(project_id, instance_id) DO UPDATE SET attached_at = excluded.attached_at
+        "#,
+        params![project_id, instance_id, attached_at],
+    )
+    .map_err(|err| {
+        format!("failed to attach instance {instance_id} to project {project_id}: {err}")
+    })?;
+
+    Ok(ProjectMembership {
+        project_id: project_id.to_owned(),
+        instance_id: instance_id.to_owned(),
+        attached_at,
+    })
+}
+
+pub fn detach_instance_from_project(
+    conn: &Connection,
+    project_id: &str,
+    instance_id: &str,
+) -> Result<bool, String> {
+    let deleted = conn
+        .execute(
+            "DELETE FROM ui_project_memberships WHERE project_id = ? AND instance_id = ?",
+            params![project_id, instance_id],
+        )
+        .map_err(|err| {
+            format!("failed to detach instance {instance_id} from project {project_id}: {err}")
+        })?;
+    Ok(deleted > 0)
+}
+
+/// Fully deregister an instance — whatever its adoption state. Mirrors the
+/// cascade in `src/registry.ts::release` so the DB is left in the same
+/// shape it would be in after a clean `swarm.deregister` call from the
+/// MCP side: tasks released, locks dropped, queued messages dropped.
+///
+/// Used by the UI when the user manually removes a node (PTY already
+/// gone, instance row ghosted by a restart, etc.).
+pub fn deregister_instance(conn: &Connection, instance_id: &str) -> Result<(), String> {
+    let instance = load_instance_info(conn, instance_id)?
+        .ok_or_else(|| format!("instance {instance_id} not found"))?;
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("failed to begin tx for deregister: {err}"))?;
+
+    // Release claimed/in_progress work so someone else can pick it up.
+    tx.execute(
+        "UPDATE tasks
+         SET assignee = NULL, status = 'open',
+             updated_at = unixepoch(), changed_at = unixepoch() * 1000
+         WHERE assignee = ? AND status IN ('claimed', 'in_progress')",
+        params![instance_id],
+    )
+    .map_err(|err| format!("failed to release claimed tasks: {err}"))?;
+
+    // Clear assignee on blocked/approval-required tasks but keep status.
+    tx.execute(
+        "UPDATE tasks
+         SET assignee = NULL, updated_at = unixepoch(), changed_at = unixepoch() * 1000
+         WHERE assignee = ? AND status IN ('blocked', 'approval_required')",
+        params![instance_id],
+    )
+    .map_err(|err| format!("failed to clear blocked-task assignee: {err}"))?;
+
+    tx.execute(
+        "DELETE FROM context WHERE type = 'lock' AND instance_id = ?",
+        params![instance_id],
+    )
+    .map_err(|err| format!("failed to drop locks: {err}"))?;
+
+    tx.execute(
+        "DELETE FROM messages WHERE recipient = ?",
+        params![instance_id],
+    )
+    .map_err(|err| format!("failed to drop queued messages: {err}"))?;
+
+    tx.execute("DELETE FROM instances WHERE id = ?", params![instance_id])
+        .map_err(|err| format!("failed to delete instance row: {err}"))?;
+
+    tx.execute(
+        "INSERT INTO events (scope, type, actor, subject, payload) VALUES (?, 'instance.deregistered', ?, ?, ?)",
+        params![
+            instance.scope,
+            instance_id,
+            instance_id,
+            json!({ "label": instance.label }).to_string()
+        ],
+    )
+    .map_err(|err| format!("failed to record instance.deregistered: {err}"))?;
+
+    tx.commit()
+        .map_err(|err| format!("failed to commit deregister tx: {err}"))?;
+
+    refresh_planner_owner(conn, &instance.scope)?;
+
+    Ok(())
+}
+
+/// Delete stale unadopted instance rows left behind by prior UI sessions.
+///
+/// Fresh placeholders may still belong to another live `swarm-ui` window or a
+/// slow-starting child process, so we only sweep rows whose heartbeat has
+/// already fallen past the normal stale window.
+pub fn sweep_unadopted_orphans(conn: &Connection) -> Result<usize, String> {
+    let stale_before = now_secs().saturating_sub(INSTANCE_STALE_AFTER_SECS);
+
+    // Collect ids first so we can cascade tasks/locks/messages per id.
+    let mut stmt = conn
+        .prepare("SELECT id FROM instances WHERE adopted = 0 AND heartbeat < ?")
+        .map_err(|err| format!("failed to prepare orphan sweep query: {err}"))?;
+    let ids: Vec<String> = stmt
+        .query_map(params![stale_before], |row| row.get(0))
+        .map_err(|err| format!("failed to query orphans: {err}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| format!("failed to read orphan ids: {err}"))?;
+    drop(stmt);
+
+    for id in &ids {
+        let Some(instance) = load_instance_info(conn, id)? else {
+            continue;
+        };
+
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|err| format!("failed to begin orphan sweep tx: {err}"))?;
+
+        tx.execute(
+            "UPDATE tasks
+             SET assignee = NULL, status = 'open',
+                 updated_at = unixepoch(), changed_at = unixepoch() * 1000
+             WHERE assignee = ? AND status IN ('claimed', 'in_progress')",
+            params![id],
+        )
+        .map_err(|err| format!("failed to release orphan claimed tasks: {err}"))?;
+        tx.execute(
+            "UPDATE tasks
+             SET assignee = NULL, updated_at = unixepoch(), changed_at = unixepoch() * 1000
+             WHERE assignee = ? AND status IN ('blocked', 'approval_required')",
+            params![id],
+        )
+        .map_err(|err| format!("failed to clear orphan blocked-task assignee: {err}"))?;
+        tx.execute(
+            "DELETE FROM context WHERE type = 'lock' AND instance_id = ?",
+            params![id],
+        )
+        .map_err(|err| format!("failed to drop orphan locks: {err}"))?;
+        tx.execute("DELETE FROM messages WHERE recipient = ?", params![id])
+            .map_err(|err| format!("failed to drop orphan messages: {err}"))?;
+        tx.execute("DELETE FROM instances WHERE id = ?", params![id])
+            .map_err(|err| format!("failed to delete orphan instance: {err}"))?;
+        tx.execute(
+            "INSERT INTO events (scope, type, actor, subject, payload) VALUES (?, 'instance.stale_reclaimed', 'system', ?, ?)",
+            params![instance.scope, id, json!({ "label": instance.label }).to_string()],
+        )
+        .map_err(|err| format!("failed to record instance.stale_reclaimed: {err}"))?;
+        tx.commit()
+            .map_err(|err| format!("failed to commit orphan sweep tx: {err}"))?;
+
+        refresh_planner_owner(conn, &instance.scope)?;
+    }
+
+    Ok(ids.len())
+}
+
+pub struct InstanceInfo {
+    pub id: String,
+    pub scope: String,
+    pub directory: String,
+    pub label: Option<String>,
+    pub heartbeat: i64,
+    pub adopted: bool,
+    /// OS pid the instance row recorded at `swarm.register` time. `0` is the
+    /// placeholder used for UI-pre-created rows that haven't been adopted
+    /// yet — do NOT attempt to signal that pid.
+    pub pid: i64,
+}
+
+/// Read the subset of an instance row needed to respawn a PTY against it.
+/// Returns `None` if the row no longer exists.
+pub fn load_instance_info(
+    conn: &Connection,
+    instance_id: &str,
+) -> Result<Option<InstanceInfo>, String> {
+    conn.query_row(
+        "SELECT id, scope, directory, label, heartbeat, COALESCE(adopted, 1), COALESCE(pid, 0)
+         FROM instances
+         WHERE id = ?",
+        params![instance_id],
+        |row| {
+            Ok(InstanceInfo {
+                id: row.get(0)?,
+                scope: row.get(1)?,
+                directory: row.get(2)?,
+                label: row.get(3)?,
+                heartbeat: row.get(4)?,
+                adopted: row.get::<_, i64>(5)? != 0,
+                pid: row.get::<_, i64>(6)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|err| format!("failed to load instance info: {err}"))
+}
+
+/// Return every instance id currently registered in `scope`. Used by the
+/// Conversation panel's "Stop all" button (fan out SIGINT) and by the
+/// operator-broadcast helper. Mirrors `src/registry.ts::list` semantics.
+pub fn list_scope_instance_ids(conn: &Connection, scope: &str) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id FROM instances WHERE scope = ? ORDER BY registered_at ASC, id ASC")
+        .map_err(|err| format!("failed to prepare scope listing: {err}"))?;
+    let rows = stmt
+        .query_map([scope], |row| row.get::<_, String>(0))
+        .map_err(|err| format!("failed to query instances in scope: {err}"))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row.map_err(|err| format!("failed to read instance row: {err}"))?);
+    }
+    Ok(ids)
+}
+
+fn list_scope_message_recipient_ids(conn: &Connection, scope: &str) -> Result<Vec<String>, String> {
+    let active_cutoff = now_secs().saturating_sub(INSTANCE_STALE_AFTER_SECS);
+    let mut stmt = conn
+        .prepare(
+            "SELECT id FROM instances
+             WHERE scope = ? AND heartbeat >= ? AND COALESCE(adopted, 1) = 1
+             ORDER BY registered_at ASC, id ASC",
+        )
+        .map_err(|err| format!("failed to prepare active recipient listing: {err}"))?;
+    let rows = stmt
+        .query_map(params![scope, active_cutoff], |row| row.get::<_, String>(0))
+        .map_err(|err| format!("failed to query active recipients in scope: {err}"))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row.map_err(|err| format!("failed to read active recipient row: {err}"))?);
+    }
+    Ok(ids)
+}
+
+fn is_active_message_recipient(
+    conn: &Connection,
+    scope: &str,
+    recipient: &str,
+) -> Result<bool, String> {
+    let active_cutoff = now_secs().saturating_sub(INSTANCE_STALE_AFTER_SECS);
+    conn.query_row(
+        "SELECT 1 FROM instances
+         WHERE scope = ? AND id = ? AND heartbeat >= ? AND COALESCE(adopted, 1) = 1
+         LIMIT 1",
+        params![scope, recipient, active_cutoff],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|row| row.is_some())
+    .map_err(|err| format!("failed to verify active recipient {recipient}: {err}"))
+}
+
+/// Write one message row per recipient in `scope`, with the operator as the
+/// sender. Mirrors `src/messages.ts::broadcast` exactly (one row per recipient,
+/// then a `message.broadcast` event) so the UI's ConnectionEdge animations and
+/// audit log treat operator sends the same as agent sends.
+///
+/// `sender_label` is the synthetic sender id (conventionally `"operator:<scope>"`
+/// or `"operator:user"`). Using a stable, reserved prefix keeps operator
+/// messages from colliding with any real instance id.
+///
+/// Returns the number of recipient rows inserted. Zero if the scope has no
+/// registered instances.
+pub fn broadcast_from_operator(
+    conn: &Connection,
+    scope: &str,
+    sender_label: &str,
+    content: &str,
+) -> Result<usize, String> {
+    let recipients = list_scope_message_recipient_ids(conn, scope)?;
+    if recipients.is_empty() {
+        return Ok(0);
+    }
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("failed to begin operator-broadcast tx: {err}"))?;
+
+    for recipient in &recipients {
+        tx.execute(
+            "INSERT INTO messages (scope, sender, recipient, content) VALUES (?, ?, ?, ?)",
+            params![scope, sender_label, recipient, content],
+        )
+        .map_err(|err| format!("failed to insert operator broadcast row: {err}"))?;
+    }
+
+    tx.execute(
+        "INSERT INTO events (scope, type, actor, subject, payload) VALUES (?, 'message.broadcast', ?, NULL, ?)",
+        params![
+            scope,
+            sender_label,
+            json!({
+                "recipients": recipients.len(),
+                "length": content.len(),
+                "operator": true,
+            })
+            .to_string()
+        ],
+    )
+    .map_err(|err| format!("failed to record message.broadcast event: {err}"))?;
+
+    tx.commit()
+        .map_err(|err| format!("failed to commit operator-broadcast tx: {err}"))?;
+
+    Ok(recipients.len())
+}
+
+/// Write one operator-authored direct message to a single recipient in `scope`.
+/// Returns `false` when the recipient is not currently registered in that
+/// scope, which lets the UI show a targeted validation error instead of
+/// silently writing a message no agent can poll.
+pub fn send_from_operator(
+    conn: &Connection,
+    scope: &str,
+    sender_label: &str,
+    recipient: &str,
+    content: &str,
+) -> Result<bool, String> {
+    if !is_active_message_recipient(conn, scope, recipient)? {
+        return Ok(false);
+    }
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| format!("failed to begin operator-send tx: {err}"))?;
+
+    tx.execute(
+        "INSERT INTO messages (scope, sender, recipient, content) VALUES (?, ?, ?, ?)",
+        params![scope, sender_label, recipient, content],
+    )
+    .map_err(|err| format!("failed to insert operator direct message row: {err}"))?;
+
+    tx.execute(
+        "INSERT INTO events (scope, type, actor, subject, payload) VALUES (?, 'message.sent', ?, ?, ?)",
+        params![
+            scope,
+            sender_label,
+            recipient,
+            json!({
+                "length": content.len(),
+                "operator": true,
+            })
+            .to_string()
+        ],
+    )
+    .map_err(|err| format!("failed to record message.sent event: {err}"))?;
+
+    tx.commit()
+        .map_err(|err| format!("failed to commit operator-send tx: {err}"))?;
+
+    Ok(true)
+}
+
+/// Returns whether the instance row has been adopted by the child process.
+/// `Ok(None)` means the row no longer exists (pruned or deregistered).
+pub fn instance_adoption_state(
+    conn: &Connection,
+    instance_id: &str,
+) -> Result<Option<bool>, String> {
+    conn.query_row(
+        "SELECT adopted FROM instances WHERE id = ?",
+        params![instance_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .map(|maybe| maybe.map(|value| value != 0))
+    .map_err(|err| format!("failed to read adoption state: {err}"))
+}
+
+/// Delete every message exchanged between two instances in either direction.
+/// Used by the UI's per-edge "Clear history" action. Returns the number of
+/// rows removed.
+pub fn clear_messages_between(
+    conn: &Connection,
+    instance_a: &str,
+    instance_b: &str,
+) -> Result<usize, String> {
+    let deleted = conn
+        .execute(
+            "DELETE FROM messages
+             WHERE (sender = ? AND recipient = ?) OR (sender = ? AND recipient = ?)",
+            params![instance_a, instance_b, instance_b, instance_a],
+        )
+        .map_err(|err| format!("failed to clear messages: {err}"))?;
+
+    if deleted > 0 {
+        let scope = conn
+            .query_row(
+                "SELECT scope FROM instances WHERE id = ? LIMIT 1",
+                params![instance_a],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|err| format!("failed to resolve scope for message clear: {err}"))?
+            .unwrap_or_default();
+        if !scope.is_empty() {
+            emit_event(
+                conn,
+                &scope,
+                "message.cleared",
+                None,
+                Some(instance_a),
+                Some(json!({
+                    "peer": instance_b,
+                    "deleted": deleted,
+                })),
+            )?;
+        }
+    }
+
+    Ok(deleted)
+}
+
+/// Unassign a task — clears `assignee` and resets `status` to `open` if it
+/// was claimed/in-progress. Mirrors the per-instance release logic in
+/// `deregister_instance` but scoped to one task. Returns `true` if a row
+/// was modified.
+pub fn unassign_task(conn: &Connection, task_id: &str) -> Result<bool, String> {
+    let task = conn
+        .query_row(
+            "SELECT scope, status, assignee FROM tasks WHERE id = ?",
+            params![task_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|err| format!("failed to load task for unassign: {err}"))?;
+
+    let Some((scope, prior_status, prior_assignee)) = task else {
+        return Ok(false);
+    };
+
+    let next_status = if matches!(prior_status.as_str(), "claimed" | "in_progress") {
+        "open"
+    } else {
+        prior_status.as_str()
+    };
+
+    let updated = conn
+        .execute(
+            "UPDATE tasks
+             SET assignee = NULL,
+                 status = ?,
+                 updated_at = unixepoch(),
+                 changed_at = unixepoch() * 1000
+             WHERE id = ?",
+            params![next_status, task_id],
+        )
+        .map_err(|err| format!("failed to unassign task: {err}"))?;
+
+    if updated > 0 {
+        emit_event(
+            conn,
+            &scope,
+            "task.updated",
+            prior_assignee.as_deref(),
+            Some(task_id),
+            Some(json!({
+                "status": next_status,
+                "prior_status": prior_status,
+                "assignee": Value::Null,
+            })),
+        )?;
+    }
+
+    Ok(updated > 0)
+}
+
+/// Remove `dependency_task_id` from `dependent_task_id`'s `depends_on` array.
+/// `depends_on` is stored as a JSON array of task ids, matching how the Bun
+/// side writes it in `src/tasks.ts`. Returns `true` if the array changed.
+pub fn remove_task_dependency(
+    conn: &Connection,
+    dependent_task_id: &str,
+    dependency_task_id: &str,
+) -> Result<bool, String> {
+    let task = conn
+        .query_row(
+            "SELECT scope, depends_on, assignee, status FROM tasks WHERE id = ?",
+            params![dependent_task_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|err| format!("failed to load depends_on: {err}"))?;
+
+    let Some((scope, raw, assignee, prior_status)) = task else {
+        return Ok(false);
+    };
+
+    let mut ids: Vec<String> = match raw.as_deref() {
+        Some(json) if !json.is_empty() => serde_json::from_str(json)
+            .map_err(|err| format!("failed to parse depends_on JSON: {err}"))?,
+        _ => Vec::new(),
+    };
+
+    let before = ids.len();
+    ids.retain(|id| id != dependency_task_id);
+    if ids.len() == before {
+        return Ok(false);
+    }
+
+    let next_dep_value = if ids.is_empty() {
+        None
+    } else {
+        Some(
+            serde_json::to_string(&ids)
+                .map_err(|err| format!("failed to serialize depends_on: {err}"))?,
+        )
+    };
+
+    let dep_state = dependency_state(conn, &scope, &ids)?;
+    let (next_status, next_result, event_type) = match prior_status.as_str() {
+        "blocked" => match dep_state {
+            "ready" => (
+                assignee
+                    .as_deref()
+                    .map_or("open".to_owned(), |_| "claimed".to_owned()),
+                None,
+                "task.cascade.unblocked",
+            ),
+            "failed" => (
+                "cancelled".to_owned(),
+                Some(format!(
+                    "auto-cancelled: dependency state still contains failed/cancelled tasks after removing {dependency_task_id}"
+                )),
+                "task.cascade.cancelled",
+            ),
+            _ => (prior_status.clone(), None, "task.updated"),
+        },
+        "approval_required" => match dep_state {
+            "failed" => (
+                "cancelled".to_owned(),
+                Some(format!(
+                    "auto-cancelled: dependency state still contains failed/cancelled tasks after removing {dependency_task_id}"
+                )),
+                "task.cascade.cancelled",
+            ),
+            _ => (prior_status.clone(), None, "task.updated"),
+        },
+        _ => (prior_status.clone(), None, "task.updated"),
+    };
+
+    conn.execute(
+        "UPDATE tasks
+         SET depends_on = ?,
+             status = ?,
+             result = ?,
+             updated_at = unixepoch(),
+             changed_at = unixepoch() * 1000
+         WHERE id = ?",
+        params![next_dep_value, next_status, next_result, dependent_task_id],
+    )
+    .map_err(|err| format!("failed to write depends_on: {err}"))?;
+
+    let payload = match event_type {
+        "task.cascade.unblocked" => json!({
+            "trigger": dependency_task_id,
+            "status": next_status,
+        }),
+        "task.cascade.cancelled" => json!({
+            "trigger": dependency_task_id,
+            "reason": "dependency_failed",
+        }),
+        _ => json!({
+            "status": next_status,
+            "prior_status": prior_status,
+            "removed_dependency": dependency_task_id,
+        }),
+    };
+
+    emit_event(
+        conn,
+        &scope,
+        event_type,
+        None,
+        Some(dependent_task_id),
+        Some(payload),
+    )?;
+
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{BrowserContext, ProjectBoundary, ProjectSpace};
+    use rusqlite::Connection;
+
+    /// Minimal legacy schema used only to verify migration behavior.
+    fn init_legacy_schema(conn: &Connection) {
+        conn.execute_batch(
+            "
+            CREATE TABLE instances (
+                id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL DEFAULT '',
+                directory TEXT NOT NULL,
+                root TEXT NOT NULL DEFAULT '',
+                file_root TEXT NOT NULL DEFAULT '',
+                pid INTEGER NOT NULL,
+                label TEXT,
+                registered_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                heartbeat INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scope TEXT NOT NULL DEFAULT '',
+                sender TEXT NOT NULL,
+                recipient TEXT,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                read INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL DEFAULT '',
+                type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                requester TEXT NOT NULL,
+                assignee TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                files TEXT,
+                result TEXT,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                changed_at INTEGER NOT NULL DEFAULT 0,
+                priority INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE context (
+                id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL DEFAULT '',
+                instance_id TEXT NOT NULL,
+                file TEXT NOT NULL,
+                type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+            ",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn ensure_adopted_column_adds_missing_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_legacy_schema(&conn);
+
+        ensure_adopted_column(&conn).unwrap();
+
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('instances') WHERE name = 'adopted'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 1);
+
+        // Idempotent — second call should be a no-op.
+        ensure_adopted_column(&conn).unwrap();
+    }
+
+    #[test]
+    fn browser_catalog_rows_round_trip() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let saved = save_browser_context(
+            &conn,
+            &BrowserContext {
+                scope: "scope-a".into(),
+                id: "ctx-a".into(),
+                owner_instance_id: None,
+                endpoint: "http://127.0.0.1:9444".into(),
+                host: "127.0.0.1".into(),
+                port: 9444,
+                profile_dir: "/tmp/browser-profile".into(),
+                pid: Some(42),
+                start_url: "https://example.com".into(),
+                status: "open".into(),
+                created_at: 100,
+                updated_at: 100,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(saved.id, "ctx-a");
+        assert_eq!(list_browser_contexts(&conn, "scope-a").unwrap().len(), 1);
+        assert!(close_browser_context(&conn, "scope-a", "ctx-a", 103).unwrap());
+        let closed = load_browser_context(&conn, "scope-a", "ctx-a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(closed.status, "closed");
+        assert_eq!(closed.pid, None);
+        assert_eq!(closed.updated_at, 103);
+
+        conn.execute(
+            "INSERT INTO browser_tabs (scope, context_id, tab_id, type, url, title, active, updated_at)
+             VALUES ('scope-a', 'ctx-a', 'stale-tab', 'page', 'https://stale.example', 'Stale', 0, 99)",
+            [],
+        )
+        .unwrap();
+        record_browser_tabs(
+            &conn,
+            "scope-a",
+            "ctx-a",
+            &[BrowserTab {
+                scope: "scope-a".into(),
+                context_id: "ctx-a".into(),
+                tab_id: "tab-a".into(),
+                tab_type: "page".into(),
+                url: "https://example.com".into(),
+                title: "Example".into(),
+                active: true,
+                updated_at: 101,
+            }],
+            101,
+        )
+        .unwrap();
+        let tabs = list_browser_tabs(&conn, "scope-a").unwrap();
+        assert_eq!(tabs.len(), 1);
+        assert!(tabs[0].active);
+        assert_eq!(tabs[0].tab_type, "page");
+
+        record_browser_snapshot(
+            &conn,
+            &BrowserSnapshot {
+                id: "snap-a".into(),
+                scope: "scope-a".into(),
+                context_id: "ctx-a".into(),
+                tab_id: "tab-a".into(),
+                url: "https://example.com".into(),
+                title: "Example".into(),
+                text: "Hello".into(),
+                elements: vec![BrowserSnapshotElement {
+                    tag: "button".into(),
+                    role: None,
+                    text: "Go".into(),
+                    selector: "button".into(),
+                }],
+                screenshot_path: None,
+                created_by: None,
+                created_at: 102,
+            },
+        )
+        .unwrap();
+        let snapshots = list_browser_snapshots(&conn, "scope-a", 10).unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].elements[0].text, "Go");
+        assert!(delete_browser_context(&conn, "scope-a", "ctx-a").unwrap());
+        assert!(
+            load_browser_context(&conn, "scope-a", "ctx-a")
+                .unwrap()
+                .is_none()
+        );
+        assert!(list_browser_tabs(&conn, "scope-a").unwrap().is_empty());
+        assert!(
+            list_browser_snapshots(&conn, "scope-a", 10)
+                .unwrap()
+                .is_empty()
+        );
+
+        let mut stmt = conn
+            .prepare("SELECT type FROM events WHERE scope = 'scope-a' ORDER BY id ASC")
+            .unwrap();
+        let event_types = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            event_types,
+            vec![
+                "browser.context.upserted",
+                "browser.context.closed",
+                "browser.tabs.updated",
+                "browser.snapshot.captured",
+                "browser.context.closed",
+            ]
+        );
+    }
+
+    #[test]
+    fn project_space_round_trips_boundary_and_roots() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let saved = save_project(
+            &conn,
+            &ProjectSpace {
+                id: "project-alpha".into(),
+                name: "Alpha".into(),
+                root: "/tmp/alpha".into(),
+                color: "#35f2ff".into(),
+                additional_roots: vec!["/tmp/alpha/assets".into()],
+                notes: "Launch window notes".into(),
+                scope: Some("/tmp/alpha#phase4".into()),
+                boundary: ProjectBoundary {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 800.0,
+                    height: 500.0,
+                },
+                created_at: 100,
+                updated_at: 200,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(saved.id, "project-alpha");
+        assert_eq!(
+            saved.additional_roots,
+            vec!["/tmp/alpha/assets".to_string()]
+        );
+        assert_eq!(saved.color, "#35f2ff");
+        assert_eq!(saved.notes, "Launch window notes");
+        assert_eq!(saved.boundary.width, 800.0);
+
+        let projects = list_projects(&conn).unwrap();
+        assert_eq!(projects, vec![saved]);
+    }
+
+    #[test]
+    fn project_memberships_attach_detach_and_delete_with_project() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        save_project(
+            &conn,
+            &ProjectSpace {
+                id: "project-alpha".into(),
+                name: "Alpha".into(),
+                root: "/tmp/alpha".into(),
+                color: "#ffffff".into(),
+                additional_roots: vec![],
+                notes: String::new(),
+                scope: None,
+                boundary: ProjectBoundary {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 800.0,
+                    height: 500.0,
+                },
+                created_at: 100,
+                updated_at: 200,
+            },
+        )
+        .unwrap();
+
+        attach_instance_to_project(&conn, "project-alpha", "agent-1", 300).unwrap();
+        let memberships = list_project_memberships(&conn).unwrap();
+        assert_eq!(memberships.len(), 1);
+        assert_eq!(memberships[0].project_id, "project-alpha");
+        assert_eq!(memberships[0].instance_id, "agent-1");
+
+        assert!(detach_instance_from_project(&conn, "project-alpha", "agent-1").unwrap());
+        assert!(list_project_memberships(&conn).unwrap().is_empty());
+
+        attach_instance_to_project(&conn, "project-alpha", "agent-1", 400).unwrap();
+        assert!(delete_project(&conn, "project-alpha").unwrap());
+        assert!(list_projects(&conn).unwrap().is_empty());
+        assert!(list_project_memberships(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn project_assets_round_trip_and_delete_with_attachments() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+        let image_path = std::env::temp_dir().join(format!("swarm-ui-hero-{}.png", now_millis()));
+        std::fs::write(&image_path, b"fake png bytes").unwrap();
+
+        save_project(
+            &conn,
+            &ProjectSpace {
+                id: "project-alpha".into(),
+                name: "Alpha".into(),
+                root: "/tmp/alpha".into(),
+                color: "#ffffff".into(),
+                additional_roots: vec![],
+                notes: String::new(),
+                scope: None,
+                boundary: ProjectBoundary {
+                    x: 10.0,
+                    y: 20.0,
+                    width: 800.0,
+                    height: 500.0,
+                },
+                created_at: 100,
+                updated_at: 200,
+            },
+        )
+        .unwrap();
+
+        let saved = save_project_asset(
+            &conn,
+            &ProjectAsset {
+                id: "asset-1".into(),
+                project_id: "project-alpha".into(),
+                kind: "image".into(),
+                title: "Hero reference".into(),
+                path: Some(image_path.to_string_lossy().into_owned()),
+                content: None,
+                description: "Use as startup mood reference".into(),
+                created_at: 100,
+                updated_at: 200,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(saved.kind, "image");
+        assert_eq!(
+            saved.path.as_deref(),
+            Some(image_path.to_string_lossy().as_ref())
+        );
+
+        let assets = list_project_assets(&conn, "project-alpha").unwrap();
+        assert_eq!(assets, vec![saved]);
+
+        attach_asset(&conn, "asset-1", "agent", "agent-1", 300).unwrap();
+        let attachments = list_asset_attachments(&conn, Some("project-alpha")).unwrap();
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].target_id, "agent-1");
+
+        assert!(delete_project_asset(&conn, "asset-1").unwrap());
+        assert!(
+            list_project_assets(&conn, "project-alpha")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            list_asset_attachments(&conn, Some("project-alpha"))
+                .unwrap()
+                .is_empty()
+        );
+        let _ = std::fs::remove_file(image_path);
+    }
+
+    #[test]
+    fn project_asset_save_requires_existing_project() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let err = save_project_asset(
+            &conn,
+            &ProjectAsset {
+                id: "asset-1".into(),
+                project_id: "missing-project".into(),
+                kind: "image".into(),
+                title: "Hero reference".into(),
+                path: Some("/tmp/hero.png".into()),
+                content: None,
+                description: String::new(),
+                created_at: 100,
+                updated_at: 200,
+            },
+        )
+        .unwrap_err();
+
+        assert!(err.contains("project missing-project not found"));
+    }
+
+    #[test]
+    fn retarget_instance_runtime_context_updates_scope_and_directory() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted)
+             VALUES ('agent-1', '/tmp/old', '/tmp/old', '/tmp/old', '/tmp/old', 0, 'provider:codex', 1)",
+            [],
+        )
+        .unwrap();
+
+        let updated =
+            retarget_instance_runtime_context(&conn, "agent-1", "/tmp", Some("/tmp#project"))
+                .unwrap();
+        assert!(updated);
+
+        let row: (String, String, String) = conn
+            .query_row(
+                "SELECT scope, directory, file_root FROM instances WHERE id = 'agent-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("/tmp#project".into(), "/tmp".into(), "/tmp".into()));
+    }
+
+    #[test]
+    fn create_pending_instance_inserts_unadopted_row() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let pending = create_pending_instance(
+            &conn,
+            "/tmp/workspace",
+            Some("my-scope"),
+            Some("role:planner launch:abc"),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(pending.scope, "my-scope");
+        assert_eq!(pending.directory, "/tmp/workspace");
+        assert_eq!(pending.file_root, "/tmp/workspace");
+
+        let (pid, adopted, label): (i64, i64, Option<String>) = conn
+            .query_row(
+                "SELECT pid, adopted, label FROM instances WHERE id = ?",
+                params![pending.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(pid, 0, "pid=0 marks UI-owned pre-adoption state");
+        assert_eq!(adopted, 0);
+        assert_eq!(label.as_deref(), Some("role:planner launch:abc"));
+    }
+
+    #[test]
+    fn heartbeat_unadopted_only_touches_unadopted_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        // Insert an already-adopted row with a known heartbeat.
+        conn.execute(
+            "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, heartbeat, adopted)
+             VALUES (?, 's', '/tmp', '/tmp', '/tmp', 1234, NULL, 1, 1)",
+            params!["adopted-id"],
+        )
+        .unwrap();
+
+        let updated = heartbeat_unadopted_instance(&conn, "adopted-id").unwrap();
+        assert!(!updated, "adopted rows are skipped");
+
+        // Unadopted row gets its heartbeat refreshed.
+        let pending = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
+        // Stomp heartbeat to an old value so we can observe the bump.
+        conn.execute(
+            "UPDATE instances SET heartbeat = 100 WHERE id = ?",
+            params![pending.id],
+        )
+        .unwrap();
+
+        let updated = heartbeat_unadopted_instance(&conn, &pending.id).unwrap();
+        assert!(updated);
+
+        let heartbeat: i64 = conn
+            .query_row(
+                "SELECT heartbeat FROM instances WHERE id = ?",
+                params![pending.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(heartbeat > 100, "heartbeat should be bumped to unixepoch()");
+    }
+
+    #[test]
+    fn delete_unadopted_leaves_adopted_rows_alone() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let pending = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
+        conn.execute(
+            "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted)
+             VALUES ('adopted', 's', '/tmp', '/tmp', '/tmp', 9, NULL, 1)",
+            [],
+        )
+        .unwrap();
+
+        let deleted = delete_unadopted_instance(&conn, &pending.id).unwrap();
+        assert!(deleted, "unadopted row should be deleted");
+
+        let deleted = delete_unadopted_instance(&conn, "adopted").unwrap();
+        assert!(!deleted, "adopted rows are ignored");
+
+        let still_there: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM instances WHERE id = 'adopted'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_there, 1);
+    }
+
+    #[test]
+    fn deregister_instance_cascades_cleanup() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        // Set up an instance with a lock, a claimed task, a blocked task,
+        // and an incoming message. All of these should disappear/be
+        // released when the instance is deregistered.
+        conn.execute(
+            "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted)
+             VALUES ('inst', 's', '/tmp', '/tmp', '/tmp', 42, 'role:x', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO context (id, scope, instance_id, file, type, content)
+             VALUES ('lock1', 's', 'inst', '/tmp/a.txt', 'lock', 'held')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tasks (id, scope, type, title, requester, assignee, status)
+             VALUES ('t1', 's', 'implement', 'claimed', 'someone', 'inst', 'claimed')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tasks (id, scope, type, title, requester, assignee, status)
+             VALUES ('t2', 's', 'implement', 'blocked', 'someone', 'inst', 'blocked')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (scope, sender, recipient, content)
+             VALUES ('s', 'other', 'inst', 'queued')",
+            [],
+        )
+        .unwrap();
+
+        deregister_instance(&conn, "inst").unwrap();
+
+        let instance_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM instances WHERE id = 'inst'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(instance_count, 0);
+
+        let lock_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM context WHERE instance_id = 'inst'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(lock_count, 0);
+
+        let msg_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE recipient = 'inst'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(msg_count, 0);
+
+        let (t1_status, t1_assignee): (String, Option<String>) = conn
+            .query_row(
+                "SELECT status, assignee FROM tasks WHERE id = 't1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(t1_status, "open", "claimed task should be released to open");
+        assert_eq!(t1_assignee, None);
+
+        let (t2_status, t2_assignee): (String, Option<String>) = conn
+            .query_row(
+                "SELECT status, assignee FROM tasks WHERE id = 't2'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(t2_status, "blocked", "blocked task keeps status");
+        assert_eq!(t2_assignee, None, "blocked task assignee cleared");
+    }
+
+    #[test]
+    fn sweep_unadopted_orphans_removes_only_unadopted() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        // Two stale orphans + one adopted instance.
+        let orphan_a = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
+        let orphan_b = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
+        let stale_heartbeat = now_secs() - INSTANCE_STALE_AFTER_SECS - 1;
+        conn.execute(
+            "UPDATE instances SET heartbeat = ? WHERE id IN (?, ?)",
+            params![stale_heartbeat, orphan_a.id, orphan_b.id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted)
+             VALUES ('live', 's', '/tmp', '/tmp', '/tmp', 1, NULL, 1)",
+            [],
+        )
+        .unwrap();
+
+        let swept = sweep_unadopted_orphans(&conn).unwrap();
+        assert_eq!(swept, 2);
+
+        let remaining: Vec<String> = conn
+            .prepare("SELECT id FROM instances")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(remaining, vec!["live".to_string()]);
+
+        // Just for paranoia: both orphans are actually gone.
+        assert!(!remaining.contains(&orphan_a.id));
+        assert!(!remaining.contains(&orphan_b.id));
+    }
+
+    #[test]
+    fn sweep_unadopted_orphans_keeps_recent_placeholders() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let recent = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
+
+        let swept = sweep_unadopted_orphans(&conn).unwrap();
+        assert_eq!(swept, 0);
+
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM instances WHERE id = ?",
+                params![recent.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 1);
+    }
+
+    #[test]
+    fn instance_adoption_state_reports_states() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let pending = create_pending_instance(&conn, "/tmp", Some("s"), None, None).unwrap();
+        assert_eq!(
+            instance_adoption_state(&conn, &pending.id).unwrap(),
+            Some(false)
+        );
+
+        conn.execute(
+            "UPDATE instances SET adopted = 1 WHERE id = ?",
+            params![pending.id],
+        )
+        .unwrap();
+        assert_eq!(
+            instance_adoption_state(&conn, &pending.id).unwrap(),
+            Some(true)
+        );
+
+        assert_eq!(instance_adoption_state(&conn, "missing").unwrap(), None);
+    }
+
+    #[test]
+    fn operator_broadcast_only_targets_active_recipients() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let stale_heartbeat = now_secs() - INSTANCE_STALE_AFTER_SECS - 1;
+        conn.execute(
+            "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, heartbeat, adopted)
+             VALUES
+             ('active', 's', '/tmp', '/tmp', '/tmp', 1, 'role:reviewer', unixepoch(), 1),
+             ('stale', 's', '/tmp', '/tmp', '/tmp', 2, 'role:reviewer', ?, 1),
+             ('adopting', 's', '/tmp', '/tmp', '/tmp', 0, 'role:reviewer', unixepoch(), 0)",
+            params![stale_heartbeat],
+        )
+        .unwrap();
+
+        let recipients = broadcast_from_operator(&conn, "s", "operator:s", "hello").unwrap();
+        assert_eq!(recipients, 1);
+
+        let rows: Vec<String> = conn
+            .prepare("SELECT recipient FROM messages ORDER BY id ASC")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(rows, vec!["active".to_string()]);
+    }
+
+    #[test]
+    fn operator_direct_send_rejects_stale_or_missing_recipients() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        let stale_heartbeat = now_secs() - INSTANCE_STALE_AFTER_SECS - 1;
+        conn.execute(
+            "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, heartbeat, adopted)
+             VALUES
+             ('active', 's', '/tmp', '/tmp', '/tmp', 1, 'role:reviewer', unixepoch(), 1),
+             ('stale', 's', '/tmp', '/tmp', '/tmp', 2, 'role:reviewer', ?, 1),
+             ('adopting', 's', '/tmp', '/tmp', '/tmp', 0, 'role:reviewer', unixepoch(), 0)",
+            params![stale_heartbeat],
+        )
+        .unwrap();
+
+        assert!(send_from_operator(&conn, "s", "operator:s", "active", "go").unwrap());
+        assert!(!send_from_operator(&conn, "s", "operator:s", "stale", "go").unwrap());
+        assert!(!send_from_operator(&conn, "s", "operator:s", "adopting", "go").unwrap());
+        assert!(!send_from_operator(&conn, "s", "operator:s", "missing", "go").unwrap());
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn deregister_instance_refreshes_planner_owner() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted)
+             VALUES
+             ('planner-a', 's', '/tmp', '/tmp', '/tmp', 1, 'role:planner', 1),
+             ('planner-b', 's', '/tmp', '/tmp', '/tmp', 2, 'role:planner', 1)",
+            [],
+        )
+        .unwrap();
+        kv_set_value(
+            &conn,
+            "s",
+            PLANNER_OWNER_KEY,
+            &json!({
+                "instance_id": "planner-a",
+                "label": "role:planner",
+                "assigned_at": 1,
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        deregister_instance(&conn, "planner-a").unwrap();
+
+        let owner = kv_get_value(&conn, "s", PLANNER_OWNER_KEY)
+            .unwrap()
+            .expect("owner/planner should be reassigned");
+        let parsed: Value = serde_json::from_str(&owner).unwrap();
+        assert_eq!(
+            parsed.get("instance_id").and_then(Value::as_str),
+            Some("planner-b")
+        );
+    }
+
+    #[test]
+    fn unassign_task_releases_claimed_work() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO tasks (id, scope, type, title, requester, assignee, status)
+             VALUES ('task-1', 's', 'implement', 'claimed', 'planner', 'worker-1', 'claimed')",
+            [],
+        )
+        .unwrap();
+
+        let changed = unassign_task(&conn, "task-1").unwrap();
+        assert!(changed);
+
+        let (status, assignee): (String, Option<String>) = conn
+            .query_row(
+                "SELECT status, assignee FROM tasks WHERE id = 'task-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "open");
+        assert_eq!(assignee, None);
+    }
+
+    #[test]
+    fn remove_task_dependency_recomputes_blocked_and_approval_required_tasks() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO tasks (id, scope, type, title, requester, status)
+             VALUES
+             ('dep-ready', 's', 'implement', 'dep ready', 'planner', 'done'),
+             ('dep-failed', 's', 'implement', 'dep failed', 'planner', 'failed')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tasks (id, scope, type, title, requester, status, depends_on)
+             VALUES
+             ('blocked-task', 's', 'implement', 'blocked', 'planner', 'blocked', ?),
+             ('approval-task', 's', 'review', 'approval', 'planner', 'approval_required', ?)",
+            params![
+                serde_json::to_string(&vec!["dep-ready"]).unwrap(),
+                serde_json::to_string(&vec!["dep-ready", "dep-failed"]).unwrap(),
+            ],
+        )
+        .unwrap();
+
+        let changed = remove_task_dependency(&conn, "blocked-task", "dep-ready").unwrap();
+        assert!(changed);
+        let changed = remove_task_dependency(&conn, "approval-task", "dep-ready").unwrap();
+        assert!(changed);
+
+        let (blocked_status, blocked_depends_on): (String, Option<String>) = conn
+            .query_row(
+                "SELECT status, depends_on FROM tasks WHERE id = 'blocked-task'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(blocked_status, "open");
+        assert_eq!(blocked_depends_on, None);
+
+        let (approval_status, approval_result, approval_depends_on): (
+            String,
+            Option<String>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT status, result, depends_on FROM tasks WHERE id = 'approval-task'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(approval_status, "cancelled");
+        assert!(
+            approval_result
+                .as_deref()
+                .unwrap_or_default()
+                .contains("auto-cancelled"),
+        );
+        assert_eq!(
+            approval_depends_on,
+            Some(serde_json::to_string(&vec!["dep-failed"]).unwrap())
+        );
+    }
+}

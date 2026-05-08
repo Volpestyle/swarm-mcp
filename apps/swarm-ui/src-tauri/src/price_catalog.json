@@ -1,0 +1,68 @@
+{
+  "as_of": "2026-04-22",
+  "entries": [
+    {
+      "provider": "anthropic",
+      "model": "claude-opus-4-7",
+      "input_per_million_usd": 5.0,
+      "cached_input_per_million_usd": 0.5,
+      "output_per_million_usd": 25.0,
+      "cache_write_5m_per_million_usd": 6.25,
+      "cache_write_1h_per_million_usd": 10.0
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-opus-4-6",
+      "input_per_million_usd": 5.0,
+      "cached_input_per_million_usd": 0.5,
+      "output_per_million_usd": 25.0,
+      "cache_write_5m_per_million_usd": 6.25,
+      "cache_write_1h_per_million_usd": 10.0
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "input_per_million_usd": 3.0,
+      "cached_input_per_million_usd": 0.3,
+      "output_per_million_usd": 15.0,
+      "cache_write_5m_per_million_usd": 3.75,
+      "cache_write_1h_per_million_usd": 6.0
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5",
+      "input_per_million_usd": 1.0,
+      "cached_input_per_million_usd": 0.1,
+      "output_per_million_usd": 5.0,
+      "cache_write_5m_per_million_usd": 1.25,
+      "cache_write_1h_per_million_usd": 2.0
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "input_per_million_usd": 2.5,
+      "cached_input_per_million_usd": 0.25,
+      "output_per_million_usd": 15.0,
+      "cache_write_5m_per_million_usd": null,
+      "cache_write_1h_per_million_usd": null
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.4-mini",
+      "input_per_million_usd": 0.75,
+      "cached_input_per_million_usd": 0.075,
+      "output_per_million_usd": 4.5,
+      "cache_write_5m_per_million_usd": null,
+      "cache_write_1h_per_million_usd": null
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.4-nano",
+      "input_per_million_usd": 0.2,
+      "cached_input_per_million_usd": 0.02,
+      "output_per_million_usd": 1.25,
+      "cache_write_5m_per_million_usd": null,
+      "cache_write_1h_per_million_usd": null
+    }
+  ]
+}

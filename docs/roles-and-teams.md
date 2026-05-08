@@ -233,7 +233,7 @@ Set `assignee` to a known instance ID for direct assignment, or omit it for any 
 
 #### 4. Implementer picks up the task
 
-`claim_task` (highest priority first; transitions to `in_progress`) -> `lock_file` (returns peer annotations as part of the response) -> do the work -> `annotate` findings -> `update_task` with `done` and a structured result (`{ files_changed, test_status, summary }`). Locks on the task's files release automatically; use `unlock_file` only for early per-file release.
+`claim_task` (highest priority first) -> `update_task` to `in_progress` -> `check_file` -> `lock_file` -> do the work -> `annotate` findings -> `unlock_file` -> `update_task` with `done` and a structured result (`{ files_changed, test_status, summary }`).
 
 #### 5. Planner requests review
 
@@ -248,7 +248,7 @@ Set `assignee` to a known instance ID for direct assignment, or omit it for any 
 
 #### 6. Reviewer completes review
 
-Inspect the task, call `lock_file` on the changed files (the response includes the implementer's annotations), add `annotate` notes for risks or follow-ups, then `update_task` with `done`, `failed`, or `cancelled`. Use `send_message` or `request_task` for fix requests.
+Inspect the task, `check_file` for annotations, add `annotate` notes for risks or follow-ups, then `update_task` with `done`, `failed`, or `cancelled`. Use `send_message` or `request_task` for fix requests.
 
 ### DAG workflow: planner emits a dependency graph
 

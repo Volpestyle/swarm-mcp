@@ -378,14 +378,6 @@ fn sample_spawn_pty_request() -> SpawnPtyRequest {
         instance_id: None,
         cols: Some(120),
         rows: Some(40),
-        args: vec!["-p".into(), "review the pairing handler".into()],
-        env: [(
-            "SWARM_DB_PATH".into(),
-            "/Users/james/.swarm-mcp/swarm.db".into(),
-        )]
-        .into_iter()
-        .collect(),
-        initial_input: Some("status\n".into()),
     }
 }
 

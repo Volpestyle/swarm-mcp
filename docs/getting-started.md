@@ -30,8 +30,6 @@ cd swarm-mcp
 bun install
 ```
 
-If you are using the packaged CLI instead of a local clone, `swarm-mcp init --dir /absolute/path/to/project` can write a project `.mcp.json` and copy the bundled skills. The manual host-specific config below is still the clearest path when you want to run directly from this checkout.
-
 ## 3. Add the MCP server to your coding agent
 
 Each host has its own MCP config format, but they should all point at the same server:
@@ -49,8 +47,8 @@ Add this to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.swarm]
 command = "bun"
-args = ["run", "/absolute/path/to/swarm-mcp/src/index.ts"]
-cwd = "/absolute/path/to/swarm-mcp"
+args = ["run", "C:\\absolute\\path\\to\\swarm-mcp\\src\\index.ts"]
+cwd = "C:\\absolute\\path\\to\\swarm-mcp"
 ```
 
 ### opencode
@@ -90,36 +88,11 @@ Use the same command, args, and working directory in that host's MCP settings.
 
 Tool names may be rendered differently by each client. For the same `register` tool, one host may show `swarm_register` while another shows `mcp__swarm__register`.
 
-## 4. Install the bundled skills
-
-The MCP server provides the *tools*; the bundled skills teach agents how to use them well for coordination and forensic inspection. Skip this step only if your host does not support installable skills.
-
-The skill sources are at `skills/swarm-mcp` and `skills/swarm-deepdive` in this repo. Symlink them into your consumer project so `git pull` updates propagate automatically:
-
-```sh
-# Run from your consumer project root
-mkdir -p .agents/skills .claude/skills
-ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp .agents/skills/swarm-mcp
-ln -s /absolute/path/to/swarm-mcp/skills/swarm-deepdive .agents/skills/swarm-deepdive
-ln -s ../../.agents/skills/swarm-mcp .claude/skills/swarm-mcp
-ln -s ../../.agents/skills/swarm-deepdive .claude/skills/swarm-deepdive
-```
-
-Or globally for every project:
-
-```sh
-mkdir -p ~/.claude/skills
-ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp ~/.claude/skills/swarm-mcp
-ln -s /absolute/path/to/swarm-mcp/skills/swarm-deepdive ~/.claude/skills/swarm-deepdive
-```
-
-Per-host paths and a copy-based alternative are in [`docs/install-skill.md`](./install-skill.md).
-
-## 5. Restart your coding agent host
+## 4. Restart your coding agent host
 
 Most hosts only load MCP server changes at startup. Restart the application or start a fresh session after editing the MCP config.
 
-## 6. Open your first session and register
+## 5. Open your first session and register
 
 In your first coding-agent session, call the swarm server's `register` tool.
 
@@ -143,7 +116,7 @@ After that, call:
 
 At this point you should see only your own session.
 
-## 7. Open a second session and register again
+## 6. Open a second session and register again
 
 Open another session in the same host or a different host on the same machine, as long as it is also configured to use `swarm-mcp`.
 
@@ -158,7 +131,7 @@ If you do not, check:
 - Both sessions are pointing at the same database path
 - Both hosts actually loaded the MCP config change after restart
 
-## 8. Verify cross-agent communication
+## 7. Verify cross-agent communication
 
 From session A:
 
@@ -176,10 +149,11 @@ You can also test shared coordination tools:
 
 - `broadcast` to announce progress to all other sessions
 - `request_task` to hand work to another session
-- `lock_file` while editing (its response also surfaces peer annotations)
+- `check_file` before editing
+- `lock_file` while editing
 - `annotate` to leave shared notes on a file
 
-## 9. Add operating instructions and start collaborating
+## 8. Add operating instructions and start collaborating
 
 Once the MCP server is working, add a short coordination protocol to your host instructions or `AGENTS.md`:
 
@@ -189,17 +163,15 @@ Once the MCP server is working, add a short coordination protocol to your host i
 
 For role/team conventions and multi-team workflows, see [`docs/roles-and-teams.md`](./roles-and-teams.md).
 
-If your host supports installable skills, see [`docs/install-skill.md`](./install-skill.md) to install the bundled `/swarm-mcp` skill for stronger per-session guidance. Use role arguments such as `/swarm-mcp planner` or `/swarm-mcp implementer` when starting specialized sessions.
+If your host supports installable skills, see [`docs/install-skill.md`](./install-skill.md) to install the bundled swarm skill for stronger per-session guidance.
 
 The minimum collaboration loop is:
 
 - Call `register` at session start
 - Call `poll_messages` and `list_tasks` before starting work
-- Call `lock_file` while editing (skip if you're alone in scope; the response includes peer annotations)
+- Call `check_file` before editing and `lock_file` while editing
 - Call `broadcast` or `update_task` when handing work off
 
 For troubleshooting tips, see the [Troubleshooting](../README.md#troubleshooting) section in the README.
 
-## Desktop and mobile access
-
-The setup above is only for the stdio MCP server. The desktop UI, PTY control, mobile pairing, and LAN streaming use the separate Rust `swarm-server` daemon. It is not required for basic MCP coordination. See [`docs/swarm-server.md`](./swarm-server.md) when you need `swarm-ui` or the iOS/iPadOS companion.
+If you are using `swarm-ui`, the operator surface for machine-wide process inspection and real agent cleanup lives in [`docs/system-load-analyzer.md`](./system-load-analyzer.md).

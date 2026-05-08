@@ -1,12 +1,10 @@
 ---
 name: swarm-mcp
-description: Join and coordinate through the swarm MCP server. Use when registering a Claude Code session, coordinating multiple agents, using swarm tasks/messages/KV/locks, or bootstrapping planner, implementer, reviewer, researcher, or generalist roles.
-argument-hint: "[planner|implementer|reviewer|researcher|generalist]"
-arguments: [role]
+description: Use when swarm-mcp tools are available and the task involves joining a local swarm, discovering other agent sessions, coordinating specialists through `role:` labels, handing off work with swarm tasks or messages, or avoiding file collisions with shared locks and annotations.
 metadata:
   short-description: Coordinate work through swarm-mcp
   domain: agent-coordination
-  role: workflow
+  role: specialist
   scope: workflow
 ---
 
@@ -16,35 +14,21 @@ Use this skill when the `swarm` MCP server is available in the current session a
 
 This skill assumes the swarm tools are already mounted. If they are not present, say so clearly and fall back to local work or direct setup help.
 
-Role argument: `$role`.
-
-If the user invoked this skill with a role argument, follow the matching role reference. If no role was provided, use the generalist flow and load role references only when choosing collaborators or accepting delegated work.
-
-## Start Here
+## Core Workflow
 
 1. Bootstrap into the swarm with `register`
 2. Inspect the current swarm with `whoami`, `list_instances`, `poll_messages`, and `list_tasks`
-3. While editing, call `lock_file` — its response includes any peer annotations, so a separate check call is unnecessary. Skip locking entirely when alone in scope.
-4. Delegate or coordinate with `request_task`, `send_message`, or `broadcast`
-5. Leave durable context with `annotate` and small shared state with `kv_set`
-6. Complete a task with a single `update_task` (terminal status). Locks on the task's files release automatically.
+3. Check coordination risk before editing with `check_file`
+4. Lock files while editing with `lock_file`
+5. Delegate or coordinate with `request_task`, `send_message`, or `broadcast`
+6. Leave durable context with `annotate` and small shared state with `kv_set`
+7. Release locks and complete tasks with `unlock_file` and `update_task`
 
 For planner sessions, the server maintains `owner/planner` automatically. Check it with `kv_get` to see whether you currently own planner duties.
-
-## Role Routing
-
-- `planner`: load `references/planner.md` and register with `role:planner`
-- `implementer`: load `references/implementer.md` and register with `role:implementer`
-- `reviewer`: load `references/reviewer.md` and register with `role:reviewer`
-- `researcher`: load `references/researcher.md` and register with `role:researcher`
-- `generalist` or no role: register without a `role:` token unless the user specified one, then handle mixed work using the core workflow
-
-When the role is unclear, do not invent one. Ask one short question or proceed as a generalist if the task is already actionable.
 
 ## Task Features
 
 - **Priority**: Tasks have an integer `priority` field (higher = more urgent). `list_tasks` returns tasks sorted by priority. Claim the highest-priority open task first.
-- **Unread-message guard**: `claim_task` refuses to claim new open work while you have unread direct messages. Call `poll_messages` and handle corrections before retrying. Override only when intentionally ignoring those messages.
 - **Dependencies**: Tasks can have a `depends_on` field (array of task IDs). A task with unmet dependencies starts as `blocked` and auto-transitions to `open` when all deps complete. If a dependency fails, downstream tasks are auto-cancelled.
 - **Approval gates**: Tasks can be set to `approval_required` status. They remain gated until approved (transitions to `open`) or explicitly cancelled. Use this for true approval checkpoints, not routine code review.
 - **Idempotency**: Tasks can have an `idempotency_key` field that prevents duplicate creation on retry.
@@ -54,11 +38,6 @@ When the role is unclear, do not invent one. Ask one short question or proceed a
 | Topic | Reference | Load When |
 |-------|-----------|-----------|
 | Bootstrap and registration fields | `references/bootstrap.md` | You need to decide `directory`, `scope`, `file_root`, or `label` |
-| Planner workflow | `references/planner.md` | The session should plan, delegate, monitor, or recover work |
-| Implementer workflow | `references/implementer.md` | The session should claim tasks and edit code |
-| Reviewer workflow | `references/reviewer.md` | The session should review completed work or inspect risk |
-| Researcher workflow | `references/researcher.md` | The session should investigate and publish findings |
-| KV and shared coordination state | `references/coordination.md` | You need to read/write `progress/`, `plan/`, `owner/`, queue, or handoff keys |
 | Specialists, generalists, and team conventions | `references/roles-and-teams.md` | You need to route work by `role:` or `team:` labels |
 | `swarm-mcp` CLI reference | `references/cli.md` | You are about to write or invoke a helper script, inspect swarm state from a plain terminal, or control `swarm-ui` through the CLI |
 
@@ -67,9 +46,9 @@ When the role is unclear, do not invent one. Ask one short question or proceed a
 ### Must Do
 
 - Call `register` before using other swarm tools
-- Use `whoami`, `list_instances`, `poll_messages`, and `list_tasks` early in the session. If `list_instances` returns only you, skip per-edit locking until peers join.
-- Call `lock_file` while editing when peers are present. Read the returned annotations as your pre-edit check.
-- Use `update_task` once at task completion (terminal status). `claim_task` already moved the task to `in_progress`.
+- Use `whoami`, `list_instances`, `poll_messages`, and `list_tasks` early in the session
+- Call `check_file` before editing and `lock_file` while editing
+- Use `update_task` when you start and finish claimed work
 - Use explicit `review` tasks for normal review handoff
 - Treat `role:` labels as conventions, not hard schema
 - Treat sessions without a `role:` label token as generalists

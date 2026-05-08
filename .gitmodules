@@ -2,7 +2,3 @@
 	path = apps/swarm-ios
 	url = https://github.com/Volpestyle/swarm-ios.git
 	branch = main
-[submodule "apps/swarm-ui"]
-	path = apps/swarm-ui
-	url = https://github.com/Volpestyle/swarm-ui.git
-	branch = main

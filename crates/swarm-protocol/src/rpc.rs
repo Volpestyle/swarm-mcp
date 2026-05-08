@@ -6,9 +6,9 @@
 //! - `POST   /auth/revoke`           → `RevokeRequest` → `RevokeResponse`
 //! - `GET    /auth/devices`          →                 → `DevicesResponse`
 //! - `POST   /auth/pairing-session`  → `CreatePairingSessionRequest`
-//!   → `CreatePairingSessionResponse`
+//!                                      → `CreatePairingSessionResponse`
 //! - `DELETE /auth/pairing-session/{id}`
-//!   →                 → `CancelPairingSessionResponse`
+//!                                    →                 → `CancelPairingSessionResponse`
 //! - `GET    /state?cursors=…`       →                 → `state::SwarmSnapshot`
 //! - `POST   /pty`                   → `SpawnPtyRequest` → `SpawnPtyResponse`
 //! - `POST   /pty/{id}/input`        → `WritePtyRequest` → `Ack`
@@ -135,8 +135,9 @@ pub struct CancelPairingSessionResponse {
 pub struct SpawnPtyRequest {
     pub v: u32,
     pub cwd: String,
-    /// One of: "shell" | "claude" | "codex" | "opencode". Future harnesses
-    /// added as opaque strings.
+    /// One of the UI-supported harnesses ("shell", "claude", "codex",
+    /// "hermes", "openclaw", "opencode"). Future harnesses are carried as
+    /// opaque strings once both launch surfaces opt in.
     pub harness: String,
     #[serde(default)]
     pub role: Option<String>,
@@ -156,21 +157,6 @@ pub struct SpawnPtyRequest {
     pub cols: Option<u16>,
     #[serde(default)]
     pub rows: Option<u16>,
-    /// Optional CLI arguments for the selected harness. When non-empty for a
-    /// non-shell harness, swarm-server runs the harness process directly in the
-    /// PTY instead of spawning a shell and waiting for a UI client to type the
-    /// harness command.
-    #[serde(default)]
-    pub args: Vec<String>,
-    /// Additional environment variables for the spawned PTY child. Authoritative
-    /// SWARM_MCP_* identity values may be overwritten by the server after these
-    /// are merged.
-    #[serde(default)]
-    pub env: std::collections::BTreeMap<String, String>,
-    /// Optional bytes, encoded as UTF-8 text, to write to PTY stdin immediately
-    /// after the child process is spawned.
-    #[serde(default)]
-    pub initial_input: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

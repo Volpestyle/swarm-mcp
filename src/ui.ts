@@ -3,8 +3,16 @@ import { db } from "./db";
 export type UiCommandKind =
   | "spawn_shell"
   | "send_prompt"
+  | "kill_instance"
   | "move_node"
-  | "organize_nodes";
+  | "organize_nodes"
+  | "ui.export-layout"
+  | "ui.screenshot"
+  | "ui.proof-pack"
+  | "browser.open"
+  | "browser.import-active-tab"
+  | "browser.capture-snapshot"
+  | "browser.close";
 
 export type UiCommandStatus = "pending" | "running" | "done" | "failed";
 

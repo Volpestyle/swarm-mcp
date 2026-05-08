@@ -3,18 +3,21 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SERVER_NAME = "swarm";
-const SKILLS = ["swarm-mcp", "swarm-deepdive"];
+const SKILLS = ["swarm-mcp", "swarm-planner", "swarm-implementer"];
+const COMMANDS = ["swarm-planner.md", "swarm-implementer.md"];
 
 type InitOptions = {
   dir: string;
   force: boolean;
   skills: boolean;
+  commands: boolean;
 };
 
 function parse(args: string[]): InitOptions {
@@ -22,12 +25,14 @@ function parse(args: string[]): InitOptions {
     dir: process.cwd(),
     force: false,
     skills: true,
+    commands: true,
   };
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--force") opts.force = true;
     else if (arg === "--no-skills") opts.skills = false;
+    else if (arg === "--no-commands") opts.commands = false;
     else if (arg === "--dir") {
       const next = args[++i];
       if (!next) throw new Error("--dir requires a path argument");
@@ -118,8 +123,15 @@ export async function runInit(args: string[]) {
     for (const path of wrote) console.log(`  wrote ${path}`);
   }
 
+  if (opts.commands) {
+    const commandsSource = join(pkgRoot, "commands");
+    const commandsDest = join(opts.dir, ".claude", "commands");
+    const wrote = copyEntries(commandsSource, commandsDest, COMMANDS, opts.force);
+    for (const path of wrote) console.log(`  wrote ${path}`);
+  }
+
   console.log(`
 Done. Restart your coding-agent host to pick up .mcp.json.
-After restart, invoke \`/swarm-mcp\` to join the swarm or \`/swarm-deepdive\` to inspect swarm history.
+After restart, call the swarm \`register\` tool to join the swarm.
 `);
 }

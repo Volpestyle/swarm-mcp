@@ -38,8 +38,6 @@ pub fn open_swarm_db(path: &Path) -> Result<Connection, String> {
         .optional()
         .map_err(|err| format!("failed to read PRAGMA journal_mode: {err}"))?;
 
-    swarm_schema::validate_schema(&conn)?;
-
     Ok(conn)
 }
 

@@ -4,6 +4,13 @@ import {
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import {
+  BrowserBridge,
+  type ManagedBrowserContext,
+  launchManagedBrowser,
+  stopManagedBrowser,
+} from "./browser";
+import * as browserStore from "./browserStore";
 import { db } from "./db";
 import * as context from "./context";
 import * as events from "./events";
@@ -12,8 +19,10 @@ import * as messages from "./messages";
 import { file as filepath } from "./paths";
 import * as planner from "./planner";
 import * as prompts from "./prompts";
+import { REGISTER_PROMPT, STANDBY_REGISTER_PROMPT } from "./registerPrompts";
 import * as registry from "./registry";
 import * as tasks from "./tasks";
+import * as ui from "./ui";
 
 let instance: registry.Instance | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -22,17 +31,14 @@ let lastMsgId = 0;
 let lastTaskUpdate = 0;
 let lastInstancesVersion = "";
 let lastKvUpdate = 0;
+let lastBrowserEventId = 0;
+const browserContexts = new Map<string, ManagedBrowserContext>();
+let activeBrowserContextId: string | null = null;
 
 const server = new McpServer({
   name: "swarm",
   version: "1.0.0",
 });
-
-const REGISTER_PROMPT = `You are now registered with the swarm and should operate in autonomous mode.
-
-Rehydrate first: poll_messages, list_tasks, list_instances, and any role-specific KV keys you rely on.
-When idle, use wait_for_activity as the loop. React to changes immediately.
-Only stop when the overall goal is complete or the user explicitly tells you to stop.`;
 
 function missing() {
   return {
@@ -43,11 +49,12 @@ function missing() {
 }
 
 function registerContent(reg: registry.Instance) {
+  const standby = process.env.SWARM_MCP_STARTUP_MODE?.trim() === "standby";
   const content = [
     { type: "text" as const, text: JSON.stringify(reg) },
-    { type: "text" as const, text: REGISTER_PROMPT },
+    { type: "text" as const, text: standby ? STANDBY_REGISTER_PROMPT : REGISTER_PROMPT },
   ];
-  const roleBootstrap = prompts.roleBootstrap(planner.extractRole(reg.label));
+  const roleBootstrap = standby ? "" : prompts.roleBootstrap(planner.extractRole(reg.label));
   if (roleBootstrap) {
     content.push({ type: "text" as const, text: roleBootstrap });
   }
@@ -156,6 +163,275 @@ const taskCreateShape = {
     ),
 } satisfies ToolShape;
 
+const browserTargetShape = {
+  context_id: z
+    .string()
+    .optional()
+    .describe(
+      "Managed browser context ID returned by browser_open. Defaults to the active context.",
+    ),
+  endpoint: z
+    .string()
+    .optional()
+    .describe(
+      "Optional Chrome DevTools endpoint or port, e.g. 9222, localhost:9222, or http://127.0.0.1:9222. Overrides context_id.",
+    ),
+} satisfies ToolShape;
+
+type BrowserContextSummary = {
+  id: string;
+  endpoint: string;
+  profileDir: string;
+  pid: number | null;
+  startUrl: string;
+  status: string;
+  active: boolean;
+  managedByThisProcess: boolean;
+  ownerInstanceId?: string | null;
+  createdAt?: number;
+  updatedAt?: number;
+};
+
+function browserContextSummary(
+  context: ManagedBrowserContext,
+): BrowserContextSummary {
+  return {
+    id: context.id,
+    endpoint: context.endpoint.baseUrl,
+    profileDir: context.profileDir,
+    pid: context.pid,
+    startUrl: context.startUrl,
+    status: "open",
+    active: context.id === activeBrowserContextId,
+    managedByThisProcess: true,
+  };
+}
+
+function browserContextRowSummary(
+  context: browserStore.BrowserContextRow,
+): BrowserContextSummary {
+  return {
+    id: context.id,
+    endpoint: context.endpoint,
+    profileDir: context.profile_dir,
+    pid: context.pid,
+    startUrl: context.start_url,
+    status: context.status,
+    active: context.id === activeBrowserContextId,
+    managedByThisProcess: browserContexts.has(context.id),
+    ownerInstanceId: context.owner_instance_id,
+    createdAt: context.created_at,
+    updatedAt: context.updated_at,
+  };
+}
+
+function browserContextList(scope: string): BrowserContextSummary[] {
+  const persisted = browserStore.listContexts(scope);
+  const seen = new Set(persisted.map((item) => item.id));
+  const rows: BrowserContextSummary[] = persisted.map(browserContextRowSummary);
+  for (const context of browserContexts.values()) {
+    if (!seen.has(context.id)) rows.push(browserContextSummary(context));
+  }
+  return rows;
+}
+
+function browserTabSummary(tab: browserStore.BrowserTabRow) {
+  return {
+    contextId: tab.context_id,
+    tabId: tab.tab_id,
+    type: tab.type,
+    url: tab.url,
+    title: tab.title,
+    active: tab.active === 1,
+    updatedAt: tab.updated_at,
+  };
+}
+
+function browserSnapshotSummary(
+  snapshot: browserStore.BrowserSnapshotRow,
+  options: { includeText?: boolean } = {},
+) {
+  return {
+    id: snapshot.id,
+    contextId: snapshot.context_id,
+    tabId: snapshot.tab_id,
+    url: snapshot.url,
+    title: snapshot.title,
+    text: options.includeText ? snapshot.text : undefined,
+    textPreview: snapshot.text.slice(0, 1200),
+    textLength: snapshot.text.length,
+    elements: snapshot.elements.slice(0, options.includeText ? 200 : 40),
+    elementCount: snapshot.elements.length,
+    screenshotPath: snapshot.screenshot_path,
+    createdBy: snapshot.created_by,
+    createdAt: snapshot.created_at,
+  };
+}
+
+function parseJsonMaybe(value: string | null) {
+  if (value == null) return null;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function uiCommandSummary(row: ui.UiCommandRow) {
+  return {
+    id: row.id,
+    scope: row.scope,
+    createdBy: row.created_by,
+    kind: row.kind,
+    payload: parseJsonMaybe(row.payload),
+    status: row.status,
+    claimedBy: row.claimed_by,
+    result: parseJsonMaybe(row.result),
+    error: row.error,
+    createdAt: row.created_at,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+  };
+}
+
+function browserUiCommandList(
+  scope: string,
+  opts: { status?: string; limit?: number } = {},
+) {
+  const limit = Math.max(1, Math.min(100, opts.limit ?? 20));
+  const args: Array<string | number> = [scope];
+  const statusFilter = opts.status?.trim();
+  const statusClause = statusFilter ? "AND status = ?" : "";
+  if (statusFilter) args.push(statusFilter);
+  args.push(limit);
+
+  return (
+    db
+      .query(
+        `SELECT id, scope, created_by, kind, payload, status, claimed_by, result,
+                error, created_at, started_at, completed_at
+         FROM ui_commands
+         WHERE scope = ? AND kind LIKE 'browser.%' ${statusClause}
+         ORDER BY id DESC
+         LIMIT ?`,
+      )
+      .all(...args) as ui.UiCommandRow[]
+  ).map(uiCommandSummary);
+}
+
+async function waitForUiCommand(id: number, waitSeconds: number) {
+  const deadline = Date.now() + Math.max(0, waitSeconds) * 1000;
+  let row = ui.get(id);
+  while (row && row.status !== "done" && row.status !== "failed" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    row = ui.get(id);
+  }
+  return row;
+}
+
+async function enqueueBrowserUiCommand(
+  kind: Extract<ui.UiCommandKind, `browser.${string}`>,
+  payload: Record<string, unknown>,
+  waitSeconds: number,
+) {
+  const current = instance!;
+  const id = ui.enqueue(current.scope, kind, payload, current.id);
+  events.emit({
+    scope: current.scope,
+    type: "browser.command.enqueued",
+    actor: current.id,
+    subject: String(id),
+    payload: {
+      kind,
+      wait_seconds: waitSeconds,
+    },
+  });
+  const row = waitSeconds > 0 ? await waitForUiCommand(id, waitSeconds) : ui.get(id);
+  return {
+    command: row ? uiCommandSummary(row) : { id, missing: true },
+    browser: browserCatalogSnapshot(current.scope),
+    note:
+      row?.status === "pending"
+        ? "Command is queued. Start swarm-ui or keep it running to execute desktop browser intents."
+        : undefined,
+  };
+}
+
+function browserCatalogSnapshot(scope: string) {
+  const contexts = browserContextList(scope);
+  const tabs = contexts.flatMap((context) =>
+    browserStore.listTabs(scope, context.id).map(browserTabSummary),
+  );
+  const snapshots = browserStore
+    .listSnapshots(scope, undefined, 40)
+    .map((snapshot) => browserSnapshotSummary(snapshot));
+
+  return {
+    activeContextId: activeBrowserContextId,
+    contexts,
+    tabs,
+    snapshots,
+    commands: browserUiCommandList(scope, { limit: 20 }),
+    note:
+      "Browser contexts are opt-in managed Chrome profiles. Normal personal Chrome tabs are not visible unless imported into this workbench.",
+  };
+}
+
+function resolveBrowserBridge(args: {
+  context_id?: string;
+  endpoint?: string;
+}): { bridge: BrowserBridge; context: unknown; contextId: string | null } {
+  if (args.endpoint?.trim()) {
+    return {
+      bridge: new BrowserBridge(args.endpoint.trim()),
+      context: null,
+      contextId: null,
+    };
+  }
+
+  const contextId = args.context_id?.trim() || activeBrowserContextId;
+  if (!contextId) {
+    throw new Error("No active browser context. Call browser_open first.");
+  }
+
+  const managed = browserContexts.get(contextId);
+  if (managed) {
+    return {
+      bridge: new BrowserBridge(managed.endpoint),
+      context: browserContextSummary(managed),
+      contextId: managed.id,
+    };
+  }
+
+  if (!instance) {
+    throw new Error("Not registered. Call register first.");
+  }
+
+  const persisted = browserStore.getContext(instance.scope, contextId);
+  if (!persisted) {
+    throw new Error(
+      `Browser context ${contextId} is not managed by this MCP process.`,
+    );
+  }
+
+  return {
+    bridge: new BrowserBridge(persisted.endpoint),
+    context: browserContextRowSummary(persisted),
+    contextId: persisted.id,
+  };
+}
+
+function closeAllBrowserContexts() {
+  for (const context of browserContexts.values()) {
+    stopManagedBrowser(context);
+    if (instance) {
+      browserStore.markContextClosed(instance.scope, context.id, instance.id);
+    }
+  }
+  browserContexts.clear();
+  activeBrowserContextId = null;
+}
+
 function resolveFileInput(file: string) {
   if (!instance) return filepath("", file);
   return filepath(instance.directory, file, {
@@ -199,6 +475,16 @@ function getMaxKvUpdate() {
   return kv.version(instance.scope);
 }
 
+function getMaxBrowserEventId() {
+  if (!instance) return 0;
+  const row = db
+    .query(
+      "SELECT MAX(id) as max FROM events WHERE scope = ? AND type LIKE 'browser.%'",
+    )
+    .get(instance.scope) as { max: number | null };
+  return row.max ?? 0;
+}
+
 async function poll() {
   if (!instance) return;
 
@@ -220,6 +506,12 @@ async function poll() {
       lastInstancesVersion = instancesVersion;
       await server.server.sendResourceUpdated({ uri: "swarm://instances" });
     }
+
+    const browserEventId = getMaxBrowserEventId();
+    if (browserEventId > lastBrowserEventId) {
+      lastBrowserEventId = browserEventId;
+      await server.server.sendResourceUpdated({ uri: "swarm://browser" });
+    }
   } catch {
     return;
   }
@@ -228,6 +520,7 @@ async function poll() {
 function cleanup() {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (notifyTimer) clearInterval(notifyTimer);
+  closeAllBrowserContexts();
   if (instance) registry.deregister(instance.id);
   instance = null;
   heartbeatTimer = null;
@@ -288,6 +581,46 @@ server.resource(
 );
 
 server.resource(
+  "browser",
+  "swarm://browser",
+  {
+    description:
+      "Managed browser contexts, tabs, and recent readable snapshots for this swarm scope.",
+  },
+  async () => {
+    if (!instance)
+      return resource(
+        { activeContextId: null, contexts: [], tabs: [], snapshots: [] },
+        "swarm://browser",
+      );
+    return resource(browserCatalogSnapshot(instance.scope), "swarm://browser");
+  },
+);
+
+server.resource(
+  "browser-snapshot",
+  new ResourceTemplate("swarm://browser/snapshot{?id}", { list: undefined }),
+  {
+    description:
+      "Full text and element details for a captured browser snapshot by snapshot id.",
+  },
+  async (uri, { id }) => {
+    if (!instance) return resource(null, uri.href);
+    const snapshotId = Array.isArray(id) ? id[0] : id;
+    if (!snapshotId) {
+      return resource({ error: "Missing snapshot id" }, uri.href);
+    }
+    const snapshot = browserStore.getSnapshot(instance.scope, String(snapshotId));
+    return resource(
+      snapshot
+        ? browserSnapshotSummary(snapshot, { includeText: true })
+        : { error: `Browser snapshot ${snapshotId} not found` },
+      uri.href,
+    );
+  },
+);
+
+server.resource(
   "context-for-file",
   new ResourceTemplate("swarm://context{?file}", { list: undefined }),
   {
@@ -321,6 +654,16 @@ server.registerPrompt(
       "Apply the recommended cross-agent coordination workflow for this session.",
   },
   async () => prompt(prompts.protocol()),
+);
+
+server.registerPrompt(
+  "browser",
+  {
+    title: "Swarm Browser Workbench",
+    description:
+      "Use managed browser contexts that agents can read and control through swarm browser tools.",
+  },
+  async () => prompt(prompts.browser()),
 );
 
 server.tool(
@@ -370,6 +713,7 @@ function startInstanceTimers() {
   lastTaskUpdate = getMaxTaskUpdate();
   lastInstancesVersion = getInstancesVersion();
   lastKvUpdate = getMaxKvUpdate();
+  lastBrowserEventId = getMaxBrowserEventId();
 
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (notifyTimer) clearInterval(notifyTimer);
@@ -384,7 +728,7 @@ function startInstanceTimers() {
 }
 
 /**
- * When swarm-ui spawns the host process (claude/codex/opencode), it
+ * When swarm-ui spawns the host process (claude/codex/hermes/openclaw/opencode), it
  * pre-creates an instance row with adopted=0 and injects its id via
  * SWARM_MCP_INSTANCE_ID. The row stays as "ADOPTING" in the UI until this
  * server adopts it — but MCP clients only call the `register` tool on
@@ -729,32 +1073,20 @@ registeredTool(
 
 registeredTool(
   "claim_task",
-  "Start work on a task: assigns it to you (if open) and transitions to in_progress in one call. Works on open+unassigned tasks and on tasks pre-assigned to you (status=claimed).",
-  {
-    task_id: z.string().describe("The task ID to claim"),
-    ignore_unread_messages: z
-      .boolean()
-      .optional()
-      .describe(
-        "Set true only when intentionally claiming despite unread messages. Default false blocks claiming until poll_messages is called.",
-      ),
-  },
-  async ({ task_id, ignore_unread_messages }) => {
+  "Claim an open task to work on it.",
+  { task_id: z.string().describe("The task ID to claim") },
+  async ({ task_id }) => {
     const current = instance!;
-    return respondJson(
-      tasks.claim(task_id, current.scope, current.id, {
-        ignoreUnreadMessages: ignore_unread_messages,
-      }),
-    );
+    return respondJson(tasks.claim(task_id, current.scope, current.id));
   },
 );
 
 registeredTool(
   "update_task",
-  "Move a claimed/in_progress task to a terminal status (done, failed, cancelled). claim_task already transitions to in_progress, so this is the single completion call. Auto-releases this instance's locks on the task's files.",
+  "Update a task's status and optionally attach a result.",
   {
     task_id: z.string().describe("The task ID"),
-    status: z.enum(["done", "failed", "cancelled"]).describe("Terminal status"),
+    status: z.enum(["in_progress", "done", "failed", "cancelled"]).describe("New status"),
     result: z.string().optional().describe("Result or summary of work done"),
   },
   async ({ task_id, status, result }) => {
@@ -869,7 +1201,7 @@ registeredTool(
 
 registeredTool(
   "lock_file",
-  "Acquire an edit lock on a file and read existing peer annotations in one call. Returns the new lock id plus any non-lock annotations on the file. Locks held by this instance are auto-released when its task reaches a terminal state via update_task.",
+  "Announce that you are actively working on a file. Other instances should avoid editing it.",
   {
     file: z.string().describe("File path to lock"),
     reason: z.string().optional().describe("Why you're locking it"),
@@ -889,12 +1221,27 @@ registeredTool(
 
 registeredTool(
   "unlock_file",
-  "Release a file lock early. Locks are auto-released on terminal update_task, so call this only when you finish a file before the task as a whole.",
+  "Release a file lock so other instances can edit it.",
   { file: z.string().describe("File path to unlock") },
   async ({ file }) => {
     const current = instance!;
     context.clearLocks(current.id, current.scope, resolveFileInput(file));
     return respond(`Unlocked ${file}`);
+  },
+);
+
+registeredTool(
+  "check_file",
+  "Check if a file has any annotations, locks, or warnings from other instances in this scope.",
+  { file: z.string().describe("File path to check") },
+  async ({ file }) => {
+    const current = instance!;
+    const rows = context.lookup(current.scope, resolveFileInput(file));
+    if (!rows.length)
+      return {
+        content: [{ type: "text", text: "No annotations for this file" }],
+      };
+    return respondJson(rows);
   },
 );
 
@@ -906,6 +1253,513 @@ registeredTool(
   },
   async ({ query }) => {
     return respondJson(context.search(instance!.scope, query));
+  },
+);
+
+registeredTool(
+  "browser_open",
+  "Launch a managed, isolated Chrome browser context that this agent can read and control through browser_* tools.",
+  {
+    context_id: z
+      .string()
+      .optional()
+      .describe("Optional stable ID for this managed browser context"),
+    url: z
+      .string()
+      .optional()
+      .describe("Initial URL. Defaults to about:blank."),
+    headless: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe("Launch Chrome headless. Default false for visible operator use."),
+    port: z
+      .number()
+      .int()
+      .min(1024)
+      .max(65535)
+      .optional()
+      .describe("Optional Chrome DevTools port. Omit to auto-pick a port."),
+  },
+  async ({ context_id, url, headless, port }) => {
+    try {
+      const current = instance!;
+      const contextId = context_id?.trim() || undefined;
+      if (
+        contextId &&
+        (browserContexts.has(contextId) ||
+          browserStore.getContext(current.scope, contextId))
+      ) {
+        return respondJson({
+          error: `Browser context ${contextId} already exists`,
+          contexts: browserContextList(current.scope),
+        });
+      }
+
+      const managed = await launchManagedBrowser({
+        id: contextId,
+        url,
+        headless,
+        port,
+      });
+      browserContexts.set(managed.id, managed);
+      activeBrowserContextId = managed.id;
+      const persisted = browserStore.upsertContext(
+        current.scope,
+        current.id,
+        managed,
+      );
+
+      const bridge = new BrowserBridge(managed.endpoint);
+      const tabs = await bridge.listTabs();
+      browserStore.recordTabs(current.scope, managed.id, tabs, current.id);
+      return respondJson({
+        context: browserContextRowSummary(persisted),
+        tabs,
+        note: "This is an isolated managed Chrome profile. Use browser_read or browser_snapshot to inspect it.",
+      });
+    } catch (err) {
+      return respondJson({ error: String(err) });
+    }
+  },
+);
+
+registeredTool(
+  "browser_contexts",
+  "List browser contexts persisted in this swarm scope, including whether each is managed by this MCP process.",
+  {},
+  async () => respondJson(browserContextList(instance!.scope)),
+);
+
+registeredTool(
+  "browser_tabs",
+  "List tabs in a managed browser context or explicit Chrome DevTools endpoint.",
+  browserTargetShape,
+  async (args) => {
+    try {
+      const current = instance!;
+      const { bridge, context, contextId } = resolveBrowserBridge(args);
+      const tabs = await bridge.listTabs();
+      if (contextId) {
+        browserStore.recordTabs(current.scope, contextId, tabs, current.id);
+      }
+      return respondJson({
+        context,
+        tabs,
+        persistedTabs: contextId
+          ? browserStore.listTabs(current.scope, contextId)
+          : [],
+      });
+    } catch (err) {
+      return respondJson({ error: String(err) });
+    }
+  },
+);
+
+registeredTool(
+  "browser_read",
+  "Read the current page as agent-friendly text and key interactive elements. Does not take a screenshot.",
+  {
+    ...browserTargetShape,
+    tab_id: z.string().optional().describe("Optional tab ID from browser_tabs"),
+    max_text_length: z
+      .number()
+      .int()
+      .min(500)
+      .max(100_000)
+      .optional()
+      .default(24_000)
+      .describe("Maximum page text characters to return"),
+    max_elements: z
+      .number()
+      .int()
+      .min(0)
+      .max(500)
+      .optional()
+      .default(120)
+      .describe("Maximum interactive/headline elements to return"),
+  },
+  async ({ tab_id, max_text_length, max_elements, ...target }) => {
+    try {
+      const current = instance!;
+      const { bridge, context, contextId } = resolveBrowserBridge(target);
+      const snapshot = await bridge.snapshot({
+        tabId: tab_id,
+        maxTextLength: max_text_length,
+        maxElements: max_elements,
+      });
+      const persistedSnapshot = contextId
+        ? browserStore.recordSnapshot(
+            current.scope,
+            contextId,
+            snapshot,
+            current.id,
+          )
+        : null;
+      return respondJson({
+        context,
+        snapshot_id: persistedSnapshot?.id ?? null,
+        ...snapshot,
+      });
+    } catch (err) {
+      return respondJson({ error: String(err) });
+    }
+  },
+);
+
+registeredTool(
+  "browser_snapshot",
+  "Capture an agent-readable page snapshot, optionally including a PNG screenshot artifact.",
+  {
+    ...browserTargetShape,
+    tab_id: z.string().optional().describe("Optional tab ID from browser_tabs"),
+    include_screenshot: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Whether to save a PNG screenshot artifact. Default true."),
+    out: z
+      .string()
+      .optional()
+      .describe("Optional absolute output path for the PNG screenshot"),
+    max_text_length: z
+      .number()
+      .int()
+      .min(500)
+      .max(100_000)
+      .optional()
+      .default(24_000)
+      .describe("Maximum page text characters to return"),
+    max_elements: z
+      .number()
+      .int()
+      .min(0)
+      .max(500)
+      .optional()
+      .default(120)
+      .describe("Maximum interactive/headline elements to return"),
+  },
+  async ({
+    tab_id,
+    include_screenshot,
+    out,
+    max_text_length,
+    max_elements,
+    ...target
+  }) => {
+    try {
+      const current = instance!;
+      const { bridge, context, contextId } = resolveBrowserBridge(target);
+      const snapshot = await bridge.snapshot({
+        tabId: tab_id,
+        includeScreenshot: include_screenshot,
+        screenshotPath: out,
+        maxTextLength: max_text_length,
+        maxElements: max_elements,
+      });
+      const persistedSnapshot = contextId
+        ? browserStore.recordSnapshot(
+            current.scope,
+            contextId,
+            snapshot,
+            current.id,
+          )
+        : null;
+      return respondJson({
+        context,
+        snapshot_id: persistedSnapshot?.id ?? null,
+        ...snapshot,
+      });
+    } catch (err) {
+      return respondJson({ error: String(err) });
+    }
+  },
+);
+
+registeredTool(
+  "browser_screenshot",
+  "Save a PNG screenshot artifact for a browser tab.",
+  {
+    ...browserTargetShape,
+    tab_id: z.string().optional().describe("Optional tab ID from browser_tabs"),
+    out: z
+      .string()
+      .optional()
+      .describe("Optional absolute output path for the PNG screenshot"),
+  },
+  async ({ tab_id, out, ...target }) => {
+    try {
+      const { bridge, context } = resolveBrowserBridge(target);
+      return respondJson({
+        context,
+        screenshotPath: await bridge.captureScreenshot({ tabId: tab_id, out }),
+      });
+    } catch (err) {
+      return respondJson({ error: String(err) });
+    }
+  },
+);
+
+registeredTool(
+  "browser_snapshots",
+  "List persisted browser snapshots in this swarm scope.",
+  {
+    context_id: z
+      .string()
+      .optional()
+      .describe("Optional browser context ID to filter snapshots"),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .optional()
+      .default(20)
+      .describe("Maximum snapshots to return"),
+  },
+  async ({ context_id, limit }) => {
+    return respondJson(
+      browserStore.listSnapshots(instance!.scope, context_id, limit),
+    );
+  },
+);
+
+registeredTool(
+  "browser_navigate",
+  "Navigate a managed browser tab to a URL.",
+  {
+    ...browserTargetShape,
+    url: z.string().describe("Destination URL"),
+    tab_id: z.string().optional().describe("Optional tab ID from browser_tabs"),
+  },
+  async ({ url, tab_id, ...target }) => {
+    try {
+      const { bridge, context } = resolveBrowserBridge(target);
+      return respondJson({
+        context,
+        result: await bridge.navigate(url, { tabId: tab_id }),
+      });
+    } catch (err) {
+      return respondJson({ error: String(err) });
+    }
+  },
+);
+
+registeredTool(
+  "browser_click",
+  "Click an element by CSS selector or visible text inside the managed browser context.",
+  {
+    ...browserTargetShape,
+    target: z
+      .string()
+      .describe("CSS selector or visible text/accessible label to click"),
+    tab_id: z.string().optional().describe("Optional tab ID from browser_tabs"),
+  },
+  async ({ target, tab_id, ...browserTarget }) => {
+    try {
+      const { bridge, context } = resolveBrowserBridge(browserTarget);
+      return respondJson({
+        context,
+        result: await bridge.click(target, { tabId: tab_id }),
+      });
+    } catch (err) {
+      return respondJson({ error: String(err) });
+    }
+  },
+);
+
+registeredTool(
+  "browser_type",
+  "Type text into an input by CSS selector, visible label, accessible label, or placeholder.",
+  {
+    ...browserTargetShape,
+    target: z
+      .string()
+      .describe("CSS selector, visible label, accessible label, or placeholder"),
+    text: z.string().describe("Text to put into the target field"),
+    tab_id: z.string().optional().describe("Optional tab ID from browser_tabs"),
+  },
+  async ({ target, text, tab_id, ...browserTarget }) => {
+    try {
+      const { bridge, context } = resolveBrowserBridge(browserTarget);
+      return respondJson({
+        context,
+        result: await bridge.typeText(target, text, { tabId: tab_id }),
+      });
+    } catch (err) {
+      return respondJson({ error: String(err) });
+    }
+  },
+);
+
+registeredTool(
+  "browser_close",
+  "Close a managed browser context launched by this MCP process.",
+  {
+    context_id: z
+      .string()
+      .optional()
+      .describe("Managed context ID. Defaults to the active context."),
+  },
+  async ({ context_id }) => {
+    const current = instance!;
+    const contextId = context_id?.trim() || activeBrowserContextId;
+    if (!contextId) return respondJson({ error: "No active browser context" });
+    const managed = browserContexts.get(contextId);
+    if (!managed) {
+      const persisted = browserStore.getContext(current.scope, contextId);
+      return respondJson({
+        error: persisted
+          ? `Browser context ${contextId} is not owned by this MCP process; refusing to mark it closed without killing it.`
+          : `Browser context ${contextId} not found`,
+        context: persisted ? browserContextRowSummary(persisted) : null,
+      });
+    }
+    const signaled = stopManagedBrowser(managed);
+    browserContexts.delete(contextId);
+    const persisted = browserStore.markContextClosed(
+      current.scope,
+      contextId,
+      current.id,
+    );
+    if (activeBrowserContextId === contextId) {
+      activeBrowserContextId = browserContexts.keys().next().value ?? null;
+    }
+    return respondJson({
+      closed: contextId,
+      signaled,
+      context: persisted ? browserContextRowSummary(persisted) : null,
+      contexts: browserContextList(current.scope),
+    });
+  },
+);
+
+const browserUiWaitShape = {
+  wait_seconds: z
+    .number()
+    .min(0)
+    .max(120)
+    .optional()
+    .default(0)
+    .describe(
+      "Optional seconds to wait for swarm-ui to claim and finish the command. Default 0 returns immediately after enqueue.",
+    ),
+} satisfies ToolShape;
+
+registeredTool(
+  "browser_ui_open",
+  "Ask the running swarm-ui desktop workbench to open a visible managed browser context in this swarm scope.",
+  {
+    url: z
+      .string()
+      .optional()
+      .describe("URL to open. Defaults to about:blank when omitted."),
+    ...browserUiWaitShape,
+  },
+  async ({ url, wait_seconds }) =>
+    respondJson(
+      await enqueueBrowserUiCommand(
+        "browser.open",
+        { url: url?.trim() || null },
+        wait_seconds,
+      ),
+    ),
+);
+
+registeredTool(
+  "browser_ui_import_active_tab",
+  "Ask swarm-ui to import the front Google Chrome tab into a managed browser context. This uses the operator's macOS Automation permission boundary.",
+  browserUiWaitShape,
+  async ({ wait_seconds }) =>
+    respondJson(
+      await enqueueBrowserUiCommand(
+        "browser.import-active-tab",
+        {},
+        wait_seconds,
+      ),
+    ),
+);
+
+registeredTool(
+  "browser_ui_capture_snapshot",
+  "Ask swarm-ui to capture a readable snapshot from a UI-managed browser context. If context_id is omitted, the desktop worker uses the newest open context.",
+  {
+    context_id: z
+      .string()
+      .optional()
+      .describe("Browser context ID. Defaults to the newest open UI context."),
+    tab_id: z
+      .string()
+      .optional()
+      .describe("Optional tab ID from browser tabs."),
+    ...browserUiWaitShape,
+  },
+  async ({ context_id, tab_id, wait_seconds }) =>
+    respondJson(
+      await enqueueBrowserUiCommand(
+        "browser.capture-snapshot",
+        {
+          context_id: context_id?.trim() || null,
+          tab_id: tab_id?.trim() || null,
+        },
+        wait_seconds,
+      ),
+    ),
+);
+
+registeredTool(
+  "browser_ui_close",
+  "Ask swarm-ui to close a UI-managed browser context. If context_id is omitted, the desktop worker closes the newest open context.",
+  {
+    context_id: z
+      .string()
+      .optional()
+      .describe("Browser context ID. Defaults to the newest open UI context."),
+    ...browserUiWaitShape,
+  },
+  async ({ context_id, wait_seconds }) =>
+    respondJson(
+      await enqueueBrowserUiCommand(
+        "browser.close",
+        { context_id: context_id?.trim() || null },
+        wait_seconds,
+      ),
+    ),
+);
+
+registeredTool(
+  "browser_ui_commands",
+  "List or inspect browser desktop-workbench commands queued through swarm-ui.",
+  {
+    id: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Optional command ID to inspect."),
+    status: z
+      .enum(["pending", "running", "done", "failed"])
+      .optional()
+      .describe("Optional status filter when listing commands."),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .default(20)
+      .describe("Maximum commands to list."),
+  },
+  async ({ id, status, limit }) => {
+    const current = instance!;
+    if (id) {
+      const row = ui.get(id);
+      if (!row || row.scope !== current.scope || !row.kind.startsWith("browser.")) {
+        return respondJson({ error: `Browser UI command ${id} not found` });
+      }
+      return respondJson(uiCommandSummary(row));
+    }
+    return respondJson(browserUiCommandList(current.scope, { status, limit }));
   },
 );
 
@@ -981,7 +1835,7 @@ registeredTool(
 
 server.tool(
   "wait_for_activity",
-  "Block until new swarm activity arrives (messages, task changes, KV changes, or instance changes), then return what changed. Use this as your idle loop to stay autonomous without user prompting. Returns immediately if there is already unread activity.",
+  "Block until new swarm activity arrives (messages, task changes, KV changes, browser updates, or instance changes), then return what changed. Use this as your idle loop to stay autonomous without user prompting. Returns immediately if there is already unread activity.",
   {
     timeout_seconds: z
       .number()
@@ -1009,10 +1863,19 @@ server.tool(
       return respond(JSON.stringify(result, null, 2));
     }
 
+    events.emit({
+      scope: instance.scope,
+      type: "agent.waiting",
+      actor: instance.id,
+      subject: instance.id,
+      payload: { timeout_seconds },
+    });
+
     const startMsgId = getMaxMsgId();
     const startTaskUpdate = getMaxTaskUpdate();
     const startInstancesVersion = getInstancesVersion();
     const startKvUpdate = getMaxKvUpdate();
+    const startBrowserEventId = getMaxBrowserEventId();
 
     const deadline = timeout_seconds > 0 ? Date.now() + timeout_seconds * 1000 : 0;
     const pollInterval = 2000; // check every 2 seconds
@@ -1022,6 +1885,7 @@ server.tool(
       const currentTaskUpdate = getMaxTaskUpdate();
       const currentInstancesVersion = getInstancesVersion();
       const currentKvUpdate = getMaxKvUpdate();
+      const currentBrowserEventId = getMaxBrowserEventId();
 
       const changes: string[] = [];
       if (currentMsgId > startMsgId) changes.push("new_messages");
@@ -1029,6 +1893,8 @@ server.tool(
       if (currentInstancesVersion !== startInstancesVersion)
         changes.push("instance_changes");
       if (currentKvUpdate > startKvUpdate) changes.push("kv_updates");
+      if (currentBrowserEventId > startBrowserEventId)
+        changes.push("browser_updates");
 
       if (changes.length > 0) {
         // Collect the actual updates to return
@@ -1043,6 +1909,17 @@ server.tool(
         if (changes.includes("instance_changes")) {
           result.instances = registry.list(instance!.scope);
         }
+        if (changes.includes("browser_updates")) {
+          result.browser = browserCatalogSnapshot(instance!.scope);
+        }
+
+        events.emit({
+          scope: instance.scope,
+          type: "agent.wait_returned",
+          actor: instance.id,
+          subject: instance.id,
+          payload: { changes, timeout: false },
+        });
 
         return respond(JSON.stringify(result, null, 2));
       }
@@ -1052,6 +1929,14 @@ server.tool(
     }
 
     // Timeout with no changes
+    events.emit({
+      scope: instance.scope,
+      type: "agent.wait_returned",
+      actor: instance.id,
+      subject: instance.id,
+      payload: { changes: [], timeout: true },
+    });
+
     return respond(
       JSON.stringify({
         changes: [],

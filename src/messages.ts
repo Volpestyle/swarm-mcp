@@ -22,7 +22,7 @@ export function send(
     type: "message.sent",
     actor: sender,
     subject: recipient,
-    payload: { content, length: content.length },
+    payload: { length: content.length },
   });
 }
 
@@ -46,11 +46,7 @@ export function broadcast(sender: string, scope: string, content: string) {
       type: "message.broadcast",
       actor: sender,
       subject: null,
-      payload: {
-        content,
-        recipients: rows.length,
-        length: content.length,
-      },
+      payload: { recipients: rows.length, length: content.length },
     });
   });
   tx();
@@ -81,6 +77,14 @@ export function poll(recipient: string, scope: string, limit = 50) {
       rows.map((row) => row.id),
     );
   }
+
+  emit({
+    scope,
+    type: "agent.polled",
+    actor: recipient,
+    subject: recipient,
+    payload: { unread_count: rows.length, limit },
+  });
 
   return rows;
 }

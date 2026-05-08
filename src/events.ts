@@ -6,6 +6,9 @@ const EVENT_TTL_SECS = 24 * 60 * 60;
 export type EventType =
   | "message.sent"
   | "message.broadcast"
+  | "agent.polled"
+  | "agent.waiting"
+  | "agent.wait_returned"
   | "task.created"
   | "task.claimed"
   | "task.updated"
@@ -18,6 +21,11 @@ export type EventType =
   | "context.annotated"
   | "context.lock_acquired"
   | "context.lock_released"
+  | "browser.context.upserted"
+  | "browser.context.closed"
+  | "browser.tabs.updated"
+  | "browser.snapshot.captured"
+  | "browser.command.enqueued"
   | "instance.registered"
   | "instance.deregistered"
   | "instance.stale_reclaimed";

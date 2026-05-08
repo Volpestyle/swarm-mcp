@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::body::{Body, Bytes};
+use axum::body::Body;
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -146,7 +146,6 @@ struct InstanceInfo {
     directory: String,
     label: Option<String>,
     heartbeat: i64,
-    adopted: bool,
 }
 
 impl AuthSession {
@@ -178,9 +177,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     cancel_active_pairing_sessions(&mut auth_db, None, "server_startup")
         .map_err(|response| std::io::Error::other(response_error_message(response)))?;
     expire_pairing_sessions(&mut auth_db)
-        .map_err(|response| std::io::Error::other(response_error_message(response)))?;
-    open_swarm_rw(&config.swarm_db_path)
-        .map(drop)
         .map_err(|response| std::io::Error::other(response_error_message(response)))?;
 
     let (broadcast_tx, _) = broadcast::channel(512);
@@ -256,15 +252,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn health() -> impl IntoResponse {
-    Json(json!({
-        "ok": true,
-        "v": PROTOCOL_VERSION,
-        "capabilities": [
-            "pty.spawn.args",
-            "pty.spawn.env",
-            "pty.spawn.initial_input"
-        ]
-    }))
+    Json(json!({ "ok": true, "v": PROTOCOL_VERSION }))
 }
 
 fn build_router(state: EndpointState) -> Router {
@@ -276,7 +264,6 @@ fn build_router(state: EndpointState) -> Router {
         .route("/stream", get(stream))
         .route("/reveal", post(reveal))
         .route("/pty", post(spawn_pty))
-        .route("/pty/:id/replay", get(replay_pty))
         .route("/pty/:id/input", post(write_pty))
         .route("/pty/:id/resize", post(resize_pty))
         .route("/pty/:id", delete(close_pty))
@@ -432,45 +419,12 @@ async fn revoke(
     let mut db = state.app.auth_db.lock().await;
     expire_pairing_sessions(&mut db)?;
     revoke_device(&mut db, &auth.device_id, &request.device_id)?;
-    drop(db);
-    release_device_leases(&state.app.pty_service, &request.device_id);
 
     Ok(Json(RevokeResponse {
         v: PROTOCOL_VERSION,
         revoked: true,
     })
     .into_response())
-}
-
-fn release_device_leases(pty_service: &PtyService, device_id: &str) {
-    let holder = format!("device:{device_id}");
-    let snapshot = match pty_service.snapshot() {
-        Ok(snapshot) => snapshot,
-        Err(err) => {
-            warn!(%err, %device_id, "failed to inspect PTY leases during device revoke");
-            return;
-        }
-    };
-
-    for pty in snapshot.rows {
-        let owns_current = pty
-            .lease
-            .as_ref()
-            .is_some_and(|lease| lease.holder == holder);
-
-        if let Err(err) = pty_service.release_lease(
-            ReleaseLeaseRequest {
-                v: PROTOCOL_VERSION,
-                pty_id: pty.id,
-            },
-            &holder,
-        ) {
-            if !owns_current && err.payload().class == ErrorClass::LeaseConflict {
-                continue;
-            }
-            warn!(%err, %device_id, "failed to release PTY lease during device revoke");
-        }
-    }
 }
 
 async fn state_snapshot(
@@ -578,50 +532,28 @@ async fn close_pty(
     State(state): State<EndpointState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<String>,
-    body: Bytes,
+    payload: Option<Json<ClosePtyRequest>>,
 ) -> Result<Response, Response> {
     let auth = authenticate_request(&state, &headers).await?;
     enforce_rate_limit(&state, &auth, "pty.close")?;
-    let request = close_pty_request_from_body(id, body)?;
+    let force = match payload {
+        Some(Json(request)) => {
+            require_version(request.v)?;
+            request.force
+        }
+        None => false,
+    };
+    let request = ClosePtyRequest {
+        v: PROTOCOL_VERSION,
+        pty_id: id,
+        force,
+    };
     let ack = state
         .app
         .pty_service
-        .close(request, &auth.lease_holder(), auth.local)
+        .close(request, &auth.lease_holder())
         .map_err(server_error_response)?;
     Ok(Json(ack).into_response())
-}
-
-fn close_pty_request_from_body(path_id: String, body: Bytes) -> Result<ClosePtyRequest, Response> {
-    if body.is_empty() {
-        return Ok(ClosePtyRequest {
-            v: PROTOCOL_VERSION,
-            pty_id: path_id,
-            force: false,
-        });
-    }
-
-    let request = serde_json::from_slice::<ClosePtyRequest>(&body).map_err(|err| {
-        error_response(
-            StatusCode::BAD_REQUEST,
-            ErrorPayload::new(
-                ErrorClass::Validation,
-                format!("invalid close request body: {err}"),
-            ),
-        )
-    })?;
-    require_version(request.v)?;
-
-    if request.pty_id != path_id {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            ErrorPayload::new(
-                ErrorClass::Validation,
-                "close request pty_id does not match URL path",
-            ),
-        ));
-    }
-
-    Ok(request)
 }
 
 async fn request_lease(
@@ -677,37 +609,6 @@ async fn release_lease(
         )
         .map_err(server_error_response)?;
     Ok(Json(ack).into_response())
-}
-
-async fn replay_pty(
-    State(state): State<EndpointState>,
-    headers: HeaderMap,
-    AxumPath(id): AxumPath<String>,
-) -> Result<Response, Response> {
-    let auth = authenticate_request(&state, &headers).await?;
-    enforce_rate_limit(&state, &auth, "pty.replay")?;
-    let frames = state
-        .app
-        .pty_service
-        .replay(&id, None)
-        .map_err(|rejected| {
-            error_response(
-                StatusCode::NOT_FOUND,
-                ErrorPayload::new(ErrorClass::NotFound, rejected.reason),
-            )
-        })?;
-    let mut data = Vec::new();
-    for frame in frames {
-        if let FramePayload::PtyData(payload) = frame.payload {
-            data.extend(payload.data);
-        }
-    }
-
-    Ok((
-        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-        String::from_utf8_lossy(&data).into_owned(),
-    )
-        .into_response())
 }
 
 async fn stream_session(mut socket: WebSocket, state: AppState, auth: AuthSession) {
@@ -1253,9 +1154,54 @@ fn open_swarm_rw(path: &Path) -> Result<Connection, Response> {
     })?;
     conn.busy_timeout(Duration::from_millis(3_000))
         .map_err(|err| internal_response(format!("failed to set swarm db busy timeout: {err}")))?;
-    swarm_schema::ensure_schema(&conn)
-        .map_err(|err| internal_response(format!("failed to ensure swarm db schema: {err}")))?;
+    ensure_instance_schema(&conn)?;
     Ok(conn)
+}
+
+fn ensure_instance_schema(conn: &Connection) -> Result<(), Response> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS instances (
+          id TEXT PRIMARY KEY,
+          scope TEXT NOT NULL,
+          directory TEXT NOT NULL,
+          root TEXT NOT NULL,
+          file_root TEXT NOT NULL DEFAULT '',
+          pid INTEGER NOT NULL,
+          label TEXT,
+          registered_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          heartbeat INTEGER NOT NULL DEFAULT (unixepoch()),
+          adopted INTEGER NOT NULL DEFAULT 1
+        );
+        "#,
+    )
+    .map_err(|err| internal_response(format!("failed to ensure instances schema: {err}")))?;
+
+    let adopted_exists = conn
+        .prepare("PRAGMA table_info(instances)")
+        .and_then(|mut stmt| {
+            let mut rows = stmt.query([])?;
+            let mut found = false;
+            while let Some(row) = rows.next()? {
+                let name: String = row.get(1)?;
+                if name == "adopted" {
+                    found = true;
+                    break;
+                }
+            }
+            Ok(found)
+        })
+        .map_err(|err| internal_response(format!("failed to inspect instances schema: {err}")))?;
+
+    if !adopted_exists {
+        conn.execute(
+            "ALTER TABLE instances ADD COLUMN adopted INTEGER NOT NULL DEFAULT 1",
+            [],
+        )
+        .map_err(|err| internal_response(format!("failed to add instances.adopted: {err}")))?;
+    }
+
+    Ok(())
 }
 
 fn git_root(dir: &Path) -> PathBuf {
@@ -1359,7 +1305,7 @@ fn load_instance_info(
     instance_id: &str,
 ) -> Result<Option<InstanceInfo>, Response> {
     conn.query_row(
-        "SELECT id, scope, directory, label, heartbeat, COALESCE(adopted, 1)
+        "SELECT id, scope, directory, label, heartbeat
          FROM instances
          WHERE id = ?",
         params![instance_id],
@@ -1370,7 +1316,6 @@ fn load_instance_info(
                 directory: row.get(2)?,
                 label: row.get(3)?,
                 heartbeat: row.get(4)?,
-                adopted: row.get::<_, i64>(5)? != 0,
             })
         },
     )
@@ -1488,9 +1433,8 @@ fn spawn_pty_impl(
             )
         })?;
 
-        if existing.adopted
-            && swarm_protocol::InstanceStatus::from_heartbeat(now_secs(), existing.heartbeat)
-                == swarm_protocol::InstanceStatus::Online
+        if swarm_protocol::InstanceStatus::from_heartbeat(now_secs(), existing.heartbeat)
+            == swarm_protocol::InstanceStatus::Online
         {
             return Err(error_response(
                 StatusCode::BAD_REQUEST,
@@ -1567,24 +1511,16 @@ async fn pty_frame_forwarder(state: AppState) {
         match receiver.recv().await {
             Ok(frame) => {
                 if let FramePayload::PtyExit(payload) = &frame.payload {
-                    match state.pty_service.bound_instance_id(&payload.pty_id) {
-                        Ok(Some(instance_id)) => {
+                    if let Ok(snapshot) = state.pty_service.snapshot() {
+                        if let Some(instance_id) = snapshot
+                            .rows
+                            .iter()
+                            .find(|pty| pty.id == payload.pty_id)
+                            .and_then(|pty| pty.bound_instance_id.clone())
+                        {
                             if let Ok(conn) = open_swarm_rw(&state.config.swarm_db_path) {
                                 let _ = delete_unadopted_instance(&conn, &instance_id);
                             }
-                        }
-                        Ok(None) => {}
-                        Err(err) => {
-                            // Surfaces the race where PtyExit arrives after
-                            // cleanup_session removed the session from the
-                            // map: bound_instance_id then returns NotFound and
-                            // we'd silently skip delete_unadopted_instance,
-                            // letting the pending row leak to stale_reclaim.
-                            warn!(
-                                pty_id = %payload.pty_id,
-                                error = %err,
-                                "pty_frame_forwarder: bound_instance_id lookup failed on PtyExit"
-                            );
                         }
                     }
                 }
@@ -2077,58 +2013,6 @@ fn expire_pairing_sessions(conn: &mut Connection) -> Result<(), Response> {
     Ok(())
 }
 
-fn active_device_ids_for_client(
-    tx: &rusqlite::Transaction<'_>,
-    client_device_id: &str,
-) -> Result<Vec<String>, Response> {
-    let mut stmt = tx
-        .prepare(
-            "SELECT id FROM devices
-             WHERE client_device_id = ? AND revoked_at IS NULL
-             ORDER BY last_seen_at DESC, created_at DESC, id DESC",
-        )
-        .map_err(|err| {
-            internal_response(format!("failed to prepare active-device query: {err}"))
-        })?;
-    let rows = stmt
-        .query_map([client_device_id], |row| row.get::<_, String>(0))
-        .map_err(|err| internal_response(format!("failed to query active devices: {err}")))?;
-
-    let mut ids = Vec::new();
-    for row in rows {
-        ids.push(
-            row.map_err(|err| internal_response(format!("failed to decode active device: {err}")))?,
-        );
-    }
-    Ok(ids)
-}
-
-fn revoke_active_tokens_for_device(
-    tx: &rusqlite::Transaction<'_>,
-    device_id: &str,
-    now: i64,
-) -> Result<(), Response> {
-    tx.execute(
-        "UPDATE tokens SET revoked_at = ? WHERE device_id = ? AND revoked_at IS NULL",
-        params![now, device_id],
-    )
-    .map_err(|err| internal_response(format!("failed to revoke previous device tokens: {err}")))?;
-    Ok(())
-}
-
-fn revoke_superseded_device(
-    tx: &rusqlite::Transaction<'_>,
-    device_id: &str,
-    now: i64,
-) -> Result<(), Response> {
-    tx.execute(
-        "UPDATE devices SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
-        params![now, device_id],
-    )
-    .map_err(|err| internal_response(format!("failed to revoke superseded device: {err}")))?;
-    revoke_active_tokens_for_device(tx, device_id, now)
-}
-
 fn consume_pairing_code_and_issue_token(
     conn: &mut Connection,
     fingerprint: &str,
@@ -2161,54 +2045,11 @@ fn consume_pairing_code_and_issue_token(
         ));
     };
 
+    let device_id = format!("dev-{}", &Uuid::new_v4().simple().to_string()[..12]);
     let token_id = Uuid::new_v4().to_string();
     let token = random_token();
     let scopes_json = serde_json::to_string(scopes)
         .map_err(|err| internal_response(format!("failed to encode scopes: {err}")))?;
-    let active_device_ids = active_device_ids_for_client(&tx, &request.device_id)?;
-    let superseded_device_ids = active_device_ids
-        .iter()
-        .skip(1)
-        .cloned()
-        .collect::<Vec<_>>();
-
-    let (device_id, reused_device) = if let Some(existing_device_id) = active_device_ids.first() {
-        tx.execute(
-            "UPDATE devices
-             SET device_name = ?, platform = ?, scopes = ?, last_seen_at = ?
-             WHERE id = ?",
-            params![
-                request.device_name,
-                request.platform.as_deref(),
-                &scopes_json,
-                now,
-                existing_device_id
-            ],
-        )
-        .map_err(|err| internal_response(format!("failed to update existing device: {err}")))?;
-        revoke_active_tokens_for_device(&tx, existing_device_id, now)?;
-        for stale_device_id in &superseded_device_ids {
-            revoke_superseded_device(&tx, stale_device_id, now)?;
-        }
-        (existing_device_id.clone(), true)
-    } else {
-        let device_id = format!("dev-{}", &Uuid::new_v4().simple().to_string()[..12]);
-        tx.execute(
-            "INSERT INTO devices (id, client_device_id, device_name, platform, scopes, created_at, last_seen_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-            params![
-                device_id,
-                request.device_id,
-                request.device_name,
-                request.platform.as_deref(),
-                &scopes_json,
-                now,
-                now
-            ],
-        )
-        .map_err(|err| internal_response(format!("failed to insert device: {err}")))?;
-        (device_id, false)
-    };
 
     tx.execute(
         "UPDATE pairing_codes
@@ -2221,6 +2062,20 @@ fn consume_pairing_code_and_issue_token(
         params![now, request.code, request.pairing_secret],
     )
     .map_err(|err| internal_response(format!("failed to consume pairing code: {err}")))?;
+    tx.execute(
+        "INSERT INTO devices (id, client_device_id, device_name, platform, scopes, created_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        params![
+            device_id,
+            request.device_id,
+            request.device_name,
+            request.platform,
+            scopes_json,
+            now,
+            now
+        ],
+    )
+    .map_err(|err| internal_response(format!("failed to insert device: {err}")))?;
     tx.execute(
         "INSERT INTO tokens (id, device_id, token_hash, created_at, last_seen_at)
          VALUES (?, ?, ?, ?, ?)",
@@ -2238,8 +2093,6 @@ fn consume_pairing_code_and_issue_token(
                 "client_device_id": request.device_id,
                 "client_nonce": request.client_nonce,
                 "pairing_session_id": session_id,
-                "reused_device": reused_device,
-                "superseded_device_ids": superseded_device_ids,
             })
             .to_string(),
             now
@@ -2667,48 +2520,13 @@ mod tests {
     }
 
     #[test]
-    fn swarm_db_bootstrap_is_shared_and_versioned() {
-        let path = test_db_path("swarm-db-schema");
-
-        let conn = open_swarm_rw(&path)
-            .unwrap_or_else(|response| panic!("swarm db bootstrap failed: {}", response.status()));
-
-        assert_eq!(
-            swarm_schema::user_version(&conn).expect("user_version should be readable"),
-            swarm_schema::SWARM_DB_VERSION
-        );
-        for table in swarm_schema::EXPECTED_TABLES {
-            let exists = conn
-                .query_row(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-                    [*table],
-                    |_| Ok(()),
-                )
-                .optional()
-                .expect("table lookup should succeed")
-                .is_some();
-            assert!(exists, "{table} should exist after shared schema bootstrap");
-        }
-
-        drop(conn);
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
     fn pairing_transaction_rolls_back_on_token_insert_failure() {
         let mut conn = open_test_db("pair-rollback");
         let now = now_secs();
         conn.execute(
-            "INSERT INTO pairing_codes (code, session_id, cert_fingerprint, pairing_secret, created_at, expires_at, used_at)
-             VALUES (?, ?, ?, ?, ?, ?, NULL)",
-            params![
-                "123456",
-                "sess-rollback",
-                "fp-1",
-                "pair-secret",
-                now,
-                now + 600
-            ],
+            "INSERT INTO pairing_codes (code, cert_fingerprint, pairing_secret, created_at, expires_at, used_at)
+             VALUES (?, ?, ?, ?, ?, NULL)",
+            params!["123456", "fp-1", "pair-secret", now, now + 600],
         )
         .expect("pairing code insert should succeed");
         conn.execute_batch(
@@ -2760,97 +2578,6 @@ mod tests {
             0,
             "pairing audit insert should roll back",
         );
-    }
-
-    #[test]
-    fn pairing_reuses_active_client_device_and_rotates_token() {
-        let mut conn = open_test_db("pair-reuse-device");
-        let now = now_secs();
-        for (code, session_id, secret) in [
-            ("123456", "sess-1", "pair-secret-1"),
-            ("654321", "sess-2", "pair-secret-2"),
-        ] {
-            conn.execute(
-                "INSERT INTO pairing_codes (
-                   code, session_id, cert_fingerprint, pairing_secret, created_at, expires_at
-                 ) VALUES (?, ?, ?, ?, ?, ?)",
-                params![code, session_id, "fp-1", secret, now, now + 600],
-            )
-            .expect("pairing code insert should succeed");
-        }
-
-        let first = PairRequest {
-            v: PROTOCOL_VERSION,
-            code: "123456".into(),
-            device_name: "Test Phone".into(),
-            device_id: "ios-device-1".into(),
-            platform: Some("ios".into()),
-            pairing_secret: "pair-secret-1".into(),
-            client_nonce: "nonce-1".into(),
-        };
-        let (first_token, first_device_id) =
-            consume_pairing_code_and_issue_token(&mut conn, "fp-1", &first, &["scope-a".into()])
-                .expect("first pairing should succeed");
-
-        let second = PairRequest {
-            code: "654321".into(),
-            device_name: "Renamed Phone".into(),
-            pairing_secret: "pair-secret-2".into(),
-            client_nonce: "nonce-2".into(),
-            ..first
-        };
-        let (second_token, second_device_id) =
-            consume_pairing_code_and_issue_token(&mut conn, "fp-1", &second, &["scope-b".into()])
-                .expect("second pairing should succeed");
-
-        assert_ne!(
-            first_token, second_token,
-            "re-pairing should rotate the bearer token"
-        );
-        assert_eq!(
-            first_device_id, second_device_id,
-            "same client_device_id should reuse the active server device row"
-        );
-        assert_eq!(
-            count_rows(&conn, "devices"),
-            1,
-            "no duplicate active device row"
-        );
-        assert_eq!(
-            count_rows(&conn, "tokens"),
-            2,
-            "token history should be retained"
-        );
-
-        let active_tokens = conn
-            .query_row(
-                "SELECT COUNT(*) FROM tokens WHERE device_id = ? AND revoked_at IS NULL",
-                [second_device_id.as_str()],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("active token count should succeed");
-        assert_eq!(
-            active_tokens, 1,
-            "only the newest token should remain active"
-        );
-
-        let revoked_tokens = conn
-            .query_row(
-                "SELECT COUNT(*) FROM tokens WHERE device_id = ? AND revoked_at IS NOT NULL",
-                [second_device_id.as_str()],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("revoked token count should succeed");
-        assert_eq!(revoked_tokens, 1, "previous token should be revoked");
-
-        let stored_name = conn
-            .query_row(
-                "SELECT device_name FROM devices WHERE id = ?",
-                [second_device_id.as_str()],
-                |row| row.get::<_, String>(0),
-            )
-            .expect("device name lookup should succeed");
-        assert_eq!(stored_name, "Renamed Phone");
     }
 
     #[test]

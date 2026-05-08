@@ -1,17 +1,46 @@
 import { randomUUID } from "node:crypto";
-import * as context from "./context";
 import { db } from "./db";
 import { emit } from "./events";
-import {
-  TASK_STATUSES,
-  TASK_TYPES,
-  type TaskStatus,
-  type TaskType,
-} from "./generated/protocol";
 import { prune } from "./registry";
 import { stamp } from "./time";
 
-export { TASK_STATUSES, TASK_TYPES, type TaskStatus, type TaskType };
+export type TaskType =
+  | "review"
+  | "implement"
+  | "fix"
+  | "test"
+  | "research"
+  | "other";
+
+export const TASK_TYPES = [
+  "review",
+  "implement",
+  "fix",
+  "test",
+  "research",
+  "other",
+] as const;
+
+export type TaskStatus =
+  | "open"
+  | "claimed"
+  | "in_progress"
+  | "done"
+  | "failed"
+  | "cancelled"
+  | "blocked"
+  | "approval_required";
+
+export const TASK_STATUSES = [
+  "open",
+  "claimed",
+  "in_progress",
+  "done",
+  "failed",
+  "cancelled",
+  "blocked",
+  "approval_required",
+] as const;
 
 type TaskRow = {
   id: string;
@@ -73,49 +102,11 @@ export type TaskSnapshot = {
   approval_required: Array<Record<string, unknown>>;
 };
 
-export interface ClaimOpts {
-  ignoreUnreadMessages?: boolean;
-}
-
 function row(task: Record<string, unknown>) {
   if (typeof task.files === "string") task.files = JSON.parse(task.files);
   if (typeof task.depends_on === "string")
     task.depends_on = JSON.parse(task.depends_on);
   return task;
-}
-
-function unreadMessageGate(scope: string, recipient: string) {
-  const latest = db
-    .query(
-      `SELECT id, sender, created_at
-       FROM messages
-       WHERE scope = ? AND recipient = ? AND read = 0
-       ORDER BY id DESC
-       LIMIT 1`,
-    )
-    .get(scope, recipient) as
-    | { id: number; sender: string; created_at: number }
-    | null;
-
-  if (!latest) return null;
-
-  const count = db
-    .query(
-      `SELECT COUNT(*) as count
-       FROM messages
-       WHERE scope = ? AND recipient = ? AND read = 0`,
-    )
-    .get(scope, recipient) as { count: number };
-
-  return {
-    error:
-      `Unread messages pending (${count.count}). Call poll_messages before claiming new work, ` +
-      `or retry claim_task with ignore_unread_messages=true if you intentionally want to skip them. ` +
-      `Latest unread message: #${latest.id} from ${latest.sender}.`,
-    unread_message_count: count.count,
-    latest_message_id: latest.id,
-    latest_message_sender: latest.sender,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -151,13 +142,7 @@ function processCompletion(completedId: string, scope: string) {
         type: "task.cascade.cancelled",
         actor: "system",
         subject: task.id,
-        payload: {
-          trigger: completedId,
-          reason: "dependency_failed",
-          prior_status: "blocked",
-          dependency_status: state.depStatus,
-          result: autoCancelledResult(state.depId, state.depStatus),
-        },
+        payload: { trigger: completedId, reason: "dependency_failed" },
       });
       processFailure(task.id, scope);
     } else if (state.kind === "ready") {
@@ -171,11 +156,7 @@ function processCompletion(completedId: string, scope: string) {
         type: "task.cascade.unblocked",
         actor: "system",
         subject: task.id,
-        payload: {
-          trigger: completedId,
-          status: newStatus,
-          prior_status: "blocked",
-        },
+        payload: { trigger: completedId, status: newStatus },
       });
     }
   }
@@ -195,21 +176,16 @@ function processFailure(failedId: string, scope: string) {
     const deps = JSON.parse(task.depends_on) as string[];
     if (!deps.includes(failedId)) continue;
 
-    const cancelResult = `auto-cancelled: dependency ${failedId} failed`;
     db.run(
       `UPDATE tasks SET status = 'cancelled', result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?`,
-      [cancelResult, stamp(), task.id],
+      [`auto-cancelled: dependency ${failedId} failed`, stamp(), task.id],
     );
     emit({
       scope,
       type: "task.cascade.cancelled",
       actor: "system",
       subject: task.id,
-      payload: {
-        trigger: failedId,
-        reason: "dependency_failed",
-        result: cancelResult,
-      },
+      payload: { trigger: failedId, reason: "dependency_failed" },
     });
 
     // Recursive cascade
@@ -340,14 +316,10 @@ function insertPreparedTask(
     payload: {
       task_type: task.type,
       title: task.title,
-      description: task.description,
       status: task.status,
       assignee: task.assignee,
       parent_task_id: task.parent_task_id,
       depends_on: task.depends_on,
-      files: task.files ?? null,
-      priority: task.priority,
-      result: task.result,
       ...extraPayload,
     },
   });
@@ -395,41 +367,12 @@ export function request(
   return { id: prepared.id, status: prepared.status };
 }
 
-export function claim(
-  id: string,
-  scope: string,
-  assignee: string,
-  opts: ClaimOpts = {},
-) {
-  const before = db
-    .query("SELECT status, assignee FROM tasks WHERE id = ? AND scope = ?")
-    .get(id, scope) as { status: TaskStatus; assignee: string | null } | null;
-
-  if (!before) return { error: "Task not found" };
-
-  // Allowed: open + unassigned, or pre-assigned to this caller (status=claimed
-  // when planner pre-set assignee). Everything else is a no-op.
-  const isOpenForAnyone = before.status === "open" && before.assignee === null;
-  const isPreassignedToMe =
-    before.status === "claimed" && before.assignee === assignee;
-  if (!isOpenForAnyone && !isPreassignedToMe) {
-    return { error: `Task is already ${before.status}` };
-  }
-
-  if (!opts.ignoreUnreadMessages) {
-    const gate = unreadMessageGate(scope, assignee);
-    if (gate) return gate;
-  }
-
+export function claim(id: string, scope: string, assignee: string) {
   const result = db.run(
     `UPDATE tasks
-     SET assignee = ?, status = 'in_progress', updated_at = unixepoch(), changed_at = ?
-     WHERE id = ? AND scope = ?
-       AND (
-         (status = 'open' AND assignee IS NULL)
-         OR (status = 'claimed' AND assignee = ?)
-       )`,
-    [assignee, stamp(), id, scope, assignee],
+     SET assignee = ?, status = 'claimed', updated_at = unixepoch(), changed_at = ?
+     WHERE id = ? AND scope = ? AND status = 'open' AND assignee IS NULL`,
+    [assignee, stamp(), id, scope],
   );
 
   if (result.changes > 0) {
@@ -438,7 +381,6 @@ export function claim(
       type: "task.claimed",
       actor: assignee,
       subject: id,
-      payload: { prior_status: before.status, status: "in_progress" },
     });
     return { ok: true as const };
   }
@@ -455,7 +397,7 @@ export function update(
   id: string,
   scope: string,
   actor: string,
-  status: "done" | "failed" | "cancelled",
+  status: "in_progress" | "done" | "failed" | "cancelled",
   result?: string,
 ) {
   const tx = db.transaction(() => {
@@ -496,6 +438,10 @@ export function update(
         return { error: "Only the assignee can update this task" };
     }
 
+    if (status === "in_progress" && task.status !== "claimed") {
+      return { error: "Task must be claimed before it can move to in_progress" };
+    }
+
     db.run(
       "UPDATE tasks SET status = ?, result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ? AND scope = ?",
       [status, result ?? null, stamp(), id, scope],
@@ -505,19 +451,8 @@ export function update(
       type: "task.updated",
       actor,
       subject: id,
-      payload: {
-        status,
-        prior_status: task.status,
-        result: result ?? null,
-      },
+      payload: { status, prior_status: task.status },
     });
-
-    // Auto-release this actor's locks on the task's files. Saves an unlock
-    // call per file at task completion.
-    const files = task.files ? (JSON.parse(task.files) as string[]) : [];
-    if (files.length && task.assignee) {
-      context.releaseInstanceLocksForFiles(task.assignee, scope, files);
-    }
 
     // Dependency cascades
     if (status === "done") {
@@ -550,23 +485,16 @@ export function approve(id: string, scope: string) {
       const state = dependencyState(scope, deps);
 
       if (state.kind === "failed") {
-        const cancelResult = autoCancelledResult(state.depId, state.depStatus);
         db.run(
           "UPDATE tasks SET status = 'cancelled', result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ?",
-          [cancelResult, stamp(), id],
+          [autoCancelledResult(state.depId, state.depStatus), stamp(), id],
         );
         emit({
           scope,
           type: "task.cascade.cancelled",
           actor: "system",
           subject: id,
-          payload: {
-            trigger: state.depId,
-            reason: "dependency_failed",
-            prior_status: "approval_required",
-            dependency_status: state.depStatus,
-            result: cancelResult,
-          },
+          payload: { trigger: state.depId, reason: "dependency_failed" },
         });
         processFailure(id, scope);
         return {
@@ -586,7 +514,7 @@ export function approve(id: string, scope: string) {
           type: "task.approved",
           actor: null,
           subject: id,
-          payload: { status: "blocked", prior_status: "approval_required" },
+          payload: { status: "blocked" },
         });
         return { ok: true as const, status: "blocked" as TaskStatus };
       }
@@ -602,7 +530,7 @@ export function approve(id: string, scope: string) {
       type: "task.approved",
       actor: null,
       subject: id,
-      payload: { status: newStatus, prior_status: "approval_required" },
+      payload: { status: newStatus },
     });
     return { ok: true as const, status: newStatus };
   });
