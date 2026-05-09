@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SessionStart hook -- prime the agent to register with swarm-mcp."""
+"""SessionStart hook -- prime the codex agent to register with swarm-mcp."""
 
 from __future__ import annotations
 

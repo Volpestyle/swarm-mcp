@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SessionStart hook -- prime the agent to register with swarm-mcp."""
+"""PreToolUse hook -- auto-acquire swarm locks for apply_patch when peers exist."""
 
 from __future__ import annotations
 
@@ -12,6 +12,6 @@ from _common import core  # noqa: E402
 
 if __name__ == "__main__":
     try:
-        sys.exit(core.run_session_start_hook(sys.stdin))
+        sys.exit(core.run_pre_tool_use_hook(sys.stdin))
     except Exception:
         sys.exit(0)

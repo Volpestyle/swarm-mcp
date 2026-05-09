@@ -41,6 +41,9 @@ The runtime-specific config file enumerates which MCPs your profile actually loa
 |---|---|---|---|
 | Hermes | [`integrations/hermes/`](../integrations/hermes/) | v0.3 | Auto-register / -deregister, lock bridge, `/swarm`, `swarm_prompt_peer` express lane, herdr identity publish |
 | Claude Code | [`integrations/claude-code/`](../integrations/claude-code/) | v0.1 | `SessionStart` register-priming, lock bridge, `/swarm`, herdr identity hint via `additionalContext` |
-| Codex / OpenCode / others | none yet | — | Participate ad-hoc via the swarm-mcp skill + MCP tools |
+| Codex CLI | [`integrations/codex/plugins/swarm/`](../integrations/codex/plugins/swarm/) | v0.1 | `SessionStart` register-priming, `apply_patch` lock bridge, `/swarm`, herdr identity hint via `additionalContext` |
+| OpenCode / others | none yet | — | Participate ad-hoc via the swarm-mcp skill + MCP tools |
+
+The Claude Code and Codex plugins share their runtime-agnostic core in [`integrations/_shared/swarm_hook_core.py`](../integrations/_shared/swarm_hook_core.py); each plugin's `_common.py` only carries the runtime-specific bits (write-tool name, path extractor, env-var prefix, label token).
 
 Runtimes without a dedicated plugin still participate fully — they just have to call `register`, `lock_file`, `unlock_file`, etc. explicitly rather than getting them via lifecycle hooks.
