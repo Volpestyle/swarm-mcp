@@ -64,6 +64,8 @@ Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
   swarm-mcp kv get <key> [--scope <path>] [--json]
 
 Write commands (require identity):
+  swarm-mcp request-task <type> <title...> [--description <text>] [--file <path>] [--priority N] [--idempotency-key <key>] [--as <who>] [--json]
+  swarm-mcp dispatch <title...> [--message <text>] [--type <type>] [--role <role>] [--harness <harness>] [--idempotency-key <key>] [--no-spawn] [--wait <seconds>] [--as <who>] [--json]
   swarm-mcp send --to <who> <content...> [--as <who>]
   swarm-mcp prompt-peer --to <who> --message <text> [--task <id>] [--force] [--no-nudge] [--as <who>]
   swarm-mcp broadcast <content...>       [--as <who>]

@@ -22,7 +22,7 @@
     "test:server": "cargo test --manifest-path apps/swarm-server/Cargo.toml",
     "test:tauri": "cargo test --manifest-path apps/swarm-ui/src-tauri/Cargo.toml",
     "typecheck": "node scripts/generate-protocol-types.mjs && tsc --noEmit",
-    "test": "node scripts/generate-protocol-types.mjs && bun test && python -m unittest integrations.hermes.test_lifecycle",
+    "test": "node scripts/generate-protocol-types.mjs && bun test && python3 -m unittest integrations.hermes.test_lifecycle integrations._shared.test_swarm_hook_core",
     "check": "bun run typecheck && bun run test && bun run build && bun run check:ui && bun run test:server && bun run test:tauri",
     "prepack": "bun run build"
   },

@@ -40,10 +40,15 @@ The runtime-specific config file enumerates which MCPs your profile actually loa
 | Runtime | Plugin | Status | Capabilities |
 |---|---|---|---|
 | Hermes | [`integrations/hermes/`](../integrations/hermes/) | v0.3 | Auto-register / -deregister, lock bridge, `/swarm`, `swarm_prompt_peer` express lane, herdr identity publish |
-| Claude Code | [`integrations/claude-code/`](../integrations/claude-code/) | v0.1 | `SessionStart` register-priming, lock bridge, `/swarm`, herdr identity hint via `additionalContext` |
-| Codex CLI | [`integrations/codex/plugins/swarm/`](../integrations/codex/plugins/swarm/) | v0.1 | `SessionStart` register-priming, `apply_patch` lock bridge, `/swarm`, herdr identity hint via `additionalContext` |
+| Claude Code | [`integrations/claude-code/`](../integrations/claude-code/) | v0.2 | Auto-register / -deregister, lock bridge, `/swarm`, herdr identity publish, gateway conductor mode via `SWARM_CC_ROLE=gateway` |
+| Codex CLI | [`integrations/codex/plugins/swarm/`](../integrations/codex/plugins/swarm/) | v0.2 | Auto-register / -deregister, `apply_patch` lock bridge, `/swarm`, herdr identity publish, gateway conductor mode via `SWARM_CODEX_ROLE=gateway` |
 | OpenCode / others | none yet | — | Participate ad-hoc via the swarm-mcp skill + MCP tools |
 
 The Claude Code and Codex plugins share their runtime-agnostic core in [`integrations/_shared/swarm_hook_core.py`](../integrations/_shared/swarm_hook_core.py); each plugin's `_common.py` only carries the runtime-specific bits (write-tool name, path extractor, env-var prefix, label token).
+
+Gateway-capable Claude Code and Codex lead aliases should surface both pieces
+of state: `mode:gateway` for behavior and `role:planner` for routing. The
+planner label lets workers discover the lead; the gateway mode tells the lead
+to delegate writes by default and follow the conductor path.
 
 Runtimes without a dedicated plugin still participate fully — they just have to call `register`, `lock_file`, `unlock_file`, etc. explicitly rather than getting them via lifecycle hooks.

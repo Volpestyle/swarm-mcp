@@ -15,6 +15,38 @@ Launchers choose identity before the agent starts. Do not ask a running agent to
 
 `swarm-ui` accepts every launcher above as a `--harness` value when spawning new panes. The Hermes plugin (see `integrations/hermes/`) auto-registers from inside an already-running Hermes session, so most Hermes workers will be adopted rather than spawned through `ui spawn`.
 
+## Worker and Lead Aliases
+
+For interactive local use, it is acceptable to keep paired worker/lead aliases
+for the same identity. The worker alias selects the account/config root only.
+The lead alias selects the same account/config root and also enables gateway
+behavior plus a discoverable planner role.
+
+Personal example:
+
+```sh
+alias clowd="AGENT_IDENTITY=personal CLAUDE_CONFIG_DIR=$HOME/.claude-personal claude --enable-auto-mode"
+alias clowdl='AGENT_IDENTITY=personal SWARM_CC_ROLE=gateway SWARM_CC_AGENT_ROLE=planner SWARM_MCP_BIN="bun run /Users/james.volpe/volpestyle/swarm-mcp/src/cli.ts" CLAUDE_CONFIG_DIR=$HOME/.claude-personal claude --enable-auto-mode'
+
+alias cdx="AGENT_IDENTITY=personal CODEX_HOME=$HOME/.codex-personal command codex"
+alias cdxl='AGENT_IDENTITY=personal SWARM_CODEX_ROLE=gateway SWARM_CODEX_AGENT_ROLE=planner SWARM_MCP_BIN="bun run /Users/james.volpe/volpestyle/swarm-mcp/src/cli.ts" CODEX_HOME=$HOME/.codex-personal command codex'
+```
+
+In this convention:
+
+- `clowd` / `cdx` are personal workers.
+- `clowdl` / `cdxl` are personal leads.
+- `SWARM_<runtime>_ROLE=gateway` is the lead/conductor behavior.
+- `SWARM_<runtime>_AGENT_ROLE=planner` is the swarm routing label workers use
+  to discover the lead.
+- Lead aliases should register labels containing both `mode:gateway` and
+  `role:planner`; `mode:gateway` is not a role, it is behavior metadata.
+
+Do not treat the `identity:` label as the permission boundary. The permission
+boundary is still the launched process and its config root. For non-interactive
+launchers that do not expand shell aliases, inject the same environment
+variables directly.
+
 ## Config Roots
 
 | Runtime | Work config root | Personal config root |

@@ -145,6 +145,25 @@ class HookCore:
     def _env(self, suffix: str) -> Optional[str]:
         return os.environ.get(f"SWARM_{self.config.env_prefix}_{suffix}")
 
+    @staticmethod
+    def _truthy(value: Optional[str]) -> bool:
+        return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    def plugin_role(self) -> str:
+        """Return the adapter behavior role, not the swarm-visible skill role."""
+        raw = (self._env("ROLE") or os.environ.get("SWARM_ROLE") or "worker").strip().lower()
+        return raw if raw in {"worker", "gateway"} else "worker"
+
+    def lease_seconds(self) -> int:
+        raw = self._env("LEASE_SECONDS") or os.environ.get("SWARM_LEASE_SECONDS")
+        if not raw:
+            return 86400
+        try:
+            value = int(raw)
+        except ValueError:
+            return 86400
+        return max(0, value)
+
     def scope_arg(self) -> Optional[str]:
         return (
             self._env("SCOPE")
@@ -180,17 +199,20 @@ class HookCore:
         1. ``SWARM_<prefix>_AGENT_ROLE`` env var (e.g. ``SWARM_CC_AGENT_ROLE``).
         2. ``.swarm-role`` file walking up from cwd to the coordination scope.
         3. ``SWARM_AGENT_ROLE`` (un-prefixed shared fallback).
+        4. ``role:planner`` when the plugin behavior role is ``gateway``.
 
         Plugin-mode knobs (``SWARM_<prefix>_ROLE`` carrying ``worker``/``gateway``)
-        are intentionally **not** read here — those drive plugin behavior, not
-        the swarm-visible label. The hermes / claude-code gateway-role plumbing
-        owns that knob; this method owns only the routing label peers see.
+        otherwise drive behavior, not routing. Gateway mode is the exception:
+        a gateway is planner-shaped unless the operator explicitly set a more
+        specific agent role.
         """
         raw = (self._env("AGENT_ROLE") or "").strip()
         if not raw:
             raw = self._role_from_file()
         if not raw:
             raw = (os.environ.get("SWARM_AGENT_ROLE") or "").strip()
+        if not raw and self.plugin_role() == "gateway":
+            raw = "planner"
         return self._normalize_role(raw)
 
     @staticmethod
@@ -288,6 +310,8 @@ class HookCore:
             parts.append(token)
         parts.append(self.config.runtime_name)
         parts.append("platform:cli")
+        if self.plugin_role() == "gateway":
+            parts.append("mode:gateway")
         role = self.agent_role_token()
         if role:
             parts.append(role)
@@ -432,36 +456,148 @@ class HookCore:
 
     # -- High-level hook entry points ---------------------------------------
 
-    def build_session_start_context(self, session_id: str, cwd: str) -> str:
+    def _register_args(self, session_id: str, cwd: str) -> tuple[list[str], dict[str, str]]:
         label = self.derived_label(session_id)
+        directory = cwd or self.session_cwd()
         scope = self.scope_arg()
         file_root = self.file_root_arg()
 
-        register_args: dict[str, str] = {
-            "directory": cwd or self.session_cwd(),
+        cli_args = ["register", directory, "--label", label, "--json"]
+        pretty_args: dict[str, str] = {
+            "directory": directory,
             "label": label,
         }
         if scope:
-            register_args["scope"] = scope
+            cli_args.extend(["--scope", scope])
+            pretty_args["scope"] = scope
         if file_root:
-            register_args["file_root"] = file_root
+            cli_args.extend(["--file-root", file_root])
+            pretty_args["file_root"] = file_root
 
-        pretty = json.dumps(register_args, indent=2)
-        lines = [
-            "## swarm coordination is available",
-            "",
-            "Call the `register` tool from the `swarm` MCP server early in this session.",
-            "Use exactly these args so peer locks and `/swarm` can resolve your identity:",
-            "",
-            "```json",
-            pretty,
-            "```",
-            "",
-            "After registering, follow the `swarm-mcp` skill: `whoami`, `list_instances`,",
-            "`poll_messages`, `list_tasks`, then act on any pending work.",
-        ]
+        lease = self.lease_seconds()
+        if lease > 0:
+            cli_args.extend(["--lease-seconds", str(lease)])
+            pretty_args["lease_seconds"] = str(lease)
+        return cli_args, pretty_args
+
+    @staticmethod
+    def _parse_json_object(text: str) -> dict:
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _herdr_identity(self) -> dict[str, str]:
+        herdr_pane = os.environ.get("HERDR_PANE_ID") or os.environ.get("HERDR_PANE")
+        if not herdr_pane:
+            return {}
+        payload: dict[str, str] = {"pane_id": herdr_pane}
+        socket_path = os.environ.get("HERDR_SOCKET_PATH")
+        if socket_path:
+            payload["socket_path"] = socket_path
+        workspace_id = os.environ.get("HERDR_WORKSPACE_ID")
+        if workspace_id:
+            payload["workspace_id"] = workspace_id
+        return payload
+
+    def _publish_herdr_identity(self, instance_id: str, scope: str) -> bool:
+        identity = self._herdr_identity()
+        if not identity:
+            return False
+        blob = json.dumps(identity, separators=(",", ":"))
+        args = ["kv", "set", f"identity/herdr/{instance_id}", blob, "--as", instance_id]
+        if scope:
+            args.extend(["--scope", scope])
+        rc, _, _ = self.run_swarm(args, timeout=4.0)
+        return rc == 0
+
+    def _delete_herdr_identity(self, instance_id: str, scope: str) -> None:
+        args = ["kv", "del", f"identity/herdr/{instance_id}", "--as", instance_id]
+        if scope:
+            args.extend(["--scope", scope])
+        self.run_swarm(args, timeout=4.0)
+
+    def _deregister_instance(self, instance_id: str, scope: str) -> None:
+        args = ["deregister", "--as", instance_id, "--json"]
+        if scope:
+            args.extend(["--scope", scope])
+        self.run_swarm(args, timeout=4.0)
+
+    def build_session_start_context(
+        self,
+        session_id: str,
+        cwd: str,
+        meta: dict,
+        registration_error: str = "",
+    ) -> str:
+        _, register_args = self._register_args(session_id, cwd)
+        pretty_args = json.dumps(register_args, indent=2)
+
+        instance_id = str(meta.get("instance_id") or "")
+        plugin_role = str(meta.get("plugin_role") or self.plugin_role())
+        if instance_id:
+            lines = [
+                "## swarm coordination is active",
+                "",
+                f"This session is already registered with swarm as `{instance_id}`.",
+                f"Label: `{meta.get('label') or self.derived_label(session_id)}`",
+                f"Scope: `{meta.get('scope') or self.scope_arg() or ''}`",
+                f"Plugin behavior mode: `{plugin_role}`.",
+                "",
+                "Follow the `swarm-mcp` skill now: `whoami`, `list_instances`,",
+                "`poll_messages`, `list_tasks`, then act on any pending work.",
+                "",
+                "If `whoami` unexpectedly says you are not registered, call `register`",
+                "with these args; the MCP server will adopt the hook-created row:",
+                "",
+                "```json",
+                pretty_args,
+                "```",
+            ]
+            if meta.get("herdr_identity_published"):
+                lines.extend(
+                    [
+                        "",
+                        "Your herdr pane identity is published at",
+                        f"`identity/herdr/{instance_id}` for peer wakeups.",
+                    ]
+                )
+        else:
+            lines = [
+                "## swarm coordination is available",
+                "",
+                "The SessionStart hook could not auto-register this session.",
+                f"Plugin behavior mode: `{plugin_role}`.",
+            ]
+            if registration_error:
+                lines.append(f"Hook error: `{registration_error[:240]}`")
+            lines.extend(
+                [
+                    "",
+                    "Call the `register` tool from the `swarm` MCP server early in this session.",
+                    "Use exactly these args so peer locks and `/swarm` can resolve your identity:",
+                    "",
+                    "```json",
+                    pretty_args,
+                    "```",
+                    "",
+                    "After registering, follow the `swarm-mcp` skill: `whoami`, `list_instances`,",
+                    "`poll_messages`, `list_tasks`, then act on any pending work.",
+                ]
+            )
 
         role_token = self.agent_role_token()
+        if plugin_role == "gateway":
+            lines.extend(
+                [
+                    "",
+                    "You are running in swarm gateway/lead mode. Treat `gateway` as your",
+                    "behavior mode and `role:planner` as your discoverable swarm routing",
+                    "label. Delegate write work by default; inline writes are blocked unless",
+                    "the explicit gateway inline-write mirror config is present.",
+                ]
+            )
         if role_token:
             doctrine_lines = self._role_doctrine_lines(role_token)
             if doctrine_lines:
@@ -479,16 +615,9 @@ class HookCore:
                 ]
             )
 
-        herdr_pane = os.environ.get("HERDR_PANE_ID") or os.environ.get("HERDR_PANE")
-        if herdr_pane:
-            payload: dict[str, str] = {"pane_id": herdr_pane}
-            socket_path = os.environ.get("HERDR_SOCKET_PATH")
-            if socket_path:
-                payload["socket_path"] = socket_path
-            workspace_id = os.environ.get("HERDR_WORKSPACE_ID")
-            if workspace_id:
-                payload["workspace_id"] = workspace_id
-            blob = json.dumps(payload, separators=(",", ":"))
+        identity = self._herdr_identity()
+        if identity and not instance_id:
+            blob = json.dumps(identity, separators=(",", ":"))
             lines.extend(
                 [
                     "",
@@ -503,6 +632,30 @@ class HookCore:
 
         return "\n".join(lines)
 
+    def _gateway_inline_write_allowed(self, paths: list[str]) -> bool:
+        allow = self._truthy(
+            self._env("GATEWAY_INLINE_WRITES")
+            or os.environ.get("SWARM_GATEWAY_INLINE_WRITES")
+        )
+        mirror = (
+            self._env("GATEWAY_WORKSPACE_MIRROR")
+            or os.environ.get("SWARM_GATEWAY_WORKSPACE_MIRROR")
+            or ""
+        ).strip()
+        if not allow or not mirror:
+            return False
+        try:
+            root = Path(mirror).expanduser().resolve(strict=True)
+            resolved_paths = [Path(path).expanduser().resolve(strict=False) for path in paths]
+        except Exception:
+            return False
+        for path in resolved_paths:
+            try:
+                path.relative_to(root)
+            except ValueError:
+                return False
+        return True
+
     def run_session_start_hook(self, stdin) -> int:
         payload = self.read_hook_input(stdin)
         session_id = str(payload.get("session_id") or "")
@@ -510,24 +663,53 @@ class HookCore:
         source = str(payload.get("source") or "startup")
 
         label = self.derived_label(session_id)
-        self.write_session_meta(
-            session_id,
-            {
-                "label": label,
-                "session_short": self.session_short(session_id),
-                "scope": self.scope_arg() or "",
-                "file_root": self.file_root_arg() or "",
-                "cwd": cwd,
-                "herdr_pane_id": os.environ.get("HERDR_PANE_ID")
-                or os.environ.get("HERDR_PANE")
-                or "",
-            },
-        )
+        meta = {
+            "label": label,
+            "session_short": self.session_short(session_id),
+            "scope": self.scope_arg() or "",
+            "file_root": self.file_root_arg() or "",
+            "cwd": cwd,
+            "plugin_role": self.plugin_role(),
+            "herdr_pane_id": os.environ.get("HERDR_PANE_ID")
+            or os.environ.get("HERDR_PANE")
+            or "",
+        }
+        self.write_session_meta(session_id, meta)
 
         if source not in {"startup", "resume"} or not session_id:
             return 0
 
-        context = self.build_session_start_context(session_id, cwd)
+        registration_error = ""
+        register_cli_args, _ = self._register_args(session_id, cwd)
+        rc, out, err = self.run_swarm(register_cli_args, timeout=8.0)
+        if rc == 0:
+            registered = self._parse_json_object(out)
+            instance_id = str(registered.get("id") or registered.get("instance_id") or "")
+            if instance_id:
+                scope = str(registered.get("scope") or meta.get("scope") or "")
+                meta.update(
+                    {
+                        "instance_id": instance_id,
+                        "scope": scope,
+                        "file_root": str(registered.get("file_root") or meta.get("file_root") or ""),
+                        "herdr_identity_published": self._publish_herdr_identity(
+                            instance_id,
+                            scope,
+                        ),
+                    }
+                )
+                self.write_session_meta(session_id, meta)
+            else:
+                registration_error = "register returned no instance id"
+        else:
+            registration_error = (err.strip() or out.strip() or f"swarm-mcp register exited {rc}")
+
+        context = self.build_session_start_context(
+            session_id,
+            cwd,
+            meta,
+            registration_error,
+        )
         out = {
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
@@ -581,6 +763,16 @@ class HookCore:
         session_id = str(payload.get("session_id") or "")
         meta = self.read_session_meta(session_id)
         scope = meta.get("scope") or self.scope_arg()
+
+        if (meta.get("plugin_role") or self.plugin_role()) == "gateway":
+            if not self._gateway_inline_write_allowed(paths):
+                env_var = f"SWARM_{self.config.env_prefix}_GATEWAY_INLINE_WRITES"
+                mirror_var = f"SWARM_{self.config.env_prefix}_GATEWAY_WORKSPACE_MIRROR"
+                self.emit_block(
+                    f"swarm gateway mode blocks inline {tool_name}; delegate this work "
+                    f"or set {env_var}=1 and {mirror_var}=<trusted mirror>."
+                )
+                return 0
 
         if not self.has_peers(scope, session_id):
             return 0
@@ -655,12 +847,10 @@ class HookCore:
         meta = self.read_session_meta(session_id)
         scope = meta.get("scope") or self.scope_arg()
 
-        instance_id = self._resolve_instance_id(session_id, scope)
+        instance_id = str(meta.get("instance_id") or "") or self._resolve_instance_id(session_id, scope)
         if instance_id:
-            kv_args = ["kv", "del", f"identity/herdr/{instance_id}", "--as", instance_id]
-            if scope:
-                kv_args.extend(["--scope", scope])
-            self.run_swarm(kv_args, timeout=4.0)
+            self._delete_herdr_identity(instance_id, scope)
+            self._deregister_instance(instance_id, scope)
 
         if session_id:
             try:

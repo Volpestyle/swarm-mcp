@@ -4,10 +4,13 @@ import * as context from "./context";
 import * as kv from "./kv";
 import * as messages from "./messages";
 import * as registry from "./registry";
+import * as taskStore from "./tasks";
 import * as ui from "./ui";
 import { scope as scopeFor } from "./paths";
 import { SUBCOMMANDS, type Subcommand } from "./subcommands";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { TASK_TYPES, type TaskType } from "./generated/protocol";
 
 type Flags = {
   positional: string[];
@@ -24,15 +27,26 @@ type Flags = {
   harness?: string;
   role?: string;
   label?: string;
+  name?: string;
   directory?: string;
   fileRoot?: string;
   message?: string;
   task?: string;
+  taskType?: string;
+  description?: string;
+  idempotencyKey?: string;
+  files: string[];
+  assignee?: string;
+  dependsOn?: string;
+  parentTaskId?: string;
+  priority?: number;
   kind?: string;
   x?: number;
   y?: number;
   wait?: number;
   leaseSeconds?: number;
+  approvalRequired: boolean;
+  spawn: boolean;
   force: boolean;
   nudge: boolean;
   enter: boolean;
@@ -53,6 +67,9 @@ function parseFlags(argv: string[]): Flags {
   const flags: Flags = {
     positional: [],
     json: false,
+    files: [],
+    approvalRequired: false,
+    spawn: true,
     enter: true,
     force: false,
     nudge: true,
@@ -73,15 +90,26 @@ function parseFlags(argv: string[]): Flags {
     if (a === "--harness") { flags.harness = argv[++i]; continue; }
     if (a === "--role") { flags.role = argv[++i]; continue; }
     if (a === "--label") { flags.label = argv[++i]; continue; }
+    if (a === "--name") { flags.name = argv[++i]; continue; }
     if (a === "--directory") { flags.directory = argv[++i]; continue; }
     if (a === "--file-root") { flags.fileRoot = argv[++i]; continue; }
     if (a === "--message") { flags.message = argv[++i]; continue; }
     if (a === "--task" || a === "--task-id") { flags.task = argv[++i]; continue; }
+    if (a === "--type") { flags.taskType = argv[++i]; continue; }
+    if (a === "--description") { flags.description = argv[++i]; continue; }
+    if (a === "--idempotency-key") { flags.idempotencyKey = argv[++i]; continue; }
+    if (a === "--file") { flags.files.push(argv[++i]); continue; }
+    if (a === "--assignee") { flags.assignee = argv[++i]; continue; }
+    if (a === "--depends-on") { flags.dependsOn = argv[++i]; continue; }
+    if (a === "--parent-task") { flags.parentTaskId = argv[++i]; continue; }
+    if (a === "--priority") { flags.priority = parseInt(argv[++i] ?? "", 10); continue; }
     if (a === "--kind") { flags.kind = argv[++i]; continue; }
     if (a === "--x") { flags.x = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--y") { flags.y = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--wait") { flags.wait = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--lease-seconds") { flags.leaseSeconds = parseInt(argv[++i] ?? "", 10); continue; }
+    if (a === "--approval-required") { flags.approvalRequired = true; continue; }
+    if (a === "--no-spawn") { flags.spawn = false; continue; }
     if (a === "--force") { flags.force = true; continue; }
     if (a === "--dry-run") { flags.dryRun = true; continue; }
     if (a === "--no-nudge") { flags.nudge = false; continue; }
@@ -165,6 +193,44 @@ function idleLabel(heartbeat: number) {
   if (idle > CLEANUP_POLICY.instanceReclaimAfterSecs) return `offline (${idle}s)`;
   if (idle > CLEANUP_POLICY.instanceStaleAfterSecs) return `stale (${idle}s)`;
   return `live (${idle}s)`;
+}
+
+function parseTaskType(value: string | undefined, fallback: TaskType = "other"): TaskType {
+  const raw = (value ?? fallback).trim();
+  if ((TASK_TYPES as readonly string[]).includes(raw)) return raw as TaskType;
+  throw new Error(`Invalid task type "${raw}". Expected one of: ${TASK_TYPES.join(", ")}`);
+}
+
+function splitCsv(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  const items = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length ? items : undefined;
+}
+
+function terminalTaskStatus(status: unknown) {
+  return status === "done" || status === "failed" || status === "cancelled";
+}
+
+function roleToken(role: string | undefined) {
+  const clean = (role ?? "").trim();
+  return clean ? `role:${clean}` : "";
+}
+
+function hasRole(inst: InstRow, role: string | undefined) {
+  const token = roleToken(role);
+  if (!token) return true;
+  return (inst.label ?? "").split(/\s+/).includes(token);
+}
+
+function findWorker(scope: string, requester: string, role: string | undefined) {
+  return instancesInScope(scope).find((inst) => inst.id !== requester && hasRole(inst, role)) ?? null;
+}
+
+function hashIntent(parts: string[]) {
+  return createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 16);
 }
 
 const UI_WAIT_POLL_MS = 100;
@@ -383,6 +449,45 @@ function cmdTasks(flags: Flags) {
   }
 }
 
+function taskRequestOpts(flags: Flags, insts: InstRow[]) {
+  const assignee = flags.assignee ? resolveInstanceRef(flags.assignee, insts) : undefined;
+  return {
+    ...(flags.description ? { description: flags.description } : {}),
+    ...(flags.files.length ? { files: flags.files } : {}),
+    ...(assignee ? { assignee } : {}),
+    ...(Number.isFinite(flags.priority) ? { priority: flags.priority } : {}),
+    ...(splitCsv(flags.dependsOn) ? { depends_on: splitCsv(flags.dependsOn) } : {}),
+    ...(flags.idempotencyKey ? { idempotency_key: flags.idempotencyKey } : {}),
+    ...(flags.parentTaskId ? { parent_task_id: flags.parentTaskId } : {}),
+    ...(flags.approvalRequired ? { approval_required: true } : {}),
+  };
+}
+
+function cmdRequestTask(flags: Flags) {
+  const scope = resolveScope(flags);
+  const requester = resolveIdentity(scope, flags);
+  const insts = instancesInScope(scope);
+
+  const typeFromPosition = flags.positional[1];
+  const taskType = parseTaskType(flags.taskType ?? typeFromPosition);
+  const titleParts = flags.taskType ? flags.positional.slice(1) : flags.positional.slice(2);
+  const title = titleParts.join(" ").trim();
+  if (!title) throw new Error("request-task <type> <title...>");
+
+  const result = taskStore.request(
+    requester,
+    scope,
+    taskType,
+    title,
+    taskRequestOpts(flags, insts),
+  );
+  if ("error" in result) throw new Error(result.error);
+
+  const task = taskStore.get(result.id, scope);
+  if (flags.json) return printJson({ ...result, task });
+  console.log(`${result.existing ? "existing" : "created"} task ${result.id} [${result.status}] ${title}`);
+}
+
 function cmdContext(flags: Flags) {
   const scope = resolveScope(flags);
   const rows = db
@@ -407,6 +512,223 @@ function cmdContext(flags: Flags) {
       `  [${r.type}] ${r.instance_id.slice(0, 8)}  ${r.file}  — ${r.content}`,
     );
   }
+}
+
+type SpawnLockRow = {
+  id: string;
+  instance_id: string;
+  file: string;
+  content: string;
+};
+
+function spawnLockPath(role: string, intentHash: string) {
+  const cleanRole = role.replace(/[^A-Za-z0-9_.-]/g, "_") || "worker";
+  return `/__swarm/spawn/${cleanRole}/${intentHash}`;
+}
+
+function exactSpawnLock(scope: string, file: string) {
+  return db
+    .query(
+      "SELECT id, instance_id, file, content FROM context WHERE scope = ? AND file = ? AND type = 'lock' LIMIT 1",
+    )
+    .get(scope, file) as SpawnLockRow | null;
+}
+
+function activeSpawnLock(scope: string, file: string) {
+  const lock = exactSpawnLock(scope, file);
+  if (!lock) return null;
+
+  try {
+    const payload = JSON.parse(lock.content) as { ui_command_id?: unknown };
+    const id = Number(payload.ui_command_id);
+    if (Number.isInteger(id)) {
+      const row = ui.get(id);
+      if (row?.status === "done" || row?.status === "failed") {
+        context.clearLocks(lock.instance_id, scope, file);
+        return null;
+      }
+    }
+  } catch {
+    // Older lock notes may be plain text. Treat them as active.
+  }
+  return lock;
+}
+
+function dispatchInstruction(taskId: string, title: string, message: string) {
+  const body = message.trim() || title;
+  return [
+    `Task ${taskId} is ready: ${title}`,
+    body,
+    "Call poll_messages first, claim the task if it matches your role, then complete it with update_task and structured results.",
+  ].join("\n\n");
+}
+
+async function cmdDispatch(flags: Flags) {
+  const scope = resolveScope(flags);
+  const requester = resolveIdentity(scope, flags);
+  const taskType = parseTaskType(flags.taskType, "implement");
+  const title = flags.positional.slice(1).join(" ").trim();
+  if (!title) throw new Error("dispatch <title...> [--message <instructions>]");
+
+  const message = flags.message ?? flags.description ?? title;
+  const workerRole = (flags.role ?? "implementer").trim();
+  const idempotencyKey =
+    flags.idempotencyKey ??
+    `dispatch:${hashIntent([scope, taskType, title, message, workerRole])}`;
+  const intentHash = hashIntent([idempotencyKey]);
+  const lockPath = spawnLockPath(workerRole, intentHash);
+
+  const result = taskStore.request(requester, scope, taskType, title, {
+    description: flags.description ?? message,
+    files: flags.files.length ? flags.files : undefined,
+    priority: Number.isFinite(flags.priority) ? flags.priority : undefined,
+    depends_on: splitCsv(flags.dependsOn),
+    idempotency_key: idempotencyKey,
+    parent_task_id: flags.parentTaskId,
+    approval_required: flags.approvalRequired,
+  });
+  if ("error" in result) throw new Error(result.error);
+
+  const task = taskStore.get(result.id, scope);
+  if (terminalTaskStatus(task?.status)) {
+    const payload = { status: "already_terminal", task_id: result.id, task };
+    if (flags.json) return printJson(payload);
+    console.log(`task ${result.id} is already ${task?.status}`);
+    return;
+  }
+
+  const liveWorker = findWorker(scope, requester, workerRole);
+  if (liveWorker) {
+    context.clearLocks(requester, scope, lockPath);
+    const prompt = promptPeerResult({
+      scope,
+      sender: requester,
+      recipient: liveWorker.id,
+      message: dispatchInstruction(result.id, title, message),
+      task: result.id,
+      nudge: flags.nudge,
+      force: flags.force,
+    });
+    const payload = {
+      status: "dispatched",
+      task_id: result.id,
+      task,
+      recipient: liveWorker.id,
+      prompt,
+    };
+    if (flags.json) return printJson(payload);
+    console.log(`dispatched task ${result.id} to ${formatInst(liveWorker)}`);
+    return;
+  }
+
+  if (!flags.spawn) {
+    const payload = { status: "no_worker", task_id: result.id, task, role: workerRole };
+    if (flags.json) return printJson(payload);
+    console.log(`created task ${result.id}; no role:${workerRole} worker is live`);
+    return;
+  }
+
+  const existingLock = activeSpawnLock(scope, lockPath);
+  if (existingLock) {
+    const payload = {
+      status: "spawn_in_flight",
+      task_id: result.id,
+      task,
+      lock: existingLock,
+    };
+    if (flags.json) return printJson(payload);
+    console.log(`task ${result.id} is ready; spawn already in flight at ${lockPath}`);
+    return;
+  }
+
+  const startedAt = new Date().toISOString();
+  const lockNote = {
+    task_id: result.id,
+    intent_hash: intentHash,
+    role: workerRole,
+    started_at: startedAt,
+  };
+  const lockResult = context.lock(requester, scope, lockPath, JSON.stringify(lockNote));
+  if ("error" in lockResult) {
+    const payload = {
+      status: "spawn_in_flight",
+      task_id: result.id,
+      task,
+      lock: lockResult.active,
+    };
+    if (flags.json) return printJson(payload);
+    console.log(`task ${result.id} is ready; spawn already in flight at ${lockPath}`);
+    return;
+  }
+
+  const commandId = ui.enqueue(
+    scope,
+    "spawn_shell",
+    {
+      cwd: flags.directory ?? process.cwd(),
+      harness: flags.harness ?? "claude",
+      role: workerRole,
+      label: flags.label ?? null,
+      name: flags.name ?? null,
+    },
+    requester,
+  );
+  context.lock(
+    requester,
+    scope,
+    lockPath,
+    JSON.stringify({ ...lockNote, ui_command_id: commandId }),
+  );
+
+  const row = await maybeWaitForUiCommand(commandId, flags, 5);
+  const basePayload = {
+    task_id: result.id,
+    task,
+    ui_command_id: commandId,
+    spawn_lock: lockPath,
+  };
+
+  if (!row || row.status === "pending" || row.status === "running") {
+    const payload = { status: "spawn_in_flight", ...basePayload, ui_command: row };
+    if (flags.json) return printJson(payload);
+    console.log(`queued spawn command #${commandId} for role:${workerRole}; lock held at ${lockPath}`);
+    return;
+  }
+
+  if (row.status === "failed") {
+    context.clearLocks(requester, scope, lockPath);
+    const payload = { status: "spawn_failed", ...basePayload, ui_command: row };
+    if (flags.json) return printJson(payload);
+    console.log(`spawn command #${commandId} failed: ${row.error ?? "unknown error"}`);
+    return;
+  }
+
+  context.clearLocks(requester, scope, lockPath);
+  const spawnResult = parseJsonMaybe(row.result) as { instance_id?: unknown } | null;
+  const spawnedInstance =
+    spawnResult && typeof spawnResult.instance_id === "string" ? spawnResult.instance_id : "";
+  const prompt = spawnedInstance
+    ? promptPeerResult({
+        scope,
+        sender: requester,
+        recipient: spawnedInstance,
+        message: dispatchInstruction(result.id, title, message),
+        task: result.id,
+        nudge: false,
+        force: flags.force,
+      })
+    : null;
+  const payload = {
+    status: "spawned",
+    ...basePayload,
+    spawned_instance: spawnedInstance || null,
+    ui_command: row,
+    prompt,
+  };
+  if (flags.json) return printJson(payload);
+  console.log(
+    `spawned role:${workerRole} for task ${result.id}${spawnedInstance ? ` (${spawnedInstance.slice(0, 8)})` : ""}`,
+  );
 }
 
 function cmdKv(flags: Flags) {
@@ -507,17 +829,17 @@ function runHerdr(args: string[], identity: Record<string, unknown>) {
   });
 }
 
-function cmdPromptPeer(flags: Flags) {
-  const scope = resolveScope(flags);
-  const sender = resolveIdentity(scope, flags);
-  const recipientRef = flags.to ?? flags.positional[1];
-  if (!recipientRef) throw new Error("prompt-peer requires --to <id-or-label>");
-  const message = flags.message ?? flags.positional.slice(recipientRef === flags.positional[1] ? 2 : 1).join(" ");
-  if (!message) throw new Error("prompt-peer requires --message <text> or content");
-
-  const insts = instancesInScope(scope);
-  const recipient = resolveInstanceRef(recipientRef, insts);
-  const durable = flags.task ? `[task:${flags.task}] ${message}` : message;
+function promptPeerResult(opts: {
+  scope: string;
+  sender: string;
+  recipient: string;
+  message: string;
+  task?: string;
+  nudge: boolean;
+  force: boolean;
+}) {
+  const { scope, sender, recipient, message, task, nudge, force } = opts;
+  const durable = task ? `[task:${task}] ${message}` : message;
   messages.send(sender, scope, recipient, durable);
 
   const result: Record<string, unknown> = {
@@ -526,19 +848,15 @@ function cmdPromptPeer(flags: Flags) {
     recipient,
     nudged: false,
   };
-  if (!flags.nudge) {
+  if (!nudge) {
     result.nudge_skipped = "nudge=false";
-    if (flags.json) return printJson(result);
-    console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)} (nudge skipped)`);
-    return;
+    return result;
   }
 
   const identityRow = kv.get(scope, `identity/herdr/${recipient}`);
   if (!identityRow) {
     result.nudge_skipped = "no herdr identity is published for that instance";
-    if (flags.json) return printJson(result);
-    console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)} (no herdr identity)`);
-    return;
+    return result;
   }
 
   let identity: Record<string, unknown>;
@@ -550,17 +868,13 @@ function cmdPromptPeer(flags: Flags) {
     identity = parsed as Record<string, unknown>;
   } catch {
     result.nudge_skipped = "published herdr identity is not valid JSON";
-    if (flags.json) return printJson(result);
-    console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)} (invalid herdr identity)`);
-    return;
+    return result;
   }
 
   const paneId = identity.pane_id;
   if (typeof paneId !== "string" || !paneId) {
     result.nudge_skipped = "published herdr identity has no pane_id";
-    if (flags.json) return printJson(result);
-    console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)} (no pane_id)`);
-    return;
+    return result;
   }
 
   const getProc = runHerdr(["pane", "get", paneId], identity);
@@ -571,9 +885,7 @@ function cmdPromptPeer(flags: Flags) {
       getProc.stderr?.trim() ||
       getProc.stdout?.trim() ||
       "herdr pane get failed";
-    if (flags.json) return printJson(result);
-    console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)} (herdr unavailable)`);
-    return;
+    return result;
   }
 
   let status = "unknown";
@@ -587,14 +899,12 @@ function cmdPromptPeer(flags: Flags) {
   result.pane_id = paneId;
   result.agent_status = status;
 
-  if (!["idle", "blocked", "done", "unknown"].includes(status) && !flags.force) {
+  if (!["idle", "blocked", "done", "unknown"].includes(status) && !force) {
     result.nudge_skipped = `target pane is ${status}; pass --force to inject anyway`;
-    if (flags.json) return printJson(result);
-    console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)} (target ${status})`);
-    return;
+    return result;
   }
 
-  const wakePrompt = `A peer sent you a swarm message${flags.task ? ` for task ${flags.task}` : ""}. Call the swarm poll_messages tool, handle the message, and report back through swarm-mcp.`;
+  const wakePrompt = `A peer sent you a swarm message${task ? ` for task ${task}` : ""}. Call the swarm poll_messages tool, handle the message, and report back through swarm-mcp.`;
   const runProc = runHerdr(["pane", "run", paneId, wakePrompt], identity);
   if (runProc.error || runProc.status !== 0) {
     result.nudge_error =
@@ -605,9 +915,36 @@ function cmdPromptPeer(flags: Flags) {
   } else {
     result.nudged = true;
   }
+  return result;
+}
+
+function cmdPromptPeer(flags: Flags) {
+  const scope = resolveScope(flags);
+  const sender = resolveIdentity(scope, flags);
+  const recipientRef = flags.to ?? flags.positional[1];
+  if (!recipientRef) throw new Error("prompt-peer requires --to <id-or-label>");
+  const message = flags.message ?? flags.positional.slice(recipientRef === flags.positional[1] ? 2 : 1).join(" ");
+  if (!message) throw new Error("prompt-peer requires --message <text> or content");
+
+  const insts = instancesInScope(scope);
+  const recipient = resolveInstanceRef(recipientRef, insts);
+  const result = promptPeerResult({
+    scope,
+    sender,
+    recipient,
+    message,
+    task: flags.task,
+    nudge: flags.nudge,
+    force: flags.force,
+  });
 
   if (flags.json) return printJson(result);
-  console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)}${result.nudged ? " and nudged pane" : ""}`);
+  const suffix = result.nudged
+    ? " and nudged pane"
+    : result.nudge_skipped
+      ? ` (${result.nudge_skipped})`
+      : "";
+  console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)}${suffix}`);
 }
 
 function cmdLock(flags: Flags) {
@@ -860,6 +1197,8 @@ const HANDLERS: Record<Subcommand, (flags: Flags) => void | Promise<void>> = {
   "list-instances": cmdInstances,
   messages: cmdMessages,
   tasks: cmdTasks,
+  "request-task": cmdRequestTask,
+  dispatch: cmdDispatch,
   context: cmdContext,
   kv: cmdKv,
   send: cmdSend,

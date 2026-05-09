@@ -1,6 +1,6 @@
 # swarm Codex plugin — design notes
 
-**Status:** v0.1.0 current
+**Status:** v0.2.0 current
 **Audience:** future contributors, the operator, agents reading this directory
 
 This file captures the design constraints behind the Codex adapter so v0.2+
@@ -20,7 +20,7 @@ tool prefix inside a session, `swarm-mcp` CLI outside it), not by import:
 │   when to lock, role routing, task patterns
 ├──────────────────────────────────────────────┤
 │  Plugin (integrations/codex/plugins/swarm/)  │   behavior
-│   SessionStart prime, lock bridge, /swarm
+│   SessionStart register, lock bridge, /swarm
 ├──────────────────────────────────────────────┤
 │  MCP server (src/index.ts)                   │   capability
 │   29 tools: register, lock_file, request_task...
@@ -30,9 +30,9 @@ tool prefix inside a session, `swarm-mcp` CLI outside it), not by import:
 ## 2. Shared hook core
 
 The runtime-agnostic implementation of every hook lifecycle method —
-swarm-mcp CLI resolution, identity/scope/label derivation, peer detection,
-session scratch, lock-pair tracking, deny-on-conflict semantics, herdr
-identity prime — lives in
+swarm-mcp CLI resolution, identity/scope/label derivation, autonomous
+registration, peer detection, session scratch, lock-pair tracking,
+deny-on-conflict semantics, and herdr identity publication — lives in
 [`../../../_shared/swarm_hook_core.py`](../../../_shared/swarm_hook_core.py)
 as a `HookCore` class parameterized by `RuntimeConfig`.
 
@@ -99,8 +99,8 @@ What does *not* port cleanly:
 
 | Hook | Fires | Plugin behavior |
 |---|---|---|
-| `SessionStart` (matcher: `startup\|resume`) | New or resumed conversation | Compute label/scope/identity; write per-session scratch metadata; emit `additionalContext` instructing the agent to call `register` with those args. If `HERDR_PANE_ID` is present, instruct the agent to also publish `identity/herdr/<instance_id>` after registering. |
-| `SessionEnd` | Conversation ends | Best-effort `kv del identity/herdr/<instance_id>`; clear the session scratch dir. |
+| `SessionStart` (matcher: `startup\|resume`) | New or resumed conversation | Compute label/scope/identity; call `swarm-mcp register`; write per-session scratch metadata including `instance_id`; publish `identity/herdr/<instance_id>` if `HERDR_PANE_ID` is present; emit `additionalContext` telling the agent it is registered and should follow the swarm role workflow. |
+| `SessionEnd` | Conversation ends | Best-effort `kv del identity/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
 | `PreToolUse` (matcher: `apply_patch`) | Before each `apply_patch` dispatch | Parse the patch envelope; if peers exist in scope, `swarm-mcp lock` each path. On conflict, emit `permissionDecision: deny`. |
 | `PostToolUse` (matcher: `apply_patch`) | After each `apply_patch` dispatch | `swarm-mcp unlock` each path the matching pre acquired. |
 
@@ -115,9 +115,9 @@ Hooks identify their session by passing `--as session:<8>` to `swarm-mcp lock`
 
 The plugin's derived label always contains `session:<8>` (first 8 chars of
 the codex `session_id` with hyphens stripped — codex's session_id is a
-ULID-shaped string but the substring approach is identical), so as long as
-the agent registered with the priming label, the substring match resolves to
-exactly this session's instance.
+ULID-shaped string but the substring approach is identical). v0.2 also stores
+the returned `instance_id` in scratch metadata; the session substring remains
+a fallback for older or partially initialized sessions.
 
 ### 4.3 Failure semantics (matches hermes / claude-code)
 
@@ -188,29 +188,34 @@ Same shape as hermes and Claude Code:
 - `scope` — coordination boundary. Default: git root of `cwd`. Override via
   `SWARM_CODEX_SCOPE` / `SWARM_HERMES_SCOPE` / `SWARM_MCP_SCOPE`.
 - `label` — auto-built as
-  `[identity:<id>] codex platform:cli session:<id-prefix>`. Override via
-  `SWARM_CODEX_LABEL` / `SWARM_HERMES_LABEL`. If the override omits
-  `identity:`, the derived token is prepended.
+  `[identity:<id>] codex platform:cli [mode:gateway] [role:<name>]
+  origin:codex session:<id-prefix>`. Override via `SWARM_CODEX_LABEL` /
+  `SWARM_HERMES_LABEL`. If the override omits `identity:`, the derived token
+  is prepended. `mode:gateway` is behavior metadata; `role:planner` is the
+  swarm-visible routing label.
 
 Five-identifier invariants from hermes SPEC §6.5 carry over: tasks/messages/
 locks target `instance_id`; UI/control surfaces target transport handles;
 user-facing text uses labels.
 
-## 7. Why no `swarm_prompt_peer` tool here
+## 7. Why no plugin-local `swarm_prompt_peer` tool here
 
 Same answer as the Claude Code plugin: the right home for `prompt_peer` is
-the swarm-mcp server itself. Adding it there benefits every adapter (hermes,
-Claude Code, Codex, OpenCode, future runtimes) at once. Tracked as v0.3.
+the swarm-mcp server itself plus the `swarm-mcp prompt-peer` CLI. Adding it
+there benefits every adapter (hermes, Claude Code, Codex, OpenCode, future
+runtimes) at once, and hook/launcher code can use the CLI when it cannot call
+MCP tools directly.
 
 ## 8. Testing
 
 ### 8.1 Smoke scenarios (live, must pass)
 
-**S1: Single-agent registration prime**
+**S1: Single-agent registration**
 Fresh Codex CLI session in a git repo with the plugin installed. SessionStart
-`additionalContext` should appear in the first user turn, instructing
-`register` with a derived label. Confirm `swarm-mcp instances` shows the
-session after the agent acts on the prompt.
+should call `swarm-mcp register`, store the returned `instance_id`, and inject
+context saying the session is already registered. Confirm `swarm-mcp
+instances` shows the session before the agent spends a tool call on
+registration.
 
 **S2: Solo write does not lock**
 Single session, no peers in scope. Apply any patch. `swarm-mcp context`
@@ -239,7 +244,7 @@ With `HERDR_PANE_ID` set and the agent having published
 ### 8.2 Local unit smoke (already passing)
 
 ```sh
-# label derivation + herdr identity prime
+# label derivation + autonomous registration fallback
 AGENT_IDENTITY=personal HERDR_PANE_ID=p_5 \
     HERDR_SOCKET_PATH=/path/to/herdr.sock \
     echo '{"session_id":"019ddc7a-1681-7b91-b95f-4ba467848376","cwd":"...","source":"startup"}' | \
@@ -255,17 +260,17 @@ print(_common.write_paths_for_tool('apply_patch', {'input': patch}))
 
 ## 9. Design decisions
 
-**Why register via `additionalContext` instead of calling `register` from the
-hook?**
-Same reason as the Claude Code plugin: there is no `swarm-mcp register` CLI
-subcommand today, and hooks cannot reach the agent's MCP tool surface.
-Priming the agent is the cleanest path that ships value now.
+**Why register through the CLI instead of the MCP tool?**
+Codex hooks run as subprocesses and cannot reach the hosted session's MCP tool
+surface. The hook shells to `swarm-mcp register`, stores the returned
+`instance_id` in scratch metadata, and injects context so the model can start
+with `whoami`, `list_instances`, `poll_messages`, and `list_tasks` instead of
+spending its first action on bootstrap.
 
-**Why pass `--as session:<8>` instead of caching the `instance_id`?**
-Same reason: the hook doesn't know the `instance_id` at lock time. The agent
-only learns it from `register`'s response, and codex doesn't expose a way to
-capture that into a hook-readable file. The CLI's substring resolution makes
-the label do the work.
+**Why keep `--as session:<8>` when we cache the `instance_id`?**
+The session substring is a fallback when metadata is missing or when a clear /
+compact event refreshed scratch state without a fresh registration call. The
+normal v0.2 path stores `instance_id` from CLI registration.
 
 **Why parse `apply_patch` instead of locking the whole repo on any write?**
 Coarse locks would block productive editing in solo or near-solo sessions
@@ -281,9 +286,9 @@ everything else is bonus.
 
 Same list as the Claude Code SPEC; restating the codex-specific ones:
 
-- **`swarm-mcp register` / `deregister` / `list-instances` CLI subcommands.**
-  Highest-leverage change; lets SessionStart hooks be fully autonomous.
-- **`prompt_peer` MCP tool.** See §7.
+- **First-class in-agent dispatch/spawn orchestration.** The CLI now has
+  `dispatch`; the remaining gap is a hosted-session tool that wraps the same
+  path without asking the model to shell out.
 - **Empirical hook contract documentation.** Once codex commits to a
   documented PreToolUse / PostToolUse payload schema, the defensive parsing
   in `_common.write_paths_for_tool` can simplify.

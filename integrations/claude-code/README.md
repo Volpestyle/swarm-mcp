@@ -39,12 +39,12 @@ The Claude Code plugin now has lifecycle parity for registration, locking,
 identity publication, and peer prompting. The remaining gap is the higher-level
 gateway dispatch/spawn path:
 
-- **Dispatch/spawn orchestration.** Gateway mode blocks direct writes and
-  gives the agent planner identity, but it does not yet implement the full
-  no-double-spawn protocol from the Hermes spec as one helper command. For
-  now the gateway should create swarm tasks and wake existing workers via
-  `prompt_peer` / `prompt-peer`; first-class spawn dispatch remains the next
-  integration step.
+- **In-agent fast dispatch.** Gateway mode blocks direct writes and gives the
+  agent planner identity. The CLI now has `swarm-mcp dispatch` for idempotent
+  task creation, live-worker wakeups, and spawn requests through `swarm-ui`,
+  but Claude Code still does not have a plugin-local `swarm_fast_dispatch`
+  tool. The CLI helper is the bridge for hooks, launcher scripts, and gateway
+  wrappers that cannot call MCP tools directly.
 
 ## Install
 
@@ -124,7 +124,10 @@ priority for Claude Code-specific overrides:
 | `SWARM_CC_FILE_ROOT` / `SWARM_HERMES_FILE_ROOT` / `SWARM_MCP_FILE_ROOT` | Override the file root passed to `register`. |
 | `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this pane identity for express-lane peer wakes. |
 
-Default label format mirrors hermes: `identity:<id> claude-code platform:cli session:<id-prefix>`. Gateway mode adds `role:planner origin:claude-code`.
+Default label format mirrors hermes:
+`identity:<id> claude-code platform:cli [mode:gateway] [role:<name>] origin:claude-code session:<id-prefix>`.
+Gateway mode adds `mode:gateway` and defaults the routing role to
+`role:planner`.
 
 ## Verify
 
@@ -164,8 +167,11 @@ If the deny message never appears, the most common causes are:
 - `SWARM_CC_ROLE=gateway` planner/conductor labels and inline-write blocking
 
 ### v0.3 — Dispatch/spawn orchestration
-- Shared helper/CLI for idempotent task creation, worker selection,
-  no-double-spawn locking, herdr spawn, registration wait, and peer wake.
+- `swarm-mcp request-task` and `swarm-mcp dispatch` for idempotent task
+  creation, worker selection, no-double-spawn locking, `swarm-ui` spawn queue,
+  and peer wake.
+- Later: expose a synchronous-feeling in-agent helper if Claude Code gains a
+  suitable plugin tool surface.
 
 ### v0.4 — Ambient peer context
 - SessionStart additionalContext carries the current peer/lock/annotation
@@ -199,7 +205,7 @@ integrations/claude-code/
     └── swarm.md                 -- /swarm slash command
 ```
 
-Lifecycle methods (lock-conflict detection, peer scan, identity prime,
+Lifecycle methods (registration, lock-conflict detection, peer scan, identity publication,
 scratch-dir bookkeeping, herdr identity hint) live in the shared core.
 This plugin's `_common.py` only carries claude-code-specific bits: the
 `file_path` / `notebook_path` extractors, the `claude-code` label token,

@@ -282,6 +282,9 @@ Subcommands: `status` (default, compact summary), `instances`, `tasks`, `kv`, `m
 
 ### v0.5 — Gateway role + fast-dispatch
 - Plugin reads `swarm.role: gateway|worker` from config
+- CLI precursor: `swarm-mcp dispatch` creates/reuses an idempotent task,
+  wakes a live worker, or queues a guarded `swarm-ui` spawn for non-MCP
+  gateway wrappers.
 - New tool `swarm_fast_dispatch(intent, patch, expect, timeout_s, fallback)`
   - Wraps `request_task` + `wait_for_activity` + summarize as a single synchronous-feeling call
   - Returns `{status: "no_worker"}` if nothing claims within timeout; gateway can then ask user, escalate, or fall back to inline

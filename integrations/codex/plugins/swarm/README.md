@@ -18,15 +18,17 @@ For the broader adapter contract, see
 parallels, see [`integrations/hermes/SPEC.md`](../../../hermes/SPEC.md) and
 [`integrations/claude-code/SPEC.md`](../../../claude-code/SPEC.md).
 
-## What it does (v0.1.0)
+## What it does (v0.2.0)
 
 | Responsibility | Mechanism |
 |---|---|
-| Compute label/scope/identity, prime registration | `SessionStart` hook → `additionalContext` instructing the agent to call `register` with the canonical args |
+| Auto-`register` on session start | `SessionStart` hook → `swarm-mcp register`, stores `instance_id` in hook scratch metadata |
+| Auto-`deregister` on session end | `SessionEnd` hook → `swarm-mcp deregister` |
 | Auto-lock writes when peers exist | `PreToolUse` (matcher: `apply_patch`) → parses the patch envelope, calls `swarm-mcp lock` per path |
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
-| Cleanup `identity/herdr/<instance_id>` on session exit | `SessionEnd` hook → `swarm-mcp kv del` (best effort) |
+| Publish and cleanup `identity/herdr/<instance_id>` | `SessionStart` / `SessionEnd` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
+| Gateway conductor mode | `SWARM_CODEX_ROLE=gateway` registers as `role:planner`, blocks inline writes unless explicitly opted in |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 
 Failures are swallowed — coordination is opt-in convenience, never critical
@@ -103,8 +105,10 @@ Hooks pick up the same env knobs as the hermes / Claude Code plugins, with
 | `SWARM_CODEX_SCOPE` / `SWARM_HERMES_SCOPE` / `SWARM_MCP_SCOPE` | Override the coordination scope. Default: git root of `cwd`. |
 | `SWARM_CODEX_FILE_ROOT` / `SWARM_HERMES_FILE_ROOT` / `SWARM_MCP_FILE_ROOT` | Override the file root passed to `register`. |
 | `SWARM_CODEX_AGENT_ROLE` / `SWARM_AGENT_ROLE` | Adds a `role:<name>` token to the derived label. Accepts `planner`, `implementer`, `reviewer`, `researcher`, `generalist`, or `worker` (the default; emits no token). |
-| `SWARM_CODEX_ROLE` | Plugin-mode knob (`worker` default; `gateway` planned). Controls **plugin behavior** (e.g. suppress writes in gateway mode) — not the swarm-visible label. Reserved for the gateway-mode rollout that mirrors the hermes plugin's `swarm.role`. |
-| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart context tells the agent to publish its herdr identity for express-lane peer wakes. |
+| `SWARM_CODEX_ROLE` / `SWARM_ROLE` | `worker` by default. Set `gateway` for planner/conductor behavior. |
+| `SWARM_CODEX_GATEWAY_INLINE_WRITES` + `SWARM_CODEX_GATEWAY_WORKSPACE_MIRROR` | Both must be set to allow gateway inline writes; otherwise write tools are denied and should be delegated. |
+| `SWARM_CODEX_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `SessionEnd` deregisters normally. |
+| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this pane identity for express-lane peer wakes. |
 
 **Repo-wide role default — `.swarm-role` file.**
 If `SWARM_CODEX_AGENT_ROLE` is unset, the hook walks up from `cwd` to the
@@ -117,31 +121,27 @@ without env-var ceremony:
 echo implementer > .swarm-role
 ```
 
-Resolution order: `SWARM_CODEX_AGENT_ROLE` → `.swarm-role` file → `SWARM_AGENT_ROLE`. The
-literal value `worker` (the default) explicitly suppresses the role token
-even if a `.swarm-role` file exists.
+Resolution order: `SWARM_CODEX_AGENT_ROLE` → `.swarm-role` file →
+`SWARM_AGENT_ROLE` → `role:planner` when `SWARM_CODEX_ROLE=gateway`. The
+literal value `worker` explicitly suppresses the role token.
 
-If no source supplies a role, the SessionStart prime appends a one-line nudge
+If no source supplies a role, the SessionStart context appends a one-line nudge
 to the agent telling it how to set the token before its first peer
 interaction. Skill doctrine in `skills/swarm-mcp/SKILL.md` is the source of
 truth for which role to pick.
 
-`SWARM_CODEX_ROLE` (plural-mode knob, separate from the agent role) is
-intentionally **not** read here. It's reserved for the gateway-mode
-behavior plumbing — when claude-code/codex grow `swarm.role: gateway`
-support analogous to the hermes plugin, plugin-mode logic will consume that
-env var to suppress writes / drive three-tier dispatch / etc., independently
-of the swarm-visible label.
-
-Default label format: `identity:<id> codex platform:cli [role:<name>] origin:codex session:<id-prefix>`.
+Default label format:
+`identity:<id> codex platform:cli [mode:gateway] [role:<name>] origin:codex session:<id-prefix>`.
+Gateway mode adds `mode:gateway` and defaults the routing role to
+`role:planner`.
 
 ## Verify
 
 In a fresh project with the swarm MCP server mounted:
 
 1. Start codex (`cdx` or `codex`). The first turn should include a
-   `SessionStart` system block instructing it to call `register` with a
-   concrete label and scope.
+   `SessionStart` system block saying the session is already registered with
+   an `instance_id`.
 2. Confirm registration: `swarm-mcp instances` from another terminal should
    show your codex session.
 3. With a second peer registered in the same scope, ask the agent to apply a
@@ -161,24 +161,26 @@ If the deny message never appears, the most common causes are:
 
 ## Roadmap
 
-### v0.1 — Lifecycle bridge ✓ (this version)
+### v0.1 — Lifecycle bridge ✓
 - SessionStart additionalContext priming registration with derived args
 - Lock bridge with deny-on-conflict, fail-open elsewhere
 - /swarm slash command
 - Best-effort identity KV cleanup on SessionEnd
 
-### v0.2 — Verify hook payload contract
+### v0.2 — Autonomous lifecycle + gateway mode ✓ (this version)
+- `swarm-mcp register` / `deregister` / `list-instances`
+- SessionStart/SessionEnd hooks call lifecycle commands directly
+- Gateway-mode planner labels and inline-write blocking
+
+### v0.3 — Verify hook payload contract
 - Empirically confirm codex's PreToolUse / PostToolUse stdin schema and
   matcher semantics; tighten path extraction once the contract is stable.
-- Adopt upstream `swarm-mcp register` / `deregister` / `list_instances` CLI
-  subcommands when they land so the SessionStart hook can register
-  autonomously instead of priming the agent.
 
-### v0.3 — Peer prompt express lane
-- Flow in once the swarm MCP server gains a `prompt_peer` tool. No
-  plugin-side work needed — the tool arrives via the existing MCP mount.
+### v0.4 — Peer prompt express lane
+- Use the adapter-neutral `prompt_peer` MCP tool or `swarm-mcp prompt-peer`
+  CLI. No plugin-local tool surface is needed.
 
-### v0.4 — Ambient peer context
+### v0.5 — Ambient peer context
 - SessionStart additionalContext carries the current peer/lock/annotation
   snapshot so the agent starts a turn already aware of the coordination
   state.
@@ -206,7 +208,7 @@ integrations/codex/plugins/swarm/
 ```
 
 The hook lifecycle methods (lock-conflict detection, peer scan, identity
-prime, scratch-dir bookkeeping, herdr identity hint, etc.) live in the shared
+registration, scratch-dir bookkeeping, herdr identity publication, etc.) live in the shared
 core. This plugin's `_common.py` only carries codex-specific bits: the
 `apply_patch` envelope parser, the `codex` label token, the `SWARM_CODEX_*`
 env-var prefix, and the `swarm-codex` scratch namespace.

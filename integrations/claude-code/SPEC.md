@@ -19,7 +19,7 @@ inside a session, `swarm-mcp` CLI outside it), not by import:
 │   when to lock, role routing, task patterns
 ├──────────────────────────────────────────────┤
 │  Plugin (integrations/claude-code/)          │   behavior
-│   SessionStart prime, lock bridge, /swarm
+│   SessionStart register, lock bridge, /swarm
 ├──────────────────────────────────────────────┤
 │  MCP server (src/index.ts)                   │   capability
 │   29 tools: register, lock_file, request_task...
@@ -29,9 +29,9 @@ inside a session, `swarm-mcp` CLI outside it), not by import:
 ## 2. Shared hook core with the Codex plugin
 
 The runtime-agnostic implementation of every hook lifecycle method —
-swarm-mcp CLI resolution, identity/scope/label derivation, peer detection,
-session scratch, lock-pair tracking, deny-on-conflict semantics, herdr
-identity prime — lives in
+swarm-mcp CLI resolution, identity/scope/label derivation, autonomous
+registration, peer detection, session scratch, lock-pair tracking,
+deny-on-conflict semantics, herdr identity publication — lives in
 [`../_shared/swarm_hook_core.py`](../_shared/swarm_hook_core.py) as a
 `HookCore` class parameterized by `RuntimeConfig`.
 
@@ -156,39 +156,37 @@ Same shape as hermes:
 - `scope` — coordination boundary. Default: git root of `cwd`. Override via
   `SWARM_CC_SCOPE` / `SWARM_HERMES_SCOPE` / `SWARM_MCP_SCOPE`.
 - `label` — auto-built as
-  `[identity:<id>] claude-code platform:cli session:<id-prefix>`. Override
-  via `SWARM_CC_LABEL` / `SWARM_HERMES_LABEL`. If the override omits
-  `identity:`, the derived token is prepended.
+  `[identity:<id>] claude-code platform:cli [mode:gateway] [role:<name>]
+  origin:claude-code session:<id-prefix>`. Override via `SWARM_CC_LABEL` /
+  `SWARM_HERMES_LABEL`. If the override omits `identity:`, the derived token
+  is prepended. `mode:gateway` is behavior metadata; `role:planner` is the
+  swarm-visible routing label.
 
 The five-identifier invariants from hermes SPEC §6.5 carry over without
 modification: tasks/messages/locks target `instance_id`; UI/control surfaces
 target transport handles; user-facing text uses labels.
 
-## 7. Why no `swarm_prompt_peer` tool here
+## 7. Why no plugin-local `swarm_prompt_peer` tool here
 
 The hermes plugin registers `swarm_prompt_peer` because it can — hermes
 exposes `ctx.register_tool` to plugins. Claude Code does not allow plugins to
 inject ad-hoc tools into a hosted session; the only way to add tools is to
 ship an MCP server in the plugin.
 
-The right architectural answer is to add a `prompt_peer` tool to the
-swarm-mcp server itself. It's adapter-neutral (hermes, Claude Code, Codex,
-OpenCode, any future runtime gets it for free), and it lives next to the
-durable `send_message` it composes with. Tracked as v0.3.
-
-The fallback inside Claude Code today is the regular `send_message` MCP tool
-plus a manual `! herdr pane run <pane> "<wake prompt>"` invocation. Workable
-for one-offs; not worth wrapping until the upstream tool exists.
+The architectural answer is the adapter-neutral `prompt_peer` tool in the
+swarm-mcp server plus the `swarm-mcp prompt-peer` CLI. Claude Code receives
+the MCP tool through the normal `swarm` server mount, and hook/launcher code
+can use the CLI when it cannot call MCP tools directly.
 
 ## 8. Testing
 
 ### 8.1 Smoke scenarios (live, must pass)
 
-**S1: Single-agent registration prime**
-Fresh Claude Code session in a git repo. SessionStart additionalContext
-should appear in the first user turn, instructing `register` with a derived
-label. Confirm `swarm-mcp instances` shows the session after the agent acts
-on the prompt.
+**S1: Single-agent registration**
+Fresh Claude Code session in a git repo. SessionStart should call
+`swarm-mcp register`, store the returned `instance_id`, and inject context
+saying the session is already registered. Confirm `swarm-mcp instances`
+shows the session before the agent spends a tool call on registration.
 
 **S2: Solo write does not lock**
 Single session, no peers in scope. Edit any file. `swarm-mcp context` should
@@ -214,9 +212,11 @@ With `HERDR_PANE_ID` set and the agent having published
 `identity/herdr/<id>`, exiting the session should result in
 `swarm-mcp kv get identity/herdr/<id>` returning empty/error.
 
-### 8.2 Mocked unit tests (future)
+### 8.2 Mocked unit tests
 
-When/if these are added, they should cover:
+Current shared-core tests cover autonomous registration, fallback context,
+SessionEnd cleanup/deregister, and gateway write blocking. Additional cases
+that still deserve coverage:
 - Lock conflict detection on stderr substring `locked`
 - `has_peers` returning false on solo (1 instance) scope
 - `as_selector` falling back to `None` for empty session_id
@@ -225,12 +225,12 @@ When/if these are added, they should cover:
 
 ## 9. Design decisions
 
-**Why prime registration via `additionalContext` instead of calling
-`register` from the hook?**
-Because there is no `swarm-mcp register` CLI subcommand today, and the hook
-cannot reach the agent's MCP tool surface. Priming the agent is the cleanest
-path that ships value now without touching swarm-mcp internals. Adding the
-CLI subcommand is the v0.2 follow-up.
+**Why register through the CLI instead of the MCP tool?**
+Claude Code hooks run as subprocesses and cannot reach the hosted session's
+MCP tool surface. The hook shells to `swarm-mcp register`, stores the returned
+`instance_id` in scratch metadata, and injects context so the model can start
+with `whoami`, `list_instances`, `poll_messages`, and `list_tasks` instead of
+spending its first action on bootstrap.
 
 **Why pass `--as session:<8>` instead of caching the `instance_id`?**
 Older versions used `--as session:<8>` because the hook did not know the
@@ -257,6 +257,6 @@ unblock this adapter specifically:
 - **Exclusive lock semantics (already on the hermes list).** Not strictly
   required for this plugin, but if added, makes the hook's deny path more
   precise without needing the substring `locked` heuristic.
-- **First-class dispatch/spawn orchestration.** The next gap is not lifecycle;
-  it is the no-double-spawn helper that turns gateway intent into task
-  creation, worker selection/spawn, adoption wait, and peer wake.
+- **First-class in-agent dispatch/spawn orchestration.** The CLI now has
+  `dispatch`; the remaining gap is a hosted-session tool that wraps the same
+  path without asking the model to shell out.

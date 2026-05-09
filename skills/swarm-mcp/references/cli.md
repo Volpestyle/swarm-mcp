@@ -10,6 +10,12 @@ Inside an MCP-enabled agent session, prefer the MCP tools for swarm coordination
 
 The CLI talks to the same SQLite database as the MCP server. For state/coordination commands it is a non-MCP transport for the same primitives. The `ui` subcommands add a small queue-based control surface for `swarm-ui`.
 
+Two higher-level helpers exist for non-MCP callers: `request-task` creates an
+idempotent swarm task, and `dispatch` creates/reuses a task, wakes a matching
+live worker when one exists, or queues a guarded `swarm-ui` spawn. Inside an
+MCP-enabled agent session, prefer `request_task`, `prompt_peer`, and related
+MCP tools directly.
+
 ## When to reach for the CLI
 
 - You are writing a helper script (e.g. a CLI referee, a test harness, a one-shot migration) that is invoked by an agent and needs to atomically update swarm state (KV, messages, locks) as part of its work.
@@ -54,6 +60,8 @@ Writes (require an identity):
 
 | Command | Purpose |
 |--|--|
+| `swarm-mcp request-task <type> <title...> [--description D] [--file P] [--priority N] [--idempotency-key K]` | Create a task as the current identity. |
+| `swarm-mcp dispatch <title...> [--message M] [--type T] [--role R] [--harness H] [--idempotency-key K] [--no-spawn] [--wait N]` | Create/reuse a task, wake a live `role:R` worker, or enqueue a guarded `swarm-ui` spawn. |
 | `swarm-mcp send --to <who> <content...>` | Send a direct message. |
 | `swarm-mcp prompt-peer --to <who> --message <text> [--task ID] [--force] [--no-nudge]` | Send a durable direct message, then best-effort wake the target's published herdr pane. |
 | `swarm-mcp broadcast <content...>` | Fan out to every other instance in scope. |
@@ -102,6 +110,26 @@ Ambiguous matches error with the list of candidates.
 `prompt-peer` is the CLI equivalent of the MCP `prompt_peer` tool. It always sends the real instruction through swarm messages first. If the target has published `identity/herdr/<instance_id>` in KV, the command then asks herdr for the pane status and injects only a short wake prompt telling the worker to call `poll_messages`.
 
 The work contract should live in the swarm message or task, not in raw pane input. If no herdr identity exists, the message is still delivered and the nudge is skipped. If the target pane is `working`, the nudge is skipped unless `--force` is passed.
+
+## Dispatch Helper
+
+`swarm-mcp dispatch` is the CLI bridge for gateway-style flows that cannot call
+MCP tools directly. It does four things:
+
+1. Creates or reuses a task using `--idempotency-key` when provided, otherwise
+   an auto-derived key from scope, type, title, message, and role.
+2. Looks for a live peer whose label contains `role:<role>` (default:
+   `role:implementer`). If found, it sends the task instruction through
+   `prompt-peer`.
+3. If no worker is live and spawning is allowed, it enqueues `ui spawn` for a
+   running `swarm-ui` app.
+4. While the spawn command is pending/running, it holds a synthetic lock at
+   `/__swarm/spawn/<role>/<intent_hash>` so retries return `spawn_in_flight`
+   instead of queueing duplicate workers.
+
+If no `swarm-ui` app is running, the UI command remains pending and the spawn
+lock remains in place. A later retry with the same idempotency key sees the
+in-flight lock instead of creating another pane.
 
 ## UI command model
 

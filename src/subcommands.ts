@@ -6,6 +6,8 @@ export const SUBCOMMANDS = [
   "list-instances",
   "messages",
   "tasks",
+  "request-task",
+  "dispatch",
   "context",
   "kv",
   "send",
