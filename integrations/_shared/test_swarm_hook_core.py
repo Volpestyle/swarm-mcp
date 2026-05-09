@@ -99,6 +99,7 @@ class HookCoreLifecycleTests(unittest.TestCase):
 
     def test_gateway_session_start_surfaces_mode_and_planner_label(self) -> None:
         os.environ["SWARM_TEST_ROLE"] = "gateway"
+        os.environ["SWARM_MCP_BIN"] = "bun run /repo/src/cli.ts"
 
         calls: list[list[str]] = []
 
@@ -123,7 +124,8 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertIn("Plugin behavior mode: `gateway`", rendered)
         self.assertIn("swarm gateway/lead mode", rendered)
         self.assertIn("do not silently fall back to native", rendered)
-        self.assertIn("swarm-mcp dispatch", rendered)
+        self.assertIn("bun run /repo/src/cli.ts dispatch", rendered)
+        self.assertIn("Do not assume the literal `swarm-mcp` binary", rendered)
 
     def test_session_end_deletes_identity_and_deregisters(self) -> None:
         self.core.write_session_meta(

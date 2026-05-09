@@ -8,6 +8,17 @@ The `swarm-mcp` CLI has three uses:
 
 Inside an MCP-enabled agent session, prefer the MCP tools for swarm coordination primitives — they are the primary, structured, notification-integrated interface. Reach for the CLI when you are writing a helper script, operating from a plain terminal, or the user explicitly wants to drive `swarm-ui` from the CLI.
 
+When launcher aliases set `SWARM_MCP_BIN`, use that value as the command prefix
+instead of assuming a literal `swarm-mcp` binary exists on `PATH`. For example,
+if `SWARM_MCP_BIN='bun run /path/to/swarm-mcp/src/cli.ts'`, run:
+
+```sh
+bun run /path/to/swarm-mcp/src/cli.ts dispatch ...
+```
+
+Use `swarm-mcp ...` only when no launcher-provided prefix exists and the binary
+is actually resolvable.
+
 The CLI talks to the same SQLite database as the MCP server. For state/coordination commands it is a non-MCP transport for the same primitives. The `ui` subcommands add a small queue-based control surface for `swarm-ui`.
 
 Two higher-level helpers exist for non-MCP callers: `request-task` creates an
@@ -114,7 +125,9 @@ The work contract should live in the swarm message or task, not in raw pane inpu
 ## Dispatch Helper
 
 `swarm-mcp dispatch` is the CLI bridge for gateway-style flows that cannot call
-MCP tools directly. It does four things:
+MCP tools directly or need to cross into herdr/`swarm-ui` process control. In
+launcher-managed sessions, replace `swarm-mcp` with `SWARM_MCP_BIN` when that
+environment variable is set. The helper does four things:
 
 1. Creates or reuses a task using `--idempotency-key` when provided, otherwise
    an auto-derived key from scope, type, title, message, and role.
@@ -130,6 +143,13 @@ MCP tools directly. It does four things:
 If no `swarm-ui` app is running, the UI command remains pending and the spawn
 lock remains in place. A later retry with the same idempotency key sees the
 in-flight lock instead of creating another pane.
+
+Spawn/dispatch authority is intentionally narrow: gateway/lead sessions and
+operator surfaces may use this helper; ordinary worker/generalist sessions
+should create or claim tasks, message the planner/gateway, or continue locally
+when safe. The CLI enforces this for identified callers by requiring the
+requester label to include `mode:gateway`; trusted operator shells can override
+the guard with `SWARM_MCP_ALLOW_SPAWN=1`.
 
 ## UI command model
 
@@ -194,7 +214,7 @@ The agent calls `node harness.mjs <partner-id>` once. The script does validation
 ## Caveats
 
 - **Exit codes**: 0 on success, 1 on any error (unknown ref, lock conflict, missing key on `kv get`). Check in scripts.
-- **Impersonation**: `--as` trusts the caller. The CLI will happily write as any live instance. This is fine for scripts the agent spawns locally; don't expose the binary to untrusted callers.
+- **Impersonation**: `--as` trusts the caller. The CLI will write as any live instance, though spawn/dispatch helpers require `mode:gateway` unless `SWARM_MCP_ALLOW_SPAWN=1` is set. This is fine for scripts the agent spawns locally; don't expose the binary to untrusted callers.
 - **Message peek vs poll**: `swarm-mcp messages` does not consume messages. Use it for observation; use MCP `poll_messages` inside an agent to consume.
 - **Stale agents**: the CLI calls `prune()` at startup (same as every MCP call). Instances are marked stale after about 30s without a heartbeat and reclaimed after about 60s, which releases their work and clears locks/messages.
 - **UI commands need the desktop app**: `swarm-mcp ui ...` only executes if a `swarm-ui` app is running and watching the shared DB.

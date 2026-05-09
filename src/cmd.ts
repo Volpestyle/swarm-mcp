@@ -225,6 +225,27 @@ function hasRole(inst: InstRow, role: string | undefined) {
   return (inst.label ?? "").split(/\s+/).includes(token);
 }
 
+function hasLabelToken(inst: InstRow | null | undefined, token: string) {
+  return (inst?.label ?? "").split(/\s+/).includes(token);
+}
+
+function instanceById(scope: string, id: string) {
+  return instancesInScope(scope).find((inst) => inst.id === id) ?? null;
+}
+
+function envTruthy(name: string) {
+  return (process.env[name] ?? "").trim().toLowerCase().match(/^(1|true|yes|on)$/) !== null;
+}
+
+function requireSpawnAuthority(scope: string, requester: string, action: string) {
+  if (envTruthy("SWARM_MCP_ALLOW_SPAWN")) return;
+  const inst = instanceById(scope, requester);
+  if (hasLabelToken(inst, "mode:gateway")) return;
+  throw new Error(
+    `${action} is gateway-only. Use a requester labeled mode:gateway, or set SWARM_MCP_ALLOW_SPAWN=1 from a trusted operator shell.`,
+  );
+}
+
 function findWorker(scope: string, requester: string, role: string | undefined) {
   return instancesInScope(scope).find((inst) => inst.id !== requester && hasRole(inst, role)) ?? null;
 }
@@ -300,13 +321,9 @@ async function enqueueUiCommand(
   payload: Record<string, unknown>,
   flags: Flags,
   fallbackSeconds = DEFAULT_UI_WAIT_SECS,
+  createdBy = resolveOptionalIdentity(scope, flags),
 ) {
-  const id = ui.enqueue(
-    scope,
-    kind,
-    payload,
-    resolveOptionalIdentity(scope, flags),
-  );
+  const id = ui.enqueue(scope, kind, payload, createdBy);
   const row = await maybeWaitForUiCommand(id, flags, fallbackSeconds);
   if (!row) throw new Error(`ui command ${id} disappeared`);
   printUiCommand(row, flags.json);
@@ -566,6 +583,7 @@ function dispatchInstruction(taskId: string, title: string, message: string) {
 async function cmdDispatch(flags: Flags) {
   const scope = resolveScope(flags);
   const requester = resolveIdentity(scope, flags);
+  requireSpawnAuthority(scope, requester, "dispatch");
   const taskType = parseTaskType(flags.taskType, "implement");
   const title = flags.positional.slice(1).join(" ").trim();
   if (!title) throw new Error("dispatch <title...> [--message <instructions>]");
@@ -1117,6 +1135,8 @@ async function cmdUi(flags: Flags) {
       );
     }
     const scope = scopeFor(cwd, flags.scope);
+    const createdBy = resolveOptionalIdentity(scope, flags);
+    if (createdBy) requireSpawnAuthority(scope, createdBy, "ui spawn");
     return enqueueUiCommand(
       scope,
       "spawn_shell",
@@ -1127,6 +1147,8 @@ async function cmdUi(flags: Flags) {
         label: flags.label ?? null,
       },
       flags,
+      DEFAULT_UI_WAIT_SECS,
+      createdBy,
     );
   }
 

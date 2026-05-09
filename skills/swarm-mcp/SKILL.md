@@ -86,7 +86,7 @@ When the role is unclear, do not invent one. Ask one short question or proceed a
 - Use `assignee` for a stale or unknown instance
 - Confuse direct messages with task handoff; use `request_task` for structured delegated work
 - Try to claim `blocked` tasks — they will become `open` automatically
-- Shell out to the `swarm-mcp` CLI for normal coordination primitives from inside your agent loop — use the MCP tools. Exception: gateway/lead sessions may use CLI bridge commands such as `swarm-mcp dispatch` when they are driving launcher, herdr, or `swarm-ui` spawn flows that have no direct MCP equivalent.
+- Shell out to the `swarm-mcp` CLI for normal coordination primitives from inside your agent loop — use the MCP tools. Exception: gateway/lead sessions may use CLI bridge commands such as `dispatch` when they are driving launcher, herdr, or `swarm-ui` spawn flows that have no direct MCP equivalent. Resolve the command prefix from `SWARM_MCP_BIN` first; use literal `swarm-mcp` only when no launcher-provided prefix exists.
 
 ## Default Behavior
 
@@ -117,7 +117,19 @@ When the skill triggers, prefer this sequence unless the task clearly requires s
 - Update your progress with `kv_set("progress/<your-instance-id>", ...)` while working on tasks so others can check on you without interrupting
 - Messages prefixed with `[auto]` are system notifications (task assignments, completions, stale-agent recovery) — treat them like any other actionable message
 - When you receive a `[signal:complete]` broadcast, the planner is signaling all work is done — finish current work, deregister, and stop
-- In gateway/lead mode, no live worker is a spawn problem, not a native-subagent fallback. Create/reuse a swarm task, dedupe the spawn intent, then use herdr or `swarm-ui` to launch a visible worker process; if you cannot access a spawner surface, ask the operator.
+- In gateway/lead mode, no live worker is a spawn problem, not a native-subagent fallback. Create/reuse a swarm task, dedupe the spawn intent, then use herdr or `swarm-ui` to launch a visible worker process; if you cannot access a spawner surface, ask the operator. Worker/generalist sessions do not spawn new workers; they request tracked work, message the planner/gateway, or continue locally when safe.
+
+## CLI Bridge Resolution
+
+Most swarm coordination should use MCP tools. The CLI bridge exists for gateway-only process control, especially `dispatch` and `ui spawn`, because those flows cross into herdr or `swarm-ui` rather than only updating swarm state.
+
+When a gateway must use the CLI bridge, resolve the command prefix in this order:
+
+1. Use the exact `SWARM_MCP_BIN` value if set by the launcher, for example `bun run /path/to/swarm-mcp/src/cli.ts`.
+2. Otherwise use `swarm-mcp` from `PATH`.
+3. If neither works, use herdr directly if available, or ask the operator to start the worker.
+
+Do not ask ordinary worker sessions to run `dispatch`, `ui spawn`, or raw herdr pane creation. Spawn authority belongs to `mode:gateway` sessions and operator surfaces.
 
 ## Spawn Layout Doctrine
 

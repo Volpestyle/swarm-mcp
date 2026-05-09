@@ -233,6 +233,10 @@ The same `swarm-mcp` binary exposes a non-MCP CLI that talks directly to `~/.swa
 
 Inside an MCP-enabled agent session, prefer the MCP tools for swarm coordination primitives (`register`, messages, tasks, locks, KV). The CLI is primarily for scripts, operator terminals, and the `swarm-ui` control surface.
 
+Launcher-managed sessions may set `SWARM_MCP_BIN` to a real command such as
+`bun run /path/to/swarm-mcp/src/cli.ts`. Agents should use that prefix instead
+of assuming `swarm-mcp` is installed on `PATH`.
+
 Setup helper:
 
 ```sh
@@ -281,6 +285,7 @@ Notes:
 
 - `swarm-mcp ui spawn`, `ui prompt`, `ui move`, and `ui organize` wait up to 5 seconds by default for the desktop app to claim + complete the command. Pass `--wait 0` to return immediately after enqueue.
 - `ui spawn` accepts the work-identity launchers `--harness claude` / `--harness codex` / `--harness opencode` / `--harness hermesw` (and `--harness clawd` for Claude with `--enable-auto-mode`) and the personal-identity launchers `--harness clowd` / `--harness cdx` / `--harness opc` / `--harness hermesp`; omit `--harness` for a plain shell. Pick the launcher whose identity matches the worker you intend to spawn — see [identity boundaries](docs/identity-boundaries.md).
+- Identified `dispatch` / `ui spawn` callers must be registered with a `mode:gateway` label. Trusted operator shells can bypass that accidental-use guard with `SWARM_MCP_ALLOW_SPAWN=1`.
 - Use `swarm-mcp ui list` and `swarm-mcp ui get <id>` to inspect queued, running, completed, or failed UI commands.
 - `--target` accepts `bound:<instance-id>`, `instance:<instance-id>`, `pty:<pty-id>`, or a bare instance / PTY reference. Bare instance refs resolve by full UUID, unique UUID prefix, or unique label substring in scope. Bare PTY refs resolve by full PTY id, unique PTY id prefix, or a unique substring of the PTY command.
 - `ui move` persists layout into the shared `ui/layout` KV entry for the target scope, so changes survive refreshes and can be driven from either the desktop UI or the CLI.

@@ -589,6 +589,7 @@ class HookCore:
 
         role_token = self.agent_role_token()
         if plugin_role == "gateway":
+            cli_prefix = os.environ.get("SWARM_MCP_BIN", "").strip() or "swarm-mcp"
             lines.extend(
                 [
                     "",
@@ -598,11 +599,13 @@ class HookCore:
                     "",
                     "If no matching peer is registered, do not silently fall back to native",
                     "subagents or direct hands-on edits. Create or reuse a swarm task, then",
-                    "use the herdr / swarm-ui spawn path (`swarm-mcp dispatch` from launcher",
-                    "or gateway contexts) to start a real worker process. If no spawner",
-                    "surface is available in this session, ask the operator to launch a",
-                    "worker pane. Inline writes are blocked unless the explicit gateway",
-                    "inline-write mirror config is present.",
+                    "use the herdr / swarm-ui spawn path to start a real worker process.",
+                    f"For CLI dispatch in this session, use `{cli_prefix} dispatch ...`.",
+                    "Do not assume the literal `swarm-mcp` binary is on PATH when",
+                    "`SWARM_MCP_BIN` is set by the launcher. If no spawner surface is",
+                    "available in this session, ask the operator to launch a worker pane.",
+                    "Inline writes are blocked unless the explicit gateway inline-write",
+                    "mirror config is present.",
                 ]
             )
         if role_token:

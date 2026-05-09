@@ -12,12 +12,23 @@ Decision flow on session start:
 
 1. Call the swarm `list_instances` and `list_tasks` MCP tools early — before deciding how to execute.
 2. **Matching peer present** (compatible `scope`, useful `role:<implementer|reviewer|researcher>`, matching `identity:<work|personal>`) → delegate via `request_task` with a concrete patch + success criterion. To wake an idle peer in its herdr pane, send the durable swarm message via `send_message` first; the pane nudge (the plugin tool `swarm_prompt_peer` if your runtime exposes it, else direct `herdr pane run` if you have that capability) is best-effort and never carries the work contract itself.
-3. **Gateway/lead mode and no matching peer** (`mode:gateway`) → create or reuse a swarm task, then use the herdr / `swarm-ui` spawn path to create a real worker process. The CLI bridge for wrappers and lead sessions is `swarm-mcp dispatch`: it wakes a live worker when one exists, or queues a guarded `swarm-ui` spawn when none exists. If no spawner surface is available, ask the operator to start a worker instead of silently using native subagents.
+3. **Gateway/lead mode and no matching peer** (`mode:gateway`) → create or reuse a swarm task, then use the herdr / `swarm-ui` spawn path to create a real worker process. The CLI bridge for wrappers and lead sessions is `dispatch` through the launcher-resolved CLI prefix: use `SWARM_MCP_BIN` when set, otherwise `swarm-mcp` from `PATH`. It wakes a live worker when one exists, or queues a guarded `swarm-ui` spawn when none exists. If no spawner surface is available, ask the operator to start a worker instead of silently using native subagents.
 4. **Worker/generalist mode and no matching peer** → fall back to your runtime's native subagent mechanism, or do the work yourself when that is faster and safe.
 
 Why peers when available: independent processes — possibly different harnesses (Codex, OpenCode, Claude, Hermes) or a different identity profile carrying account-scoped MCP auth your session can't reach. Their tasks are durable across sessions; native subagents typically share your process and die with the parent turn or session. The integration plugin's lock bridge already handles write-collision protection automatically across runtimes.
 
 Do not use native subagents as the normal gateway fallback. Gateway mode exists to keep worker execution visible as separate herdr/swarm peers. Inline work or native subagents are only acceptable when the operator explicitly asks for it, or when the runtime is not in gateway mode and the local tradeoff is clearly better.
+
+The split between MCP and CLI is deliberate. MCP owns coordination state: tasks,
+messages, locks, KV, and notifications. Spawning a new worker crosses into
+WorkspaceControl/Spawner territory: it creates a PTY or pane, chooses a
+launcher/config root, and injects adoption environment. That action should stay
+visible to the operator and should be available only to gateway/lead sessions or
+operator surfaces. Ordinary workers must not call `dispatch`, `ui spawn`, or raw
+herdr pane creation unless explicitly instructed. The CLI rejects identified
+spawn/dispatch callers whose swarm label does not include `mode:gateway`; a
+trusted operator shell can bypass that accidental-use guard with
+`SWARM_MCP_ALLOW_SPAWN=1`.
 
 ## SPEC invariants (do not violate)
 
