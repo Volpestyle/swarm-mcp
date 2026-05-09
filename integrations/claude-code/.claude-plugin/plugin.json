@@ -1,0 +1,10 @@
+{
+  "name": "swarm",
+  "version": "0.1.0",
+  "description": "Auto-lock writes, surface peer state, publish herdr identity, and prime registration from Claude Code sessions.",
+  "author": {
+    "name": "@volpestyle"
+  },
+  "homepage": "https://github.com/volpestyle/swarm-mcp",
+  "keywords": ["swarm", "swarm-mcp", "coordination", "multi-agent", "herdr"]
+}

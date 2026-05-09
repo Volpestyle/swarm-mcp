@@ -1,0 +1,15 @@
+{
+  "name": "swarm-mcp",
+  "owner": {
+    "name": "@volpestyle"
+  },
+  "plugins": [
+    {
+      "name": "swarm",
+      "source": "./integrations/claude-code",
+      "description": "Auto-lock writes, surface peer state, publish herdr identity, and prime registration from Claude Code sessions against the swarm-mcp coordinator.",
+      "version": "0.1.0",
+      "keywords": ["swarm", "swarm-mcp", "coordination", "multi-agent", "herdr"]
+    }
+  ]
+}
