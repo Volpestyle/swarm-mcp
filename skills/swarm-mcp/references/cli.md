@@ -33,18 +33,28 @@ Read-only (no identity required):
 | Command | Purpose |
 |--|--|
 | `swarm-mcp inspect [--scope P] [--json]` | Unified dump: instances, tasks, context, kv, recent messages. |
-| `swarm-mcp instances [--scope P]` | List live instances. |
+| `swarm-mcp instances [--scope P] [--json]` | List live instances. |
+| `swarm-mcp list-instances [--scope P] [--json]` | Alias for `instances`, useful for scripts that mirror the MCP tool name. |
 | `swarm-mcp messages [--to W] [--from W] [--limit N]` | Peek messages. Does not mark them read. |
 | `swarm-mcp tasks [--status S] [--scope P]` | List tasks. |
 | `swarm-mcp context [--scope P]` | List locks + annotations. |
 | `swarm-mcp kv list [--prefix P] [--scope P]` | List KV keys. |
 | `swarm-mcp kv get <key> [--scope P]` | Print a KV value. Exits 1 if missing. |
 
+Lifecycle and identity:
+
+| Command | Purpose |
+|--|--|
+| `swarm-mcp register [directory] [--label L] [--scope P] [--file-root P] [--lease-seconds N] [--json]` | Register an instance from a hook or non-MCP host. `--lease-seconds` is for hook-managed sessions that do not have an MCP heartbeat timer. |
+| `swarm-mcp deregister [--as W] [--scope P] [--json]` | Deregister an instance and release its tasks/locks. |
+| `swarm-mcp whoami [--as W] [--scope P] [--json]` | Resolve an identity reference and print the registered instance. |
+
 Writes (require an identity):
 
 | Command | Purpose |
 |--|--|
 | `swarm-mcp send --to <who> <content...>` | Send a direct message. |
+| `swarm-mcp prompt-peer --to <who> --message <text> [--task ID] [--force] [--no-nudge]` | Send a durable direct message, then best-effort wake the target's published herdr pane. |
 | `swarm-mcp broadcast <content...>` | Fan out to every other instance in scope. |
 | `swarm-mcp kv set <key> <value>` | Set a KV entry. |
 | `swarm-mcp kv append <key> <json>` | Append to a KV array value. |
@@ -85,6 +95,12 @@ Ambiguous matches error with the list of candidates.
 ## Scope resolution
 
 `--scope <path>` overrides. Otherwise the CLI resolves scope the same way `register` does: git root of the current working directory, falling back to the directory itself. Always pass `--scope` from scripts that may be invoked from anywhere.
+
+## Peer wakeups
+
+`prompt-peer` is the CLI equivalent of the MCP `prompt_peer` tool. It always sends the real instruction through swarm messages first. If the target has published `identity/herdr/<instance_id>` in KV, the command then asks herdr for the pane status and injects only a short wake prompt telling the worker to call `poll_messages`.
+
+The work contract should live in the swarm message or task, not in raw pane input. If no herdr identity exists, the message is still delivered and the nudge is skipped. If the target pane is `working`, the nudge is skipped unless `--force` is passed.
 
 ## UI command model
 

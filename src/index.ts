@@ -3,6 +3,7 @@ import {
   ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { spawnSync } from "node:child_process";
 import { z } from "zod";
 import { db } from "./db";
 import * as context from "./context";
@@ -560,6 +561,115 @@ registeredTool(
 
     messages.send(current.id, current.scope, recipient, content);
     return respond(`Message sent to ${recipient}`);
+  },
+);
+
+registeredTool(
+  "prompt_peer",
+  "Send a durable swarm message to another instance, then best-effort wake its herdr pane if it published identity/herdr/<instance_id>.",
+  {
+    recipient: z.string().describe("Target swarm instance id"),
+    message: z.string().describe("Instruction to send through swarm"),
+    task_id: z.string().optional().describe("Optional related swarm task id"),
+    nudge: z.boolean().optional().default(true).describe("Whether to wake the target herdr pane"),
+    force: z.boolean().optional().default(false).describe("Wake even when the target pane is working"),
+  },
+  async ({ recipient, message, task_id, nudge, force }) => {
+    const current = instance!;
+    const target = registry.get(recipient);
+    if (!target || target.scope !== current.scope) {
+      return respondJson({ error: `Instance ${recipient} is not active in this scope` });
+    }
+    if (target.id === current.id) {
+      return respondJson({ error: "Cannot prompt yourself" });
+    }
+
+    const durable = task_id ? `[task:${task_id}] ${message}` : message;
+    messages.send(current.id, current.scope, target.id, durable);
+
+    const result: Record<string, unknown> = {
+      message_sent: true,
+      recipient: target.id,
+      nudged: false,
+    };
+    if (!nudge) {
+      result.nudge_skipped = "nudge=false";
+      return respondJson(result);
+    }
+
+    const identityRow = kv.get(current.scope, `identity/herdr/${target.id}`);
+    if (!identityRow) {
+      result.nudge_skipped = "no herdr identity is published for that instance";
+      return respondJson(result);
+    }
+
+    let identity: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(identityRow.value);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("identity is not an object");
+      }
+      identity = parsed as Record<string, unknown>;
+    } catch {
+      result.nudge_skipped = "published herdr identity is not valid JSON";
+      return respondJson(result);
+    }
+
+    const paneId = identity.pane_id;
+    if (typeof paneId !== "string" || !paneId) {
+      result.nudge_skipped = "published herdr identity has no pane_id";
+      return respondJson(result);
+    }
+
+    const env = { ...process.env };
+    if (typeof identity.socket_path === "string" && identity.socket_path) {
+      env.HERDR_SOCKET_PATH = identity.socket_path;
+    }
+    const getProc = spawnSync("herdr", ["pane", "get", paneId], {
+      encoding: "utf8",
+      env,
+      timeout: 5_000,
+    });
+    result.pane_id = paneId;
+    if (getProc.error || getProc.status !== 0) {
+      result.nudge_skipped =
+        getProc.error?.message ||
+        getProc.stderr?.trim() ||
+        getProc.stdout?.trim() ||
+        "herdr pane get failed";
+      return respondJson(result);
+    }
+
+    let status = "unknown";
+    try {
+      const payload = JSON.parse(getProc.stdout || "{}");
+      const pane = payload?.result?.pane;
+      if (pane && typeof pane.agent_status === "string") status = pane.agent_status;
+    } catch {
+      status = "unknown";
+    }
+    result.agent_status = status;
+    if (!["idle", "blocked", "done", "unknown"].includes(status) && !force) {
+      result.nudge_skipped = `target pane is ${status}; pass force=true to inject anyway`;
+      return respondJson(result);
+    }
+
+    const wakePrompt = `A peer sent you a swarm message${task_id ? ` for task ${task_id}` : ""}. Call the swarm poll_messages tool, handle the message, and report back through swarm-mcp.`;
+    const runProc = spawnSync("herdr", ["pane", "run", paneId, wakePrompt], {
+      encoding: "utf8",
+      env,
+      timeout: 5_000,
+    });
+    if (runProc.error || runProc.status !== 0) {
+      result.nudge_error =
+        runProc.error?.message ||
+        runProc.stderr?.trim() ||
+        runProc.stdout?.trim() ||
+        "herdr pane run failed";
+    } else {
+      result.nudged = true;
+    }
+    return respondJson(result);
   },
 );
 

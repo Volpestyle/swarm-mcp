@@ -1,6 +1,6 @@
 # swarm Claude Code plugin — design notes
 
-**Status:** v0.1.0 current
+**Status:** v0.2.0 current
 **Audience:** future contributors, the operator, agents reading this directory
 
 This file captures the design constraints behind the Claude Code adapter so
@@ -26,7 +26,30 @@ inside a session, `swarm-mcp` CLI outside it), not by import:
 └──────────────────────────────────────────────┘
 ```
 
-## 2. Why this plugin is leaner than hermes
+## 2. Shared hook core with the Codex plugin
+
+The runtime-agnostic implementation of every hook lifecycle method —
+swarm-mcp CLI resolution, identity/scope/label derivation, peer detection,
+session scratch, lock-pair tracking, deny-on-conflict semantics, herdr
+identity prime — lives in
+[`../_shared/swarm_hook_core.py`](../_shared/swarm_hook_core.py) as a
+`HookCore` class parameterized by `RuntimeConfig`.
+
+This plugin's `hooks/_common.py` instantiates `HookCore` with the
+Claude-Code-flavored config: `runtime_name="claude-code"`, `env_prefix="CC"`,
+`scratch_dir_name="swarm-cc"`, `write_tools={Write, Edit, MultiEdit,
+NotebookEdit}`, and a path extractor that reads `tool_input.file_path` /
+`tool_input.notebook_path`. The four hook entry scripts
+(`session_start.py`, `session_end.py`, `pre_tool_use.py`, `post_tool_use.py`)
+are 12-line stubs that just call `core.run_*_hook(sys.stdin)`.
+
+The Codex plugin (`integrations/codex/plugins/swarm/`) consumes the same
+shared core with a different `RuntimeConfig` (write tool: `apply_patch`,
+path extractor: parses the `*** Begin Patch` envelope). Hermes does *not*
+use this shared core because hermes integrates via an in-process plugin
+API rather than stdin-JSON subprocess hooks.
+
+## 3. Why this plugin is leaner than hermes
 
 The hermes plugin has the advantage of hermes-agent's plugin API, which
 exposes:
@@ -43,54 +66,52 @@ plugin vs. need to live in the agent's prompt-time behavior.
 
 The result:
 
-| Hermes-plugin responsibility | Claude Code plugin v0.1 |
+| Hermes-plugin responsibility | Claude Code plugin v0.2 |
 |---|---|
-| Auto-register via `mcp_swarm_register` | Inject `additionalContext` priming the agent to call `register`; the bundled `swarm-mcp` skill drives it. Auto-call requires upstream CLI subcommands (v0.2). |
-| Auto-deregister | Best-effort herdr-identity KV cleanup; deregister waits on either the agent or stale-prune. |
+| Auto-register via `mcp_swarm_register` | `SessionStart` shells to `swarm-mcp register`, stores the returned `instance_id`, and injects context saying registration is complete. |
+| Auto-deregister | `SessionEnd` shells to `swarm-mcp deregister` and cleans up herdr identity KV. |
 | Auto-lock + auto-unlock | Same — shell to `swarm-mcp lock` / `unlock`. |
 | Block on lock conflict | Same — emit `permissionDecision: deny`. |
 | `/swarm` slash command | Markdown command; same shape, slightly different surface. |
-| `swarm_prompt_peer` tool | Not implemented here. Right home is the swarm MCP server itself. |
-| Herdr identity publish on session start | Inline in the `additionalContext` instructing the agent (chicken-and-egg: `kv_set` needs the `instance_id` register returns). |
+| `swarm_prompt_peer` tool | Implemented adapter-neutrally as the swarm MCP `prompt_peer` tool and `swarm-mcp prompt-peer` CLI. |
+| Herdr identity publish on session start | `SessionStart` publishes `identity/herdr/<instance_id>` directly after CLI registration. |
 
-## 3. CLI surface required for full autonomy
+## 4. CLI surface for full autonomy
 
-Today the swarm-mcp CLI exposes `lock`, `unlock`, `kv`, `send`, `broadcast`,
-`inspect`, `instances`, `tasks`, `messages`, `context`, and `ui`. It does
-**not** expose `register`, `deregister`, or `list_instances` as standalone
-subcommands.
-
-Adding those would let this plugin (and any other shell-hook-based adapter)
-drop the `additionalContext` priming and become fully autonomous. Sketch:
+The swarm-mcp CLI exposes the lifecycle and coordination commands shell-hook
+adapters need: `register`, `deregister`, `whoami`, `instances` /
+`list-instances`, `lock`, `unlock`, `kv`, `send`, `broadcast`,
+`prompt-peer`, `inspect`, `tasks`, `messages`, `context`, and `ui`.
 
 ```text
-swarm-mcp register --label "..." --directory "$cwd" \
-    [--scope <path>] [--file-root <path>] [--json]
-    # prints { instance_id, scope, ... }; sets SWARM_MCP_INSTANCE_ID-style
-    # output that hooks can capture into a session scratch file
+swarm-mcp register "$cwd" --label "..." \
+    [--scope <path>] [--file-root <path>] [--lease-seconds N] [--json]
+    # prints the registered instance; hooks capture id into session scratch
 
 swarm-mcp deregister [--as <who>] [--scope <path>]
 
 swarm-mcp list-instances [--scope <path>] [--json]
-    # already partially exposed as `instances`; just normalize the name
+
+swarm-mcp prompt-peer --to <who> --message "..." [--task <id>] [--force]
 ```
 
-Ownership of stale instances stays unchanged — the existing prune-on-call
-guarantee covers crash recovery for both adapters.
+CLI-registered hook sessions do not have an MCP heartbeat timer, so Claude
+Code uses a lease (`SWARM_CC_LEASE_SECONDS`, default 86400) and deregisters
+explicitly on `SessionEnd`.
 
-## 4. Lifecycle contracts (v0.1)
+## 5. Lifecycle contracts (v0.1)
 
-### 4.1 Hook firing
+### 5.1 Hook firing
 
 | Hook | Fires | Plugin behavior |
 |---|---|---|
-| `SessionStart` (source=startup or resume) | New or resumed conversation | Compute label/scope/identity; write per-session scratch metadata; emit `additionalContext` instructing the agent to call `register` with those args. If `HERDR_PANE_ID` is present, instruct the agent to also publish `identity/herdr/<instance_id>` after registering. |
+| `SessionStart` (source=startup or resume) | New or resumed conversation | Compute label/scope/identity; call `swarm-mcp register`; write per-session scratch metadata including `instance_id`; publish `identity/herdr/<instance_id>` if `HERDR_PANE_ID` is present; emit `additionalContext` telling the agent it is registered and should follow the swarm role workflow. |
 | `SessionStart` (source=clear or compact) | Mid-session reset | Refresh metadata only; do not re-prompt registration. |
-| `SessionEnd` | Conversation ends | Best-effort `kv del identity/herdr/<instance_id>`; clear the session scratch dir. |
-| `PreToolUse` (matcher: `Write\|Edit\|MultiEdit\|NotebookEdit`) | Before each write-class tool dispatch | If peers exist in scope, `swarm-mcp lock` each path. On conflict, emit `permissionDecision: deny`. |
+| `SessionEnd` | Conversation ends | Best-effort `kv del identity/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
+| `PreToolUse` (matcher: `Write\|Edit\|MultiEdit\|NotebookEdit`) | Before each write-class tool dispatch | In gateway mode, deny inline writes unless explicit inline-write config is present. Otherwise, if peers exist in scope, `swarm-mcp lock` each path. On conflict, emit `permissionDecision: deny`. |
 | `PostToolUse` (same matcher) | After each write-class tool dispatch | `swarm-mcp unlock` each path the matching pre acquired. |
 
-### 4.2 Identity selector for the lock CLI
+### 5.2 Identity selector for the lock CLI
 
 Hooks identify their session by passing `--as session:<8>` to `swarm-mcp lock`
 / `unlock`. The CLI resolves `--as` by:
@@ -106,7 +127,7 @@ this session's instance. Collisions on the first 8 chars within the same
 scope are vanishingly unlikely; if they happen, the CLI errors as ambiguous
 and the lock fails open (no deny).
 
-### 4.3 Failure semantics (matches hermes)
+### 5.3 Failure semantics (matches hermes)
 
 - **Fail-open by default.** CLI missing, network/db error, identity
   ambiguous → tool proceeds without a lock. Coordination is opt-in.
@@ -117,7 +138,7 @@ and the lock fails open (no deny).
   `swarm-mcp instances` first; if the count of peers (excluding ourselves)
   is zero, no lock attempt.
 
-### 4.4 Lock tracking across pre/post
+### 5.4 Lock tracking across pre/post
 
 Claude Code does not expose a stable `tool_call_id` to hooks. We key the
 PreToolUse-PostToolUse pair on `(tool_name, |joined_paths)` instead — same
@@ -127,7 +148,7 @@ shape the tool input has either way. Stored under
 If a tool is denied in PreToolUse, PostToolUse never fires (Claude Code skips
 it for denied tools), so there is no lock to release.
 
-## 5. Identity, scope, labels
+## 6. Identity, scope, labels
 
 Same shape as hermes:
 
@@ -143,7 +164,7 @@ The five-identifier invariants from hermes SPEC §6.5 carry over without
 modification: tasks/messages/locks target `instance_id`; UI/control surfaces
 target transport handles; user-facing text uses labels.
 
-## 6. Why no `swarm_prompt_peer` tool here
+## 7. Why no `swarm_prompt_peer` tool here
 
 The hermes plugin registers `swarm_prompt_peer` because it can — hermes
 exposes `ctx.register_tool` to plugins. Claude Code does not allow plugins to
@@ -159,9 +180,9 @@ The fallback inside Claude Code today is the regular `send_message` MCP tool
 plus a manual `! herdr pane run <pane> "<wake prompt>"` invocation. Workable
 for one-offs; not worth wrapping until the upstream tool exists.
 
-## 7. Testing
+## 8. Testing
 
-### 7.1 Smoke scenarios (live, must pass)
+### 8.1 Smoke scenarios (live, must pass)
 
 **S1: Single-agent registration prime**
 Fresh Claude Code session in a git repo. SessionStart additionalContext
@@ -193,7 +214,7 @@ With `HERDR_PANE_ID` set and the agent having published
 `identity/herdr/<id>`, exiting the session should result in
 `swarm-mcp kv get identity/herdr/<id>` returning empty/error.
 
-### 7.2 Mocked unit tests (future)
+### 8.2 Mocked unit tests (future)
 
 When/if these are added, they should cover:
 - Lock conflict detection on stderr substring `locked`
@@ -202,7 +223,7 @@ When/if these are added, they should cover:
 - PostToolUse skipping when no scratch file exists (denied or non-write tool)
 - Label derivation with and without override / identity token
 
-## 8. Design decisions
+## 9. Design decisions
 
 **Why prime registration via `additionalContext` instead of calling
 `register` from the hook?**
@@ -212,10 +233,10 @@ path that ships value now without touching swarm-mcp internals. Adding the
 CLI subcommand is the v0.2 follow-up.
 
 **Why pass `--as session:<8>` instead of caching the `instance_id`?**
-Because the hook doesn't know the `instance_id` at the time it shells to
-`lock`. The agent only learns it from `register`'s response, and Claude Code
-doesn't expose a way to capture that into a hook-readable file. The CLI's
-substring resolution makes the label do the work.
+Older versions used `--as session:<8>` because the hook did not know the
+`instance_id`. v0.2 stores `instance_id` from CLI registration in scratch
+metadata and uses that for lock/unlock. The session substring remains a
+fallback when metadata is missing.
 
 **Why fail-open on non-conflict errors?**
 Same reason as hermes: a swarm outage shouldn't tank productive editing.
@@ -228,16 +249,14 @@ sub-agent prompt back to a swarm task; the same idea applies to Claude
 Code's `SubagentStop` hook but requires the sub-agent prompt to carry a task
 id, which the bundled skill doesn't currently do. Tracked as v0.5+.
 
-## 9. Upstream tightenings recommended for swarm-mcp
+## 10. Upstream tightenings recommended for swarm-mcp
 
 These overlap with the hermes SPEC §12 list. Restating only the ones that
 unblock this adapter specifically:
 
-- **`swarm-mcp register` / `deregister` / `list-instances` CLI subcommands.**
-  Highest-leverage change for shell-hook-based adapters. Removes the
-  `additionalContext` priming step and lets SessionStart hooks be fully
-  autonomous.
-- **`prompt_peer` MCP tool.** See §6.
 - **Exclusive lock semantics (already on the hermes list).** Not strictly
   required for this plugin, but if added, makes the hook's deny path more
   precise without needing the substring `locked` heuristic.
+- **First-class dispatch/spawn orchestration.** The next gap is not lifecycle;
+  it is the no-double-spawn helper that turns gateway intent into task
+  creation, worker selection/spawn, adoption wait, and peer wake.

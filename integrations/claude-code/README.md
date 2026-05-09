@@ -16,38 +16,35 @@ For the broader adapter contract, see
 [`docs/control-plane.md`](../../docs/control-plane.md). For the design parallel
 in the hermes case, see [`integrations/hermes/SPEC.md`](../hermes/SPEC.md).
 
-## What it does (v0.1.0)
+## What it does (v0.2.0)
 
 | Responsibility | Mechanism |
 |---|---|
-| Compute label/scope/identity, prime registration | `SessionStart` hook → `additionalContext` instructing the agent to call `register` with the canonical args |
+| Auto-`register` on session start | `SessionStart` hook → `swarm-mcp register`, stores `instance_id` in hook scratch metadata |
+| Auto-`deregister` on session end | `SessionEnd` hook → `swarm-mcp deregister` |
 | Auto-lock write-class file tools when peers exist | `PreToolUse` (matcher: `Write\|Edit\|MultiEdit\|NotebookEdit`) → `swarm-mcp lock` |
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
-| Cleanup `identity/herdr/<instance_id>` on session exit | `SessionEnd` hook → `swarm-mcp kv del` (best effort) |
+| Publish and cleanup `identity/herdr/<instance_id>` | `SessionStart` / `SessionEnd` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
+| Gateway conductor mode | `SWARM_CC_ROLE=gateway` registers as `role:planner`, blocks inline writes unless explicitly opted in |
+| Peer prompt express lane | `prompt_peer` MCP tool or `swarm-mcp prompt-peer` CLI sends durable swarm message, then best-effort herdr wake |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 
 Failures are swallowed — coordination is opt-in convenience, never critical
 path. Solo sessions (no peers in scope) skip locking entirely.
 
-### Gaps vs. the hermes plugin
+### Remaining gaps vs. the hermes plugin
 
-The Claude Code plugin model and the swarm-mcp CLI surface have a few seams
-the hermes plugin can paper over but this one cannot, yet:
+The Claude Code plugin now has lifecycle parity for registration, locking,
+identity publication, and peer prompting. The remaining gap is the higher-level
+gateway dispatch/spawn path:
 
-- **Auto-`register`/`deregister`.** The `swarm-mcp` CLI exposes `lock`,
-  `unlock`, `kv`, `send`, `broadcast`, and inspection commands, but not
-  `register`, `deregister`, or `list_instances`. Claude Code hooks cannot
-  reach the agent's MCP tool surface, so this plugin primes the agent to
-  register itself (via `additionalContext`) instead. Adding those
-  subcommands upstream would let the hooks be fully autonomous; tracked as
-  a follow-up below.
-- **`swarm_prompt_peer` express-lane tool.** The hermes plugin registers a
-  custom tool through hermes' plugin API. Claude Code plugins can ship MCP
-  servers but cannot inject single tools into a hosted session. The right
-  home for this is the swarm-mcp server itself — adding a `prompt_peer`
-  tool there benefits every adapter (Claude, Codex, OpenCode, hermes) at
-  once.
+- **Dispatch/spawn orchestration.** Gateway mode blocks direct writes and
+  gives the agent planner identity, but it does not yet implement the full
+  no-double-spawn protocol from the Hermes spec as one helper command. For
+  now the gateway should create swarm tasks and wake existing workers via
+  `prompt_peer` / `prompt-peer`; first-class spawn dispatch remains the next
+  integration step.
 
 ## Install
 
@@ -119,19 +116,23 @@ priority for Claude Code-specific overrides:
 |---|---|
 | `SWARM_CC_IDENTITY` / `AGENT_IDENTITY` / `SWARM_IDENTITY` | Auto-derives the `identity:<work\|personal>` label token. |
 | `SWARM_CC_LABEL` / `SWARM_HERMES_LABEL` | Override the full label. If it omits `identity:`, the derived token is prepended. |
+| `SWARM_CC_ROLE` / `SWARM_ROLE` | `worker` by default. Set `gateway` for planner/conductor behavior. |
+| `SWARM_CC_AGENT_ROLE` / `SWARM_AGENT_ROLE` | Optional swarm role label. Gateway defaults this to `role:planner`. Falls back to a `.swarm-role` file walking up from `cwd` to the coordination scope (first non-blank, non-comment line is the role token) — drop `echo implementer > .swarm-role` at the repo root for a per-project default. |
+| `SWARM_CC_GATEWAY_INLINE_WRITES` + `SWARM_CC_GATEWAY_WORKSPACE_MIRROR` | Both must be set to allow gateway inline writes; otherwise write tools are denied and should be delegated. |
+| `SWARM_CC_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `SessionEnd` deregisters normally. |
 | `SWARM_CC_SCOPE` / `SWARM_HERMES_SCOPE` / `SWARM_MCP_SCOPE` | Override the coordination scope. Default: git root of `cwd`. |
 | `SWARM_CC_FILE_ROOT` / `SWARM_HERMES_FILE_ROOT` / `SWARM_MCP_FILE_ROOT` | Override the file root passed to `register`. |
-| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart context tells the agent to publish its herdr identity for express-lane peer wakes. |
+| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this pane identity for express-lane peer wakes. |
 
-Default label format mirrors hermes: `identity:<id> claude-code platform:cli session:<id-prefix>`.
+Default label format mirrors hermes: `identity:<id> claude-code platform:cli session:<id-prefix>`. Gateway mode adds `role:planner origin:claude-code`.
 
 ## Verify
 
 In a fresh project with the swarm MCP server mounted:
 
 1. Start Claude Code. The first turn should see a system block from
-   `SessionStart` instructing it to call `register` with a concrete label and
-   scope.
+   `SessionStart` saying the session is already registered with an
+   `instance_id`.
 2. Confirm registration: `swarm-mcp instances` from another terminal should
    show your session.
 3. With a second peer registered in the same scope, ask the agent to edit a
@@ -141,8 +142,8 @@ In a fresh project with the swarm MCP server mounted:
 
 If the deny message never appears, the most common causes are:
 
-- The agent never registered (skill not loaded, or `register` was skipped).
-  Check `swarm-mcp instances` — you should see your session there.
+- The SessionStart hook did not register. Check `swarm-mcp instances` — you
+  should see your session there.
 - `swarm-mcp` CLI is not resolvable from the hook subprocess. Set
   `SWARM_MCP_BIN` to a real command.
 - No peer holds a lock on the file you're editing. Solo sessions skip
@@ -150,22 +151,21 @@ If the deny message never appears, the most common causes are:
 
 ## Roadmap
 
-### v0.1 — Lifecycle bridge ✓ (this version)
+### v0.1 — Lifecycle bridge ✓
 - SessionStart additionalContext priming registration with derived args
 - Lock bridge with deny-on-conflict, fail-open elsewhere
 - /swarm slash command
 - Best-effort identity KV cleanup on SessionEnd
 
-### v0.2 — Upstream CLI extensions
-- Add `swarm-mcp register` / `deregister` / `list_instances` subcommands so
-  hooks can be fully autonomous (no agent priming required)
-- Update SessionStart/SessionEnd hooks to call them directly
+### v0.2 — Autonomous lifecycle + gateway mode ✓ (this version)
+- `swarm-mcp register` / `deregister` / `list-instances`
+- SessionStart/SessionEnd hooks call lifecycle commands directly
+- `prompt_peer` MCP tool and `swarm-mcp prompt-peer`
+- `SWARM_CC_ROLE=gateway` planner/conductor labels and inline-write blocking
 
-### v0.3 — Peer prompt express lane
-- Add `prompt_peer` to the swarm MCP server itself (benefits every adapter,
-  not just one runtime)
-- This plugin gains nothing new — the tool flows in via the existing MCP
-  mount
+### v0.3 — Dispatch/spawn orchestration
+- Shared helper/CLI for idempotent task creation, worker selection,
+  no-double-spawn locking, herdr spawn, registration wait, and peer wake.
 
 ### v0.4 — Ambient peer context
 - SessionStart additionalContext carries the current peer/lock/annotation
@@ -180,6 +180,9 @@ If the deny message never appears, the most common causes are:
 ## File layout
 
 ```
+integrations/_shared/
+└── swarm_hook_core.py           -- runtime-agnostic HookCore class (shared with codex)
+
 integrations/claude-code/
 ├── README.md                    -- this file
 ├── SPEC.md                      -- design notes (gaps, hook contract)
@@ -187,11 +190,17 @@ integrations/claude-code/
 │   └── plugin.json              -- Claude Code plugin manifest
 ├── hooks/
 │   ├── hooks.json               -- hook registration
-│   ├── _common.py               -- shared CLI/identity helpers
-│   ├── session_start.py
-│   ├── session_end.py
-│   ├── pre_tool_use.py
-│   └── post_tool_use.py
+│   ├── _common.py               -- claude-code RuntimeConfig + file_path/notebook_path extractor
+│   ├── session_start.py         -- 12-line stub: core.run_session_start_hook
+│   ├── session_end.py           -- 12-line stub: core.run_session_end_hook
+│   ├── pre_tool_use.py          -- 12-line stub: core.run_pre_tool_use_hook
+│   └── post_tool_use.py         -- 12-line stub: core.run_post_tool_use_hook
 └── commands/
     └── swarm.md                 -- /swarm slash command
 ```
+
+Lifecycle methods (lock-conflict detection, peer scan, identity prime,
+scratch-dir bookkeeping, herdr identity hint) live in the shared core.
+This plugin's `_common.py` only carries claude-code-specific bits: the
+`file_path` / `notebook_path` extractors, the `claude-code` label token,
+the `SWARM_CC_*` env-var prefix, and the `swarm-cc` scratch namespace.

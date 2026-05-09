@@ -6,6 +6,7 @@ import * as registry from "./registry";
 import * as ui from "./ui";
 import { scope as scopeFor } from "./paths";
 import { SUBCOMMANDS, type Subcommand } from "./subcommands";
+import { spawnSync } from "node:child_process";
 
 type Flags = {
   positional: string[];
@@ -22,10 +23,17 @@ type Flags = {
   harness?: string;
   role?: string;
   label?: string;
+  directory?: string;
+  fileRoot?: string;
+  message?: string;
+  task?: string;
   kind?: string;
   x?: number;
   y?: number;
   wait?: number;
+  leaseSeconds?: number;
+  force: boolean;
+  nudge: boolean;
   enter: boolean;
 };
 
@@ -40,7 +48,13 @@ type InstRow = {
 };
 
 function parseFlags(argv: string[]): Flags {
-  const flags: Flags = { positional: [], json: false, enter: true };
+  const flags: Flags = {
+    positional: [],
+    json: false,
+    enter: true,
+    force: false,
+    nudge: true,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--json") { flags.json = true; continue; }
@@ -56,10 +70,17 @@ function parseFlags(argv: string[]): Flags {
     if (a === "--harness") { flags.harness = argv[++i]; continue; }
     if (a === "--role") { flags.role = argv[++i]; continue; }
     if (a === "--label") { flags.label = argv[++i]; continue; }
+    if (a === "--directory") { flags.directory = argv[++i]; continue; }
+    if (a === "--file-root") { flags.fileRoot = argv[++i]; continue; }
+    if (a === "--message") { flags.message = argv[++i]; continue; }
+    if (a === "--task" || a === "--task-id") { flags.task = argv[++i]; continue; }
     if (a === "--kind") { flags.kind = argv[++i]; continue; }
     if (a === "--x") { flags.x = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--y") { flags.y = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--wait") { flags.wait = parseFloat(argv[++i] ?? ""); continue; }
+    if (a === "--lease-seconds") { flags.leaseSeconds = parseInt(argv[++i] ?? "", 10); continue; }
+    if (a === "--force") { flags.force = true; continue; }
+    if (a === "--no-nudge") { flags.nudge = false; continue; }
     if (a === "--no-enter") { flags.enter = false; continue; }
     if (a.startsWith("--")) throw new Error(`Unknown flag: ${a}`);
     flags.positional.push(a);
@@ -236,6 +257,48 @@ function cmdInstances(flags: Flags) {
       `  ${r.id.slice(0, 8)}  ${r.label ?? "-"}  pid=${r.pid}  ${idleLabel(r.heartbeat)}`,
     );
   }
+}
+
+function cmdRegister(flags: Flags) {
+  const directory = flags.directory ?? flags.positional[1] ?? process.cwd();
+  const label = flags.label;
+  const instance = registry.register(
+    directory,
+    label,
+    flags.scope,
+    flags.fileRoot,
+    process.env.SWARM_MCP_INSTANCE_ID?.trim() || undefined,
+  );
+  let leasedHeartbeat: number | null = null;
+  if (Number.isFinite(flags.leaseSeconds) && (flags.leaseSeconds ?? 0) > 0) {
+    leasedHeartbeat = Math.floor(Date.now() / 1000) + (flags.leaseSeconds ?? 0);
+    db.run("UPDATE instances SET heartbeat = unixepoch() + ? WHERE id = ?", [
+      flags.leaseSeconds,
+      instance.id,
+    ]);
+  }
+  if (flags.json) return printJson(leasedHeartbeat ? { ...instance, heartbeat: leasedHeartbeat } : instance);
+  console.log(`registered ${instance.id}`);
+}
+
+function cmdDeregister(flags: Flags) {
+  const scope = resolveScope(flags);
+  const id = resolveIdentity(scope, flags);
+  registry.deregister(id);
+  if (flags.json) return printJson({ ok: true, id, scope });
+  console.log(`deregistered ${id}`);
+}
+
+function cmdWhoami(flags: Flags) {
+  const scope = resolveScope(flags);
+  const id = resolveIdentity(scope, flags);
+  const instance = registry.get(id);
+  if (!instance) {
+    if (flags.json) return printJson(null);
+    process.exit(1);
+  }
+  if (flags.json) return printJson(instance);
+  console.log(`${instance.id}  ${instance.label ?? "-"}  scope=${instance.scope}`);
 }
 
 function cmdMessages(flags: Flags) {
@@ -422,6 +485,125 @@ function cmdBroadcast(flags: Flags) {
   const count = messages.broadcast(sender, scope, content);
   if (flags.json) return printJson({ ok: true, sender, scope, count });
   console.log(`broadcast to ${count} recipient(s)`);
+}
+
+function herdrEnv(identity: Record<string, unknown>) {
+  const env = { ...process.env };
+  if (typeof identity.socket_path === "string" && identity.socket_path) {
+    env.HERDR_SOCKET_PATH = identity.socket_path;
+  }
+  return env;
+}
+
+function runHerdr(args: string[], identity: Record<string, unknown>) {
+  return spawnSync("herdr", args, {
+    encoding: "utf8",
+    env: herdrEnv(identity),
+    timeout: 5_000,
+  });
+}
+
+function cmdPromptPeer(flags: Flags) {
+  const scope = resolveScope(flags);
+  const sender = resolveIdentity(scope, flags);
+  const recipientRef = flags.to ?? flags.positional[1];
+  if (!recipientRef) throw new Error("prompt-peer requires --to <id-or-label>");
+  const message = flags.message ?? flags.positional.slice(recipientRef === flags.positional[1] ? 2 : 1).join(" ");
+  if (!message) throw new Error("prompt-peer requires --message <text> or content");
+
+  const insts = instancesInScope(scope);
+  const recipient = resolveInstanceRef(recipientRef, insts);
+  const durable = flags.task ? `[task:${flags.task}] ${message}` : message;
+  messages.send(sender, scope, recipient, durable);
+
+  const result: Record<string, unknown> = {
+    message_sent: true,
+    sender,
+    recipient,
+    nudged: false,
+  };
+  if (!flags.nudge) {
+    result.nudge_skipped = "nudge=false";
+    if (flags.json) return printJson(result);
+    console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)} (nudge skipped)`);
+    return;
+  }
+
+  const identityRow = kv.get(scope, `identity/herdr/${recipient}`);
+  if (!identityRow) {
+    result.nudge_skipped = "no herdr identity is published for that instance";
+    if (flags.json) return printJson(result);
+    console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)} (no herdr identity)`);
+    return;
+  }
+
+  let identity: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(identityRow.value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("identity is not an object");
+    }
+    identity = parsed as Record<string, unknown>;
+  } catch {
+    result.nudge_skipped = "published herdr identity is not valid JSON";
+    if (flags.json) return printJson(result);
+    console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)} (invalid herdr identity)`);
+    return;
+  }
+
+  const paneId = identity.pane_id;
+  if (typeof paneId !== "string" || !paneId) {
+    result.nudge_skipped = "published herdr identity has no pane_id";
+    if (flags.json) return printJson(result);
+    console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)} (no pane_id)`);
+    return;
+  }
+
+  const getProc = runHerdr(["pane", "get", paneId], identity);
+  if (getProc.error || getProc.status !== 0) {
+    result.pane_id = paneId;
+    result.nudge_skipped =
+      getProc.error?.message ||
+      getProc.stderr?.trim() ||
+      getProc.stdout?.trim() ||
+      "herdr pane get failed";
+    if (flags.json) return printJson(result);
+    console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)} (herdr unavailable)`);
+    return;
+  }
+
+  let status = "unknown";
+  try {
+    const payload = JSON.parse(getProc.stdout || "{}");
+    const pane = payload?.result?.pane;
+    if (pane && typeof pane.agent_status === "string") status = pane.agent_status;
+  } catch {
+    status = "unknown";
+  }
+  result.pane_id = paneId;
+  result.agent_status = status;
+
+  if (!["idle", "blocked", "done", "unknown"].includes(status) && !flags.force) {
+    result.nudge_skipped = `target pane is ${status}; pass --force to inject anyway`;
+    if (flags.json) return printJson(result);
+    console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)} (target ${status})`);
+    return;
+  }
+
+  const wakePrompt = `A peer sent you a swarm message${flags.task ? ` for task ${flags.task}` : ""}. Call the swarm poll_messages tool, handle the message, and report back through swarm-mcp.`;
+  const runProc = runHerdr(["pane", "run", paneId, wakePrompt], identity);
+  if (runProc.error || runProc.status !== 0) {
+    result.nudge_error =
+      runProc.error?.message ||
+      runProc.stderr?.trim() ||
+      runProc.stdout?.trim() ||
+      "herdr pane run failed";
+  } else {
+    result.nudged = true;
+  }
+
+  if (flags.json) return printJson(result);
+  console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)}${result.nudged ? " and nudged pane" : ""}`);
 }
 
 function cmdLock(flags: Flags) {
@@ -646,13 +828,18 @@ async function cmdUi(flags: Flags) {
 // ---------------------------------------------------------------------------
 
 const HANDLERS: Record<Subcommand, (flags: Flags) => void | Promise<void>> = {
+  register: cmdRegister,
+  deregister: cmdDeregister,
+  whoami: cmdWhoami,
   instances: cmdInstances,
+  "list-instances": cmdInstances,
   messages: cmdMessages,
   tasks: cmdTasks,
   context: cmdContext,
   kv: cmdKv,
   send: cmdSend,
   broadcast: cmdBroadcast,
+  "prompt-peer": cmdPromptPeer,
   lock: cmdLock,
   unlock: cmdUnlock,
   inspect: cmdInspect,

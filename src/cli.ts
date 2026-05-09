@@ -47,9 +47,13 @@ Init flags:
   --no-skills           Skip copying skills.
 
 Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
+  swarm-mcp register [directory] [--label <tokens>] [--scope <path>] [--file-root <path>] [--lease-seconds N] [--json]
+  swarm-mcp deregister [--as <who>] [--scope <path>] [--json]
+  swarm-mcp whoami [--as <who>] [--scope <path>] [--json]
   swarm-mcp inspect [--scope <path>] [--json]
       One-shot dump of instances, tasks, context, kv, and recent messages.
   swarm-mcp instances [--scope <path>] [--json]
+  swarm-mcp list-instances [--scope <path>] [--json]
   swarm-mcp messages  [--scope <path>] [--to <who>] [--from <who>] [--limit N]
       Peeks; does not mark messages read.
   swarm-mcp tasks     [--scope <path>] [--status <status>] [--json]
@@ -59,6 +63,7 @@ Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
 
 Write commands (require identity):
   swarm-mcp send --to <who> <content...> [--as <who>]
+  swarm-mcp prompt-peer --to <who> --message <text> [--task <id>] [--force] [--no-nudge] [--as <who>]
   swarm-mcp broadcast <content...>       [--as <who>]
   swarm-mcp kv set <key> <value>         [--as <who>]
   swarm-mcp kv append <key> <json-value> [--as <who>]
