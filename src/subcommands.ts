@@ -14,6 +14,7 @@ export const SUBCOMMANDS = [
   "lock",
   "unlock",
   "inspect",
+  "cleanup",
   "ui",
 ] as const;
 

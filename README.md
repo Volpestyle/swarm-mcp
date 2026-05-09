@@ -155,17 +155,21 @@ The durable coordination state lives in the shared database, not in repeated per
 
 ## Auto-cleanup
 
-| Data                             | TTL        |
-| -------------------------------- | ---------- |
-| Stale instances (no heartbeat)   | 30 seconds |
-| Messages                         | 1 hour     |
-| Completed/failed/cancelled tasks | 24 hours   |
-| Non-lock context annotations     | 24 hours   |
-| Events                           | 24 hours   |
+| Data                                           | TTL        |
+| ---------------------------------------------- | ---------- |
+| Stale marker (no heartbeat)                    | 30 seconds |
+| Offline instance reclaim                       | 60 seconds |
+| Messages                                       | 1 hour     |
+| Completed/failed/cancelled tasks               | 24 hours   |
+| Non-lock context annotations                   | 24 hours   |
+| Events                                         | 24 hours   |
+| Orphaned `progress/` + `plan/<instance-id>` KV | 1 hour     |
 
-When a session expires, stale claimed or in-progress tasks are released back to `open` and that session's file locks are removed.
+When a session reaches the offline reclaim window, claimed or in-progress tasks are released back to `open` and that session's file locks are removed.
 
-Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are cleared when the owning instance goes stale or deregisters.
+Non-lock annotations are cleaned up by TTL, while locks stay exclusive and are cleared when the owning instance is reclaimed offline or deregisters.
+
+Run `swarm-mcp cleanup --dry-run --json` to inspect what the janitor would remove without mutating the shared database.
 
 ---
 
@@ -244,6 +248,7 @@ Inspection:
 swarm-mcp inspect                    # unified dump of instances, tasks, kv, locks, recent messages
 swarm-mcp inspect --scope /path      # pin to an explicit scope
 swarm-mcp messages --from <who>      # peek (does not mark read)
+swarm-mcp cleanup --dry-run --json   # inspect cleanup without deleting
 swarm-mcp kv list --prefix pixel:
 swarm-mcp kv get pixel:turn
 ```

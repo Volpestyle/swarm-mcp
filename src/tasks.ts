@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as context from "./context";
+import { cleanupTerminalTasks } from "./cleanup";
 import { db } from "./db";
 import { emit } from "./events";
 import {
@@ -907,8 +908,5 @@ export function snapshot(scope: string): TaskSnapshot {
 }
 
 export function cleanup() {
-  db.run(
-    "DELETE FROM tasks WHERE status IN ('done', 'failed', 'cancelled') AND updated_at < ?",
-    [Math.floor(Date.now() / 1000) - 86400],
-  );
+  cleanupTerminalTasks({ mode: "manual" });
 }

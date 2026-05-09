@@ -1,12 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { releaseInstanceState, runCleanup, type CleanupMode } from "./cleanup";
 import { db } from "./db";
 import { emit } from "./events";
 import { norm, root, scope as scoped } from "./paths";
 import * as planner from "./planner";
-import { now, stamp } from "./time";
-
-const STALE = 30;
-const MESSAGE_TTL = 3600;
+import { now } from "./time";
 
 export type Instance = {
   id: string;
@@ -19,142 +17,8 @@ export type Instance = {
   adopted: boolean;
 };
 
-function marks(size: number) {
-  return Array.from({ length: size }, () => "?").join(",");
-}
-
-function release(ids: string[]) {
-  if (!ids.length) return;
-
-  const slots = marks(ids.length);
-  db.run(
-    `UPDATE tasks
-     SET assignee = NULL, status = 'open', updated_at = unixepoch(), changed_at = ?
-     WHERE assignee IN (${slots}) AND status IN ('claimed', 'in_progress')`,
-    [stamp(), ...ids],
-  );
-  // Clear assignee from blocked/approval_required tasks but keep their status
-  db.run(
-    `UPDATE tasks
-     SET assignee = NULL, updated_at = unixepoch(), changed_at = ?
-     WHERE assignee IN (${slots}) AND status IN ('blocked', 'approval_required')`,
-    [stamp(), ...ids],
-  );
-  db.run(
-    `DELETE FROM context WHERE type = 'lock' AND instance_id IN (${slots})`,
-    ids,
-  );
-  db.run(`DELETE FROM messages WHERE recipient IN (${slots})`, ids);
-}
-
-export function prune() {
-  const cutoff = now() - STALE;
-  const stale = db
-    .query("SELECT id, scope, label, pid, heartbeat FROM instances WHERE heartbeat < ?")
-    .all(cutoff) as Array<{
-      id: string;
-      scope: string;
-      label: string | null;
-      pid: number | null;
-      heartbeat: number;
-    }>;
-
-  if (stale.length) {
-    const ids = stale.map((item) => item.id);
-    const slots = marks(ids.length);
-    const scopes = [...new Set(stale.map((item) => item.scope))];
-
-    // Collect released tasks before modifying them
-    const releasedTasks = db
-      .query(
-        `SELECT id, title, type, assignee, scope FROM tasks
-         WHERE assignee IN (${slots}) AND status IN ('claimed', 'in_progress')`,
-      )
-      .all(...ids) as Array<{
-      id: string;
-      title: string;
-      type: string;
-      assignee: string;
-      scope: string;
-    }>;
-
-    const tx = db.transaction(() => {
-      release(ids);
-      db.run(`DELETE FROM instances WHERE id IN (${slots})`, ids);
-
-      for (const item of stale) {
-        emit({
-          scope: item.scope,
-          type: "instance.stale_reclaimed",
-          actor: "system",
-          subject: item.id,
-          payload: {
-            label: item.label,
-            pid: item.pid,
-            last_heartbeat: item.heartbeat,
-            reclaim_threshold_secs: STALE,
-          },
-        });
-      }
-
-      // Broadcast recovery notifications for released tasks
-      if (releasedTasks.length) {
-        // Group released tasks by scope for targeted broadcasts
-        const byScope = new Map<string, typeof releasedTasks>();
-        for (const task of releasedTasks) {
-          const list = byScope.get(task.scope) ?? [];
-          list.push(task);
-          byScope.set(task.scope, list);
-        }
-
-        for (const [scope, scopeTasks] of byScope) {
-          const staleAgent = stale.find((s) =>
-            scopeTasks.some((t) => t.assignee === s.id),
-          );
-          const agentLabel = staleAgent?.label ?? staleAgent?.id ?? "unknown";
-          const taskSummary = scopeTasks
-            .map((t) => `"${t.title}" (${t.type}, task_id: ${t.id})`)
-            .join(", ");
-          const content = `[auto] Agent ${agentLabel} went stale. ${scopeTasks.length} task(s) released back to open: ${taskSummary}. Claim them if they match your role.`;
-
-          // Insert broadcast messages to all remaining instances in this scope
-          const recipients = db
-            .query("SELECT id FROM instances WHERE scope = ?")
-            .all(scope) as Array<{ id: string }>;
-
-          for (const recipient of recipients) {
-            db.run(
-              "INSERT INTO messages (scope, sender, recipient, content) VALUES (?, ?, ?, ?)",
-              [scope, "system", recipient.id, content],
-            );
-          }
-
-          // Mirror the auto-broadcast into the audit log so the events
-          // surface tells the same story the agents see in their inboxes.
-          if (recipients.length > 0) {
-            emit({
-              scope,
-              type: "message.broadcast",
-              actor: "system",
-              subject: null,
-              payload: {
-                content,
-                recipients: recipients.length,
-                length: content.length,
-                reason: "stale_reclaim",
-                released_tasks: scopeTasks.map((t) => t.id),
-              },
-            });
-          }
-        }
-      }
-    });
-    tx();
-
-    for (const scope of scopes) planner.refreshOwner(scope);
-  }
-
-  db.run("DELETE FROM messages WHERE created_at < ?", [now() - MESSAGE_TTL]);
+export function prune(mode: CleanupMode = "opportunistic") {
+  runCleanup({ mode });
 }
 
 export function register(
@@ -293,7 +157,7 @@ export function deregister(id: string) {
       pid: number | null;
     } | null;
 
-  release([id]);
+  releaseInstanceState(id);
   db.run("DELETE FROM instances WHERE id = ?", [id]);
 
   if (item) {
@@ -316,7 +180,7 @@ export function heartbeat(id: string) {
     .get(id) as { id: string; scope: string; label: string | null } | null;
   if (item) planner.ensureOwner(item);
 
-  prune();
+  prune("periodic");
 }
 
 export function list(scope?: string, labelContains?: string) {

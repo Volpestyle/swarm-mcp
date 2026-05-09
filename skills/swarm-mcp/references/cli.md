@@ -33,6 +33,7 @@ Read-only (no identity required):
 | Command | Purpose |
 |--|--|
 | `swarm-mcp inspect [--scope P] [--json]` | Unified dump: instances, tasks, context, kv, recent messages. |
+| `swarm-mcp cleanup [--scope P] [--dry-run] [--json]` | Run retention cleanup for offline instances, TTL rows, and orphaned instance-scoped KV. |
 | `swarm-mcp instances [--scope P] [--json]` | List live instances. |
 | `swarm-mcp list-instances [--scope P] [--json]` | Alias for `instances`, useful for scripts that mirror the MCP tool name. |
 | `swarm-mcp messages [--to W] [--from W] [--limit N]` | Peek messages. Does not mark them read. |
@@ -167,7 +168,7 @@ The agent calls `node harness.mjs <partner-id>` once. The script does validation
 - **Exit codes**: 0 on success, 1 on any error (unknown ref, lock conflict, missing key on `kv get`). Check in scripts.
 - **Impersonation**: `--as` trusts the caller. The CLI will happily write as any live instance. This is fine for scripts the agent spawns locally; don't expose the binary to untrusted callers.
 - **Message peek vs poll**: `swarm-mcp messages` does not consume messages. Use it for observation; use MCP `poll_messages` inside an agent to consume.
-- **Stale agents**: the CLI calls `prune()` at startup (same as every MCP call), so stale instances disappear before the command runs.
+- **Stale agents**: the CLI calls `prune()` at startup (same as every MCP call). Instances are marked stale after about 30s without a heartbeat and reclaimed after about 60s, which releases their work and clears locks/messages.
 - **UI commands need the desktop app**: `swarm-mcp ui ...` only executes if a `swarm-ui` app is running and watching the shared DB.
 - **UI organize is intentionally small**: today `ui organize` supports only `grid`.
 - **Not for inside-session state access**: if your agent has the swarm MCP tools mounted, use them for swarm state. Shelling out to the CLI from inside the agent loop adds a subprocess, bypasses notifications, and clutters reasoning.

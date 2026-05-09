@@ -20,7 +20,12 @@ export type EventType =
   | "context.lock_released"
   | "instance.registered"
   | "instance.deregistered"
-  | "instance.stale_reclaimed";
+  | "instance.stale_reclaimed"
+  | "cleanup.messages_deleted"
+  | "cleanup.terminal_tasks_deleted"
+  | "cleanup.context_annotations_deleted"
+  | "cleanup.events_deleted"
+  | "cleanup.kv_deleted";
 
 export interface EmitArgs {
   scope: string;

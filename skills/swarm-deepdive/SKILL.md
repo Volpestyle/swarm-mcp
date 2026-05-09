@@ -37,7 +37,7 @@ The Bun MCP server, `swarm-ui`, and `swarm-server` share the same swarm DB path.
 
 ## Preserve Evidence First
 
-For strict postmortems, start with `sqlite3 -readonly` before using `swarm-mcp inspect`. The CLI is convenient, but every state subcommand imports the runtime and runs stale-instance pruning before it reads. That can release tasks, delete stale instance rows, clear locks/messages for those instances, and delete messages older than one hour.
+For strict postmortems, start with `sqlite3 -readonly` before using `swarm-mcp inspect`. The CLI is convenient, but every state subcommand imports the runtime and runs cleanup before it reads. That can release tasks, delete offline instance rows, clear locks/messages for those instances, delete old TTL rows, and remove orphaned instance-scoped KV.
 
 Use the CLI when you want the live view after normal runtime cleanup. Use read-only SQL when you need the least-mutated snapshot.
 
@@ -64,11 +64,11 @@ Each row has `scope`, `actor`, `subject`, `payload`, and `created_at`. Payloads 
 
 | Data | Retention behavior |
 |---|---|
-| `events` | Deleted after 24 hours when an MCP server process exits cleanly. |
-| `messages` | Deleted after one hour by stale-prune paths. Messages for deregistered/stale recipients are deleted immediately during release. Use `message.*` events for 24-hour reconstruction. |
+| `events` | Deleted after 24 hours when MCP cleanup runs. |
+| `messages` | Deleted after one hour by cleanup. Messages for deregistered/offline recipients are deleted immediately during release. Use `message.*` events for 24-hour reconstruction. |
 | `tasks` | Active tasks persist. Terminal `done`/`failed`/`cancelled` tasks are deleted after 24 hours when MCP cleanup runs. |
-| `context` | Locks persist until released, task completion, deregister, or stale reclaim. Non-lock annotations are deleted after 24 hours when MCP cleanup runs. |
-| `kv` | Only current values persist. MCP KV writes emit content-bearing events, but some internal UI KV writes do not. |
+| `context` | Locks persist until released, task completion, deregister, or offline reclaim. Non-lock annotations are deleted after 24 hours when MCP cleanup runs. |
+| `kv` | Only current values persist. Old orphaned `progress/<instance-id>` and `plan/<instance-id>` rows are removed by cleanup; durable keys such as `plan/latest` remain until overwritten or deleted. |
 | `ui_commands` | Command rows persist unless manually cleaned; status is `pending`, `running`, `done`, or `failed`. |
 
 Never assume older incidents are fully reconstructable from the DB. For older windows, combine surviving task/KV/UI rows with server logs and whatever event rows remain.

@@ -19,7 +19,7 @@ The database is SQLite with WAL journaling. Ordinary `*_at` timestamps are Unix 
 | `heartbeat` | Unix seconds for the latest heartbeat. Runtime stale threshold is about 30 seconds. |
 | `adopted` | `1` after the child MCP process adopts the row. `0` means a UI-spawned PTY row is pending adoption. |
 
-Rows disappear on clean deregister or stale reclaim. `instance.registered`, `instance.deregistered`, and `instance.stale_reclaimed` events preserve labels for the 24-hour event window.
+Rows disappear on clean deregister or offline reclaim. Instances are stale after about 30 seconds without a heartbeat and reclaimable after about 60 seconds. `instance.registered`, `instance.deregistered`, and `instance.stale_reclaimed` events preserve labels for the 24-hour event window.
 
 ## `tasks` - Work Items
 
@@ -55,7 +55,7 @@ Active tasks persist. Terminal tasks are deleted after 24 hours when MCP cleanup
 | `created_at` | Unix seconds. |
 | `read` | `1` once the recipient consumed it with `poll_messages`. CLI and resource peeks do not flip this. |
 
-Messages are short-lived. Runtime prune deletes rows older than one hour and deletes queued rows for recipients that deregister or go stale. For message history inside the 24-hour event window, prefer `message.sent` and `message.broadcast` events because their payloads include content.
+Messages are short-lived. Runtime cleanup deletes rows older than one hour and deletes queued rows for recipients that deregister or are reclaimed offline. For message history inside the 24-hour event window, prefer `message.sent` and `message.broadcast` events because their payloads include content.
 
 `message.cleared` events are emitted by `swarm-ui` when a user clears the history between two instances.
 
@@ -97,7 +97,7 @@ Payload facts that matter for investigations:
 | `context.lock_acquired` / `context.lock_released` | Includes lock ID/content or release count/reason. |
 | `ui.command.*` | Includes `command_id`, result or error, and command metadata. |
 
-Events are deleted after 24 hours when an MCP server process exits cleanly. The CLI has no `events` subcommand; inspect this table with SQL.
+Events are deleted after 24 hours when MCP cleanup runs. The CLI has no `events` subcommand; inspect this table with SQL.
 
 ## `context` - File Locks And Annotations
 
@@ -111,7 +111,7 @@ Events are deleted after 24 hours when an MCP server process exits cleanly. The 
 | `content` | Lock reason or annotation text. |
 | `created_at` | Unix seconds. |
 
-A unique partial index enforces one active `lock` per `(scope, file)`. Locks clear on explicit unlock, terminal task update for task files, instance deregister, or stale reclaim. Non-lock annotations are deleted after 24 hours when MCP cleanup runs.
+A unique partial index enforces one active `lock` per `(scope, file)`. Locks clear on explicit unlock, terminal task update for task files, instance deregister, or offline reclaim. Non-lock annotations are deleted after 24 hours when MCP cleanup runs.
 
 ## `kv` - Shared Coordination State
 
@@ -122,7 +122,7 @@ A unique partial index enforces one active `lock` per `(scope, file)`. Locks cle
 | `value` | Text, usually JSON for structured values. |
 | `updated_at` | Unix seconds. |
 
-Only the current value lives here. MCP-side `kv_set`, `kv_delete`, and `kv_append` also emit events with enough content to reconstruct changes inside the event window. Some internal `swarm-ui` KV writes, such as layout and planner-owner refreshes, update `kv` directly and may not emit `kv.*` events. Always compare current `kv` rows against event history before claiming a complete KV timeline.
+Only the current value lives here. MCP cleanup removes old orphaned `progress/<instance-id>` and `plan/<instance-id>` rows after the owning instance disappears; durable keys such as `plan/latest`, `owner/planner`, and `ui/...` remain until overwritten or explicitly deleted. MCP-side `kv_set`, `kv_delete`, and `kv_append` also emit events with enough content to reconstruct changes inside the event window. Some internal `swarm-ui` KV writes, such as layout and planner-owner refreshes, update `kv` directly and may not emit `kv.*` events. Always compare current `kv` rows against event history before claiming a complete KV timeline.
 
 `kv_scope_updates` stores one row per scope with `changed_at` in Unix milliseconds for polling.
 

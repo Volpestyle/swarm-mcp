@@ -72,10 +72,10 @@ describe("events: registry", () => {
     expect(types).toContain("instance.deregistered");
   });
 
-  test("stale prune emits instance.stale_reclaimed inside the cleanup tx", () => {
+  test("offline prune emits instance.stale_reclaimed inside the cleanup tx", () => {
     const a = reg("alice");
     reg("bob"); // keeps the recipient list non-empty for broadcast
-    // Force alice's heartbeat into the past so the next prune reclaims her.
+    // Force alice's heartbeat into the offline window so the next prune reclaims her.
     db.run(`UPDATE instances SET heartbeat = ? WHERE id = ?`, [
       Math.floor(Date.now() / 1000) - 120,
       a.id,

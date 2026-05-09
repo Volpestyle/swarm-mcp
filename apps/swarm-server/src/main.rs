@@ -1380,7 +1380,7 @@ fn load_instance_info(
 
 fn reclaim_stale_pending_instances(path: &Path) -> Result<(), Response> {
     let conn = open_swarm_rw(path)?;
-    let stale_before = now_secs().saturating_sub(swarm_protocol::state::INSTANCE_STALE_AFTER_SECS);
+    let stale_before = now_secs().saturating_sub(swarm_protocol::state::INSTANCE_OFFLINE_AFTER_SECS);
     conn.execute(
         "DELETE FROM instances WHERE COALESCE(adopted, 1) = 0 AND heartbeat < ?",
         params![stale_before],

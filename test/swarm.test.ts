@@ -15,6 +15,7 @@ process.env.SWARM_DB_PATH = join(
 );
 
 const { db } = await import("../src/db");
+const cleanup = await import("../src/cleanup");
 const context = await import("../src/context");
 const kv = await import("../src/kv");
 const messages = await import("../src/messages");
@@ -157,10 +158,28 @@ describe("scope", () => {
     expect(paths.scope(dir)).toBe(paths.norm(dir));
   });
 
-  test("stale instances are pruned before lookups succeed", () => {
+  test("stale instances remain visible until they are offline", () => {
     const item = reg("worker", "scope-a");
 
-    db.run("UPDATE instances SET heartbeat = ? WHERE id = ?", [0, item.id]);
+    db.run("UPDATE instances SET heartbeat = ? WHERE id = ?", [
+      Math.floor(Date.now() / 1000) -
+        cleanup.CLEANUP_POLICY.instanceStaleAfterSecs -
+        1,
+      item.id,
+    ]);
+
+    expect(registry.get(item.id)).toMatchObject({ id: item.id });
+  });
+
+  test("offline instances are pruned before lookups succeed", () => {
+    const item = reg("worker", "scope-a");
+
+    db.run("UPDATE instances SET heartbeat = ? WHERE id = ?", [
+      Math.floor(Date.now() / 1000) -
+        cleanup.CLEANUP_POLICY.instanceReclaimAfterSecs -
+        1,
+      item.id,
+    ]);
 
     expect(registry.get(item.id)).toBeNull();
   });
@@ -247,7 +266,7 @@ describe("tasks", () => {
     expect(messages.peek(worker.id, worker.scope)).toHaveLength(1);
   });
 
-  test("stale assignees are released and their locks are removed", () => {
+  test("offline assignees are released and their locks are removed", () => {
     const requester = reg("requester", "scope-a");
     const worker = reg("worker", "scope-a");
     const file = paths.file(worker.directory, "src/index.ts");
@@ -711,8 +730,8 @@ describe("parent_task_id", () => {
   });
 });
 
-describe("stale release with new statuses", () => {
-  test("blocked tasks keep status when assignee goes stale", () => {
+describe("offline release with new statuses", () => {
+  test("blocked tasks keep status when assignee goes offline", () => {
     const a = reg("planner", "scope-a");
     const w = reg("worker", "scope-a");
 
@@ -1103,6 +1122,47 @@ describe("kv", () => {
 
     expect(second).toBeGreaterThan(first);
   });
+
+  test("cleanup removes old orphaned instance-scoped kv and keeps durable plans", () => {
+    const worker = reg("worker", "scope-a");
+    const old =
+      Math.floor(Date.now() / 1000) -
+      cleanup.CLEANUP_POLICY.orphanKvTtlSecs -
+      1;
+
+    kv.set(worker.scope, `progress/${worker.id}`, '"active"');
+    kv.set(worker.scope, "progress/missing-worker", '"old"');
+    kv.set(worker.scope, "plan/missing-planner", '"old"');
+    kv.set(worker.scope, "plan/latest", '"keep"');
+    db.run("UPDATE kv SET updated_at = ?", [old]);
+
+    const result = cleanup.runCleanup({ scope: worker.scope, mode: "manual" });
+
+    expect(result.kv_deleted).toBe(2);
+    expect(kv.get(worker.scope, `progress/${worker.id}`)).not.toBeNull();
+    expect(kv.get(worker.scope, "progress/missing-worker")).toBeNull();
+    expect(kv.get(worker.scope, "plan/missing-planner")).toBeNull();
+    expect(kv.get(worker.scope, "plan/latest")).not.toBeNull();
+  });
+
+  test("cleanup dry-run reports orphaned kv without deleting it", () => {
+    const worker = reg("worker", "scope-a");
+    const old =
+      Math.floor(Date.now() / 1000) -
+      cleanup.CLEANUP_POLICY.orphanKvTtlSecs -
+      1;
+    kv.set(worker.scope, "progress/missing-worker", '"old"');
+    db.run("UPDATE kv SET updated_at = ?", [old]);
+
+    const result = cleanup.runCleanup({
+      scope: worker.scope,
+      mode: "manual",
+      dryRun: true,
+    });
+
+    expect(result.kv_deleted).toBe(1);
+    expect(kv.get(worker.scope, "progress/missing-worker")).not.toBeNull();
+  });
 });
 
 describe("planner ownership", () => {
@@ -1125,7 +1185,7 @@ describe("planner ownership", () => {
     });
   });
 
-  test("owner/planner fails over when the current owner goes stale", () => {
+  test("owner/planner fails over when the current owner goes offline", () => {
     const first = regPlanner("planner-a", "scope-a");
     const second = regPlanner("planner-b", "scope-a");
 

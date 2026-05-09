@@ -159,7 +159,7 @@ If an implementer stops responding or its heartbeat expires:
 - Use `remove_instance` to force-remove it from the swarm. This releases its tasks and locks and notifies the rest of the swarm.
 - Reassign its released tasks to another implementer or leave them open for claiming.
 
-Stale instances are also cleaned up automatically by the server's heartbeat prune (~30s); use `remove_instance` only when you need the cleanup to happen now.
+Instances become stale after roughly 30s without a heartbeat and are reclaimed after roughly 60s; use `remove_instance` only when you need the cleanup to happen now.
 
 ## Must Not
 

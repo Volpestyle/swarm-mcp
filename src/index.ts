@@ -5,9 +5,9 @@ import {
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { spawnSync } from "node:child_process";
 import { z } from "zod";
+import { runCleanup } from "./cleanup";
 import { db } from "./db";
 import * as context from "./context";
-import * as events from "./events";
 import * as kv from "./kv";
 import * as messages from "./messages";
 import { file as filepath } from "./paths";
@@ -233,9 +233,7 @@ function cleanup() {
   instance = null;
   heartbeatTimer = null;
   notifyTimer = null;
-  tasks.cleanup();
-  context.cleanup();
-  events.cleanup();
+  runCleanup({ mode: "manual" });
 }
 
 server.resource(

@@ -52,6 +52,8 @@ Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
   swarm-mcp whoami [--as <who>] [--scope <path>] [--json]
   swarm-mcp inspect [--scope <path>] [--json]
       One-shot dump of instances, tasks, context, kv, and recent messages.
+  swarm-mcp cleanup [--scope <path>] [--dry-run] [--json]
+      Run retention cleanup for offline instances, TTL rows, and orphaned KV.
   swarm-mcp instances [--scope <path>] [--json]
   swarm-mcp list-instances [--scope <path>] [--json]
   swarm-mcp messages  [--scope <path>] [--to <who>] [--from <who>] [--limit N]

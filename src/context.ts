@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { cleanupContextAnnotations } from "./cleanup";
 import { db } from "./db";
 import { emit } from "./events";
 
@@ -145,7 +146,5 @@ export function releaseInstanceLocksForFiles(
 }
 
 export function cleanup() {
-  db.run("DELETE FROM context WHERE created_at < ? AND type != 'lock'", [
-    Math.floor(Date.now() / 1000) - 86400,
-  ]);
+  cleanupContextAnnotations({ mode: "manual" });
 }

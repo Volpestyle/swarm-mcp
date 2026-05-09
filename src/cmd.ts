@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { CLEANUP_POLICY, runCleanup } from "./cleanup";
 import * as context from "./context";
 import * as kv from "./kv";
 import * as messages from "./messages";
@@ -35,6 +36,7 @@ type Flags = {
   force: boolean;
   nudge: boolean;
   enter: boolean;
+  dryRun: boolean;
 };
 
 type InstRow = {
@@ -54,6 +56,7 @@ function parseFlags(argv: string[]): Flags {
     enter: true,
     force: false,
     nudge: true,
+    dryRun: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -80,6 +83,7 @@ function parseFlags(argv: string[]): Flags {
     if (a === "--wait") { flags.wait = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--lease-seconds") { flags.leaseSeconds = parseInt(argv[++i] ?? "", 10); continue; }
     if (a === "--force") { flags.force = true; continue; }
+    if (a === "--dry-run") { flags.dryRun = true; continue; }
     if (a === "--no-nudge") { flags.nudge = false; continue; }
     if (a === "--no-enter") { flags.enter = false; continue; }
     if (a.startsWith("--")) throw new Error(`Unknown flag: ${a}`);
@@ -158,8 +162,8 @@ function ts(n: number) {
 
 function idleLabel(heartbeat: number) {
   const idle = Math.max(0, Math.floor(Date.now() / 1000) - heartbeat);
-  if (idle > 30) return `offline (${idle}s)`;
-  if (idle > 10) return `stale (${idle}s)`;
+  if (idle > CLEANUP_POLICY.instanceReclaimAfterSecs) return `offline (${idle}s)`;
+  if (idle > CLEANUP_POLICY.instanceStaleAfterSecs) return `stale (${idle}s)`;
   return `live (${idle}s)`;
 }
 
@@ -714,6 +718,27 @@ function cmdInspect(flags: Flags) {
   }
 }
 
+function cmdCleanup(flags: Flags) {
+  const result = runCleanup({
+    scope: flags.scope ? resolveScope(flags) : undefined,
+    dryRun: flags.dryRun,
+    mode: "manual",
+  });
+  if (flags.json) return printJson(result);
+
+  const verb = flags.dryRun ? "would clean" : "cleaned";
+  console.log(`${verb} ${result.scope ?? "all scopes"}`);
+  console.log(`  instances reclaimed: ${result.instances_reclaimed}`);
+  console.log(`  tasks reopened: ${result.tasks_reopened}`);
+  console.log(`  task assignees cleared: ${result.task_assignees_cleared}`);
+  console.log(`  locks deleted: ${result.locks_deleted}`);
+  console.log(`  messages deleted: ${result.messages_deleted}`);
+  console.log(`  terminal tasks deleted: ${result.terminal_tasks_deleted}`);
+  console.log(`  context annotations deleted: ${result.context_annotations_deleted}`);
+  console.log(`  events deleted: ${result.events_deleted}`);
+  console.log(`  kv rows deleted: ${result.kv_deleted}`);
+}
+
 async function cmdUi(flags: Flags) {
   const [sub, ...rest] = flags.positional.slice(1);
   if (!sub || sub === "commands" || sub === "list") {
@@ -843,14 +868,15 @@ const HANDLERS: Record<Subcommand, (flags: Flags) => void | Promise<void>> = {
   lock: cmdLock,
   unlock: cmdUnlock,
   inspect: cmdInspect,
+  cleanup: cmdCleanup,
   ui: cmdUi,
 };
 export { SUBCOMMANDS };
 
 export async function run(subcommand: Subcommand, argv: string[]) {
   const handler = HANDLERS[subcommand];
-  // Drop stale instances before any read/write so the CLI sees the same world a live agent would.
-  registry.prune();
+  // Run normal cleanup before read/write so the CLI sees the same world a live agent would.
+  if (subcommand !== "cleanup") registry.prune();
   try {
     const flags = parseFlags([subcommand, ...argv]);
     await handler(flags);
