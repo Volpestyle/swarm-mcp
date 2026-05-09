@@ -12,18 +12,19 @@ Decision flow on session start:
 
 1. Call the swarm `list_instances` and `list_tasks` MCP tools early — before deciding how to execute.
 2. **Matching peer present** (compatible `scope`, useful `role:<implementer|reviewer|researcher>`, matching `identity:<work|personal>`) → delegate via `request_task` with a concrete patch + success criterion. To wake an idle peer in its herdr pane, send the durable swarm message via `send_message` first; the pane nudge (the plugin tool `swarm_prompt_peer` if your runtime exposes it, else direct `herdr pane run` if you have that capability) is best-effort and never carries the work contract itself.
-3. **No matching peer** → fall back to your runtime's native subagent mechanism, or do the work yourself.
+3. **Gateway/lead mode and no matching peer** (`mode:gateway`) → create or reuse a swarm task, then use the herdr / `swarm-ui` spawn path to create a real worker process. The CLI bridge for wrappers and lead sessions is `swarm-mcp dispatch`: it wakes a live worker when one exists, or queues a guarded `swarm-ui` spawn when none exists. If no spawner surface is available, ask the operator to start a worker instead of silently using native subagents.
+4. **Worker/generalist mode and no matching peer** → fall back to your runtime's native subagent mechanism, or do the work yourself when that is faster and safe.
 
 Why peers when available: independent processes — possibly different harnesses (Codex, OpenCode, Claude, Hermes) or a different identity profile carrying account-scoped MCP auth your session can't reach. Their tasks are durable across sessions; native subagents typically share your process and die with the parent turn or session. The integration plugin's lock bridge already handles write-collision protection automatically across runtimes.
 
-Do not delegate when: you are the only registered instance, the round-trip cost beats just doing it, or the user explicitly asked you to do the work yourself.
+Do not use native subagents as the normal gateway fallback. Gateway mode exists to keep worker execution visible as separate herdr/swarm peers. Inline work or native subagents are only acceptable when the operator explicitly asks for it, or when the runtime is not in gateway mode and the local tradeoff is clearly better.
 
 ## SPEC invariants (do not violate)
 
 These come from the swarm-mcp design contract and apply to every runtime.
 
 - Tasks, messages, and locks **always** target swarm `instance_id`, never herdr `pane_id`. Pane IDs recompact when other panes close, so a captured reference can become stale or wrong. Translate to **labels** ("implementer-bob in pane 1-3") for user-facing summaries — never present raw IDs.
-- Coordination is **fail-open**: if swarm-mcp is unreachable, work locally — don't loop on a failed `register`. The exception is a real peer-held lock conflict, which the integration plugin surfaces as a tool error and you must respect.
+- Coordination is **fail-open** for ordinary worker sessions: if swarm-mcp is unreachable, work locally — don't loop on a failed `register`. Gateway/lead sessions are different: they may keep planning and asking the operator, but should not convert a write intent into local implementation just because the coordinator or spawner is unavailable. A real peer-held lock conflict is always blocking and must be respected.
 - `wait_for_activity` is the warm-worker idle loop. It does not type into another agent's conversation by itself. Wake-up of an idle peer goes through the durable swarm message first; the pane nudge is best-effort.
 - Solo session (only one registered instance in scope): the integration plugin skips per-edit locking automatically. Don't ceremoniously add locks when no peer can collide.
 - Worker mode is the default. Gateway-mode protocol (delegated writes by default, three-tier write routing, no-double-spawn idempotency) applies only when the runtime is explicitly configured as a gateway — see the integration SPEC for your runtime.

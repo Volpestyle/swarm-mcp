@@ -30,8 +30,11 @@ in the hermes case, see [`integrations/hermes/SPEC.md`](../hermes/SPEC.md).
 | Peer prompt express lane | `prompt_peer` MCP tool or `swarm-mcp prompt-peer` CLI sends durable swarm message, then best-effort herdr wake |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 
-Failures are swallowed — coordination is opt-in convenience, never critical
-path. Solo sessions (no peers in scope) skip locking entirely.
+Worker-mode coordination failures are swallowed — coordination is opt-in
+convenience for ordinary sessions, never critical path. Gateway mode still
+blocks inline writes by default: no live peer means create/reuse a swarm task
+and drive the herdr / `swarm-ui` spawn path, not native subagents or local
+implementation. Solo worker sessions (no peers in scope) skip locking entirely.
 
 ### Remaining gaps vs. the hermes plugin
 

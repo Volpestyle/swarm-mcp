@@ -122,6 +122,8 @@ class HookCoreLifecycleTests(unittest.TestCase):
         rendered = json.loads(output)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("Plugin behavior mode: `gateway`", rendered)
         self.assertIn("swarm gateway/lead mode", rendered)
+        self.assertIn("do not silently fall back to native", rendered)
+        self.assertIn("swarm-mcp dispatch", rendered)
 
     def test_session_end_deletes_identity_and_deregisters(self) -> None:
         self.core.write_session_meta(
