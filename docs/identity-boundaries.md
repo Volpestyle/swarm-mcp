@@ -104,6 +104,20 @@ Figma and Linear are both account-scoped sources of truth. Treat them like produ
 - Workers may update Linear for durable human-facing work records, but they use swarm-mcp for live coordination.
 - Workers may create or update Figma artifacts only in the matching identity.
 
+
+## Design Capability Routing
+
+Hermes may have direct account-scoped design MCPs, but the Hermes MCP list is not the full design capability surface of the native-agent stack. A Hermes gateway or planner can route design work to external workers whose launcher/config root owns stronger remote Figma or Linear auth.
+
+Use direct Hermes design MCPs for local, selection-based work that the current profile can safely access. For example, `figma_personal` in Hermes may point at Figma Desktop MCP and is suitable for reading selected designs, screenshots, metadata, variables, FigJam context, and implementation guidance.
+
+Use an external design worker when the task needs remote-only Figma capabilities, such as design-library search, write-to-canvas, create-new-file or code-to-canvas flows, or remote OAuth support unavailable in Hermes itself. Route through the matching launcher and identity:
+
+- Personal design workers: `opc`, `cdx`, or `clowd`, using `figma_personal` / `linear_personal` in that worker config.
+- Work design workers: `opencode`, `codex`, or `claude`/`clawd`, using `figma_work` / `linear_work` in that worker config.
+
+Swarm tasks for design work should state the expected MCP surface explicitly. Example: `identity:personal; use figma_personal and linear_personal; if remote-only Figma tools are required, spawn an opc/cdx/clowd design worker with remote Figma MCP auth.` The durable work contract lives in swarm tasks/messages; direct pane prompts should only wake workers to read that contract.
+
 ## Security Notes
 
 Raw bearer tokens in agent config are fragile: they are easy to leak through config inspection, shell history, or logs. Prefer OAuth blocks or secret-store-backed env injection. If a token is printed in logs or tool output, rotate it before continuing to use that account.

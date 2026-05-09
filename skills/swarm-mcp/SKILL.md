@@ -60,6 +60,7 @@ When the role is unclear, do not invent one. Ask one short question or proceed a
 | Researcher workflow | `references/researcher.md` | The session should investigate and publish findings |
 | KV and shared coordination state | `references/coordination.md` | You need to read/write `progress/`, `plan/`, `owner/`, queue, or handoff keys |
 | Specialists, generalists, and team conventions | `references/roles-and-teams.md` | You need to route work by `role:` or `team:` labels |
+| Identity, auth, and design-tool routing | `../../docs/identity-boundaries.md` | You need to route work across personal/work identities, Figma/Linear, or external Codex/OpenCode/Claude design workers |
 | `swarm-mcp` CLI reference | `references/cli.md` | You are about to write or invoke a helper script, inspect swarm state from a plain terminal, or control `swarm-ui` through the CLI |
 
 ## Constraints
@@ -116,6 +117,37 @@ When the skill triggers, prefer this sequence unless the task clearly requires s
 - Update your progress with `kv_set("progress/<your-instance-id>", ...)` while working on tasks so others can check on you without interrupting
 - Messages prefixed with `[auto]` are system notifications (task assignments, completions, stale-agent recovery) — treat them like any other actionable message
 - When you receive a `[signal:complete]` broadcast, the planner is signaling all work is done — finish current work, deregister, and stop
+
+## Spawn Layout Doctrine
+
+Gateway agents own worker layout decisions. Do not move layout selection into plugin code or a deterministic helper: choosing whether to split a pane, create a tab, or create a workspace is part of the same judgment call as choosing the worker role, task contract, and success criterion. The hard rule is human readability — keep density at a level the operator can scan and navigate from the current surface.
+
+### Herdr surfaces available
+
+- `herdr workspace list` — inspect workspaces in the current herdr instance
+- `herdr tab list --workspace <id>` — inspect tabs in a workspace
+- `herdr pane list` — inspect panes in current focus or by tab/workspace as supported by herdr
+- `herdr workspace create`, `herdr tab create`, and `herdr pane split` — create new layout surfaces before spawning a worker
+
+### Rules of thumb, not enforcement
+
+- **Workspace per swarm scope:** default to one workspace per git-root/scope. A second workspace for the same scope should be a deliberate operator-driven choice, not the default spawn path.
+- **Aim for ≤3 panes per tab:** four or more panes usually makes individual agents unreadable. If the matching tab is at cap, prefer a new tab.
+- **Aim for ≤6–8 tabs per workspace:** beyond that, the herdr sidebar starts hiding useful context. Consider a new workspace only when the operator has asked for that separation.
+- **Group by role:** tabs labeled by role group (`implementers`, `reviewers`, `researchers`) are easier to scan than per-ticket sprawl. For one-off bursts, a spawn-batch tab label is also acceptable.
+- **Adjust for the operator's surface:** a 4-pane tab may be fine on a large monitor and terrible from a phone. Use judgment and make the decision visible when it matters.
+
+### Labels and identity bridge
+
+- **Pane title:** use the full swarm label when possible, e.g. `implementer-bob role:implementer scope:vuhlp`, so herdr maps onto `swarm list_instances`.
+- **Tab label:** use the role group when role-grouped; otherwise use the spawn batch or ticket identifier.
+- **Workspace label:** keep herdr's cwd-based default unless the operator explicitly overrides it.
+
+### What not to do
+
+- Don't write a deterministic layout helper in plugin code.
+- Don't enforce the soft caps as hard config limits.
+- Don't hide layout decisions from the gateway agent; it should reason about them visibly.
 
 ## Structured Results Convention
 

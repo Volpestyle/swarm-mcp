@@ -173,6 +173,10 @@ The plugin deletes this key during `on_session_finalize`. Stale keys are advisor
 
 Workers that are not Hermes-hosted can participate by publishing the same KV shape through their own adapter or launcher. They do not need to run this plugin as long as the identity key maps their swarm `instance_id` to the current herdr `pane_id`.
 
+### 5.7 Spawn layout policy
+
+Spawn layout is doctrine, not plugin behavior. The gateway agent decides per spawn whether to reuse a pane group, split a pane, create a tab, or create a workspace, using the `Spawn Layout Doctrine` section in `skills/swarm-mcp/SKILL.md` as its source of truth. Plugin code must keep saying only "spawn via herdr" at the behavior layer: it should not implement a deterministic layout helper, enforce soft pane/tab caps, or hide the layout decision from the agent.
+
 ## 6. Identity, scope, labels
 
 - **instance_id** — UUIDv4, one per registered session. The plugin tracks `_instances[session_id] = instance_id` and `_refcounts[instance_id]`.
