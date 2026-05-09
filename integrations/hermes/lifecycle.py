@@ -22,12 +22,47 @@ logger = logging.getLogger(__name__)
 # Per-session instance state. Keyed by session_id; cleared on session finalize.
 # Guarded because hermes runs gateway turns in worker threads.
 _instances: Dict[str, str] = {}
+_roles_by_session: Dict[str, str] = {}
 _refcounts: Dict[str, int] = {}
 _locks_by_call: Dict[str, list[str]] = {}
 _lock = threading.Lock()
 _json_decoder = JSONDecoder()
 _WRITE_TOOLS = {"write_file", "patch", "edit_file", "apply_patch"}
 _PATCH_FILE_RE = re.compile(r"^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$", re.MULTILINE)
+_VALID_PLUGIN_ROLES = {"worker", "gateway"}
+
+
+def _load_config() -> dict[str, Any]:
+    """Load Hermes config lazily so tests/imports do not require Hermes internals."""
+    try:
+        from hermes_cli.config import load_config
+
+        config = load_config()
+    except Exception as exc:
+        logger.debug("swarm plugin: config load failed, defaulting role to worker: %s", exc)
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
+def _configured_role() -> str:
+    """Return configured plugin role, defaulting invalid/missing values to worker."""
+    config = _load_config()
+    swarm = config.get("swarm")
+    if not isinstance(swarm, dict) or "role" not in swarm:
+        return "worker"
+
+    role = swarm.get("role")
+    if role is None or (isinstance(role, str) and not role.strip()):
+        return "worker"
+    if not isinstance(role, str):
+        logger.warning("swarm plugin: invalid swarm.role %r; defaulting to worker", role)
+        return "worker"
+
+    normalized = role.strip().lower()
+    if normalized not in _VALID_PLUGIN_ROLES:
+        logger.warning("swarm plugin: invalid swarm.role %r; defaulting to worker", role)
+        return "worker"
+    return normalized
 
 
 def _server_prefix() -> str:
@@ -302,6 +337,8 @@ def on_pre_tool_call(
     session_id = _effective_session_id(session_id)
     if tool_name not in _WRITE_TOOLS or not session_id:
         return None
+    if get_role(session_id) == "gateway":
+        return None
 
     paths = _paths_for_tool(tool_name, args or {})
     if not paths or not _has_peers(session_id):
@@ -359,6 +396,7 @@ def on_session_start(session_id: str = "", **kwargs: Any) -> None:
             logger.debug("swarm plugin: already registered for session %s", session_id)
             return
 
+    role = _configured_role()
     register_args = _register_args(session_id, kwargs)
     logger.debug("swarm plugin: dispatching register with args=%r", register_args)
     result = _dispatch("register", register_args)
@@ -370,6 +408,7 @@ def on_session_start(session_id: str = "", **kwargs: Any) -> None:
     if instance_id:
         with _lock:
             _instances[session_id] = instance_id
+            _roles_by_session[session_id] = role
             _refcounts[instance_id] = _refcounts.get(instance_id, 0) + 1
         from . import prompt_peer
 
@@ -386,6 +425,7 @@ def on_session_finalize(session_id: str = "", **_: Any) -> None:
     """Deregister once the last Hermes session using this MCP instance ends."""
     with _lock:
         instance_id = _instances.pop(session_id, "")
+        _roles_by_session.pop(session_id, None)
         if instance_id:
             count = max(0, _refcounts.get(instance_id, 0) - 1)
             if count:
@@ -416,3 +456,10 @@ def get_instance_id(session_id: str) -> str:
     """Lookup helper -- used by the /swarm slash command for context."""
     with _lock:
         return _instances.get(session_id, "")
+
+
+def get_role(session_id: str = "") -> str:
+    """Lookup the cached plugin role for a session, defaulting to worker."""
+    session_id = _effective_session_id(session_id)
+    with _lock:
+        return _roles_by_session.get(session_id, "worker")

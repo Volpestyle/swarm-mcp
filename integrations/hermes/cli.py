@@ -15,6 +15,11 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+try:
+    from . import lifecycle
+except ImportError:  # pragma: no cover - supports direct unit-test imports
+    import lifecycle  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -117,13 +122,14 @@ def _run(args: list[str]) -> tuple[int, str, str]:
         return 1, "", f"swarm-mcp CLI failed: {exc}"
 
 
-def _format_status(payload: dict) -> str:
+def _format_status(payload: dict, role: str = "worker") -> str:
     lines = ["swarm status:"]
     instances = payload.get("instances") or []
     tasks = payload.get("tasks") or []
     kv = payload.get("kv") or []
     messages = payload.get("messages") or []
 
+    lines.append(f"  role      : {role}")
     lines.append(f"  instances : {len(instances)} active")
     for inst in instances[:5]:
         label = inst.get("label") or inst.get("role") or ""
@@ -150,7 +156,7 @@ def handle_slash(raw_args: str) -> str:
         if rc != 0:
             return f"swarm-mcp inspect failed:\n{err.strip() or out.strip()}"
         try:
-            return _format_status(json.loads(out))
+            return _format_status(json.loads(out), role=lifecycle.get_role())
         except json.JSONDecodeError:
             return f"swarm-mcp inspect returned non-JSON:\n{out[:500]}"
 
