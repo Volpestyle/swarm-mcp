@@ -88,15 +88,15 @@ Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting 
 
 - [`docs/getting-started.md`](./docs/getting-started.md) -- beginner-friendly setup and verification walkthrough
 - [`docs/control-plane.md`](./docs/control-plane.md) -- modular agent workspace control-plane contracts and golden path
+- [`docs/agent-routing.md`](./docs/agent-routing.md) -- runtime-agnostic doctrine for swarm peers vs native subagents
 - [`docs/identity-boundaries.md`](./docs/identity-boundaries.md) -- work/personal launcher, config, MCP auth, and routing boundaries
-- [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) -- copy-paste coordination rules for any agent host (generalist)
-- [`docs/agents-planner.md`](./docs/agents-planner.md) -- drop-in AGENTS.md for planner sessions (plans work, reviews results)
-- [`docs/agents-implementer.md`](./docs/agents-implementer.md) -- drop-in AGENTS.md for implementer sessions (claims tasks, edits code)
-- [`docs/roles-and-teams.md`](./docs/roles-and-teams.md) -- role/team conventions, multi-team workflows, and handoff examples
 - [`docs/install-skill.md`](./docs/install-skill.md) -- host-specific install paths for the bundled skills
 - [`docs/swarm-server.md`](./docs/swarm-server.md) -- Rust daemon for desktop UI, mobile pairing, PTY streaming, and LAN access
-- [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable coordination skill source with role references
+- [`docs/database-contracts.md`](./docs/database-contracts.md) -- `swarm.db` schema ownership and adoption contract
+- [`docs/design-batch-creation.md`](./docs/design-batch-creation.md) -- design spec for `request_task_batch`
+- [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable coordination skill — main `SKILL.md` plus role references (planner, implementer, reviewer, researcher, generalist, roles-and-teams, bootstrap, coordination, cli)
 - [`skills/swarm-deepdive`](./skills/swarm-deepdive) -- installable forensic inspection skill source
+- [`integrations/hermes/`](./integrations/hermes/) and [`integrations/claude-code/`](./integrations/claude-code/) -- runtime plugins (lifecycle, lock bridge, `/swarm` slash command)
 
 ---
 
@@ -323,21 +323,25 @@ The server exposes MCP prompts. Some hosts surface them directly, while others o
 
 ---
 
-## Set up AGENTS.md
+## Coordination doctrine
 
-For autonomous collaboration, add directives to your global or project `AGENTS.md`, or to the equivalent host instruction file.
+For autonomous collaboration, agent doctrine lives in the bundled **`swarm-mcp` skill** rather than in copy-paste `AGENTS.md` snippets. The skill carries a short main `SKILL.md` plus on-demand references for each role:
 
-Pick the version that matches your workflow:
+| Role | Reference |
+|------|-----------|
+| Generalist (no `role:` token) | [`skills/swarm-mcp/SKILL.md`](./skills/swarm-mcp/SKILL.md) |
+| Planner | [`skills/swarm-mcp/references/planner.md`](./skills/swarm-mcp/references/planner.md) |
+| Implementer | [`skills/swarm-mcp/references/implementer.md`](./skills/swarm-mcp/references/implementer.md) |
+| Reviewer | [`skills/swarm-mcp/references/reviewer.md`](./skills/swarm-mcp/references/reviewer.md) |
+| Researcher | [`skills/swarm-mcp/references/researcher.md`](./skills/swarm-mcp/references/researcher.md) |
+| Roles, teams, handoff patterns | [`skills/swarm-mcp/references/roles-and-teams.md`](./skills/swarm-mcp/references/roles-and-teams.md) |
+| Bootstrap fields, KV/coordination, CLI | [`bootstrap.md`](./skills/swarm-mcp/references/bootstrap.md), [`coordination.md`](./skills/swarm-mcp/references/coordination.md), [`cli.md`](./skills/swarm-mcp/references/cli.md) |
 
-| Workflow | File | Use when |
-|----------|------|----------|
-| Generalist | [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) | Every session does the same thing, no role specialization |
-| Planner | [`docs/agents-planner.md`](./docs/agents-planner.md) | This session plans work, delegates to implementers, and reviews results |
-| Implementer | [`docs/agents-implementer.md`](./docs/agents-implementer.md) | This session claims tasks, edits code, and sends work back for review |
+On hosts that support installable skills, invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc. On hosts without skill support, point your `AGENTS.md` (or equivalent) at `skills/swarm-mcp/SKILL.md` — it doubles as a readable doctrine file.
 
-For role/team conventions and multi-team workflows, see [`docs/roles-and-teams.md`](./docs/roles-and-teams.md).
+For runtime-agnostic routing doctrine that should always be loaded (not on-demand), see [`docs/agent-routing.md`](./docs/agent-routing.md). Runtime plugins ([`integrations/hermes/`](./integrations/hermes/), [`integrations/claude-code/`](./integrations/claude-code/)) automate registration, locking, and the `/swarm` slash command on top of the skill.
 
-If your host exposes MCP prompts, you can also use the built-in `protocol` prompt, often shown as `swarm:protocol`, to pull the workflow into a session on demand.
+If your host exposes MCP prompts, you can also use the built-in `protocol` prompt (often shown as `swarm:protocol`) to pull the workflow into a session on demand.
 
 ## Installable Skills
 

@@ -181,15 +181,11 @@ You can also test shared coordination tools:
 
 ## 9. Add operating instructions and start collaborating
 
-Once the MCP server is working, add a short coordination protocol to your host instructions or `AGENTS.md`:
+Once the MCP server is working, install the bundled coordination skill and let it carry the doctrine. The skill's main `SKILL.md` is the generalist guide; `skills/swarm-mcp/references/` holds role-specific workflows (planner, implementer, reviewer, researcher) and the roles-and-teams reference for multi-team setups.
 
-- [`docs/generic-AGENTS.md`](./generic-AGENTS.md) -- for generalist sessions (no role specialization)
-- [`docs/agents-planner.md`](./agents-planner.md) -- for planner sessions (plans work, reviews results)
-- [`docs/agents-implementer.md`](./agents-implementer.md) -- for implementer sessions (claims tasks, edits code)
+Install with the steps in [`docs/install-skill.md`](./install-skill.md), then invoke role-specialized sessions with `/swarm-mcp planner`, `/swarm-mcp implementer`, `/swarm-mcp reviewer`, or `/swarm-mcp researcher`. Hosts without installable-skill support can point their `AGENTS.md` (or equivalent) directly at [`skills/swarm-mcp/SKILL.md`](../skills/swarm-mcp/SKILL.md) — it doubles as a readable doctrine file.
 
-For role/team conventions and multi-team workflows, see [`docs/roles-and-teams.md`](./roles-and-teams.md).
-
-If your host supports installable skills, see [`docs/install-skill.md`](./install-skill.md) to install the bundled `/swarm-mcp` skill for stronger per-session guidance. Use role arguments such as `/swarm-mcp planner` or `/swarm-mcp implementer` when starting specialized sessions.
+For runtime-agnostic routing rules that should be always-on (not on-demand), see [`docs/agent-routing.md`](./agent-routing.md).
 
 The minimum collaboration loop is:
 
