@@ -17,6 +17,8 @@ export type Instance = {
   adopted: boolean;
 };
 
+type InstanceRow = Omit<Instance, "adopted"> & { adopted: number };
+
 export function prune(mode: CleanupMode = "opportunistic") {
   runCleanup({ mode });
 }
@@ -33,6 +35,46 @@ export function register(
   const dir = norm(directory);
   const trimmedLabel = label?.trim() || null;
 
+  function adopt(existing: InstanceRow, nextLabel: string | null): Instance {
+    db.run(
+      `UPDATE instances
+       SET pid = ?, label = ?, adopted = 1, heartbeat = unixepoch()
+       WHERE id = ?`,
+      [process.pid, nextLabel, existing.id],
+    );
+
+    const adopted: Instance = {
+      id: existing.id,
+      scope: existing.scope,
+      directory: existing.directory,
+      root: existing.root,
+      file_root: existing.file_root,
+      pid: process.pid,
+      label: nextLabel,
+      adopted: true,
+    };
+    emit({
+      scope: adopted.scope,
+      type: "instance.registered",
+      actor: adopted.id,
+      subject: adopted.id,
+      payload: {
+        label: nextLabel,
+        adopted: true,
+        pid: process.pid,
+        directory: adopted.directory,
+        root: adopted.root,
+        file_root: adopted.file_root,
+      },
+    });
+    planner.ensureOwner({
+      id: adopted.id,
+      scope: adopted.scope,
+      label: adopted.label,
+    });
+    return adopted;
+  }
+
   // Adoption path: a UI-owned instance row was pre-created with `adopted = 0`
   // and its id injected via SWARM_MCP_INSTANCE_ID. Update the existing row
   // with the live pid + label and flip `adopted = 1`. We leave
@@ -43,67 +85,33 @@ export function register(
       .query(
         "SELECT id, scope, directory, root, file_root, pid, label, adopted FROM instances WHERE id = ?",
       )
-      .get(preassignedId) as
-      | {
-          id: string;
-          scope: string;
-          directory: string;
-          root: string;
-          file_root: string;
-          pid: number;
-          label: string | null;
-          adopted: number;
-        }
-      | null;
+      .get(preassignedId) as InstanceRow | null;
 
     if (existing) {
-      const nextLabel = trimmedLabel ?? existing.label;
-      db.run(
-        `UPDATE instances
-         SET pid = ?, label = ?, adopted = 1, heartbeat = unixepoch()
-         WHERE id = ?`,
-        [process.pid, nextLabel, preassignedId],
-      );
-
-      const adopted: Instance = {
-        id: existing.id,
-        scope: existing.scope,
-        directory: existing.directory,
-        root: existing.root,
-        file_root: existing.file_root,
-        pid: process.pid,
-        label: nextLabel,
-        adopted: true,
-      };
-      emit({
-        scope: adopted.scope,
-        type: "instance.registered",
-        actor: adopted.id,
-        subject: adopted.id,
-        payload: {
-          label: nextLabel,
-          adopted: true,
-          pid: process.pid,
-          directory: adopted.directory,
-          root: adopted.root,
-          file_root: adopted.file_root,
-        },
-      });
-      planner.ensureOwner({
-        id: adopted.id,
-        scope: adopted.scope,
-        label: adopted.label,
-      });
-      return adopted;
+      return adopt(existing, trimmedLabel ?? existing.label);
     }
     // If the pre-created row was pruned before adoption (stale heartbeat,
     // manual deregister), fall through to a fresh INSERT with that same id
     // so the UI's PTY binding stays valid.
   }
 
+  const nextScope = scoped(dir, value);
+  if (!preassignedId && trimmedLabel && /\bsession:[^\s]+/.test(trimmedLabel)) {
+    const existing = db
+      .query(
+        `SELECT id, scope, directory, root, file_root, pid, label, adopted
+         FROM instances
+         WHERE scope = ? AND directory = ? AND label = ?
+         ORDER BY registered_at ASC
+         LIMIT 1`,
+      )
+      .get(nextScope, dir, trimmedLabel) as InstanceRow | null;
+    if (existing) return adopt(existing, trimmedLabel);
+  }
+
   const row = {
     id: preassignedId ?? randomUUID(),
-    scope: scoped(dir, value),
+    scope: nextScope,
     directory: dir,
     root: root(dir),
     file_root: norm(fileRoot || dir),
@@ -173,7 +181,11 @@ export function deregister(id: string) {
 }
 
 export function heartbeat(id: string) {
-  db.run("UPDATE instances SET heartbeat = ? WHERE id = ?", [now(), id]);
+  db.run("UPDATE instances SET pid = ?, heartbeat = ? WHERE id = ?", [
+    process.pid,
+    now(),
+    id,
+  ]);
 
   const item = db
     .query("SELECT id, scope, label FROM instances WHERE id = ?")

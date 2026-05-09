@@ -146,6 +146,24 @@ describe("registry adoption", () => {
       .all(instance.id) as Array<{ adopted: number }>;
     expect(row.adopted).toBe(1);
   });
+
+  test("register with an existing session label adopts instead of duplicating", () => {
+    const label = "identity:personal claude-code platform:cli role:planner origin:claude-code session:abc12345";
+    const first = registry.register("/tmp/repo", label, "scope-d");
+    db.run("UPDATE instances SET heartbeat = unixepoch() + 86400 WHERE id = ?", [
+      first.id,
+    ]);
+
+    const second = registry.register("/tmp/repo", label, "scope-d");
+
+    expect(second.id).toBe(first.id);
+    expect(second.adopted).toBe(true);
+
+    const [row] = db
+      .query("SELECT COUNT(*) as n FROM instances WHERE scope = ? AND label = ?")
+      .all(first.scope, label) as Array<{ n: number }>;
+    expect(row.n).toBe(1);
+  });
 });
 
 describe("scope", () => {

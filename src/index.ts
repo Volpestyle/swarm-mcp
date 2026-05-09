@@ -10,7 +10,7 @@ import { db } from "./db";
 import * as context from "./context";
 import * as kv from "./kv";
 import * as messages from "./messages";
-import { file as filepath } from "./paths";
+import { file as filepath, norm, scope as scopeFor } from "./paths";
 import * as planner from "./planner";
 import * as prompts from "./prompts";
 import * as registry from "./registry";
@@ -104,7 +104,7 @@ function registeredTool<Shape extends ToolShape>(
     description,
     shape,
     (async (args: z.infer<z.ZodObject<Shape>>) => {
-      if (!instance) return missing();
+      if (!ensureInstance()) return missing();
       return handler(args);
     }) as any,
   );
@@ -418,6 +418,55 @@ function tryAutoAdopt() {
   }
 }
 
+function tryAdoptLeasedRegistration() {
+  if (instance) return;
+
+  const directory = norm(
+    process.env.SWARM_MCP_DIRECTORY?.trim() || process.cwd(),
+  );
+  const envScope = process.env.SWARM_MCP_SCOPE?.trim() || undefined;
+  const scope = scopeFor(directory, envScope);
+  const envFileRoot = process.env.SWARM_MCP_FILE_ROOT?.trim() || undefined;
+
+  const candidates = db
+    .query(
+      `SELECT id, scope, directory, root, file_root, pid, label, adopted
+       FROM instances
+       WHERE scope = ?
+         AND directory = ?
+         AND label LIKE '%session:%'
+         AND heartbeat > unixepoch() + 60
+       ORDER BY registered_at ASC`,
+    )
+    .all(scope, directory) as Array<
+      Omit<registry.Instance, "adopted"> & { adopted: number }
+    >;
+
+  if (candidates.length !== 1) return;
+
+  const candidate = candidates[0];
+  try {
+    instance = registry.register(
+      candidate.directory,
+      candidate.label ?? undefined,
+      candidate.scope,
+      envFileRoot ?? candidate.file_root,
+      candidate.id,
+    );
+    startInstanceTimers();
+  } catch (err) {
+    console.error("[swarm-mcp] leased registration adoption failed:", err);
+  }
+}
+
+function ensureInstance() {
+  if (instance) return instance;
+  tryAutoAdopt();
+  if (instance) return instance;
+  tryAdoptLeasedRegistration();
+  return instance;
+}
+
 tryAutoAdopt();
 
 server.tool(
@@ -432,13 +481,14 @@ server.tool(
       ),
   },
   async ({ label_contains }) => {
-    if (!instance) return missing();
+    const current = ensureInstance();
+    if (!current) return missing();
     return {
       content: [
         {
           type: "text",
           text: JSON.stringify(
-            registry.list(instance.scope, label_contains),
+            registry.list(current.scope, label_contains),
             null,
             2,
           ),
@@ -453,9 +503,10 @@ server.tool(
   "Get this instance's swarm ID and registration info.",
   {},
   async () => {
-    if (!instance) return missing();
+    const current = ensureInstance();
+    if (!current) return missing();
     return {
-      content: [{ type: "text", text: JSON.stringify(instance, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify(current, null, 2) }],
     };
   },
 );
@@ -467,9 +518,10 @@ server.tool(
     instance_id: z.string().describe("The instance ID to remove"),
   },
   async ({ instance_id }) => {
-    if (!instance) return missing();
+    const current = ensureInstance();
+    if (!current) return missing();
 
-    if (instance_id === instance.id) {
+    if (instance_id === current.id) {
       return {
         content: [
           {
@@ -481,7 +533,7 @@ server.tool(
     }
 
     const target = registry.get(instance_id);
-    if (!target || target.scope !== instance.scope) {
+    if (!target || target.scope !== current.scope) {
       return {
         content: [
           {
@@ -497,9 +549,9 @@ server.tool(
 
     // Notify remaining instances
     messages.broadcast(
-      instance.id,
-      instance.scope,
-      `[auto] Instance ${label} (${instance_id}) was removed by ${instance.label ?? instance.id}. Its tasks and locks have been released.`,
+      current.id,
+      current.scope,
+      `[auto] Instance ${label} (${instance_id}) was removed by ${current.label ?? current.id}. Its tasks and locks have been released.`,
     );
 
     return respond(
@@ -513,9 +565,10 @@ server.tool(
   "Remove this instance from the swarm and clean up its tasks and locks.",
   {},
   async () => {
-    if (!instance) return missing();
+    const current = ensureInstance();
+    if (!current) return missing();
 
-    const id = instance.id;
+    const id = current.id;
     cleanup();
 
     return {
@@ -1102,17 +1155,18 @@ server.tool(
       ),
   },
   async ({ timeout_seconds }) => {
-    if (!instance) return missing();
+    const current = ensureInstance();
+    if (!current) return missing();
 
     // Check for already-unread messages before snapshotting — return
     // immediately so auto-notifications that arrived before this call
     // are not missed.
-    const existing = messages.peek(instance.id, instance.scope, 50);
+    const existing = messages.peek(current.id, current.scope, 50);
     if (existing.length > 0) {
       const result: Record<string, unknown> = {
         changes: ["new_messages"],
-        messages: messages.poll(instance!.id, instance!.scope, 50),
-        tasks: tasks.snapshot(instance!.scope),
+        messages: messages.poll(current.id, current.scope, 50),
+        tasks: tasks.snapshot(current.scope),
       };
       return respond(JSON.stringify(result, null, 2));
     }
