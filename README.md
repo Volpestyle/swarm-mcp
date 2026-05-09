@@ -10,7 +10,7 @@ Each session spawns its own swarm-mcp server process via stdio. They all share o
 
 ## Quick start
 
-If you want a first-run walkthrough, start with [`docs/getting-started.md`](./docs/getting-started.md).
+If you want a first-run walkthrough, start with [`docs/getting-started.md`](./docs/getting-started.md). If you want the broader modular architecture this repo is growing toward, read [`docs/control-plane.md`](./docs/control-plane.md).
 
 Install dependencies:
 
@@ -87,6 +87,8 @@ Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting 
 ### Further reading
 
 - [`docs/getting-started.md`](./docs/getting-started.md) -- beginner-friendly setup and verification walkthrough
+- [`docs/control-plane.md`](./docs/control-plane.md) -- modular agent workspace control-plane contracts and golden path
+- [`docs/identity-boundaries.md`](./docs/identity-boundaries.md) -- work/personal launcher, config, MCP auth, and routing boundaries
 - [`docs/generic-AGENTS.md`](./docs/generic-AGENTS.md) -- copy-paste coordination rules for any agent host (generalist)
 - [`docs/agents-planner.md`](./docs/agents-planner.md) -- drop-in AGENTS.md for planner sessions (plans work, reviews results)
 - [`docs/agents-implementer.md`](./docs/agents-implementer.md) -- drop-in AGENTS.md for implementer sessions (claims tasks, edits code)
@@ -123,7 +125,7 @@ The `register` tool accepts these parameters. Only `directory` is required.
 | `directory` | Yes | The live working directory for the current session. |
 | `scope` | No | Shared swarm boundary. Sessions in the same scope can see each other; different scopes are different swarms. Defaults to the detected git root, or to `directory` when no git root exists. Use a new scope only for a separate swarm; do not split frontend/backend inside one repo with scope. Use `team:` label tokens for that. |
 | `file_root` | No | Canonical base path for resolving relative file paths in `annotate`, `lock_file`, and task `files`. Useful when disposable worktrees should share one logical file tree. |
-| `label` | No | Free-form identity text. Recommended convention: machine-readable space-separated tokens like `provider:codex-cli role:planner`. The `role:` token is optional; if missing, the session is treated as a generalist. |
+| `label` | No | Free-form identity text. Recommended convention: machine-readable space-separated tokens like `identity:work provider:codex-cli role:planner`. The `identity:` token should match the launcher/config root when using identity separation. The `role:` token is optional; if missing, the session is treated as a generalist. |
 
 ### Task features
 
@@ -273,7 +275,7 @@ These commands enqueue work for a running `swarm-ui` app to claim and execute. I
 Notes:
 
 - `swarm-mcp ui spawn`, `ui prompt`, `ui move`, and `ui organize` wait up to 5 seconds by default for the desktop app to claim + complete the command. Pass `--wait 0` to return immediately after enqueue.
-- `ui spawn` accepts `--harness claude`, `--harness codex`, or `--harness opencode`; omit `--harness` for a plain shell.
+- `ui spawn` accepts the work-identity launchers `--harness claude` / `--harness codex` / `--harness opencode` / `--harness hermesw` (and `--harness clawd` for Claude with `--enable-auto-mode`) and the personal-identity launchers `--harness clowd` / `--harness cdx` / `--harness opc` / `--harness hermesp`; omit `--harness` for a plain shell. Pick the launcher whose identity matches the worker you intend to spawn — see [identity boundaries](docs/identity-boundaries.md).
 - Use `swarm-mcp ui list` and `swarm-mcp ui get <id>` to inspect queued, running, completed, or failed UI commands.
 - `--target` accepts `bound:<instance-id>`, `instance:<instance-id>`, `pty:<pty-id>`, or a bare instance / PTY reference. Bare instance refs resolve by full UUID, unique UUID prefix, or unique label substring in scope. Bare PTY refs resolve by full PTY id, unique PTY id prefix, or a unique substring of the PTY command.
 - `ui move` persists layout into the shared `ui/layout` KV entry for the target scope, so changes survive refreshes and can be driven from either the desktop UI or the CLI.

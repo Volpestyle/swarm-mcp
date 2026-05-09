@@ -67,7 +67,7 @@ Write commands (require identity):
   swarm-mcp unlock <file>                [--as <who>]
   swarm-mcp ui list      [--scope <path>] [--status <status>] [--limit N] [--json]
   swarm-mcp ui get <id>  [--json]
-  swarm-mcp ui spawn <cwd> [--harness <claude|codex|opencode>] [--role <role>] [--label <tokens>] [--scope <path>] [--wait <seconds>] [--json]
+  swarm-mcp ui spawn <cwd> [--harness <claude|clawd|clowd|codex|cdx|opencode|opc|hermesw|hermesp>] [--role <role>] [--label <tokens>] [--scope <path>] [--wait <seconds>] [--json]
   swarm-mcp ui prompt --target <node|instance|pty> <content...> [--no-enter] [--scope <path>] [--wait <seconds>] [--json]
   swarm-mcp ui move --target <node|instance|pty> --x <n> --y <n> [--scope <path>] [--wait <seconds>] [--json]
   swarm-mcp ui organize [--kind grid] [--scope <path>] [--wait <seconds>] [--json]

@@ -4,7 +4,7 @@ Use this reference when the session should claim tasks, edit code safely, report
 
 ## Bootstrap
 
-1. Call `register` with `directory` set to the current working directory and `label` including `role:implementer`, such as `provider:claude-code role:implementer`.
+1. Call `register` with `directory` set to the current working directory and `label` including `identity:<work|personal>` and `role:implementer`, such as `identity:work provider:claude-code role:implementer`.
 2. Call `whoami`.
 3. Call `list_instances` and note active planners and reviewers.
 4. Call `poll_messages` and act on unread messages.

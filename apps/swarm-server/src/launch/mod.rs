@@ -10,7 +10,18 @@ use swarm_protocol::rpc::SpawnPtyRequest;
 use crate::error::ServerError;
 
 const DEFAULT_ROLES: &[&str] = &["planner", "implementer", "reviewer", "researcher"];
-const HARNESSES: &[&str] = &["shell", "claude", "codex", "opencode"];
+const HARNESSES: &[&str] = &[
+    "shell",
+    "claude",
+    "clawd",
+    "clowd",
+    "codex",
+    "cdx",
+    "opencode",
+    "opc",
+    "hermesw",
+    "hermesp",
+];
 const DEFAULT_PATH_SEGMENTS: &[&str] = &[
     "/opt/homebrew/bin",
     "/usr/local/bin",
@@ -383,6 +394,20 @@ mod tests {
             plan.env.get("SWARM_DB_PATH").map(String::as_str),
             Some("/tmp/swarm.db")
         );
+    }
+
+    #[test]
+    fn personal_identity_launchers_are_accepted() {
+        for harness in ["clowd", "cdx", "opc", "clawd", "hermesw", "hermesp"] {
+            let plan = build_launch_plan(&request(harness), &LaunchConfig::load())
+                .unwrap_or_else(|err| panic!("{harness} should be a valid harness: {err:?}"));
+            assert_eq!(plan.display_command, harness);
+            assert_eq!(plan.bootstrap_command.as_deref(), Some(harness));
+            assert_eq!(
+                plan.env.get("SWARM_SERVER_HARNESS").map(String::as_str),
+                Some(harness)
+            );
+        }
     }
 
     #[test]

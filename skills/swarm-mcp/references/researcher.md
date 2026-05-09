@@ -4,7 +4,7 @@ Use this reference when the session should investigate code, docs, APIs, runtime
 
 ## Bootstrap
 
-1. Call `register` with `directory` set to the current working directory and `label` including `role:researcher`, such as `provider:claude-code role:researcher`.
+1. Call `register` with `directory` set to the current working directory and `label` including `identity:<work|personal>` and `role:researcher`, such as `identity:work provider:claude-code role:researcher`.
 2. Call `whoami`.
 3. Call `list_instances` and note active planners and implementers.
 4. Call `poll_messages` and act on unread messages.

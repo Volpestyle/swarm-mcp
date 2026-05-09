@@ -127,7 +127,7 @@ Use:
 
 - `directory`: the project directory you are working in
 - `scope`: usually omit it. By default the server uses the repo's git root, or `directory` when no git root exists. Use a different `scope` only when you want a completely separate swarm.
-- `label`: optional, but if you use one prefer machine-readable tokens like `provider:codex-cli role:implementer`
+- `label`: optional, but if you use one prefer machine-readable tokens like `identity:work provider:codex-cli role:implementer`
 
 Do not use `scope` to split frontend/backend inside one repo. Keep one shared scope and use `label` tokens like `team:frontend` and `team:backend` if you want soft grouping inside the same swarm.
 

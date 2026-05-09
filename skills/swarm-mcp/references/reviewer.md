@@ -4,7 +4,7 @@ Use this reference when the session should review completed work, identify bugs 
 
 ## Bootstrap
 
-1. Call `register` with `directory` set to the current working directory and `label` including `role:reviewer`, such as `provider:claude-code role:reviewer`.
+1. Call `register` with `directory` set to the current working directory and `label` including `identity:<work|personal>` and `role:reviewer`, such as `identity:work provider:claude-code role:reviewer`.
 2. Call `whoami`.
 3. Call `list_instances` and note active planners and implementers.
 4. Call `poll_messages` and act on unread messages.

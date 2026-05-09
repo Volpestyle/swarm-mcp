@@ -13,7 +13,7 @@ Tool names are namespaced by the host. Use whichever form your host exposes (e.g
 At the start of every session, call `register` before using any other swarm tool.
 
 - `directory`: your current project directory
-- `label`: include `role:implementer` (e.g. `provider:codex-cli role:implementer team:frontend`)
+- `label`: include `identity:<work|personal>` and `role:implementer` (e.g. `identity:work provider:codex-cli role:implementer team:frontend`)
 
 ---
 

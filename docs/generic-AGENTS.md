@@ -13,7 +13,7 @@ At the start of every session, call `register` before using any other swarm tool
 - `directory`: your current project directory (required)
 - `scope`: omit unless you want multiple directories or worktrees to share one swarm; do not use it to split frontend/backend inside one repo
 - `file_root`: omit unless working in a disposable worktree that should share locks and annotations with a stable checkout
-- `label`: optional, but prefer machine-readable tokens like `provider:codex-cli role:planner team:frontend`
+- `label`: optional, but prefer machine-readable tokens like `identity:work provider:codex-cli role:planner team:frontend`
 
 No `role:` token means the session is a generalist.
 

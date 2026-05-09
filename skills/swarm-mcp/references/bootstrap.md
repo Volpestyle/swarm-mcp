@@ -21,7 +21,7 @@ Useful full payload:
   "directory": "C:\\repo",
   "scope": "C:\\repo",
   "file_root": "C:\\repo",
-  "label": "provider:codex-cli role:implementer"
+  "label": "identity:work provider:codex-cli role:implementer"
 }
 ```
 
@@ -60,11 +60,11 @@ Free-form identity text for the session.
 
 Recommended convention:
 
-- `provider:codex-cli role:planner`
-- `provider:codex-cli role:implementer`
-- `provider:claude-code role:reviewer`
+- `identity:work provider:codex-cli role:planner`
+- `identity:work provider:codex-cli role:implementer`
+- `identity:work provider:claude-code role:reviewer`
 
-The `role:` token is optional. No `role:` token means the session is a generalist.
+The `identity:` token should match the launcher/config root (`identity:work` or `identity:personal`). The `role:` token is optional. No `role:` token means the session is a generalist.
 
 ## First Read After Register
 

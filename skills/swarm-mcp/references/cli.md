@@ -60,7 +60,7 @@ Swarm UI control:
 |--|--|
 | `swarm-mcp ui list [--scope P] [--status S] [--limit N]` | List queued/running/completed UI commands. |
 | `swarm-mcp ui get <id>` | Inspect one UI command, including result/error. |
-| `swarm-mcp ui spawn <cwd> [--harness H] [--role R] [--label L] [--scope P] [--wait N]` | Ask a running `swarm-ui` app to spawn a new PTY/node. Supported harness values are `claude`, `codex`, and `opencode`; omit `--harness` for a plain shell. |
+| `swarm-mcp ui spawn <cwd> [--harness H] [--role R] [--label L] [--scope P] [--wait N]` | Ask a running `swarm-ui` app to spawn a new PTY/node. Supported harness values are the work-identity launchers `claude`, `codex`, `opencode`, `hermesw` (and `clawd` for Claude with `--enable-auto-mode`) and the personal-identity launchers `clowd`, `cdx`, `opc`, `hermesp` — pick the launcher that matches the spawned worker's identity per [`identity-boundaries`](../../../docs/identity-boundaries.md). Omit `--harness` for a plain shell. |
 | `swarm-mcp ui prompt --target T <content...> [--no-enter] [--scope P] [--wait N]` | Forward input to a node's PTY. |
 | `swarm-mcp ui move --target T --x X --y Y [--scope P] [--wait N]` | Move a node and persist layout. |
 | `swarm-mcp ui organize [--kind grid] [--scope P] [--wait N]` | Auto-organize the scope's canvas layout. |

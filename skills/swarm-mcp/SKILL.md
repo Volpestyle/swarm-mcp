@@ -33,10 +33,10 @@ For planner sessions, the server maintains `owner/planner` automatically. Check 
 
 ## Role Routing
 
-- `planner`: load `references/planner.md` and register with `role:planner`
-- `implementer`: load `references/implementer.md` and register with `role:implementer`
-- `reviewer`: load `references/reviewer.md` and register with `role:reviewer`
-- `researcher`: load `references/researcher.md` and register with `role:researcher`
+- `planner`: load `references/planner.md` and register with `identity:<work|personal> role:planner`
+- `implementer`: load `references/implementer.md` and register with `identity:<work|personal> role:implementer`
+- `reviewer`: load `references/reviewer.md` and register with `identity:<work|personal> role:reviewer`
+- `researcher`: load `references/researcher.md` and register with `identity:<work|personal> role:researcher`
 - `generalist` or no role: register without a `role:` token unless the user specified one, then handle mixed work using the core workflow
 
 When the role is unclear, do not invent one. Ask one short question or proceed as a generalist if the task is already actionable.
@@ -71,6 +71,7 @@ When the role is unclear, do not invent one. Ask one short question or proceed a
 - Call `lock_file` while editing when peers are present. Read the returned annotations as your pre-edit check.
 - Use `update_task` once at task completion (terminal status). `claim_task` already moved the task to `in_progress`.
 - Use explicit `review` tasks for normal review handoff
+- Use `identity:work` or `identity:personal` to match the launcher/config root
 - Treat `role:` labels as conventions, not hard schema
 - Treat sessions without a `role:` label token as generalists
 - Prefer the highest-priority open task when claiming work

@@ -19,11 +19,12 @@ See the README's [Registration fields](../README.md#registration-fields) for ful
 Use machine-readable, space-separated tokens:
 
 ```
-provider:codex-cli role:planner
-provider:codex-cli role:implementer team:frontend
-provider:claude-code role:reviewer
+identity:work provider:codex-cli role:planner
+identity:work provider:codex-cli role:implementer team:frontend
+identity:personal provider:claude-code role:reviewer
 ```
 
+- Include `identity:work` or `identity:personal` when the launcher/config root follows the identity-boundaries model.
 - `role:` is optional. No `role:` token means generalist.
 - Keep tokens short and unambiguous. Prefer one clear role token.
 - Add `team:`, `origin:`, or `owner:` tokens when useful.
@@ -102,9 +103,9 @@ Use this when you want strong isolation. Sessions in different scopes cannot see
 
 Keep one shared `scope`, but add a team token to labels:
 
-- `provider:codex-cli role:implementer team:frontend`
-- `provider:claude-code role:reviewer team:api`
-- `provider:codex-cli role:planner team:platform`
+- `identity:work provider:codex-cli role:implementer team:frontend`
+- `identity:work provider:claude-code role:reviewer team:api`
+- `identity:personal provider:opencode role:planner team:platform`
 
 Use this when everyone should stay in one shared swarm but still advertise specialties or sub-groups. Because all sessions share one scope, every tool works across teams -- messaging, tasks, locks, annotations, and KV are all visible to everyone.
 
@@ -209,9 +210,9 @@ Each session calls `register` with the same `scope` and `directory`, using diffe
 
 | Session | Label |
 |---------|-------|
-| Planner | `provider:codex-cli role:planner` |
-| Implementer | `provider:codex-cli role:implementer` |
-| Reviewer | `provider:claude-code role:reviewer` |
+| Planner | `identity:work provider:codex-cli role:planner` |
+| Implementer | `identity:work provider:codex-cli role:implementer` |
+| Reviewer | `identity:work provider:claude-code role:reviewer` |
 
 #### 2. Inspect the swarm
 
@@ -279,8 +280,8 @@ Roles are conventions, not hard boundaries. A planner can also act as the review
 
 | Session | Label | Responsibilities |
 |---------|-------|-----------------|
-| Planner | `provider:codex-cli role:planner` | Plans work, creates tasks, reviews results |
-| Implementer | `provider:codex-cli role:implementer` | Claims implementation tasks, sends back for review |
+| Planner | `identity:work provider:codex-cli role:planner` | Plans work, creates tasks, reviews results |
+| Implementer | `identity:work provider:codex-cli role:implementer` | Claims implementation tasks, sends back for review |
 
 The planner does not need a `role:reviewer` label for this to work. Route review tasks to it by `assignee` instance ID.
 
@@ -342,4 +343,4 @@ This model is intentionally lightweight. `swarm-mcp` does not enforce roles or a
 
 ---
 
-**Note:** Orchestrators like Clanky already emit labels in this style (e.g. `origin:clanky provider:codex-cli role:implementer`). You can mix orchestrator-launched sessions with manually launched sessions that follow the same convention.
+**Note:** Orchestrators like Clanky already emit labels in this style (e.g. `identity:work origin:clanky provider:codex-cli role:implementer`). You can mix orchestrator-launched sessions with manually launched sessions that follow the same convention.

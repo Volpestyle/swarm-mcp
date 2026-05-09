@@ -4,7 +4,7 @@ Use this reference when the session should plan work, delegate to implementers, 
 
 ## Bootstrap
 
-1. Call `register` with `directory` set to the current working directory and `label` including `role:planner`, such as `provider:claude-code role:planner`.
+1. Call `register` with `directory` set to the current working directory and `label` including `identity:<work|personal>` and `role:planner`, such as `identity:work provider:claude-code role:planner`.
 2. Call `whoami`.
 3. Call `list_instances` and note active implementers, reviewers, researchers, and peer planners.
 4. Call `poll_messages` and act on unread messages.
