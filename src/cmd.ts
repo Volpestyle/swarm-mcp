@@ -856,6 +856,7 @@ function cmdLock(flags: Flags) {
   const path = resolveFileForInstance(owner, file);
   const res = context.lock(inst, scope, path, flags.note ?? "", {
     exclusive: flags.exclusive,
+    taskId: flags.task?.trim() || undefined,
   });
   if ("error" in res) {
     if (flags.json) return printJson(res);

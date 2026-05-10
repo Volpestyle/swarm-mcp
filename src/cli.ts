@@ -83,7 +83,8 @@ Write commands (require identity):
   swarm-mcp kv set <key> <value>         [--as <who>]
   swarm-mcp kv append <key> <json-value> [--as <who>]
   swarm-mcp kv del <key>                 [--as <who>]
-  swarm-mcp lock <file>   [--note "..."] [--exclusive] [--as <who>]
+  swarm-mcp lock <file>   [--note "..."] [--exclusive] [--task <task-id>] [--as <who>]
+      Pass --task to associate the lock with a task; terminal update-task releases all locks under that task_id.
   swarm-mcp unlock <file>                [--as <who>]
   swarm-mcp ui list      [--scope <path>] [--status <status>] [--limit N] [--json]
   swarm-mcp ui get <id>  [--json]

@@ -25,6 +25,8 @@ CREATE INDEX IF NOT EXISTS tasks_scope_changed_at_idx
   ON tasks(scope, changed_at);
 CREATE INDEX IF NOT EXISTS context_scope_file_idx
   ON context(scope, file);
+CREATE INDEX IF NOT EXISTS context_task_lock_idx
+  ON context(scope, instance_id, task_id) WHERE type = 'lock' AND task_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS context_lock_idx
   ON context(scope, file) WHERE type = 'lock';
 CREATE UNIQUE INDEX IF NOT EXISTS tasks_idempotency_key_idx

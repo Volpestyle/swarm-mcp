@@ -1345,10 +1345,16 @@ registeredTool(
 
 registeredTool(
   "lock_file",
-  "Acquire an edit lock on a file and read existing peer annotations in one call. Returns the new lock id plus any non-lock annotations on the file. Normal edit locks held by this instance are auto-released when its task reaches a terminal state via update_task. Pass exclusive=true to require that no lock exists on the file (including one held by this same instance) — useful for one-shot operations like spawn mutexes where same-instance re-entry is itself a conflict.",
+  "Acquire an edit lock on a file and read existing peer annotations in one call. Returns the new lock id plus any non-lock annotations on the file. Normal edit locks held by this instance are auto-released when their task reaches a terminal state via update_task. Pass task_id to associate the lock with a specific task — terminal release will then pick it up by task_id regardless of whether the file appears in the task's declared files list (use this when editing files outside the original task.files set). Pass exclusive=true to require that no lock exists on the file (including one held by this same instance) — useful for one-shot operations like spawn mutexes where same-instance re-entry is itself a conflict.",
   {
     file: z.string().describe("File path to lock"),
     reason: z.string().optional().describe("Why you're locking it"),
+    task_id: z
+      .string()
+      .optional()
+      .describe(
+        "Optional task ID to associate this lock with. When the named task reaches a terminal status via update_task, locks tagged with this task_id are released regardless of whether the file is in task.files.",
+      ),
     exclusive: z
       .boolean()
       .optional()
@@ -1356,7 +1362,7 @@ registeredTool(
         "If true, conflict on ANY existing lock for the file — including one held by this same instance. Default false keeps re-entrant semantics.",
       ),
   },
-  async ({ file, reason, exclusive }) => {
+  async ({ file, reason, task_id, exclusive }) => {
     const current = instance!;
     const path = resolveFileInput(file);
     const result = context.lock(
@@ -1364,7 +1370,7 @@ registeredTool(
       current.scope,
       path,
       reason ?? "actively editing",
-      { exclusive: exclusive ?? false },
+      { exclusive: exclusive ?? false, taskId: task_id?.trim() || undefined },
     );
     return respondJson(result);
   },

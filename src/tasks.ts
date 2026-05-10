@@ -538,6 +538,7 @@ export function update(
     // locks so tasks without complete file lists do not leave stale locks.
     // Internal `/__swarm/` mutex locks are managed by their owning flow.
     if (task.assignee) {
+      context.releaseInstanceLocksForTask(task.assignee, scope, id);
       const files = task.files ? (JSON.parse(task.files) as string[]) : [];
       if (files.length) {
         context.releaseInstanceLocksForFiles(task.assignee, scope, files);

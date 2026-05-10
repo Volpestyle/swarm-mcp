@@ -1116,6 +1116,102 @@ describe("locks", () => {
       { type: "lock", instance_id: worker.id },
     ]);
   });
+
+  test("terminal task update releases locks tagged with that task_id even when file is not in task.files", () => {
+    const requester = reg("requester", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const declared = paths.file(worker.directory, "src/declared.ts");
+    const undeclared = paths.file(worker.directory, "src/undeclared.ts");
+    const { id } = req(requester.id, requester.scope, "fix", "Fix bug", {
+      files: [declared],
+      assignee: worker.id,
+    });
+    expect(
+      tasks.claim(id, worker.scope, worker.id, { ignoreUnreadMessages: true }),
+    ).toEqual({ ok: true });
+
+    expect(
+      context.lock(worker.id, worker.scope, declared, "editing", { taskId: id }),
+    ).toMatchObject({ ok: true });
+    expect(
+      context.lock(worker.id, worker.scope, undeclared, "editing", { taskId: id }),
+    ).toMatchObject({ ok: true });
+
+    expect(tasks.update(id, worker.scope, worker.id, "done")).toEqual({ ok: true });
+
+    expect(context.lookup(worker.scope, declared)).toEqual([]);
+    expect(context.lookup(worker.scope, undeclared)).toEqual([]);
+  });
+
+  test("legacy locks without task_id still release via task.files at terminal update", () => {
+    const requester = reg("requester", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const file = paths.file(worker.directory, "src/legacy.ts");
+    const { id } = req(requester.id, requester.scope, "fix", "Fix legacy", {
+      files: [file],
+      assignee: worker.id,
+    });
+    expect(
+      tasks.claim(id, worker.scope, worker.id, { ignoreUnreadMessages: true }),
+    ).toEqual({ ok: true });
+
+    expect(context.lock(worker.id, worker.scope, file, "editing")).toMatchObject({
+      ok: true,
+    });
+
+    expect(tasks.update(id, worker.scope, worker.id, "done")).toEqual({ ok: true });
+
+    expect(context.lookup(worker.scope, file)).toEqual([]);
+  });
+
+  test("releaseInstanceLocksForTask returns 0 and is a no-op when no locks match", () => {
+    const a = reg("a", "scope-a");
+    expect(
+      context.releaseInstanceLocksForTask(a.id, a.scope, "no-such-task"),
+    ).toBe(0);
+  });
+
+  test("terminal task update keeps locks tagged with a different active task_id", () => {
+    const requester = reg("requester", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const file = paths.file(worker.directory, "src/shared.ts");
+    const taskA = req(requester.id, requester.scope, "fix", "Fix A", {
+      assignee: worker.id,
+    });
+    const taskB = req(requester.id, requester.scope, "fix", "Fix B", {
+      assignee: worker.id,
+    });
+    expect(
+      tasks.claim(taskA.id, worker.scope, worker.id, { ignoreUnreadMessages: true }),
+    ).toEqual({ ok: true });
+    expect(
+      tasks.claim(taskB.id, worker.scope, worker.id, { ignoreUnreadMessages: true }),
+    ).toEqual({ ok: true });
+
+    expect(
+      context.lock(worker.id, worker.scope, file, "editing for B", {
+        taskId: taskB.id,
+      }),
+    ).toMatchObject({ ok: true });
+
+    expect(tasks.update(taskA.id, worker.scope, worker.id, "done")).toEqual({
+      ok: true,
+    });
+
+    // Task A's terminal release must not yank task B's lock because the
+    // assignee still has an active task, so the assignee-wide sweep is skipped.
+    const survivors = context.lookup(worker.scope, file) as Array<{
+      type: string;
+      instance_id: string;
+      task_id: string | null;
+    }>;
+    expect(survivors).toHaveLength(1);
+    expect(survivors[0]).toMatchObject({
+      type: "lock",
+      instance_id: worker.id,
+      task_id: taskB.id,
+    });
+  });
 });
 
 describe("batch creation", () => {

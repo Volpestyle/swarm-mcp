@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS context (
   file TEXT NOT NULL,
   type TEXT NOT NULL,
   content TEXT NOT NULL,
+  task_id TEXT,
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 

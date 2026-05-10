@@ -78,6 +78,7 @@ const COLUMN_MIGRATIONS = [
   ["tasks", "idempotency_key TEXT"],
   ["tasks", "parent_task_id TEXT"],
   ["context", "scope TEXT NOT NULL DEFAULT ''"],
+  ["context", "task_id TEXT"],
 ] as const;
 
 function cols(table: string) {

@@ -100,11 +100,12 @@ export function annotate(
   file: string,
   type: ContextType,
   content: string,
+  taskId?: string,
 ) {
   const id = randomUUID();
   db.run(
-    "INSERT INTO context (id, scope, instance_id, file, type, content) VALUES (?, ?, ?, ?, ?, ?)",
-    [id, scope, instance, file, type, content],
+    "INSERT INTO context (id, scope, instance_id, file, type, content, task_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [id, scope, instance, file, type, content, taskId ?? null],
   );
   // `lock` writes go through `annotate` too — emit the more specific
   // `context.lock_acquired` from `lock()` instead of double-firing here.
@@ -125,7 +126,7 @@ export function lock(
   scope: string,
   file: string,
   content: string,
-  opts: { exclusive?: boolean } = {},
+  opts: { exclusive?: boolean; taskId?: string } = {},
 ) {
   // Re-entrant by default: same-instance callers extending their own edit
   // lock should succeed, so drop their existing row before insert. With
@@ -144,7 +145,7 @@ export function lock(
   const notes = annotations(scope, file);
 
   try {
-    const id = annotate(instance, scope, file, "lock", content);
+    const id = annotate(instance, scope, file, "lock", content, opts.taskId);
     emit({
       scope,
       type: "context.lock_acquired",
@@ -168,7 +169,7 @@ export function lock(
 export function lookup(scope: string, file: string) {
   return db
     .query(
-      "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND file = ? ORDER BY created_at DESC, id DESC",
+      "SELECT id, instance_id, file, type, content, task_id, created_at FROM context WHERE scope = ? AND file = ? ORDER BY created_at DESC, id DESC",
     )
     .all(scope, file);
 }
@@ -207,6 +208,37 @@ export function clearLocks(instance: string, scope: string, file: string) {
       payload: { released: result.changes },
     });
   }
+}
+
+/** Release all locks the given instance acquired under the named task_id, regardless of which files. */
+export function releaseInstanceLocksForTask(
+  instance: string,
+  scope: string,
+  taskId: string,
+) {
+  const rows = db
+    .query(
+      "SELECT id, file FROM context WHERE scope = ? AND type = 'lock' AND instance_id = ? AND task_id = ?",
+    )
+    .all(scope, instance, taskId) as Array<{ id: string; file: string }>;
+  let released = 0;
+  for (const row of rows) {
+    const result = db.run(
+      "DELETE FROM context WHERE id = ? AND type = 'lock' AND instance_id = ?",
+      [row.id, instance],
+    );
+    if (result.changes > 0) {
+      released += result.changes;
+      emit({
+        scope,
+        type: "context.lock_released",
+        actor: instance,
+        subject: row.file,
+        payload: { released: result.changes, reason: "task_terminal", task_id: taskId },
+      });
+    }
+  }
+  return released;
 }
 
 /** Release all locks the given instance holds on the listed files. */
