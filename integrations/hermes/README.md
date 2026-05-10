@@ -8,7 +8,7 @@ This is the *behavioural* layer that complements two other artifacts in this rep
 - **Skill** (`skills/swarm-mcp/`) — gives the agent the role doctrine.
 - **Plugin** (this directory) — eliminates lifecycle boilerplate the agent should not have to remember.
 
-For the full design — architecture, lifecycle contract, role topology (worker vs gateway), and roadmap — see [SPEC.md](SPEC.md). This README covers install + verify only.
+For the full design — architecture, lifecycle contract, role topology (worker vs gateway), and roadmap — see [SPEC.md](SPEC.md). Backend selection and workspace identity conventions are centralized in [`docs/backend-configuration.md`](../../docs/backend-configuration.md). This README covers install + verify only.
 
 ## What it does (v0.3.0)
 
@@ -17,7 +17,7 @@ For the full design — architecture, lifecycle contract, role topology (worker 
 | Auto-`register` on session start | `on_session_start` hook → `mcp_swarm_register` |
 | Auto-`deregister` on session finalization | `on_session_finalize` hook → `mcp_swarm_deregister` |
 | Auto-lock write-like file tools when peers are active | `pre_tool_call` → `mcp_swarm_lock_file`, `post_tool_call` → `mcp_swarm_unlock_file` |
-| Publish workspace identity for this swarm instance | `on_session_start` → `mcp_swarm_kv_set identity/workspace/herdr/<instance_id>` when `HERDR_PANE_ID` is present |
+| Publish workspace identity for this swarm instance | `on_session_start` → publish current workspace handle when `HERDR_PANE_ID` is present |
 | Express-lane peer prompt | `swarm_prompt_peer` tool → `mcp_swarm_send_message`, then best-effort workspace backend wake-up (`herdr pane run` today) |
 | `/swarm` slash command (status/instances/tasks/kv/messages) | shells to `swarm-mcp` CLI, no agent turn |
 

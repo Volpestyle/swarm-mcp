@@ -34,6 +34,8 @@ This stack is the golden path, not the boundary of the system.
 
 Auth and account separation are part of the control plane, not an afterthought. Work and personal stacks use separate launcher profiles, config roots, and account-scoped MCP names as the tool visibility boundary; swarm identity labels provide routing and audit metadata. See [`identity-boundaries.md`](./identity-boundaries.md).
 
+Consumer backend selection spans host MCP config, launcher profiles, spawner env, and workspace identity publication. See [`backend-configuration.md`](./backend-configuration.md) for the current herdr/swarm-ui setup and the intended future swarm-server switch shape.
+
 ## Narrow Waist
 
 Every adapter should preserve these concepts even if the backing product changes:
@@ -236,5 +238,5 @@ This is the first integration target. New abstractions should be justified by ma
 - Which control-plane contract deserves the first stable interface package?
 - Should spawn/adoption become a first-class Coordinator primitive instead of adapter convention?
 - Should exact context lookup replace fuzzy `search_context` for synthetic resources?
-- Where should cross-adapter configuration live: repo config, user profile, or Coordinator KV?
+- Which cross-adapter configuration belongs in repo config, user profile, launcher env, or Coordinator KV after the current [`backend-configuration.md`](./backend-configuration.md) split hardens?
 - What is the minimum remote herdr bridge needed before the iOS app feels useful?

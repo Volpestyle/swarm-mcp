@@ -16,7 +16,7 @@ repo:
 For the broader adapter contract, see
 [`docs/control-plane.md`](../../../../docs/control-plane.md). For design
 parallels, see [`integrations/hermes/SPEC.md`](../../../hermes/SPEC.md) and
-[`integrations/claude-code/SPEC.md`](../../../claude-code/SPEC.md).
+[`integrations/claude-code/SPEC.md`](../../../claude-code/SPEC.md). Backend selection and workspace identity conventions are centralized in [`docs/backend-configuration.md`](../../../../docs/backend-configuration.md).
 
 ## What it does (v0.2.0)
 
@@ -27,7 +27,7 @@ parallels, see [`integrations/hermes/SPEC.md`](../../../hermes/SPEC.md) and
 | Auto-lock writes when peers exist | `PreToolUse` (matcher: `apply_patch`) → parses the patch envelope, calls `swarm-mcp lock` per path |
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
-| Publish and cleanup `identity/workspace/herdr/<instance_id>` | `SessionStart` / `Stop` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
+| Publish and cleanup workspace identity | `SessionStart` / `Stop` hooks → publish/delete current workspace handle when `HERDR_PANE_ID` is present |
 | Gateway conductor mode | `SWARM_CODEX_ROLE=gateway` registers as `role:planner`; make easy edits locally, use the MCP `dispatch` tool for medium/large task/spawn routing |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 
@@ -147,7 +147,7 @@ Hooks pick up the same env knobs as the hermes / Claude Code plugins, with
 | `SWARM_CODEX_AGENT_ROLE` / `SWARM_AGENT_ROLE` | Adds a `role:<name>` token to the derived label. Accepts `planner`, `implementer`, `reviewer`, `researcher`, `generalist`, or `worker` (the default; emits no token). |
 | `SWARM_CODEX_ROLE` / `SWARM_ROLE` | `worker` by default. Set `gateway` for planner/conductor behavior. |
 | `SWARM_CODEX_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `Stop` deregisters normally. |
-| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this pane identity for express-lane peer wakes. |
+| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this workspace identity for express-lane peer wakes. See [`backend-configuration.md`](../../../../docs/backend-configuration.md). |
 
 **Repo-wide role default — `.swarm-role` file.**
 If `SWARM_CODEX_AGENT_ROLE` is unset, the hook walks up from `cwd` to the

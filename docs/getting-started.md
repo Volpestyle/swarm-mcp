@@ -8,6 +8,8 @@ It assumes:
 - Your coding agent host supports custom stdio MCP servers.
 - You want a simple local setup using the default shared database at `~/.swarm-mcp/swarm.db`.
 
+This guide uses the default local backend setup. For consumer backend/profile configuration, see [`backend-configuration.md`](./backend-configuration.md). For work/personal account separation, see [`identity-boundaries.md`](./identity-boundaries.md).
+
 ## 1. Install Bun
 
 `swarm-mcp` is easiest to run in development through `bun run`. The built `dist/*.js` entrypoints also run under Node 20+ with `better-sqlite3`, but this guide uses Bun for the shortest setup path.

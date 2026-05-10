@@ -134,7 +134,7 @@ tool instead. The CLI helper does four things:
 3. If no worker is live and spawning is allowed, it calls the configured
    Spawner backend. The default is `herdr`; set `SWARM_SPAWNER=swarm-ui` or
    pass `--spawner swarm-ui` to keep the legacy queue-backed desktop path
-   available.
+   available. See `docs/backend-configuration.md` for consumer backend config.
 4. While the spawn attempt is pending/running, it holds a synthetic lock at
    `/__swarm/spawn/<role>/<intent_hash>` so retries return `spawn_in_flight`
    instead of creating duplicate workers.

@@ -10,7 +10,7 @@ Each session spawns its own swarm-mcp server process via stdio. They all share o
 
 ## Quick start
 
-If you want a first-run walkthrough, start with [`docs/getting-started.md`](./docs/getting-started.md). If you want the broader modular architecture this repo is growing toward, read [`docs/control-plane.md`](./docs/control-plane.md).
+If you want a first-run walkthrough, start with [`docs/getting-started.md`](./docs/getting-started.md). If you want the broader modular architecture this repo is growing toward, read [`docs/control-plane.md`](./docs/control-plane.md). Backend and consumer config lives in [`docs/backend-configuration.md`](./docs/backend-configuration.md).
 
 Install dependencies:
 
@@ -88,6 +88,7 @@ Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting 
 
 - [`docs/getting-started.md`](./docs/getting-started.md) -- beginner-friendly setup and verification walkthrough
 - [`docs/control-plane.md`](./docs/control-plane.md) -- modular agent workspace control-plane contracts and golden path
+- [`docs/backend-configuration.md`](./docs/backend-configuration.md) -- consumer config layers, spawner/backend selection, and future swarm-server switch shape
 - [`docs/agent-routing.md`](./docs/agent-routing.md) -- runtime-agnostic doctrine for swarm peers vs native subagents
 - [`docs/identity-boundaries.md`](./docs/identity-boundaries.md) -- work/personal launcher, config, MCP auth, and routing boundaries
 - [`docs/install-skill.md`](./docs/install-skill.md) -- host-specific install paths for the bundled skills

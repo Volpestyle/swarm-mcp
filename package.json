@@ -16,6 +16,7 @@
     "dev:server": "cargo run --manifest-path apps/swarm-server/Cargo.toml",
     "dev:ui": "cd apps/swarm-ui && SWARM_UI_MANAGE_DAEMON=0 bunx tauri dev",
     "dev:ui:managed": "cd apps/swarm-ui && bunx tauri dev",
+    "diagrams": "node scripts/render-mermaid.mjs",
     "generate:protocol": "node scripts/generate-protocol-types.mjs",
     "build": "node scripts/generate-protocol-types.mjs && esbuild src/cli.ts src/index.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --packages=external --loader:.sql=text --banner:js='#!/usr/bin/env node'",
     "check:ui": "cd apps/swarm-ui && bun run check && bun run build",

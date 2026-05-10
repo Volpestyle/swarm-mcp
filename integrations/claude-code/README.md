@@ -13,8 +13,7 @@ repo:
   should not have to remember.
 
 For the broader adapter contract, see
-[`docs/control-plane.md`](../../docs/control-plane.md). For the design parallel
-in the hermes case, see [`integrations/hermes/SPEC.md`](../hermes/SPEC.md).
+[`docs/control-plane.md`](../../docs/control-plane.md). Backend selection and workspace identity conventions are centralized in [`docs/backend-configuration.md`](../../docs/backend-configuration.md). For the design parallel in the hermes case, see [`integrations/hermes/SPEC.md`](../hermes/SPEC.md).
 
 ## What it does (v0.2.0)
 
@@ -25,7 +24,7 @@ in the hermes case, see [`integrations/hermes/SPEC.md`](../hermes/SPEC.md).
 | Auto-lock write-class file tools when peers exist | `PreToolUse` (matcher: `Write\|Edit\|MultiEdit\|NotebookEdit`) → `swarm-mcp lock` |
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
-| Publish and cleanup `identity/workspace/herdr/<instance_id>` | `SessionStart` / `SessionEnd` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
+| Publish and cleanup workspace identity | `SessionStart` / `SessionEnd` hooks → publish/delete current workspace handle when `HERDR_PANE_ID` is present |
 | Gateway conductor mode | `SWARM_CC_ROLE=gateway` registers as `role:planner`; make easy edits locally, use the MCP `dispatch` tool for medium/large task/spawn routing |
 | Peer prompt express lane | `prompt_peer` MCP tool or `swarm-mcp prompt-peer` CLI sends durable swarm message, then best-effort herdr wake |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
@@ -119,7 +118,7 @@ priority for Claude Code-specific overrides:
 | `SWARM_CC_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `SessionEnd` deregisters normally. |
 | `SWARM_CC_SCOPE` / `SWARM_HERMES_SCOPE` / `SWARM_MCP_SCOPE` | Override the coordination scope. Default: git root of `cwd`. |
 | `SWARM_CC_FILE_ROOT` / `SWARM_HERMES_FILE_ROOT` / `SWARM_MCP_FILE_ROOT` | Override the file root passed to `register`. |
-| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this pane identity for express-lane peer wakes. |
+| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this workspace identity for express-lane peer wakes. See [`backend-configuration.md`](../../docs/backend-configuration.md). |
 
 Default label format mirrors hermes:
 `identity:<id> claude-code platform:cli [mode:gateway] [role:<name>] origin:claude-code session:<id-prefix>`.

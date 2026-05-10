@@ -4,6 +4,8 @@
 
 Use `swarm-mcp` when coding-agent hosts need MCP tools. Use `swarm-server` when `swarm-ui` or a paired iOS/iPadOS client needs snapshots, PTY streaming, pairing, leases, or LAN access.
 
+`swarm-server` is not currently registered as a `swarm-mcp` workspace or spawner backend. For the current backend matrix and the intended future config switch to `swarm-server`, see [`backend-configuration.md`](./backend-configuration.md).
+
 ## Responsibilities
 
 - Reads the shared `swarm.db` through `crates/swarm-state`.
