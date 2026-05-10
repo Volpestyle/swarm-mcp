@@ -89,7 +89,7 @@ Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting 
 - [`docs/agent-routing.md`](./docs/agent-routing.md) -- runtime-agnostic doctrine for swarm peers vs native subagents
 - [`docs/identity-boundaries.md`](./docs/identity-boundaries.md) -- work/personal launcher, config, MCP auth, and routing boundaries
 - [`docs/install-skill.md`](./docs/install-skill.md) -- host-specific install paths for the packaged `swarm-mcp` skill
-- [`docs/swarm-server.md`](./docs/swarm-server.md) -- Rust daemon for desktop UI, mobile pairing, PTY streaming, and LAN access
+- [`docs/swarm-server.md`](./docs/swarm-server.md) -- Rust daemon for `swarm-ui`, mobile-style pairing, PTY streaming, and LAN access
 - [`docs/database-contracts.md`](./docs/database-contracts.md) -- `swarm.db` schema ownership and adoption contract
 - [`docs/design-batch-creation.md`](./docs/design-batch-creation.md) -- design spec for `request_task_batch`
 - [`docs/testing/herdr-swarm-agent-metadata-review.md`](./docs/testing/herdr-swarm-agent-metadata-review.md) -- retrospective from a two-agent Herdr swarm metadata implementation test
@@ -105,7 +105,7 @@ The TypeScript `swarm-mcp` process is the stdio MCP server used by coding-agent 
 
 Spawner backends are adapters around that bus. The default adapter is `herdr`; `swarm-ui` remains available as a fallback/control-surface adapter. New terminal managers should plug in as spawner/workspace backends rather than changing the task/message/lock contract.
 
-The Rust `apps/swarm-server` daemon is a separate desktop/mobile control plane. It serves `swarm-ui` over a local Unix socket, exposes HTTPS/WSS on port 5444 for paired iOS/iPadOS clients, manages PTYs, and reads the same `swarm.db`. It is not required for the basic MCP setup above. See [`docs/swarm-server.md`](./docs/swarm-server.md).
+The Rust `apps/swarm-server` daemon is a separate desktop/mobile control plane. It serves `swarm-ui` over a local Unix socket, exposes HTTPS/WSS on port 5444 for paired clients, manages PTYs, and reads the same `swarm.db`. It is not required for the basic MCP setup above. The current `apps/swarm-ios` workstream is Herdr-bridge first so Herdr remains the universal PTY owner; `swarm-server` remains useful reference material and the daemon for `swarm-ui`. See [`docs/swarm-server.md`](./docs/swarm-server.md).
 
 ## Control-plane overview
 

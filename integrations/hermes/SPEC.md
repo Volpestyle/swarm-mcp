@@ -54,7 +54,7 @@ These are not redundant. herdr gives transport + observability; swarm-mcp gives 
 
 herdr owns local PTYs and workspace control across **all** operator surfaces — laptop CLI, mobile app, future desktop UI. This is a deliberate choice: one PTY owner per live worker eliminates the failure mode where two systems independently spawn or claim the same conceptual worker.
 
-swarm-mcp's `swarm-server` component (`apps/swarm-server/`, with iOS pairing, HTTPS/WSS, native PTY streaming, Swift packages) is **reference / non-primary** — its design solved adjacent problems and remains useful source material (notably the SwarmPairing package), but it is not in the critical path.
+swarm-mcp's `swarm-server` component (`apps/swarm-server/`, with pairing, HTTPS/WSS, and native PTY streaming) is **reference / non-primary** — its design solved adjacent problems and remains useful source material, but it is not in the critical path.
 
 The cross-layer durable identity is swarm-mcp `instance_id`. herdr `pane_id` is the active transport/UI handle. swarm-server `pty_id`, when it appears at all, is reference-only.
 
@@ -68,7 +68,7 @@ The bridge daemon is unavoidable: iOS clients literally cannot speak Unix socket
 
 **v2 upgrade paths (later, optional):**
 - Native network mode in herdr — TCP/WSS listener with Bonjour/PSK pairing (eliminates Tailscale dependency)
-- Reuse swarm-server's existing iOS pairing + transport code as the bridge — port `apps/swarm-ios/Packages/SwarmPairing/` to drive that pairing flow against herdr's socket
+- Reuse swarm-server's pairing + transport design as the bridge, or recover the old Swift pairing package from git history if that is still useful, to drive pairing against herdr's socket
 
 **Streaming gap (must address for full iPhone UX):** herdr's current socket is a *control* API — `pane.read` (snapshot), `pane.send_input`, lifecycle events, output-match events, status events. For continuous terminal output (live scrollback, animations, REPL feedback), herdr needs `pane.output_stream` or raw PTY frame streaming, plus resize. v1 ships with snapshot-control; full terminal UX is a later milestone (see §9 mobile/iOS track).
 
@@ -338,7 +338,7 @@ Tracks the iOS-via-herdr workstream (§3.3). Ordered by dependency, not calendar
 - **m1 — bridge daemon.** Small unix-socket ⇄ TCP/WSS daemon for herdr, behind Tailscale. Enables iOS app to drive existing herdr control API: snapshot reads + send-input + lifecycle/status events. Sufficient for v1 mobile UX (kick off work, peek output, send prompts).
 - **m2 — `pane.output_stream` in herdr socket.** Continuous PTY output streaming + resize. Required for full terminal UX on iOS (live scrollback, animations, REPL feedback). Without this, the app is "command-and-snapshot," not "real terminal."
 - **m3 — native network mode in herdr.** TCP/WSS listener directly in herdr, with Bonjour/PSK pairing. Eliminates the Tailscale-required dependency.
-- **m4 — pairing reuse.** Port `apps/swarm-ios/Packages/SwarmPairing/` (from swarm-server) to drive m3's pairing flow.
+- **m4 — pairing reuse.** Reuse swarm-server's pairing/transport design, or recover the old Swift pairing package from git history if still useful, to drive m3's pairing flow.
 
 ## 10. Testing
 

@@ -2,7 +2,7 @@
 
 `swarm-server` is the Rust daemon for the desktop and mobile control plane. It is separate from the TypeScript `swarm-mcp` stdio MCP server.
 
-Use `swarm-mcp` when coding-agent hosts need MCP tools. Use `swarm-server` when `swarm-ui` or a paired iOS/iPadOS client needs snapshots, PTY streaming, pairing, leases, or LAN access.
+Use `swarm-mcp` when coding-agent hosts need MCP tools. Use `swarm-server` when `swarm-ui` or a paired client needs snapshots, PTY streaming, pairing, leases, or LAN access. The current `apps/swarm-ios` workstream is Herdr-bridge first, so this daemon is not the primary iOS app backend.
 
 `swarm-server` is not currently registered as a `swarm-mcp` workspace or spawner backend. For the current backend matrix and the intended future config switch to `swarm-server`, see [`backend-configuration.md`](./backend-configuration.md).
 
@@ -100,7 +100,7 @@ Local-only endpoints:
 | `POST /auth/pairing-session` | Create a short-lived pairing session for `swarm-ui` Mobile Access. |
 | `DELETE /auth/pairing-session/:id` | Cancel a pairing session. |
 
-JSON RPC request/response bodies defined in `crates/swarm-protocol/src/rpc.rs` carry protocol field `v`. `GET /state` returns a `SwarmSnapshot` with cursors and `server_time`. WebSocket frames use the protocol types in `crates/swarm-protocol` and the Swift mirror in `apps/swarm-ios/Packages/SwarmProtocol`.
+JSON RPC request/response bodies defined in `crates/swarm-protocol/src/rpc.rs` carry protocol field `v`. `GET /state` returns a `SwarmSnapshot` with cursors and `server_time`. WebSocket frames use the protocol types in `crates/swarm-protocol`. The old Swift mirror package was removed when the iOS app was reset around the Herdr bridge.
 
 ## Pairing Model
 

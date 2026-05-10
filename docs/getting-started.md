@@ -199,4 +199,4 @@ For troubleshooting tips, see the [Troubleshooting](../README.md#troubleshooting
 
 ## Desktop and mobile access
 
-The setup above is only for the stdio MCP server. The desktop UI, PTY control, mobile pairing, and LAN streaming use the separate Rust `swarm-server` daemon. It is not required for basic MCP coordination. See [`docs/swarm-server.md`](./swarm-server.md) when you need `swarm-ui` or the iOS/iPadOS companion.
+The setup above is only for the stdio MCP server. The desktop UI, PTY control, mobile-style pairing, and LAN streaming use the separate Rust `swarm-server` daemon. It is not required for basic MCP coordination. See [`docs/swarm-server.md`](./swarm-server.md) when you need `swarm-ui`. The current `apps/swarm-ios` workstream is Herdr-bridge first so Herdr remains the PTY owner.
