@@ -69,6 +69,11 @@ Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
 
 Write commands (require identity):
   swarm-mcp request-task <type> <title...> [--description <text>] [--file <path>] [--priority N] [--idempotency-key <key>] [--as <who>] [--json]
+  swarm-mcp claim <task-id> [--force] [--as <who>] [--json]
+      Claim an open or pre-assigned task and transition it to in_progress.
+      --force ignores the unread-message gate (use only when intentionally claiming despite unread messages).
+  swarm-mcp update-task <task-id> --status <done|failed|cancelled> [--note <result>] [--as <who>] [--json]
+      Move a claimed/in_progress task to a terminal status. Auto-releases this instance's locks on the task's listed files.
   swarm-mcp dispatch <title...> [--message <text>] [--type <type>] [--role <role>] [--spawner <herdr|swarm-ui>] [--harness <harness>] [--idempotency-key <key>] [--no-spawn] [--force-spawn] [--wait <seconds>] [--as <who>] [--json]
   swarm-mcp send --to <who> <content...> [--as <who>]
   swarm-mcp prompt-peer --to <who> --message <text> [--task <id>] [--force] [--no-nudge] [--as <who>]

@@ -658,3 +658,120 @@ describe("CLI file path normalization", () => {
     expect(JSON.parse(dispatched.stdout).task.files).toEqual([expectedFile]);
   });
 });
+
+describe("CLI claim and update-task", () => {
+  test("claim transitions an open task to in_progress and update-task moves it to a terminal status", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cli-claim-"));
+    const dbPath = join(dir, "swarm.db");
+    const requester = register(
+      dbPath,
+      dir,
+      dir,
+      "identity:personal role:planner",
+    );
+    const worker = register(
+      dbPath,
+      dir,
+      dir,
+      "identity:personal role:implementer",
+    );
+
+    const requestResult = runCli(dbPath, [
+      "request-task",
+      "implement",
+      "test work",
+      "--scope",
+      dir,
+      "--as",
+      requester.id,
+      "--json",
+    ]);
+    expect(requestResult.exitCode).toBe(0);
+    const taskId = (JSON.parse(requestResult.stdout) as { id: string }).id;
+
+    const claimResult = runCli(dbPath, [
+      "claim",
+      taskId,
+      "--scope",
+      dir,
+      "--as",
+      worker.id,
+      "--json",
+    ]);
+    expect(claimResult.exitCode).toBe(0);
+    const claimPayload = JSON.parse(claimResult.stdout) as { ok: boolean };
+    expect(claimPayload.ok).toBe(true);
+
+    const tasksAfterClaim = JSON.parse(
+      runCli(dbPath, ["tasks", "--scope", dir, "--json"]).stdout,
+    ) as Array<{ id: string; status: string; assignee: string | null }>;
+    const taskAfterClaim = tasksAfterClaim.find((t) => t.id === taskId);
+    expect(taskAfterClaim?.status).toBe("in_progress");
+    expect(taskAfterClaim?.assignee).toBe(worker.id);
+
+    const updateResult = runCli(dbPath, [
+      "update-task",
+      taskId,
+      "--status",
+      "done",
+      "--note",
+      "all good",
+      "--scope",
+      dir,
+      "--as",
+      worker.id,
+      "--json",
+    ]);
+    expect(updateResult.exitCode).toBe(0);
+
+    const tasksAfterUpdate = JSON.parse(
+      runCli(dbPath, ["tasks", "--scope", dir, "--json"]).stdout,
+    ) as Array<{ id: string; status: string }>;
+    const taskAfterUpdate = tasksAfterUpdate.find((t) => t.id === taskId);
+    expect(taskAfterUpdate?.status).toBe("done");
+  });
+
+  test("claim fails with a non-zero exit code for a non-existent task (text mode)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cli-claim-missing-"));
+    const dbPath = join(dir, "swarm.db");
+    const worker = register(
+      dbPath,
+      dir,
+      dir,
+      "identity:personal role:implementer",
+    );
+
+    const result = runCli(dbPath, [
+      "claim",
+      "00000000-0000-0000-0000-000000000000",
+      "--scope",
+      dir,
+      "--as",
+      worker.id,
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Task not found");
+  });
+
+  test("update-task requires a valid --status flag", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cli-update-bad-"));
+    const dbPath = join(dir, "swarm.db");
+    const worker = register(
+      dbPath,
+      dir,
+      dir,
+      "identity:personal role:implementer",
+    );
+
+    const result = runCli(dbPath, [
+      "update-task",
+      "any-id",
+      "--scope",
+      dir,
+      "--as",
+      worker.id,
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("--status one of done|failed|cancelled");
+  });
+});

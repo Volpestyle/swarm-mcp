@@ -528,6 +528,44 @@ function cmdRequestTask(flags: Flags) {
   console.log(`${result.existing ? "existing" : "created"} task ${result.id} [${result.status}] ${title}`);
 }
 
+function cmdClaim(flags: Flags) {
+  const taskId = flags.positional[1];
+  if (!taskId) throw new Error("claim <task-id>");
+  const scope = resolveScope(flags);
+  const assignee = resolveIdentity(scope, flags);
+  const result = taskStore.claim(taskId, scope, assignee, {
+    ignoreUnreadMessages: flags.force,
+  });
+  if ("error" in result) {
+    if (flags.json) return printJson(result);
+    console.error(`claim failed: ${result.error}`);
+    process.exit(1);
+  }
+  if (flags.json) return printJson({ ...result, task_id: taskId });
+  console.log(`claimed ${taskId}`);
+}
+
+function cmdUpdate(flags: Flags) {
+  const taskId = flags.positional[1];
+  if (!taskId) throw new Error("update-task <task-id> --status <done|failed|cancelled> [--note <result>]");
+  const status = flags.status;
+  if (status !== "done" && status !== "failed" && status !== "cancelled") {
+    throw new Error(
+      "update-task requires --status one of done|failed|cancelled",
+    );
+  }
+  const scope = resolveScope(flags);
+  const actor = resolveIdentity(scope, flags);
+  const result = taskStore.update(taskId, scope, actor, status, flags.note);
+  if ("error" in result) {
+    if (flags.json) return printJson(result);
+    console.error(`update-task failed: ${result.error}`);
+    process.exit(1);
+  }
+  if (flags.json) return printJson({ ...result, task_id: taskId, status });
+  console.log(`task ${taskId} -> ${status}`);
+}
+
 function cmdContext(flags: Flags) {
   const scope = resolveScope(flags);
   const rows = db
@@ -1021,6 +1059,8 @@ const HANDLERS: Record<Subcommand, (flags: Flags) => void | Promise<void>> = {
   messages: cmdMessages,
   tasks: cmdTasks,
   "request-task": cmdRequestTask,
+  claim: cmdClaim,
+  "update-task": cmdUpdate,
   dispatch: cmdDispatch,
   context: cmdContext,
   kv: cmdKv,

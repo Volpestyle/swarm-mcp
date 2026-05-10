@@ -7,6 +7,8 @@ export const SUBCOMMANDS = [
   "messages",
   "tasks",
   "request-task",
+  "claim",
+  "update-task",
   "dispatch",
   "context",
   "kv",
