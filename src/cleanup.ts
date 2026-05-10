@@ -480,6 +480,10 @@ function scopedInstanceIdForKey(key: string) {
   if (key.startsWith("plan/") && key !== "plan/latest") {
     return key.slice("plan/".length);
   }
+  for (const backend of registeredBackends()) {
+    const id = backend.instanceIdFromIdentityKey(key);
+    if (id) return id;
+  }
   return null;
 }
 
@@ -523,7 +527,11 @@ function cleanupOrphanKv(options: CleanupOptions, result: CleanupResult) {
       `SELECT scope, key, updated_at
        FROM kv
        WHERE updated_at < ?
-         AND (key LIKE 'progress/%' OR key LIKE 'plan/%')${scoped.clause}
+         AND (
+           key LIKE 'progress/%'
+           OR key LIKE 'plan/%'
+           OR key LIKE 'identity/%'
+         )${scoped.clause}
        ORDER BY scope, key`,
     )
     .all(cutoff, ...scoped.args) as Array<{

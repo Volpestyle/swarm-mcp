@@ -332,4 +332,24 @@ describe("workspace backend registry", () => {
     expect(result.identity_rows_deleted).toBeGreaterThanOrEqual(1);
     expect(kv.get(inst.scope, key)).toBeNull();
   });
+
+  test("orphan identity rows older than orphanKvTtl are swept by cleanupOrphanKv", async () => {
+    const cleanup = await import("../src/cleanup");
+    workspaceIdentity.registerBackend(syntheticBackend("alpha"));
+    const scope = "scope-identity-orphan-sweep";
+
+    const orphanId = "ghost-instance-id";
+    const orphanKey = workspaceBackend.identityKey("alpha", orphanId);
+    kv.set(scope, orphanKey, JSON.stringify({ backend: "alpha", handle: "ghost" }), orphanId);
+
+    const stalePast = Math.floor(Date.now() / 1000) - cleanup.CLEANUP_POLICY.orphanKvTtlSecs - 10;
+    db.run(
+      "UPDATE kv SET updated_at = ? WHERE scope = ? AND key = ?",
+      [stalePast, scope, orphanKey],
+    );
+
+    const result = cleanup.runCleanup({ mode: "manual" });
+    expect(result.kv_keys_deleted).toContain(`${scope}:${orphanKey}`);
+    expect(kv.get(scope, orphanKey)).toBeNull();
+  });
 });
