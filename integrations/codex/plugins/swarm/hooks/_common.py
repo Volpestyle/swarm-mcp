@@ -8,8 +8,6 @@ parser) and exposes a singleton ``core`` for the entry scripts to call.
 
 from __future__ import annotations
 
-import os
-import re
 import sys
 from pathlib import Path
 
@@ -17,17 +15,8 @@ from pathlib import Path
 _INTEGRATIONS_ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(_INTEGRATIONS_ROOT / "_shared"))
 
+import swarm_adapter_contract as contract  # noqa: E402
 from swarm_hook_core import HookCore, RuntimeConfig  # noqa: E402
-
-
-_PATCH_PATH_RE = re.compile(
-    r"^\*\*\*\s+(Update|Add|Delete)\s+File:\s*(.+?)\s*$",
-    re.MULTILINE,
-)
-_PATCH_MOVE_RE = re.compile(
-    r"^\*\*\*\s+Move\s+File:\s*(.+?)\s*->\s*(.+?)\s*$",
-    re.MULTILINE,
-)
 
 
 def _patch_text_from_input(tool_input: object) -> str:
@@ -51,11 +40,7 @@ def _patch_text_from_input(tool_input: object) -> str:
 
 
 def _abs_path(p: str) -> str:
-    if not p:
-        return ""
-    if os.path.isabs(p):
-        return p
-    return os.path.abspath(os.path.join(HookCore.session_cwd(), p))
+    return contract.abs_path(p, HookCore.session_cwd)
 
 
 def _extract_paths(_tool_name: str, tool_input: object) -> list[str]:
@@ -63,24 +48,7 @@ def _extract_paths(_tool_name: str, tool_input: object) -> list[str]:
     if not patch:
         return []
 
-    seen: set[str] = set()
-    out: list[str] = []
-
-    def push(value: str | None) -> None:
-        if not value:
-            return
-        abs_p = _abs_path(value.strip())
-        if abs_p and abs_p not in seen:
-            seen.add(abs_p)
-            out.append(abs_p)
-
-    for match in _PATCH_PATH_RE.finditer(patch):
-        push(match.group(2))
-    for match in _PATCH_MOVE_RE.finditer(patch):
-        push(match.group(1))
-        push(match.group(2))
-
-    return out
+    return contract.apply_patch_paths(patch, HookCore.session_cwd)
 
 
 core = HookCore(

@@ -62,8 +62,20 @@ class SwarmRoleConfigTests(unittest.TestCase):
         self.assertIn("role:planner", args["label"])
         self.assertNotIn("role:gateway", args["label"])
         self.assertNotIn("role:worker", args["label"])
+        self.assertIn("session:session1", args["label"])
 
-    def test_gateway_role_keeps_pre_tool_lock_bridge(self) -> None:
+    def test_override_label_gets_identity_and_session_from_contract(self) -> None:
+        os.environ["SWARM_HERMES_LABEL"] = "role:researcher custom:x"
+        os.environ["SWARM_HERMES_IDENTITY"] = "personal"
+
+        args = lifecycle._register_args("abc-123", {"platform": "telegram"})
+
+        self.assertEqual(
+            args["label"],
+            "identity:personal role:researcher custom:x session:abc123",
+        )
+
+    def test_gateway_role_skips_pre_tool_lock_bridge(self) -> None:
         self._start_with_config({"swarm": {"role": "gateway"}})
 
         with mock.patch.object(lifecycle, "_has_peers", return_value=True) as has_peers, mock.patch.object(
@@ -77,8 +89,8 @@ class SwarmRoleConfigTests(unittest.TestCase):
             )
 
         self.assertIsNone(result)
-        has_peers.assert_called_once_with("session-123")
-        lock_file.assert_called_once_with(os.path.abspath("example.txt"), "write_file")
+        has_peers.assert_not_called()
+        lock_file.assert_not_called()
 
     def test_worker_role_keeps_pre_tool_lock_bridge(self) -> None:
         self._start_with_config({"swarm": {"role": "worker"}})
@@ -105,7 +117,7 @@ class SwarmRoleConfigTests(unittest.TestCase):
         self.assertIn("mode:gateway", args["label"])
         self.assertIn("role:planner", args["label"])
         self.assertIn("origin:hermes", args["label"])
-        self.assertIn("session:session-", args["label"])
+        self.assertIn("session:session1", args["label"])
 
     def test_patch_paths_are_absolute_and_include_moves(self) -> None:
         paths = lifecycle._paths_for_tool(
