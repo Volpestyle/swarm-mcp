@@ -23,11 +23,11 @@ parallels, see [`integrations/hermes/SPEC.md`](../../../hermes/SPEC.md) and
 | Responsibility | Mechanism |
 |---|---|
 | Auto-`register` on session start | `SessionStart` hook → `swarm-mcp register`, stores `instance_id` in hook scratch metadata |
-| Auto-`deregister` on session end | `SessionEnd` hook → `swarm-mcp deregister` |
+| Auto-`deregister` on session end | `Stop` hook → `swarm-mcp deregister` |
 | Auto-lock writes when peers exist | `PreToolUse` (matcher: `apply_patch`) → parses the patch envelope, calls `swarm-mcp lock` per path |
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
-| Publish and cleanup `identity/herdr/<instance_id>` | `SessionStart` / `SessionEnd` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
+| Publish and cleanup `identity/herdr/<instance_id>` | `SessionStart` / `Stop` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
 | Gateway conductor mode | `SWARM_CODEX_ROLE=gateway` registers as `role:planner`, blocks inline writes unless explicitly opted in |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 
@@ -75,6 +75,11 @@ Restart codex so it picks up the plugin's `hooks.json` and `commands/`. On
 the first launch after installing or changing hooks, review and approve the
 new hook entries in `/hooks`; until they are approved, Codex will not run the
 SessionStart auto-registration hook.
+
+Codex runs hook commands from the session cwd, not the plugin root, and does
+not currently expose a plugin-root environment variable to hook subprocesses.
+For that reason, this plugin's hook commands locate the installed plugin under
+`CODEX_HOME` / `~/.codex*` before executing the Python hook scripts.
 
 For local plugin development, Codex discovers installed plugin versions from
 real cache directories. If you want repo edits to flow into the installed
@@ -142,7 +147,7 @@ Hooks pick up the same env knobs as the hermes / Claude Code plugins, with
 | `SWARM_CODEX_AGENT_ROLE` / `SWARM_AGENT_ROLE` | Adds a `role:<name>` token to the derived label. Accepts `planner`, `implementer`, `reviewer`, `researcher`, `generalist`, or `worker` (the default; emits no token). |
 | `SWARM_CODEX_ROLE` / `SWARM_ROLE` | `worker` by default. Set `gateway` for planner/conductor behavior. |
 | `SWARM_CODEX_GATEWAY_INLINE_WRITES` + `SWARM_CODEX_GATEWAY_WORKSPACE_MIRROR` | Both must be set to allow gateway inline writes; otherwise write tools are denied and should be delegated. |
-| `SWARM_CODEX_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `SessionEnd` deregisters normally. |
+| `SWARM_CODEX_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `Stop` deregisters normally. |
 | `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this pane identity for express-lane peer wakes. |
 
 **Repo-wide role default — `.swarm-role` file.**
@@ -200,11 +205,11 @@ If the deny message never appears, the most common causes are:
 - SessionStart additionalContext priming registration with derived args
 - Lock bridge with deny-on-conflict, fail-open elsewhere
 - /swarm slash command
-- Best-effort identity KV cleanup on SessionEnd
+- Best-effort identity KV cleanup on Stop
 
 ### v0.2 — Autonomous lifecycle + gateway mode ✓ (this version)
 - `swarm-mcp register` / `deregister` / `list-instances`
-- SessionStart/SessionEnd hooks call lifecycle commands directly
+- SessionStart/Stop hooks call lifecycle commands directly
 - Gateway-mode planner labels and inline-write blocking
 
 ### v0.3 — Verify hook payload contract

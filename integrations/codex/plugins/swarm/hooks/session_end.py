@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SessionEnd hook -- cleanup the session's herdr identity KV and scratch dir."""
+"""Stop hook -- cleanup the session's herdr identity KV and scratch dir."""
 
 from __future__ import annotations
 

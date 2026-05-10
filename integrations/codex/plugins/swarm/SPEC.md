@@ -69,11 +69,11 @@ that a near-1:1 port works:
 |---|---|---|
 | Manifest | `.claude-plugin/plugin.json` | `.codex-plugin/plugin.json` |
 | Hooks file | `hooks.json` (root or `hooks/`) | `hooks.json` (root) |
-| Hook events | `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`, … | Same names; codex feature flag `CodexHooks` enables them |
+| Hook events | `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`, … | `SessionStart`, `Stop`, `PreToolUse`, `PostToolUse`, … |
 | Slash commands | `commands/<name>.md` with frontmatter | `commands/<name>.md` with frontmatter |
 | MCP servers | `.mcp.json` | `.mcp.json` |
 | Skills | `skills/<name>/SKILL.md` | `skills/<name>/SKILL.md` |
-| Hook command root | `${CLAUDE_PLUGIN_ROOT}` is available | Use paths relative to the plugin root, e.g. `python3 ./hooks/session_start.py` |
+| Hook command root | `${CLAUDE_PLUGIN_ROOT}` is available | Hook commands run from the session cwd; resolve scripts from `CODEX_HOME` / plugin cache |
 
 What does *not* port cleanly:
 
@@ -89,7 +89,9 @@ What does *not* port cleanly:
    contract is observed empirically.
 3. **Hook root environment.** Claude Code exposes a plugin-root env var, but
    Codex plugin hooks should not depend on `CODEX_PLUGIN_ROOT`; marketplace
-   plugin hook commands are written as plugin-root-relative paths.
+   plugin hook commands are executed from the session cwd. The hook manifest
+   uses a small launcher that finds the installed plugin under `CODEX_HOME`
+   or `~/.codex*` before executing the Python hook script.
 4. **`additionalContext` semantics.** Claude Code reliably feeds the
    `additionalContext` JSON output back into the agent's system context.
    Codex's behavior here is treated as compatible-until-proven-otherwise; if
@@ -103,7 +105,7 @@ What does *not* port cleanly:
 | Hook | Fires | Plugin behavior |
 |---|---|---|
 | `SessionStart` (matcher: `startup\|resume`) | New or resumed conversation | Compute label/scope/identity; call `swarm-mcp register`; write per-session scratch metadata including `instance_id`; publish `identity/herdr/<instance_id>` if `HERDR_PANE_ID` is present; emit `additionalContext` telling the agent it is registered and should follow the swarm role workflow. |
-| `SessionEnd` | Conversation ends | Best-effort `kv del identity/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
+| `Stop` | Conversation ends | Best-effort `kv del identity/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
 | `PreToolUse` (matcher: `apply_patch`) | Before each `apply_patch` dispatch | Parse the patch envelope; if peers exist in scope, `swarm-mcp lock` each path. On conflict, emit `permissionDecision: deny`. |
 | `PostToolUse` (matcher: `apply_patch`) | After each `apply_patch` dispatch | `swarm-mcp unlock` each path the matching pre acquired. |
 
@@ -239,7 +241,7 @@ turns, `swarm-mcp context` shows no residual locks.
 `/swarm` inside a registered session prints a compact summary listing
 instance count, task counts, kv key count, and recent message count.
 
-**S6: SessionEnd identity cleanup**
+**S6: Stop identity cleanup**
 With `HERDR_PANE_ID` set and the agent having published
 `identity/herdr/<id>`, exiting the session should result in
 `swarm-mcp kv get identity/herdr/<id>` returning empty/error.
