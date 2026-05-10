@@ -1,19 +1,45 @@
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#eef6ff", "primaryBorderColor": "#2563eb", "primaryTextColor": "#0f172a", "lineColor": "#64748b", "tertiaryColor": "#f8fafc", "fontFamily": "Inter, ui-sans-serif, system-ui, sans-serif"}}}%%
 flowchart LR
-  Operator["Operator or gateway"] -->|intent| Runtime["Agent runtime<br/>Hermes / Claude Code / Codex"]
-  Runtime -->|MCP tools| Coordinator["swarm-mcp<br/>Coordinator"]
-  Coordinator -->|durable state| DB[("swarm.db")]
-  Coordinator -->|dispatch| Spawner["Spawner backend<br/>herdr today / swarm-ui alt / swarm-server future"]
-  Spawner -->|launch + SWARM_MCP_INSTANCE_ID| Worker["Worker agent"]
-  Worker -->|register or adopt| Coordinator
-  Worker -->|publish handle| Identity["Workspace identity KV<br/>identity/workspace/backend/instance"]
-  Coordinator -->|prompt_peer resolves identity| Workspace["Workspace backend<br/>herdr today / swarm-server future"]
+  Operator["Operator surface<br/>Telegram / CLI / iOS"] -->|intent, approvals, summaries| Gateway["Notification gateway<br/>Hermes / launcher / shell"]
+  Gateway -->|MCP tools| Runtime["Agent runtime<br/>Claude Code / Codex / OpenCode / Hermes"]
+  Runtime -->|register, tasks, messages, locks, KV| Coordinator["swarm-mcp Coordinator<br/>stdio MCP server per session"]
+
+  subgraph Durable["swarm.db durable state"]
+    Instances[("instances<br/>instance_id, heartbeat, labels")]
+    Tasks[("tasks<br/>status, deps, assignee, result")]
+    Messages[("messages + events<br/>peer activity and audit")]
+    Context[("context<br/>file locks and annotations")]
+    KV[("kv<br/>workspace identity and small shared state")]
+  end
+
+  Coordinator -->|register / heartbeat / adopt| Instances
+  Coordinator -->|request / claim / update| Tasks
+  Coordinator -->|send / wait / audit| Messages
+  Coordinator -->|lock / annotate| Context
+  Coordinator -->|kv_get / kv_set| KV
+
+  Gateway -->|dispatch spawn intent| Spawner["Spawner backend<br/>herdr today / swarm-ui alt / swarm-server future"]
+  Spawner -->|precreate row + inject SWARM_MCP_INSTANCE_ID| Instances
+  Spawner -->|launch worker process| Workspace["Workspace backend<br/>herdr panes today / swarm-server PTYs future"]
+  Workspace -->|env + PTY/session| Worker["Worker agent<br/>adopts instance_id"]
+
+  Worker -->|register/adopt + coordinate| Coordinator
+  Worker -->|publish transport handle| KV
+  Coordinator -->|prompt_peer resolves identity/workspace/backend/instance| KV
+  Coordinator -->|wake by instance_id| Workspace
   Workspace -->|short wake prompt only| Worker
+
+  Gateway <-->|human-facing issue state| Tracker["Work tracker<br/>Linear / Jira / backlog"]
+  Worker -->|authorized evidence and comments| Tracker
 
   classDef durable fill:#ecfdf5,stroke:#059669,color:#064e3b
   classDef adapter fill:#fff7ed,stroke:#ea580c,color:#7c2d12
   classDef runtime fill:#eef6ff,stroke:#2563eb,color:#0f172a
+  classDef surface fill:#fdf2f8,stroke:#db2777,color:#831843
+  classDef tracker fill:#f5f3ff,stroke:#7c3aed,color:#4c1d95
 
-  class Coordinator,DB,Identity durable
+  class Coordinator,Instances,Tasks,Messages,Context,KV durable
   class Spawner,Workspace adapter
   class Runtime,Worker runtime
+  class Operator,Gateway surface
+  class Tracker tracker

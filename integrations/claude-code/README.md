@@ -84,7 +84,7 @@ session — it does not install it for you. The simplest way is:
 swarm-mcp init --dir .
 ```
 
-That writes a project-local `.mcp.json` and copies the bundled skills. See
+That writes a project-local `.mcp.json` and copies the packaged `swarm-mcp` skill. See
 [`docs/install-skill.md`](../../docs/install-skill.md) for global installs and
 non-Claude hosts.
 

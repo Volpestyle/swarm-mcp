@@ -4,7 +4,7 @@ The `swarm-mcp` CLI has three uses:
 
 1. Read/write shared swarm state from contexts that cannot speak MCP
 2. Control a running `swarm-ui` app through the `swarm-mcp ui ...` command family
-3. Install project-local MCP config and the bundled skills with `swarm-mcp init`
+3. Install project-local MCP config and the packaged skill with `swarm-mcp init`
 
 Inside an MCP-enabled agent session, prefer the MCP tools for swarm coordination primitives — they are the primary, structured, notification-integrated interface. Gateway agents should use the MCP `dispatch` tool rather than shelling out. Reach for the CLI when you are writing a helper script, operating from a plain terminal, or the user explicitly wants to drive `swarm-ui` from the CLI.
 
@@ -38,7 +38,7 @@ Setup:
 
 | Command | Purpose |
 |--|--|
-| `swarm-mcp init [--dir P] [--force] [--no-skills]` | Write `.mcp.json` and copy `skills/swarm-mcp` plus `skills/swarm-deepdive` into `.claude/skills/` unless `--no-skills` is passed. |
+| `swarm-mcp init [--dir P] [--force] [--no-skills]` | Write `.mcp.json` and copy `skills/swarm-mcp` into `.claude/skills/` unless `--no-skills` is passed. |
 
 Read-only (no identity required):
 

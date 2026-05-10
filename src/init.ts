@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SERVER_NAME = "swarm";
-const SKILLS = ["swarm-mcp", "swarm-deepdive"];
+const SKILLS = ["swarm-mcp"];
 
 type InitOptions = {
   dir: string;
@@ -120,6 +120,6 @@ export async function runInit(args: string[]) {
 
   console.log(`
 Done. Restart your coding-agent host to pick up .mcp.json.
-After restart, invoke \`/swarm-mcp\` to join the swarm or \`/swarm-deepdive\` to inspect swarm history.
+After restart, invoke \`/swarm-mcp\` to join the swarm.
 `);
 }

@@ -6,11 +6,11 @@ The short version: agents should keep using swarm tools (`dispatch`, `prompt_pee
 
 ## Mental Model
 
-![Backend configuration mental model](./diagrams/backend-configuration.png)
+![Control-plane and backend configuration overview](./diagrams/backend-configuration.png)
 
 Source: [`docs/diagrams/backend-configuration.mmd`](./diagrams/backend-configuration.mmd). Render with `bun run diagrams`.
 
-Durable coordination uses swarm `instance_id`. Workspace handles such as herdr `pane_id` or a future swarm-server `pty_id` are transport-local and live behind workspace identity rows.
+Durable coordination uses swarm `instance_id` and state in `swarm.db`. Workspace handles such as herdr `pane_id` or a future swarm-server `pty_id` are transport-local and live behind workspace identity rows.
 
 ## Configuration Layers
 
