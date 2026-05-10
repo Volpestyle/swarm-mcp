@@ -19,8 +19,10 @@ const repoRoot = resolve(here, "..");
 
 const { db } = await import("../src/db");
 const dispatch = await import("../src/dispatch");
+const herdrSpawner = await import("../src/backends/herdr_spawner");
 const kv = await import("../src/kv");
 const registry = await import("../src/registry");
+const spawnerBackend = await import("../src/spawner_backend");
 const workspaceBackend = await import("../src/workspace_backend");
 const workspaceIdentity = await import("../src/workspace_identity");
 
@@ -293,6 +295,109 @@ describe("workspace backend registry", () => {
     });
 
     expect(result).toMatchObject({ status: "no_worker", role: "implementer" });
+  });
+
+  test("dispatch binds spawned workers before releasing the spawn mutex", async () => {
+    const scope = "scope-dispatch-spawn-bind";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    const spawned = registry.register(
+      "/tmp/spawned",
+      "identity:personal role:implementer launch:testtoken",
+      scope,
+    );
+    const spawnerName = "test-bind";
+    spawnerBackend.registerSpawner({
+      name: spawnerName,
+      defaultWaitSeconds: 0,
+      defaultHarness() {
+        return "test";
+      },
+      spawn(input) {
+        const active = db
+          .query("SELECT COUNT(*) AS count FROM context WHERE scope = ? AND file = ? AND type = 'lock'")
+          .get(input.scope, input.lock_path) as { count: number };
+        expect(active.count).toBe(1);
+        return {
+          status: "spawned",
+          spawned_instance: spawned.id,
+          saw_lock_while_spawning: true,
+        };
+      },
+    });
+
+    const result = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Bind spawned task",
+      role: "implementer",
+      spawner: spawnerName,
+      force_spawn: true,
+      nudge: false,
+    });
+
+    expect(result).toMatchObject({
+      status: "spawned",
+      spawned_instance: spawned.id,
+      binding: { ok: true },
+    });
+    const task = db
+      .query("SELECT status, assignee FROM tasks WHERE id = ?")
+      .get(String(result.task_id)) as { status: string; assignee: string | null };
+    expect(task).toEqual({ status: "claimed", assignee: spawned.id });
+    const locks = db
+      .query("SELECT COUNT(*) AS count FROM context WHERE scope = ? AND file LIKE '/__swarm/spawn/%'")
+      .get(scope) as { count: number };
+    expect(locks.count).toBe(0);
+  });
+
+  test("herdr launch wait ignores unadopted leased placeholders", async () => {
+    const scope = "scope-herdr-launch-wait";
+    const leased = registry.register(
+      "/tmp/spawned",
+      "role:implementer launch:testtoken",
+      scope,
+      "/tmp/spawned",
+    );
+    registry.setLease(leased.id, Math.floor(Date.now() / 1000) + 60);
+
+    await expect(
+      herdrSpawner.waitForLaunchInstanceForTesting({
+        scope: leased.scope,
+        launchToken: "testtoken",
+        expectedInstance: leased.id,
+        timeoutSeconds: 0,
+      }),
+    ).resolves.toBeNull();
+
+    registry.register(
+      "/tmp/spawned",
+      "role:implementer launch:testtoken",
+      scope,
+      "/tmp/spawned",
+      leased.id,
+    );
+    expect(registry.get(leased.id)).toMatchObject({
+      id: leased.id,
+      scope: leased.scope,
+      adopted: true,
+      label: "role:implementer launch:testtoken",
+    });
+    expect(registry.list(leased.scope)).toContainEqual(
+      expect.objectContaining({ id: leased.id, label: "role:implementer launch:testtoken" }),
+    );
+
+    await expect(
+      herdrSpawner.waitForLaunchInstanceForTesting({
+        scope: leased.scope,
+        launchToken: "testtoken",
+        expectedInstance: leased.id,
+        timeoutSeconds: 0,
+      }),
+    ).resolves.toMatchObject({ id: leased.id, adopted: 1 });
   });
 
   test("workspace_identity does not own child process transport calls", () => {

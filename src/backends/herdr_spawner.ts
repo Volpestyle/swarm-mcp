@@ -3,6 +3,16 @@ import * as context from "../context";
 import * as registry from "../registry";
 import type { SpawnerBackend } from "../spawner_backend";
 
+type InstanceRef = {
+  id: string;
+  label: string | null;
+  adopted?: boolean | number;
+};
+
+function isAdopted(inst: InstanceRef) {
+  return inst.adopted === true || inst.adopted === 1;
+}
+
 function identityDefaultHarness() {
   const identity = (
     process.env.AGENT_IDENTITY ??
@@ -91,8 +101,10 @@ function launchCommand(opts: {
   role: string;
   label: string;
   harness: string;
+  instanceId: string;
 }) {
   const env: Record<string, string> = {
+    SWARM_MCP_INSTANCE_ID: opts.instanceId,
     SWARM_MCP_SCOPE: opts.scope,
     SWARM_MCP_FILE_ROOT: opts.cwd,
     SWARM_MCP_DIRECTORY: opts.cwd,
@@ -116,12 +128,21 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForLaunchInstance(scope: string, launchToken: string, timeoutSeconds: number) {
+export async function waitForLaunchInstanceForTesting(opts: {
+  scope: string;
+  launchToken: string;
+  expectedInstance: string;
+  timeoutSeconds: number;
+}) {
+  const { scope, launchToken, expectedInstance, timeoutSeconds } = opts;
   const deadline = Date.now() + Math.max(0, timeoutSeconds * 1000);
   const token = `launch:${launchToken}`;
   do {
-    const found = registry.list(scope).find((inst) =>
-      (inst.label ?? "").split(/\s+/).includes(token),
+    const found = (registry.list(scope) as InstanceRef[]).find(
+      (inst) =>
+        inst.id === expectedInstance &&
+        isAdopted(inst) &&
+        (inst.label ?? "").split(/\s+/).includes(token),
     );
     if (found) return found;
     if (timeoutSeconds <= 0) return null;
@@ -175,12 +196,18 @@ export const herdrSpawnerBackend: SpawnerBackend = {
       launchToken: input.launch_token,
       extra: input.label,
     });
+    const leased = registry.register(input.cwd, label, input.scope, input.cwd);
+    registry.setLease(
+      leased.id,
+      Math.floor(Date.now() / 1000) + Math.max(60, input.wait_seconds + 30),
+    );
     const command = launchCommand({
       scope: input.scope,
       cwd: input.cwd,
       role: input.role,
       label,
       harness: input.harness,
+      instanceId: leased.id,
     });
     const run = runHerdrCommand(["pane", "run", paneId, command]);
     const workspaceHandle = {
@@ -190,6 +217,7 @@ export const herdrSpawnerBackend: SpawnerBackend = {
       pane_id: paneId,
     };
     if (run.error || run.status !== 0) {
+      registry.deregister(leased.id);
       return {
         status: "spawn_failed",
         workspace_handle: workspaceHandle,
@@ -205,19 +233,22 @@ export const herdrSpawnerBackend: SpawnerBackend = {
         ...input.lock_note,
         launch_token: input.launch_token,
         pane_id: paneId,
+        instance_id: leased.id,
         harness: input.harness,
       }),
     );
 
-    const spawned = await waitForLaunchInstance(
-      input.scope,
-      input.launch_token,
-      input.wait_seconds,
-    );
+    const spawned = await waitForLaunchInstanceForTesting({
+      scope: input.scope,
+      launchToken: input.launch_token,
+      expectedInstance: leased.id,
+      timeoutSeconds: input.wait_seconds,
+    });
     if (!spawned) {
       return {
         status: "spawn_in_flight",
         launch_token: input.launch_token,
+        expected_instance: leased.id,
         workspace_handle: workspaceHandle,
       };
     }
@@ -225,6 +256,7 @@ export const herdrSpawnerBackend: SpawnerBackend = {
     return {
       status: "spawned",
       spawned_instance: spawned.id,
+      expected_instance: leased.id,
       launch_token: input.launch_token,
       workspace_handle: workspaceHandle,
     };

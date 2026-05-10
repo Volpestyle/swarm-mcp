@@ -15,15 +15,13 @@ import * as planner from "./planner";
 import * as prompts from "./prompts";
 import * as registry from "./registry";
 import * as spawnerBackend from "./spawner_backend";
+import { registerDefaultSpawners } from "./spawner_defaults";
 import * as tasks from "./tasks";
 import * as workspaceIdentity from "./workspace_identity";
 import { herdrWorkspaceBackend } from "./backends/herdr";
-import { herdrSpawnerBackend } from "./backends/herdr_spawner";
-import { swarmUiSpawnerBackend } from "./backends/swarm_ui_spawner";
 
 workspaceIdentity.registerBackend(herdrWorkspaceBackend);
-spawnerBackend.registerSpawner(herdrSpawnerBackend);
-spawnerBackend.registerSpawner(swarmUiSpawnerBackend);
+registerDefaultSpawners();
 
 let instance: registry.Instance | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;

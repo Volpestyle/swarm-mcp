@@ -6,8 +6,11 @@ import * as registry from "./registry";
 import * as taskStore from "./tasks";
 import type { TaskType } from "./generated/protocol";
 import * as spawnerBackend from "./spawner_backend";
+import { registerDefaultSpawners } from "./spawner_defaults";
 import * as ui from "./ui";
 import * as workspaceIdentity from "./workspace_identity";
+
+registerDefaultSpawners();
 
 type InstanceRef = {
   id: string;
@@ -366,9 +369,13 @@ export async function runDispatch(opts: DispatchOptions) {
     return { ...basePayload, ...spawn };
   }
 
-  context.clearLocks(opts.requester, opts.scope, lockPath);
   const spawnedInstance =
     typeof spawn.spawned_instance === "string" ? spawn.spawned_instance : "";
+  let binding: Record<string, unknown> | null = null;
+  if (spawnedInstance) {
+    binding = taskStore.reserveForAssignee(result.id, opts.scope, spawnedInstance);
+  }
+  context.clearLocks(opts.requester, opts.scope, lockPath);
   const prompt = spawnedInstance
     ? promptPeerResult({
         scope: opts.scope,
@@ -385,6 +392,7 @@ export async function runDispatch(opts: DispatchOptions) {
     ...basePayload,
     ...spawn,
     spawned_instance: spawnedInstance || null,
+    binding,
     prompt,
   };
 }

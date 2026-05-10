@@ -11,14 +11,12 @@ import { file as fileFor, scope as scopeFor } from "./paths";
 import { SUBCOMMANDS, type Subcommand } from "./subcommands";
 import { TASK_TYPES, type TaskType } from "./generated/protocol";
 import * as spawnerBackend from "./spawner_backend";
+import { registerDefaultSpawners } from "./spawner_defaults";
 import * as workspaceIdentity from "./workspace_identity";
 import { herdrWorkspaceBackend } from "./backends/herdr";
-import { herdrSpawnerBackend } from "./backends/herdr_spawner";
-import { swarmUiSpawnerBackend } from "./backends/swarm_ui_spawner";
 
 workspaceIdentity.registerBackend(herdrWorkspaceBackend);
-spawnerBackend.registerSpawner(herdrSpawnerBackend);
-spawnerBackend.registerSpawner(swarmUiSpawnerBackend);
+registerDefaultSpawners();
 
 type Flags = {
   positional: string[];

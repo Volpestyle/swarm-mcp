@@ -472,6 +472,41 @@ export function claim(
   return { error: `Task is already ${task.status}` };
 }
 
+export function reserveForAssignee(id: string, scope: string, assignee: string) {
+  const before = db
+    .query("SELECT status, assignee FROM tasks WHERE id = ? AND scope = ?")
+    .get(id, scope) as { status: TaskStatus; assignee: string | null } | null;
+
+  if (!before) return { error: "Task not found" };
+  if (before.status !== "open" || before.assignee !== null) {
+    return { error: `Task is already ${before.status}` };
+  }
+
+  const result = db.run(
+    `UPDATE tasks
+     SET assignee = ?, status = 'claimed', updated_at = unixepoch(), changed_at = ?
+     WHERE id = ? AND scope = ? AND status = 'open' AND assignee IS NULL`,
+    [assignee, stamp(), id, scope],
+  );
+
+  if (result.changes > 0) {
+    emit({
+      scope,
+      type: "task.reserved",
+      actor: assignee,
+      subject: id,
+      payload: { prior_status: before.status, status: "claimed" },
+    });
+    return { ok: true as const };
+  }
+
+  const task = db
+    .query("SELECT status FROM tasks WHERE id = ? AND scope = ?")
+    .get(id, scope) as { status: TaskStatus } | null;
+  if (!task) return { error: "Task not found" };
+  return { error: `Task is already ${task.status}` };
+}
+
 export function update(
   id: string,
   scope: string,

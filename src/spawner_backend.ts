@@ -48,7 +48,7 @@ export function requireSpawner(name: string | undefined) {
   const suffix = registered.length
     ? ` Registered spawners: ${registered.join(", ")}.`
     : " No spawner backends are registered.";
-  throw new Error(`Unsupported dispatch spawner "${normalized}".${suffix}`);
+  throw new Error(`Unknown dispatch spawner "${normalized}".${suffix}`);
 }
 
 export function registeredSpawners() {
