@@ -111,7 +111,36 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertIn("swarm coordination is active", rendered)
         self.assertIn("Instance `inst-1`", rendered)
         self.assertIn("`bootstrap`", rendered)
+        self.assertIn('adopt_instance_id="inst-1"', rendered)
         self.assertNotIn("Call the `register` tool", rendered)
+
+    def test_session_start_override_label_preserves_session_token(self) -> None:
+        os.environ["SWARM_TEST_LABEL"] = "identity:personal role:researcher topic:debug"
+
+        calls: list[list[str]] = []
+
+        def fake_run(args: list[str], timeout: float = 8.0) -> tuple[int, str, str]:
+            calls.append(args)
+            if args[0] == "register":
+                return (
+                    0,
+                    json.dumps({"id": "inst-override", "scope": "/repo", "file_root": "/repo"}),
+                    "",
+                )
+            return 0, "{}", ""
+
+        with mock.patch.object(self.core, "run_swarm", side_effect=fake_run):
+            output = self.run_hook(
+                {"session_id": "abc-123", "cwd": "/repo", "source": "startup"}
+            )
+
+        self.assertEqual(calls[0][:3], ["register", "/repo", "--label"])
+        self.assertIn("identity:personal role:researcher topic:debug", calls[0][3])
+        self.assertIn("session:abc123", calls[0][3])
+        meta = self.core.read_session_meta("abc-123")
+        self.assertIn("session:abc123", meta["label"])
+        rendered = json.loads(output)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn('adopt_instance_id="inst-override"', rendered)
 
     def test_session_start_falls_back_to_manual_context_when_register_fails(self) -> None:
         with mock.patch.object(

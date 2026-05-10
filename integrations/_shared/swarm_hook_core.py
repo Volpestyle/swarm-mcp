@@ -299,10 +299,12 @@ class HookCore:
     def derived_label(self, session_id: str) -> str:
         override = self._env("LABEL") or os.environ.get("SWARM_HERMES_LABEL")
         if override:
+            label = override
             if any(part.startswith("identity:") for part in override.split()):
-                return override
+                return self._with_session_token(label, session_id)
             token = self.identity_token()
-            return f"{token} {override}".strip() if token else override
+            label = f"{token} {override}".strip() if token else override
+            return self._with_session_token(label, session_id)
 
         parts: list[str] = []
         token = self.identity_token()
@@ -320,6 +322,13 @@ class HookCore:
         if short:
             parts.append(f"session:{short}")
         return " ".join(parts)
+
+    def _with_session_token(self, label: str, session_id: str) -> str:
+        short = self.session_short(session_id)
+        token = f"session:{short}" if short else ""
+        if token and token not in label.split():
+            return f"{label} {token}".strip()
+        return label
 
     # -- Per-session scratch dir --------------------------------------------
 
@@ -628,6 +637,10 @@ class HookCore:
                 "",
                 "Call the swarm `bootstrap` tool to rehydrate state, then act on any pending work.",
                 "See the `swarm-mcp` skill for the coordination protocol.",
+                "If bootstrap says you are not registered, retry bootstrap with "
+                f"`adopt_instance_id=\"{instance_id}\"` or call register with the "
+                "same `adopt_instance_id`; this is the SessionStart lease id "
+                "that already owns any published workspace identity.",
             ]
             if meta.get("herdr_identity_published"):
                 lines.append(
