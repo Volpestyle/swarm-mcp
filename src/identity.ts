@@ -1,0 +1,54 @@
+/**
+ * Identity boundary helpers shared by registry, dispatch, and write-path
+ * handlers. The control-plane contract treats `identity:work` /
+ * `identity:personal` (or any explicit identity token) as a hard delegation
+ * boundary: tasks, messages, and prompts that cross identities are forbidden.
+ *
+ * These helpers are intentionally label-based. The launched process root (its
+ * config dir, MCP auth, and AGENT_IDENTITY env) is the underlying source of
+ * truth; the swarm label is the routing/audit surface and what we can compare
+ * server-side.
+ */
+export type LabelOwner = { label: string | null } | null | undefined;
+
+const IDENTITY_PREFIX = "identity:";
+
+export function identityToken(owner: LabelOwner): string {
+  return (
+    (owner?.label ?? "")
+      .split(/\s+/)
+      .find((token) => token.startsWith(IDENTITY_PREFIX)) ?? ""
+  );
+}
+
+export function identityName(owner: LabelOwner): string {
+  const token = identityToken(owner);
+  return token ? token.slice(IDENTITY_PREFIX.length) : "";
+}
+
+export function processIdentity(): string {
+  const raw = (process.env.AGENT_IDENTITY ?? "").trim();
+  return raw ? `${IDENTITY_PREFIX}${raw}` : "";
+}
+
+/**
+ * Returns a non-null reason string when a write from `sender` to `target`
+ * should be rejected because their identity tokens conflict. Missing tokens on
+ * either side are allowed (compat for legacy/unlabeled instances) but should
+ * trigger a warning at the source.
+ */
+export function crossIdentityReason(
+  sender: LabelOwner,
+  target: LabelOwner,
+): string | null {
+  if (envTruthy("SWARM_MCP_ALLOW_CROSS_IDENTITY")) return null;
+  const a = identityToken(sender);
+  const b = identityToken(target);
+  if (!a || !b) return null;
+  if (a === b) return null;
+  return `Cross-identity coordination blocked: sender ${a}, target ${b}. Delegation across the identity boundary is forbidden (see swarm-mcp/docs/control-plane.md). Set SWARM_MCP_ALLOW_CROSS_IDENTITY=1 to override from a trusted shell.`;
+}
+
+function envTruthy(name: string) {
+  return /^(1|true|yes|on)$/i.test((process.env[name] ?? "").trim());
+}

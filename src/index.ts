@@ -8,6 +8,7 @@ import { runCleanup } from "./cleanup";
 import { db } from "./db";
 import * as context from "./context";
 import * as dispatch from "./dispatch";
+import { crossIdentityReason } from "./identity";
 import * as kv from "./kv";
 import * as messages from "./messages";
 import { file as filepath, norm, scope as scopeFor } from "./paths";
@@ -830,6 +831,11 @@ registeredTool(
       };
     }
 
+    const crossId = crossIdentityReason(current, target);
+    if (crossId) {
+      return { content: [{ type: "text", text: crossId }] };
+    }
+
     messages.send(current.id, current.scope, recipient, content);
     return respond(`Message sent to ${recipient}`);
   },
@@ -853,6 +859,11 @@ registeredTool(
     }
     if (target.id === current.id) {
       return respondJson({ error: "Cannot prompt yourself" });
+    }
+
+    const crossId = crossIdentityReason(current, target);
+    if (crossId) {
+      return respondJson({ error: crossId });
     }
 
     return respondJson(
@@ -965,6 +976,10 @@ registeredTool(
           ],
         };
       }
+      const crossId = crossIdentityReason(current, target);
+      if (crossId) {
+        return { content: [{ type: "text", text: crossId }] };
+      }
     }
 
     const result = tasks.request(current.id, current.scope, type, title, {
@@ -1034,7 +1049,9 @@ registeredTool(
       resolved,
       (assigneeId) => {
         const target = registry.get(assigneeId);
-        return !!target && target.scope === current.scope;
+        if (!target || target.scope !== current.scope) return false;
+        if (crossIdentityReason(current, target)) return false;
+        return true;
       },
     );
 

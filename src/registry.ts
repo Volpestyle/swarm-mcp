@@ -2,9 +2,23 @@ import { randomUUID } from "node:crypto";
 import { releaseInstanceState, runCleanup, type CleanupMode } from "./cleanup";
 import { db } from "./db";
 import { emit } from "./events";
+import { identityToken, processIdentity } from "./identity";
 import { norm, root, scope as scoped } from "./paths";
 import * as planner from "./planner";
 import { now } from "./time";
+
+function warnIdentityMismatch(label: string | null, context: string) {
+  const claimed = identityToken({ label });
+  const actual = processIdentity();
+  if (!claimed || !actual) return;
+  if (claimed !== actual) {
+    console.warn(
+      `[swarm-mcp] ${context}: claimed ${claimed} but process AGENT_IDENTITY is ${actual.slice("identity:".length)}. ` +
+        `The launcher and label disagree — coordination-write checks will trust the label, not the process env. ` +
+        `Verify the calling agent is launched under the matching identity wrapper.`,
+    );
+  }
+}
 
 export type Instance = {
   id: string;
@@ -89,7 +103,9 @@ export function adoptInstanceId(
   const existing = instanceRow(instanceId);
   if (!existing) return null;
   if (existing.scope !== nextScope || existing.directory !== dir) return null;
-  return adopt(existing, trimmedLabel ?? existing.label);
+  const nextLabel = trimmedLabel ?? existing.label;
+  warnIdentityMismatch(nextLabel, `adoptInstanceId(${instanceId})`);
+  return adopt(existing, nextLabel);
 }
 
 export function prune(mode: CleanupMode = "opportunistic") {
@@ -109,6 +125,8 @@ export function register(
   const dir = norm(directory);
   const trimmedLabel = label?.trim() || null;
   const nextScope = scoped(dir, value);
+
+  warnIdentityMismatch(trimmedLabel, "register");
 
   if (adoptId) {
     const adopted = adoptInstanceId(directory, label, value, adoptId);

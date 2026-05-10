@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import * as context from "./context";
 import { db } from "./db";
+import { identityToken } from "./identity";
 import * as messages from "./messages";
 import * as registry from "./registry";
 import * as taskStore from "./tasks";
@@ -68,10 +69,6 @@ function roleToken(role: string | undefined) {
 
 function labelTokens(inst: InstanceRef) {
   return (inst.label ?? "").split(/\s+/).filter(Boolean);
-}
-
-function identityToken(inst: InstanceRef | null | undefined) {
-  return (inst?.label ?? "").split(/\s+/).find((token) => token.startsWith("identity:")) ?? "";
 }
 
 function hasRole(inst: InstanceRef, role: string | undefined) {

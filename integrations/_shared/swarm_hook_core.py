@@ -38,6 +38,29 @@ except ModuleNotFoundError:  # pragma: no cover - package import path for tests
     from . import swarm_adapter_contract as contract
 
 
+_WARNED_MISSING_IDENTITY: set[str] = set()
+
+
+def _warn_missing_identity_once(env_prefix: str) -> None:
+    if env_prefix in _WARNED_MISSING_IDENTITY:
+        return
+    _WARNED_MISSING_IDENTITY.add(env_prefix)
+    import sys
+
+    runtime_hint = {
+        "CC": "claude-code (use clawd for work, clowd for personal)",
+        "CODEX": "codex (use codex for work, cdx for personal)",
+    }.get(env_prefix, f"runtime with env prefix {env_prefix}")
+    print(
+        f"[swarm-mcp] {runtime_hint}: session has no AGENT_IDENTITY / "
+        f"SWARM_{env_prefix}_IDENTITY / SWARM_IDENTITY env set. Falling back to "
+        f"identity:unknown. Launch via the matching identity wrapper to get a "
+        f"real identity token; bypassing the wrapper leaves the swarm boundary "
+        f"undefined.",
+        file=sys.stderr,
+    )
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     """Per-runtime knobs that parameterize HookCore.
@@ -183,20 +206,39 @@ class HookCore:
             or os.environ.get("SWARM_MCP_FILE_ROOT")
         )
 
-    def identity_token(self) -> str:
-        value = (
+    def _raw_identity(self) -> str:
+        return (
             self._env("IDENTITY")
             or os.environ.get("SWARM_HERMES_IDENTITY")
             or os.environ.get("AGENT_IDENTITY")
             or os.environ.get("SWARM_IDENTITY")
             or ""
         ).strip()
-        if not value:
-            return ""
-        return contract.identity_token(value)
+
+    def resolved_identity_name(self) -> str:
+        """Identity name with fallback to ``unknown``.
+
+        Sessions launched without a matching identity wrapper (raw ``claude`` /
+        ``codex`` / ``hermes`` instead of ``clawd``/``clowd`` / ``codex``/``cdx``
+        / ``hermesw``/``hermesp``) miss the launcher's ``AGENT_IDENTITY``
+        export and would otherwise register without any ``identity:`` token.
+        Cross-identity boundary checks fail-open on missing identities, so an
+        unlabeled instance is discoverable from any identity — defeating the
+        boundary. We substitute ``unknown`` so the label always carries a
+        distinct, non-work/non-personal identity token, then warn the operator
+        once per prefix so they can fix the launcher.
+        """
+        derived = contract.identity_name(self._raw_identity())
+        if derived:
+            return derived
+        _warn_missing_identity_once(self.config.env_prefix)
+        return "unknown"
+
+    def identity_token(self) -> str:
+        return contract.identity_token(self.resolved_identity_name())
 
     def identity_name(self) -> str:
-        return contract.identity_name(self.identity_token())
+        return self.resolved_identity_name()
 
     def work_tracker_config(self, cwd: str = "", scope: Optional[str] = None) -> dict:
         return contract.work_tracker_config(
@@ -290,7 +332,7 @@ class HookCore:
                 plugin_role=self.plugin_role(),
                 session_id=session_id,
                 override_label=self._env("LABEL") or os.environ.get("SWARM_HERMES_LABEL") or "",
-                identity=(self._env("IDENTITY") or os.environ.get("SWARM_HERMES_IDENTITY") or os.environ.get("AGENT_IDENTITY") or os.environ.get("SWARM_IDENTITY") or ""),
+                identity=self.resolved_identity_name(),
                 agent_role=(self._env("AGENT_ROLE") or self._role_from_file() or os.environ.get("SWARM_AGENT_ROLE") or ""),
             )
         )

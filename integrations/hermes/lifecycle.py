@@ -35,6 +35,39 @@ _lock = threading.Lock()
 _json_decoder = JSONDecoder()
 _WRITE_TOOLS = {"write_file", "patch", "edit_file", "apply_patch"}
 _VALID_PLUGIN_ROLES = {"worker", "gateway"}
+_warned_missing_identity = False
+
+
+def _resolved_identity() -> str:
+    """Return the identity for label/registration, falling back to ``unknown``.
+
+    Hermes sessions launched without an identity wrapper (raw ``hermes`` instead
+    of ``hermesp``/``hermesw``) miss ``AGENT_IDENTITY`` and would otherwise
+    register without any ``identity:`` token. Cross-identity boundary checks
+    fail-open on missing identities, so an unlabeled instance is discoverable
+    from any identity — defeating the boundary. We substitute ``unknown`` so the
+    label always carries a distinct, non-work/non-personal identity token, then
+    warn the operator once so they can fix the launcher.
+    """
+    global _warned_missing_identity
+    raw = (
+        os.environ.get("SWARM_HERMES_IDENTITY")
+        or os.environ.get("AGENT_IDENTITY")
+        or os.environ.get("SWARM_IDENTITY")
+        or ""
+    )
+    derived = contract.identity_name(raw)
+    if derived:
+        return derived
+    if not _warned_missing_identity:
+        logger.warning(
+            "swarm plugin: hermes session has no AGENT_IDENTITY / SWARM_HERMES_IDENTITY / "
+            "SWARM_IDENTITY env set. Falling back to identity:unknown. Launch via "
+            "hermesp (personal) or hermesw (work) to get a real identity token; raw "
+            "hermes bypasses the launcher and leaves the swarm boundary undefined."
+        )
+        _warned_missing_identity = True
+    return "unknown"
 
 
 def _load_config() -> dict[str, Any]:
@@ -76,12 +109,7 @@ def _server_prefix() -> str:
 
 
 def _identity_name() -> str:
-    return contract.identity_name(
-        os.environ.get("SWARM_HERMES_IDENTITY")
-        or os.environ.get("AGENT_IDENTITY")
-        or os.environ.get("SWARM_IDENTITY")
-        or ""
-    )
+    return _resolved_identity()
 
 
 def _work_tracker_config(kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -228,12 +256,7 @@ def _register_args(session_id: str, kwargs: dict[str, Any]) -> dict:
             session_id=session_id,
             platform=platform,
             override_label=os.environ.get("SWARM_HERMES_LABEL") or "",
-            identity=(
-                os.environ.get("SWARM_HERMES_IDENTITY")
-                or os.environ.get("AGENT_IDENTITY")
-                or os.environ.get("SWARM_IDENTITY")
-                or ""
-            ),
+            identity=_resolved_identity(),
             agent_role=(
                 os.environ.get("SWARM_HERMES_AGENT_ROLE")
                 or os.environ.get("SWARM_AGENT_ROLE")
