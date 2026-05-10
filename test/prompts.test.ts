@@ -6,8 +6,7 @@ describe("prompts", () => {
     const text = prompts.setup();
 
     expect(text).toContain("register");
-    expect(text).toContain("poll_messages");
-    expect(text).toContain("list_tasks");
+    expect(text).toContain("bootstrap");
     expect(text).toContain("owner/planner");
     expect(text).toContain("fresh window");
   });

@@ -21,9 +21,11 @@ If you choose a \`label\`, prefer machine-readable tokens such as \`provider:cod
 
 ## Check first
 
-Before starting work, call the swarm \`poll_messages\` and \`list_tasks\` tools to pick up requests from other sessions. Prefer the highest-priority open task when claiming work. Skip \`blocked\` tasks — they will become \`open\` automatically when their dependencies complete.
+Before starting work, call the swarm \`bootstrap\` tool. It returns \`{instance, peers, unread_messages, tasks}\` in a single round trip — the canonical "where am I, who else is here, what's pending" snapshot. Pass \`mark_read: false\` if you want to peek messages without consuming them.
 
-If \`list_instances\` shows you alone in this scope, you can skip per-edit lock calls entirely — there is no one to coordinate with. Re-enable locking when \`instance_changes\` reports peers joining.
+Prefer the highest-priority open task when claiming work. Skip \`blocked\` tasks — they will become \`open\` automatically when their dependencies complete.
+
+If \`bootstrap\` shows an empty \`peers\` list, you are alone in this scope and can skip per-edit lock calls entirely. Re-enable locking when \`instance_changes\` reports peers joining.
 
 ---
 
@@ -69,7 +71,7 @@ For planner sessions, the server maintains \`owner/planner\` automatically. Use 
 
 Keep values short and structured. JSON strings work well when the value needs a little shape.
 
-If your host compacts context or you start a fresh window, call \`register\` again and rehydrate from \`poll_messages\`, \`list_tasks\`, \`list_instances\`, and any role-specific KV keys you rely on. The shared database is the durable source of truth.
+If your host compacts context or you start a fresh window, call \`register\` again and rehydrate via \`bootstrap\` (plus any role-specific \`kv_get\` keys you rely on, like \`owner/planner\` or \`plan/latest\`). The shared database is the durable source of truth.
 
 ### Progress heartbeats
 
@@ -144,19 +146,17 @@ export function setup() {
    - \`label\`: optional, but when useful prefer machine-readable tokens such as \`provider:codex-cli role:planner\`; omit \`role:\` when this session should be a generalist
    - \`scope\`: omit unless I explicitly want to share across directories or worktrees; do not use it to split frontend/backend inside one repo
    - \`file_root\`: omit unless I explicitly want file paths to resolve against a different canonical checkout, such as a non-temporary repo path behind a disposable worktree
-2. Call the swarm \`poll_messages\` tool
-3. Call the swarm \`list_tasks\` tool — note open, blocked, and assigned tasks
-4. Call the swarm \`list_instances\` tool
-5. Check \`kv_get("owner/planner")\` and \`kv_get("plan/latest")\`. If \`owner/planner\` points to you, or no active planner owner exists, resume from the latest checkpoint instead of re-planning from scratch.
-6. Summarize:
+2. Call the swarm \`bootstrap\` tool — atomic \`{instance, peers, unread_messages, tasks}\` snapshot. Pass \`mark_read: false\` if you want to peek messages without consuming them.
+3. Check \`kv_get("owner/planner")\` and \`kv_get("plan/latest")\`. If \`owner/planner\` points to you, or no active planner owner exists, resume from the latest checkpoint instead of re-planning from scratch.
+4. Summarize:
    - my swarm ID
    - other active sessions in this scope
    - any useful \`role:\` labels among those sessions
    - open, blocked, or assigned tasks (claim highest priority first)
    - whether you currently own \`owner/planner\`
    - any immediate coordination risks
-7. Act on any pending work (claim tasks, respond to messages)
-8. Enter an autonomous loop using \`wait_for_activity\` — react to new messages, task changes, KV updates, and instance changes as they arrive. Do not wait for user prompting between tasks.
+5. Act on any pending work (claim tasks, respond to messages)
+6. Enter an autonomous loop using \`wait_for_activity\` — react to new messages, task changes, KV updates, and instance changes as they arrive. Do not wait for user prompting between tasks.
 
 If this host later compacts context or starts a fresh window, repeat this same rehydration flow instead of relying on remembered prompt text.`;
 }
@@ -212,10 +212,11 @@ export function protocol() {
   return `Follow the shared swarm coordination protocol for this session.
 
 - Use the swarm server tools exposed by your host
+- On session start (or after compaction), call \`bootstrap\` for the atomic \`{instance, peers, unread_messages, tasks}\` snapshot instead of issuing four separate read calls
 - When editing, call the swarm \`lock_file\` tool — its response also returns peer annotations on the file, so no separate pre-check is needed
 - Locks auto-release when you mark the task terminal via \`update_task\`. Use \`unlock_file\` only for early per-file release.
-- If \`list_instances\` shows no peers, you can skip locking until peers join (watch \`instance_changes\`)
-- When choosing collaborators, inspect \`list_instances\` labels for tokens like \`role:planner\`, \`role:reviewer\`, or \`role:implementer\`; if no \`role:\` token exists, treat that session as a generalist
+- If \`bootstrap\` shows an empty \`peers\` list, you can skip locking until peers join (watch \`instance_changes\`)
+- When choosing collaborators, inspect peer labels (from \`bootstrap\` or \`list_instances\`) for tokens like \`role:planner\`, \`role:reviewer\`, or \`role:implementer\`; if no \`role:\` token exists, treat that session as a generalist
 - Use the swarm \`annotate\` tool for file-specific findings
 - Use the swarm \`broadcast\` tool for important progress updates
 - \`claim_task\` already transitions a task to \`in_progress\`. Use \`update_task\` once at the end with \`done\`, \`failed\`, or \`cancelled\`.
