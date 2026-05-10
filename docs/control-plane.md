@@ -136,14 +136,14 @@ Required capabilities:
 - Detect adoption/registration.
 - Deduplicate retries using task idempotency plus spawn mutexes.
 
-First implementation: Hermes gateway/plugin code invoking herdr workspace and pane APIs. herdr owns the actual PTY/process; the gateway drives the spawn protocol against herdr's socket.
+First implementation: the `dispatch` path uses a registered spawner backend. The default backend invokes herdr workspace and pane APIs. herdr owns the actual PTY/process; swarm-mcp owns the durable task, spawn mutex, and adoption observation.
 
 Spawn dedupe has two valid ownership models:
 
 - **Requester-held mutex (current):** the requester/gateway creates an idempotent task, checks live workers, guards spawn with a synthetic Coordinator lock, invokes herdr, then explicitly releases the lock when the worker registers and claims/binds the task. This is the Hermes v0.4 path described in [`../integrations/hermes/SPEC.md §5.5`](../integrations/hermes/SPEC.md#55-no-double-spawn-invariant-gateway-fast-dispatch).
 - **Coordinator-owned spawn request (future):** the Coordinator exposes a first-class `request_spawn` primitive and owns the spawn mutex server-side. This may be cleaner later, but it is not required for the first stack.
 
-Boundary: the Spawner may call herdr, a cloud runner, SSH, or a sandbox provider, but it must report back through the Coordinator. Do not introduce a second PTY owner for the same worker; the first stack routes physical spawning through herdr.
+Boundary: the Spawner may call herdr, a cloud runner, SSH, or a sandbox provider, but it must report back through the Coordinator. Do not introduce a second PTY owner for the same worker; the first stack routes physical spawning through herdr. New terminal managers should implement the spawner/workspace backend contracts instead of adding product-specific branches to task, lock, message, or KV code.
 
 ### NotificationGateway
 
@@ -211,7 +211,7 @@ This is the first integration target. New abstractions should be justified by ma
 - Keep transport-local handles out of durable task/lock/message state.
 - Give workers the capabilities they need, but route them through the right source of truth: swarm for live coordination, Linear for human-facing work records, herdr for transport.
 - Treat `swarm-mcp` as the reference Coordinator, not as an assumption every adapter must hard-code.
-- Prefer explicit adapter contracts over hidden cross-imports.
+- Prefer explicit adapter contracts over hidden cross-imports; terminal/process control belongs in workspace or spawner backends, not in the coordination primitives.
 - Do not invent a generic framework layer until the concrete implementation creates pressure for it.
 
 ## Current Workstreams

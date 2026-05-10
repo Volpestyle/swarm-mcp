@@ -206,12 +206,21 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertEqual(calls[2][:3], ["deregister", "--as", "inst-1"])
         self.assertFalse(self.core.session_scratch("abc-123").joinpath("meta.json").exists())
 
-    def test_gateway_mode_blocks_inline_writes_unless_mirror_allows_path(self) -> None:
+    def test_gateway_mode_allows_inline_writes_and_uses_lock_bridge(self) -> None:
         os.environ["SWARM_TEST_ROLE"] = "gateway"
         self.core.write_session_meta("abc-123", {"plugin_role": "gateway", "scope": "/repo"})
+        calls: list[list[str]] = []
+
+        def fake_run(args: list[str], timeout: float = 8.0) -> tuple[int, str, str]:
+            calls.append(args)
+            return 0, "{}", ""
 
         out = io.StringIO()
-        with redirect_stdout(out):
+        with mock.patch.object(self.core, "has_peers", return_value=True), mock.patch.object(
+            self.core,
+            "run_swarm",
+            side_effect=fake_run,
+        ), redirect_stdout(out):
             self.core.run_pre_tool_use_hook(
                 io.StringIO(
                     json.dumps(
@@ -224,16 +233,14 @@ class HookCoreLifecycleTests(unittest.TestCase):
                 )
             )
 
-        decision = json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"]
-        self.assertEqual(decision, "deny")
+        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(calls[0][:2], ["lock", "/repo/file.txt"])
 
-    def test_gateway_inline_write_can_be_explicitly_allowed_for_mirror(self) -> None:
+    def test_gateway_inline_write_skips_locking_when_solo(self) -> None:
         mirror = Path(tempfile.mkdtemp(prefix="swarm-mirror-")).resolve()
         self.addCleanup(lambda: shutil.rmtree(mirror, ignore_errors=True))
         target = mirror / "file.txt"
         os.environ["SWARM_TEST_ROLE"] = "gateway"
-        os.environ["SWARM_TEST_GATEWAY_INLINE_WRITES"] = "1"
-        os.environ["SWARM_TEST_GATEWAY_WORKSPACE_MIRROR"] = str(mirror)
         self.core.write_session_meta("abc-123", {"plugin_role": "gateway", "scope": str(mirror)})
 
         out = io.StringIO()

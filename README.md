@@ -103,7 +103,9 @@ Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting 
 
 ## MCP server vs swarm-server
 
-The TypeScript `swarm-mcp` process is the stdio MCP server used by coding-agent hosts. It is enough for local multi-agent coordination through tools, resources, prompts, and the shared SQLite database.
+The TypeScript `swarm-mcp` process is the stdio MCP server used by coding-agent hosts. It is enough for local multi-agent coordination through tools, resources, prompts, and the shared SQLite database. Its core job is the lightweight bus: instance identity, tasks, messages, locks, shared context, KV, and best-effort wakeups.
+
+Spawner backends are adapters around that bus. The default adapter is `herdr`; `swarm-ui` remains available as a fallback/control-surface adapter. New terminal managers should plug in as spawner/workspace backends rather than changing the task/message/lock contract.
 
 The Rust `apps/swarm-server` daemon is a separate desktop/mobile control plane. It serves `swarm-ui` over a local Unix socket, exposes HTTPS/WSS on port 5444 for paired iOS/iPadOS clients, manages PTYs, and reads the same `swarm.db`. It is not required for the basic MCP setup above. See [`docs/swarm-server.md`](./docs/swarm-server.md).
 

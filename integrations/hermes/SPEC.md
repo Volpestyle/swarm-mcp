@@ -209,40 +209,26 @@ The plugin diverges by role (env or config):
 | Mode | Reads | Writes |
 |---|---|---|
 | `worker` (default, herdr pane) | Inline | Inline, with lock bridge |
-| `gateway` (Telegram/Discord/etc.) | Inline (against synced mirror) | Delegated by default; inline only under explicit, narrow conditions |
+| `gateway` (Telegram/Discord/etc.) | Inline for trivial edits; dispatched for larger work | Easy edits local, medium/large work via swarm `dispatch` |
 
-### 7.1 Why gateway never writes (by default)
+### 7.1 Why gateway delegates non-trivial writes
 
-- No fresh workspace state — sync risk or stale risk.
-- Can't hold meaningful locks against workers on different hosts.
-- All edits should leave a worker's audit trail in swarm tasks.
-- Keeps the gateway↔worker network seam manageable: gateway needs git-read-access only.
+- Medium or large work benefits from an isolated worker audit trail in swarm tasks.
+- Spawning/waking workers keeps implementation in normal terminal-managed workspaces.
+- The gateway should stay responsive as planner/conductor instead of becoming a long-running implementer.
+- A trivial, low-risk edit can be cheaper to make locally than to dispatch.
 
 ### 7.2 Three-tier write routing
 
 When a user intent on the gateway resolves to a write:
 
-1. **Delegate (default).** Gateway formulates a concrete patch + success criterion, then uses the dispatch primitive (see §9 v0.5) to create/reuse the task, wake or spawn a worker, and monitor the result. When a worker is available this becomes a near-synchronous round-trip — claim → apply → `update_task` → summarize. This is the path for ~all production traffic.
-2. **Inline fallback.** Gateway may write inline **only when all three are true**:
-   - `swarm.gateway.inline_writes: true` (explicit opt-in; behavior framing, not permission framing)
-   - `swarm.gateway.workspace_mirror` resolves to a path the gateway has trusted, current access to (synced repo, read-write mirror, etc.)
-   - No reachable worker is available to delegate to (`list_instances` returns no matching peer in scope)
-3. **Ask.** Otherwise — write needed but tier-2 conditions aren't met → gateway surfaces the impasse to the operator with two options: *wait* for a worker, or *spawn* one (m1+ bridge daemon makes "spawn from your phone" tractable). Inline editing without a configured mirror is **never** an offered option; the gateway has nowhere safe to write.
-
-### 7.3 Config
-
-```yaml
-swarm:
-  gateway:
-    inline_writes: false      # behavior, not permission
-    workspace_mirror: null    # path to synced repo; null = no mirror
-```
-
-With `workspace_mirror: null`, the gateway can read/status/plan but **must not** edit. Setting both `inline_writes: true` and a valid `workspace_mirror` enables the tier-3 fallback. Both must be present for inline writes; either alone is insufficient.
+1. **Inline easy edits.** For trivial, low-risk edits, the gateway may edit locally. The shared hook still uses the swarm lock bridge when peers exist, so real lock conflicts remain blocking.
+2. **Dispatch medium/large work.** Gateway formulates a concrete patch + success criterion, then uses the dispatch primitive (see §9 v0.5) to create/reuse the task, wake or spawn a worker, and monitor the result. When a worker is available this becomes a near-synchronous round-trip — claim → apply → `update_task` → summarize.
+3. **Ask.** If non-trivial work cannot be dispatched because no spawner or worker surface is available, gateway surfaces the impasse to the operator with options to wait, spawn, or explicitly authorize local implementation.
 
 ### 7.4 Reconciliation when gateway worked inline
 
-When tier-3 inline writes happen, the plugin emits an `[auto]` swarm broadcast: `gateway worked alone on <files> between T1–T2 — expect to reconcile`. This surfaces in `wait_for_activity` for any worker that comes online afterward, and in `/swarm status` summaries, so reconciliation isn't silent.
+When gateway inline writes happen while peers exist, the lock bridge provides collision protection. For multi-step local edits, the gateway should still leave durable context with `annotate` or a small task/result record so later workers can reconcile intent.
 
 ### 7.5 Gateway default vs routine commands
 
@@ -384,8 +370,8 @@ Result: exactly one new worker pane, exactly one task row, both calls return the
 
 Negative case: also verify a *different-gateway-instance* retry (rare but possible during gateway restarts) sees the existing lock via `search_context` and behaves the same way.
 
-**S8: Inline-write refusal with `inline_writes: false` (v0.5+)**
-Gateway with no workers and `swarm.gateway.inline_writes: false`. User asks for an edit. Gateway returns the tier-3 "ask" path: surfaces wait/spawn options, refuses inline write. Source files are unchanged. Flip `inline_writes: true` + valid `workspace_mirror`, retry → tier-2 fallback fires, edit lands in the mirror with `[auto]` reconciliation broadcast.
+**S8: Gateway local-small / dispatch-large routing (v0.5+)**
+Gateway with no workers. User asks for a trivial typo edit in one file. Gateway edits locally and summarizes. User then asks for a multi-file feature. Gateway creates/reuses a swarm task and drives `dispatch`; if no spawner surface is available, it asks the operator to start a worker or explicitly authorize local implementation.
 
 **S9: Herdr `pane.report_agent` integration (v0.6+)**
 Hermes session launched in a herdr pane with `HERDR_SOCKET_PATH` + `HERDR_PANE_ID` injected. herdr sidebar shows `agent=hermes state=idle` immediately on session start (before any agent turn fires). Send a prompt → state flips to `working`. Trigger an approval prompt → state flips to `blocked`. Exit → pane releases the agent binding. Compare to a hermes session launched without the env vars: regex-detection fallback applies, with `agent_status=unknown` until output heuristics catch up.
@@ -404,7 +390,7 @@ Cover plugin behavior without a live MCP server by stubbing `lifecycle._dispatch
   - first attempt: `search_context` returns empty → `lock_file` succeeds → spawn proceeds
   - second attempt (same gateway, same intent_hash): `search_context` finds existing lock → short-circuits to in-flight task ref **without** calling `lock_file` (proving the pre-check guards against same-instance re-entry)
   - explicit `unlock_file` after worker registers; verify lock is gone
-- Inline-write refusal: with `inline_writes: false`, write request returns the "ask" payload; with both `inline_writes: true` + `workspace_mirror` set + no peers, tier-2 fires
+- Gateway routing: trivial local edit succeeds; medium/large write request creates/reuses a dispatch task or returns an operator action request when no worker/spawner is available
 - `pane.report_agent` calls: `state=idle` on register, `working` during a stubbed dispatch, `blocked` on approval directive, `release_agent` on finalize
 
 ## 11. Design decisions

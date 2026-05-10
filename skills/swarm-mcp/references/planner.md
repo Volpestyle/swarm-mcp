@@ -27,7 +27,8 @@ The server maintains `owner/planner` automatically.
 - Use `priority`; higher values are claimed first.
 - Use `depends_on` to express ordering. Tasks with unmet dependencies start as `blocked` and auto-open when dependencies complete.
 - Use `idempotency_key` for crash-safe retries.
-- Avoid editing code yourself unless necessary.
+- Make trivial, low-risk edits locally when that is clearly faster than delegation.
+- Route medium or large implementation work through `dispatch` so swarm-mcp can wake or spawn a worker via the configured workspace backend.
 
 ## Stranded Task Escalation
 

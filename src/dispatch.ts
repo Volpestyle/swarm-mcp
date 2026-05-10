@@ -1,12 +1,12 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as context from "./context";
 import { db } from "./db";
 import * as messages from "./messages";
 import * as registry from "./registry";
 import * as taskStore from "./tasks";
-import * as ui from "./ui";
 import type { TaskType } from "./generated/protocol";
+import * as spawnerBackend from "./spawner_backend";
+import * as ui from "./ui";
 import * as workspaceIdentity from "./workspace_identity";
 
 type InstanceRef = {
@@ -128,150 +128,11 @@ function spawnLockPath(role: string, intentHash: string) {
   return `/__swarm/spawn/${cleanRole}/${intentHash}`;
 }
 
-type SpawnerName = "herdr" | "swarm-ui";
-
-function resolveSpawner(value: string | undefined): SpawnerName {
-  const raw = (
-    value ??
-    process.env.SWARM_SPAWNER ??
-    process.env.SWARM_DISPATCH_SPAWNER ??
-    "herdr"
-  ).trim().toLowerCase();
-  if (raw === "herdr") return "herdr";
-  if (raw === "swarm-ui" || raw === "swarm_ui" || raw === "ui") return "swarm-ui";
-  throw new Error(`Unknown dispatch spawner "${raw}". Expected herdr or swarm-ui.`);
-}
-
-function defaultHarness(spawner: SpawnerName) {
+function defaultHarness(spawner: spawnerBackend.SpawnerBackend) {
   const configured =
     process.env.SWARM_WORKER_HARNESS ?? process.env.SWARM_DISPATCH_HARNESS;
   if (configured?.trim()) return configured.trim();
-  if (spawner === "swarm-ui") return "claude";
-
-  const identity = (
-    process.env.AGENT_IDENTITY ??
-    process.env.SWARM_IDENTITY ??
-    process.env.SWARM_CC_IDENTITY ??
-    process.env.SWARM_CODEX_IDENTITY ??
-    ""
-  ).trim().toLowerCase();
-  if (identity === "personal") return "clowd";
-  if (identity === "work") return "clawd";
-  return "claude";
-}
-
-function cleanLabelValue(value: string, fallback: string) {
-  const clean = value.trim().replace(/[^A-Za-z0-9_.-]/g, "_");
-  return clean || fallback;
-}
-
-function labelWithLaunchToken(opts: {
-  role: string;
-  harness: string;
-  launchToken: string;
-  extra?: string | null;
-}) {
-  const tokens = [
-    `role:${cleanLabelValue(opts.role, "worker")}`,
-    `provider:${cleanLabelValue(opts.harness, "agent")}`,
-    `launch:${opts.launchToken}`,
-  ];
-  if (opts.extra?.trim()) tokens.push(...opts.extra.trim().split(/\s+/));
-  return Array.from(new Set(tokens)).join(" ");
-}
-
-function shellQuote(value: string) {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function runHerdrCommand(
-  args: string[],
-  timeout = 10_000,
-  extraEnv: Record<string, string> = {},
-) {
-  const bin = process.env.SWARM_HERDR_BIN?.trim() || "herdr";
-  return spawnSync(bin, args, {
-    encoding: "utf8",
-    env: { ...process.env, ...extraEnv },
-    timeout,
-  });
-}
-
-function outputText(value: string | Buffer | null | undefined) {
-  return typeof value === "string" ? value : (value?.toString("utf8") ?? "");
-}
-
-function processError(proc: ReturnType<typeof spawnSync>) {
-  return (
-    proc.error?.message ||
-    outputText(proc.stderr).trim() ||
-    outputText(proc.stdout).trim() ||
-    `command exited ${proc.status ?? "unknown"}`
-  );
-}
-
-function paneIdFromSplit(stdout: string) {
-  try {
-    const payload = JSON.parse(stdout || "{}");
-    const pane =
-      payload?.result?.pane?.pane_id ??
-      payload?.result?.pane?.id ??
-      payload?.pane_id ??
-      payload?.id;
-    return typeof pane === "string" && pane.trim() ? pane.trim() : "";
-  } catch {
-    return "";
-  }
-}
-
-function herdrParentPane() {
-  return (
-    process.env.SWARM_HERDR_PARENT_PANE?.trim() ||
-    process.env.HERDR_PANE_ID?.trim() ||
-    process.env.HERDR_PANE?.trim() ||
-    ""
-  );
-}
-
-function herdrLaunchCommand(opts: {
-  scope: string;
-  cwd: string;
-  role: string;
-  label: string;
-  harness: string;
-}) {
-  const env: Record<string, string> = {
-    SWARM_MCP_SCOPE: opts.scope,
-    SWARM_MCP_FILE_ROOT: opts.cwd,
-    SWARM_MCP_DIRECTORY: opts.cwd,
-    SWARM_AGENT_ROLE: opts.role,
-    SWARM_CC_AGENT_ROLE: opts.role,
-    SWARM_CODEX_AGENT_ROLE: opts.role,
-    SWARM_CC_LABEL: opts.label,
-    SWARM_CODEX_LABEL: opts.label,
-    SWARM_HERMES_LABEL: opts.label,
-  };
-  if (process.env.SWARM_MCP_BIN?.trim()) {
-    env.SWARM_MCP_BIN = process.env.SWARM_MCP_BIN.trim();
-  }
-  const assignments = Object.entries(env)
-    .map(([key, value]) => `${key}=${shellQuote(value)}`)
-    .join(" ");
-  return `cd ${shellQuote(opts.cwd)} && ${assignments} ${opts.harness}`;
-}
-
-async function waitForLaunchInstance(scope: string, launchToken: string, timeoutSeconds: number) {
-  const deadline = Date.now() + Math.max(0, timeoutSeconds * 1000);
-  const token = `launch:${launchToken}`;
-  do {
-    const found = (registry.list(scope) as InstanceRef[]).find((inst) =>
-      (inst.label ?? "").split(/\s+/).includes(token),
-    );
-    if (found) return found;
-    if (timeoutSeconds <= 0) return null;
-    await sleep(250);
-  } while (Date.now() < deadline);
-  return null;
+  return spawner.defaultHarness();
 }
 
 function exactSpawnLock(scope: string, file: string) {
@@ -378,38 +239,6 @@ export function promptPeerResult(opts: {
   return result;
 }
 
-const UI_WAIT_POLL_MS = 100;
-const DEFAULT_UI_WAIT_SECS = 5;
-const DEFAULT_HERDR_WAIT_SECS = 30;
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitForUiCommand(id: number, timeoutMs: number) {
-  const deadline = Date.now() + Math.max(0, timeoutMs);
-  let row = ui.get(id);
-  while (
-    row &&
-    row.status !== "done" &&
-    row.status !== "failed" &&
-    Date.now() < deadline
-  ) {
-    await sleep(UI_WAIT_POLL_MS);
-    row = ui.get(id);
-  }
-  return row;
-}
-
-function parseJsonMaybe(raw: string | null) {
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return raw;
-  }
-}
-
 export async function runDispatch(opts: DispatchOptions) {
   requireDispatchAuthority(opts.scope, opts.requester);
 
@@ -419,7 +248,7 @@ export async function runDispatch(opts: DispatchOptions) {
   const taskType = opts.type ?? "implement";
   const message = opts.message ?? opts.description ?? title;
   const workerRole = (opts.role ?? "implementer").trim() || "implementer";
-  const spawner = resolveSpawner(opts.spawner);
+  const spawner = spawnerBackend.requireSpawner(opts.spawner);
   const harness = opts.harness?.trim() || defaultHarness(spawner);
   const idempotencyKey =
     opts.idempotency_key ??
@@ -488,7 +317,7 @@ export async function runDispatch(opts: DispatchOptions) {
     task_id: result.id,
     intent_hash: intentHash,
     role: workerRole,
-    spawner,
+    spawner: spawner.name,
     started_at: startedAt,
   };
   const lockResult = context.lock(
@@ -507,173 +336,39 @@ export async function runDispatch(opts: DispatchOptions) {
     };
   }
 
-  const waitSeconds =
-    opts.wait_seconds ?? (spawner === "herdr" ? DEFAULT_HERDR_WAIT_SECS : DEFAULT_UI_WAIT_SECS);
+  const waitSeconds = opts.wait_seconds ?? spawner.defaultWaitSeconds;
   const basePayload = {
     task_id: result.id,
     task,
-    spawner,
+    spawner: spawner.name,
     spawn_lock: lockPath,
   };
 
-  if (spawner === "herdr") {
-    const parentPane = herdrParentPane();
-    if (!parentPane) {
-      context.clearLocks(opts.requester, opts.scope, lockPath);
-      return {
-        status: "spawn_failed",
-        ...basePayload,
-        error: "herdr spawner requires HERDR_PANE_ID, HERDR_PANE, or SWARM_HERDR_PARENT_PANE",
-      };
-    }
+  const spawn = await spawner.spawn({
+    scope: opts.scope,
+    requester: opts.requester,
+    cwd,
+    role: workerRole,
+    harness,
+    label: opts.label,
+    name: opts.name,
+    launch_token: intentHash,
+    lock_path: lockPath,
+    lock_note: lockNote,
+    wait_seconds: waitSeconds,
+  });
 
-    const direction = process.env.SWARM_HERDR_SPLIT_DIRECTION?.trim() || "right";
-    const split = runHerdrCommand([
-      "pane",
-      "split",
-      parentPane,
-      "--direction",
-      direction,
-      "--cwd",
-      cwd,
-      "--no-focus",
-    ]);
-    if (split.error || split.status !== 0) {
-      context.clearLocks(opts.requester, opts.scope, lockPath);
-      return {
-        status: "spawn_failed",
-        ...basePayload,
-        error: `herdr pane split failed: ${processError(split)}`,
-      };
-    }
-
-    const paneId = paneIdFromSplit(split.stdout);
-    if (!paneId) {
-      context.clearLocks(opts.requester, opts.scope, lockPath);
-      return {
-        status: "spawn_failed",
-        ...basePayload,
-        error: "herdr pane split returned no pane id",
-        herdr_stdout: split.stdout,
-      };
-    }
-
-    const label = labelWithLaunchToken({
-      role: workerRole,
-      harness,
-      launchToken: intentHash,
-      extra: opts.label,
-    });
-    const command = herdrLaunchCommand({
-      scope: opts.scope,
-      cwd,
-      role: workerRole,
-      label,
-      harness,
-    });
-    const run = runHerdrCommand(["pane", "run", paneId, command]);
-    if (run.error || run.status !== 0) {
-      context.clearLocks(opts.requester, opts.scope, lockPath);
-      return {
-        status: "spawn_failed",
-        ...basePayload,
-        workspace_handle: {
-          backend: "herdr",
-          handle_kind: "pane",
-          handle: paneId,
-          pane_id: paneId,
-        },
-        error: `herdr pane run failed: ${processError(run)}`,
-      };
-    }
-
-    const workspaceHandle = {
-      backend: "herdr",
-      handle_kind: "pane",
-      handle: paneId,
-      pane_id: paneId,
-    };
-    context.lock(
-      opts.requester,
-      opts.scope,
-      lockPath,
-      JSON.stringify({
-        ...lockNote,
-        launch_token: intentHash,
-        pane_id: paneId,
-        harness,
-      }),
-    );
-
-    const spawned = await waitForLaunchInstance(opts.scope, intentHash, waitSeconds);
-    if (!spawned) {
-      return {
-        status: "spawn_in_flight",
-        ...basePayload,
-        launch_token: intentHash,
-        workspace_handle: workspaceHandle,
-      };
-    }
-
+  if (spawn.status === "spawn_failed") {
     context.clearLocks(opts.requester, opts.scope, lockPath);
-    const prompt = promptPeerResult({
-      scope: opts.scope,
-      sender: opts.requester,
-      recipient: spawned.id,
-      message: dispatchInstruction(result.id, title, message),
-      task: result.id,
-      nudge: false,
-      force: opts.force ?? false,
-    });
-
-    return {
-      status: "spawned",
-      ...basePayload,
-      spawned_instance: spawned.id,
-      launch_token: intentHash,
-      workspace_handle: workspaceHandle,
-      prompt,
-    };
+    return { ...basePayload, ...spawn };
   }
-
-  const commandId = ui.enqueue(
-    opts.scope,
-    "spawn_shell",
-    {
-      cwd,
-      harness,
-      role: workerRole,
-      label: opts.label ?? null,
-      name: opts.name ?? null,
-    },
-    opts.requester,
-  );
-  context.lock(
-    opts.requester,
-    opts.scope,
-    lockPath,
-    JSON.stringify({ ...lockNote, ui_command_id: commandId, harness }),
-  );
-
-  const row =
-    waitSeconds <= 0 ? ui.get(commandId) : await waitForUiCommand(commandId, waitSeconds * 1000);
-  const uiPayload = { ...basePayload, ui_command_id: commandId };
-
-  if (!row || row.status === "pending" || row.status === "running") {
-    return { status: "spawn_in_flight", ...uiPayload, ui_command: row };
-  }
-
-  if (row.status === "failed") {
-    context.clearLocks(opts.requester, opts.scope, lockPath);
-    return { status: "spawn_failed", ...uiPayload, ui_command: row };
+  if (spawn.status === "spawn_in_flight") {
+    return { ...basePayload, ...spawn };
   }
 
   context.clearLocks(opts.requester, opts.scope, lockPath);
-  const spawnResult = parseJsonMaybe(row.result) as { instance_id?: unknown } | null;
   const spawnedInstance =
-    spawnResult && typeof spawnResult.instance_id === "string"
-      ? spawnResult.instance_id
-      : "";
+    typeof spawn.spawned_instance === "string" ? spawn.spawned_instance : "";
   const prompt = spawnedInstance
     ? promptPeerResult({
         scope: opts.scope,
@@ -687,10 +382,9 @@ export async function runDispatch(opts: DispatchOptions) {
     : null;
 
   return {
-    status: "spawned",
-    ...uiPayload,
+    ...basePayload,
+    ...spawn,
     spawned_instance: spawnedInstance || null,
-    ui_command: row,
     prompt,
   };
 }

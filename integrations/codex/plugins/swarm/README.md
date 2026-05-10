@@ -28,14 +28,14 @@ parallels, see [`integrations/hermes/SPEC.md`](../../../hermes/SPEC.md) and
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
 | Publish and cleanup `identity/workspace/herdr/<instance_id>` | `SessionStart` / `Stop` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
-| Gateway conductor mode | `SWARM_CODEX_ROLE=gateway` registers as `role:planner`, blocks inline writes unless explicitly opted in; use the MCP `dispatch` tool for task/spawn routing |
+| Gateway conductor mode | `SWARM_CODEX_ROLE=gateway` registers as `role:planner`; make easy edits locally, use the MCP `dispatch` tool for medium/large task/spawn routing |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 
 Worker-mode coordination failures are swallowed — coordination is opt-in
-convenience for ordinary sessions, never critical path. Gateway mode still
-blocks inline writes by default: no live peer means create/reuse a swarm task
-and route it through the MCP `dispatch` tool, not native subagents or local
-implementation. Solo worker sessions (no peers in scope) skip locking entirely.
+convenience for ordinary sessions, never critical path. Gateway mode can handle
+trivial, low-risk edits locally, but medium or large implementation work should
+create/reuse a swarm task and route it through the MCP `dispatch` tool, not
+native subagents. Solo sessions (no peers in scope) skip locking entirely.
 
 ### Codex specifics
 
@@ -146,7 +146,6 @@ Hooks pick up the same env knobs as the hermes / Claude Code plugins, with
 | `SWARM_CODEX_FILE_ROOT` / `SWARM_HERMES_FILE_ROOT` / `SWARM_MCP_FILE_ROOT` | Override the file root passed to `register`. |
 | `SWARM_CODEX_AGENT_ROLE` / `SWARM_AGENT_ROLE` | Adds a `role:<name>` token to the derived label. Accepts `planner`, `implementer`, `reviewer`, `researcher`, `generalist`, or `worker` (the default; emits no token). |
 | `SWARM_CODEX_ROLE` / `SWARM_ROLE` | `worker` by default. Set `gateway` for planner/conductor behavior. |
-| `SWARM_CODEX_GATEWAY_INLINE_WRITES` + `SWARM_CODEX_GATEWAY_WORKSPACE_MIRROR` | Both must be set to allow gateway inline writes; otherwise write tools are denied and should be delegated. |
 | `SWARM_CODEX_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `Stop` deregisters normally. |
 | `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this pane identity for express-lane peer wakes. |
 
@@ -210,7 +209,7 @@ If the deny message never appears, the most common causes are:
 ### v0.2 — Autonomous lifecycle + gateway mode ✓ (this version)
 - `swarm-mcp register` / `deregister` / `list-instances`
 - SessionStart/Stop hooks call lifecycle commands directly
-- Gateway-mode planner labels, inline-write blocking, and MCP `dispatch`
+- Gateway-mode planner labels, local-small/dispatch-large routing, and MCP `dispatch`
 
 ### v0.3 — Verify hook payload contract
 - Empirically confirm codex's PreToolUse / PostToolUse stdin schema and

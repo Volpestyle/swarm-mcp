@@ -12,14 +12,14 @@ Decision flow on session start:
 
 1. Call the swarm `list_instances` and `list_tasks` MCP tools early — before deciding how to execute.
 2. **Matching peer present** (compatible `scope`, useful `role:<implementer|reviewer|researcher>`, matching `identity:<work|personal>`) → delegate via `request_task` with a concrete patch + success criterion. To wake an idle peer through its published workspace handle, send the durable swarm message via `send_message` first; the handle nudge (the plugin tool `swarm_prompt_peer` if your runtime exposes it, else a backend-specific command such as `herdr pane run` if you have that capability) is best-effort and never carries the work contract itself.
-3. **Gateway/lead mode and no matching peer** (`mode:gateway`) → use the swarm MCP `dispatch` tool. It creates or reuses a swarm task, wakes an exact-role or generalist live worker when one exists, or spawns through the configured Spawner backend (`herdr` for the current golden path). If no spawner surface is available, ask the operator to start a worker instead of silently using native subagents. The CLI `dispatch` bridge is only for hooks, wrappers, operator shells, or sessions where MCP tools are unavailable.
+3. **Gateway/lead mode and no matching peer** (`mode:gateway`) → for trivial, low-risk edits, work locally. For medium or large implementation work, use the swarm MCP `dispatch` tool. It creates or reuses a swarm task, wakes an exact-role or generalist live worker when one exists, or spawns through the configured Spawner backend (`herdr` for the current golden path). If no spawner surface is available for non-trivial work, ask the operator to start a worker instead of silently using native subagents. The CLI `dispatch` bridge is only for hooks, wrappers, operator shells, or sessions where MCP tools are unavailable.
 4. **Worker/generalist mode and no matching peer** → fall back to your runtime's native subagent mechanism, or do the work yourself when that is faster and safe.
 
 For gateway sessions, `dispatch` is the invisible default path for a single operator intent, not something the operator should usually request by name. User-facing slash commands belong one level up: a routine command expands into multiple role-specific tasks, then uses the same routing/wake/spawn machinery for each part.
 
 Why peers when available: independent processes — possibly different harnesses (Codex, OpenCode, Claude, Hermes) or a different identity profile carrying account-scoped MCP auth your session can't reach. Their tasks are durable across sessions; native subagents typically share your process and die with the parent turn or session. The integration plugin's lock bridge already handles write-collision protection automatically across runtimes.
 
-Do not use native subagents as the normal gateway fallback. Gateway mode exists to keep worker execution visible as separate workspace/swarm peers. Inline work or native subagents are only acceptable when the operator explicitly asks for it, or when the runtime is not in gateway mode and the local tradeoff is clearly better.
+Do not use native subagents as the normal gateway fallback. Gateway mode exists to keep non-trivial worker execution visible as separate workspace/swarm peers. Inline gateway edits are acceptable for easy, low-risk tasks where spinning up a worker would add more overhead than value; medium or large work should route through `dispatch` and the configured workspace/spawner backend.
 
 The split between MCP and CLI is deliberate. MCP owns the agent-facing
 coordination surface: tasks, messages, locks, KV, notifications, and gateway
@@ -40,10 +40,10 @@ These come from the swarm-mcp design contract and apply to every runtime.
 - Tasks, messages, and locks **always** target swarm `instance_id`, never workspace transport handles such as herdr `pane_id`. Pane IDs recompact when other panes close, so a captured reference can become stale or wrong. Translate to **labels** ("implementer-bob in pane 1-3") for user-facing summaries — never present raw IDs.
 - When a user refers to a visible workspace relationship such as "the pane next to you", resolve it in two steps: use the workspace backend to identify the adjacent transport handle, then call `resolve_workspace_handle` or `swarm-mcp resolve-workspace-handle <handle> --backend <backend>` to map that handle back to a swarm `instance_id`. Send durable messages/tasks to the swarm instance, not directly to the handle.
 - Published workspace identity rows should use `identity/workspace/<backend>/<instance_id>` with a canonical `handle` from the backend. Backend adapters may keep compatibility rows such as `identity/herdr/<instance_id>`, but swarm-facing docs and APIs should use the generic workspace-handle terminology.
-- Coordination is **fail-open** for ordinary worker sessions: if swarm-mcp is unreachable, work locally — don't loop on a failed `register`. Gateway/lead sessions are different: they may keep planning and asking the operator, but should not convert a write intent into local implementation just because the coordinator or spawner is unavailable. A real peer-held lock conflict is always blocking and must be respected.
+- Coordination is **fail-open** for ordinary worker sessions: if swarm-mcp is unreachable, work locally — don't loop on a failed `register`. Gateway/lead sessions may also handle trivial local edits directly, but should not convert medium or large work into local implementation just because the coordinator or spawner is unavailable. A real peer-held lock conflict is always blocking and must be respected.
 - `wait_for_activity` is the warm-worker idle loop. It does not type into another agent's conversation by itself. Wake-up of an idle peer goes through the durable swarm message first; the workspace-handle nudge is best-effort.
 - Solo session (only one registered instance in scope): the integration plugin skips per-edit locking automatically. Don't ceremoniously add locks when no peer can collide.
-- Worker mode is the default. Gateway-mode protocol (delegated writes by default, three-tier write routing, no-double-spawn idempotency) applies only when the runtime is explicitly configured as a gateway — see the integration SPEC for your runtime.
+- Worker mode is the default. Gateway-mode protocol (local edits for easy tasks, `dispatch` for medium/large work, no-double-spawn idempotency) applies only when the runtime is explicitly configured as a gateway — see the integration SPEC for your runtime.
 - Delegation across the identity boundary is forbidden. Don't `request_task` across `identity:work` ↔ `identity:personal`. If a task needs cross-identity resources, surface that to the user — let them relaunch under the right launcher or hand off.
 
 ## Identity and account-scoped resources
@@ -66,6 +66,6 @@ The Claude Code and Codex plugins share their runtime-agnostic core in [`integra
 Gateway-capable Claude Code and Codex lead aliases should surface both pieces
 of state: `mode:gateway` for behavior and `role:planner` for routing. The
 planner label lets workers discover the lead; the gateway mode tells the lead
-to delegate writes by default and follow the conductor path.
+to keep easy edits local while routing medium/large work through the conductor path.
 
 Runtimes without a dedicated plugin still participate fully — they just have to call `register`, `lock_file`, `unlock_file`, etc. explicitly rather than getting them via lifecycle hooks.

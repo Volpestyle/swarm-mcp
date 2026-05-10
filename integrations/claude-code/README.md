@@ -26,15 +26,15 @@ in the hermes case, see [`integrations/hermes/SPEC.md`](../hermes/SPEC.md).
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
 | Publish and cleanup `identity/workspace/herdr/<instance_id>` | `SessionStart` / `SessionEnd` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
-| Gateway conductor mode | `SWARM_CC_ROLE=gateway` registers as `role:planner`, blocks inline writes unless explicitly opted in; use the MCP `dispatch` tool for task/spawn routing |
+| Gateway conductor mode | `SWARM_CC_ROLE=gateway` registers as `role:planner`; make easy edits locally, use the MCP `dispatch` tool for medium/large task/spawn routing |
 | Peer prompt express lane | `prompt_peer` MCP tool or `swarm-mcp prompt-peer` CLI sends durable swarm message, then best-effort herdr wake |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 
 Worker-mode coordination failures are swallowed — coordination is opt-in
-convenience for ordinary sessions, never critical path. Gateway mode still
-blocks inline writes by default: no live peer means create/reuse a swarm task
-and drive the configured Spawner backend, not native subagents or local
-implementation. Solo worker sessions (no peers in scope) skip locking entirely.
+convenience for ordinary sessions, never critical path. Gateway mode can handle
+trivial, low-risk edits locally, but medium or large implementation work should
+create/reuse a swarm task and drive the configured Spawner backend, not native
+subagents. Solo sessions (no peers in scope) skip locking entirely.
 
 ### Gateway dispatch
 
@@ -116,7 +116,6 @@ priority for Claude Code-specific overrides:
 | `SWARM_CC_LABEL` / `SWARM_HERMES_LABEL` | Override the full label. If it omits `identity:`, the derived token is prepended. |
 | `SWARM_CC_ROLE` / `SWARM_ROLE` | `worker` by default. Set `gateway` for planner/conductor behavior. |
 | `SWARM_CC_AGENT_ROLE` / `SWARM_AGENT_ROLE` | Optional swarm role label. Gateway defaults this to `role:planner`. Falls back to a `.swarm-role` file walking up from `cwd` to the coordination scope (first non-blank, non-comment line is the role token) — drop `echo implementer > .swarm-role` at the repo root for a per-project default. |
-| `SWARM_CC_GATEWAY_INLINE_WRITES` + `SWARM_CC_GATEWAY_WORKSPACE_MIRROR` | Both must be set to allow gateway inline writes; otherwise write tools are denied and should be delegated. |
 | `SWARM_CC_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `SessionEnd` deregisters normally. |
 | `SWARM_CC_SCOPE` / `SWARM_HERMES_SCOPE` / `SWARM_MCP_SCOPE` | Override the coordination scope. Default: git root of `cwd`. |
 | `SWARM_CC_FILE_ROOT` / `SWARM_HERMES_FILE_ROOT` / `SWARM_MCP_FILE_ROOT` | Override the file root passed to `register`. |
@@ -162,7 +161,7 @@ If the deny message never appears, the most common causes are:
 - `swarm-mcp register` / `deregister` / `list-instances`
 - SessionStart/SessionEnd hooks call lifecycle commands directly
 - `prompt_peer` MCP tool and `swarm-mcp prompt-peer`
-- `SWARM_CC_ROLE=gateway` planner/conductor labels and inline-write blocking
+- `SWARM_CC_ROLE=gateway` planner/conductor labels and local-small/dispatch-large routing
 
 ### v0.3 — Dispatch/spawn orchestration
 - MCP `dispatch` plus CLI `swarm-mcp dispatch` fallback for idempotent task

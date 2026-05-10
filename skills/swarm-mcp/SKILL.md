@@ -14,7 +14,7 @@ metadata:
 
 Use this skill when the `swarm` MCP server is available in the current session and the task benefits from multi-agent coordination.
 
-This skill assumes the swarm tools are already mounted. If they are not present, say so clearly and fall back to local work or direct setup help only for normal worker sessions. Gateway/lead sessions should restore the swarm tools, use an available launcher/spawner surface, or ask the operator to start workers; they should not treat missing tools as permission to become a local implementation session.
+This skill assumes the swarm tools are already mounted. If they are not present, say so clearly and fall back to local work or direct setup help only for normal worker sessions. Gateway/lead sessions may make trivial, low-risk edits locally, but should restore the swarm tools, use an available launcher/spawner surface, or ask the operator to start workers for medium or large implementation work.
 
 Role argument: `$role`.
 

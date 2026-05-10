@@ -29,6 +29,7 @@ _lock = threading.Lock()
 _json_decoder = JSONDecoder()
 _WRITE_TOOLS = {"write_file", "patch", "edit_file", "apply_patch"}
 _PATCH_FILE_RE = re.compile(r"^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$", re.MULTILINE)
+_PATCH_MOVE_RE = re.compile(r"^\*\*\*\s+Move\s+File:\s*(.+?)\s*->\s*(.+?)\s*$", re.MULTILINE)
 _VALID_PLUGIN_ROLES = {"worker", "gateway"}
 
 
@@ -182,6 +183,25 @@ def _identity_label_token() -> str:
     return f"identity:{identity}"
 
 
+def _normalize_role_token(value: str) -> str:
+    role = value.strip().lower()
+    if not role or role == "worker":
+        return ""
+    if not re.match(r"^[a-z0-9_.-]+$", role):
+        logger.warning("swarm plugin: ignoring invalid role label value: %r", value)
+        return ""
+    return f"role:{role}"
+
+
+def _agent_role_token(plugin_role: str) -> str:
+    raw = (os.environ.get("SWARM_HERMES_AGENT_ROLE") or "").strip()
+    if not raw:
+        raw = (os.environ.get("SWARM_AGENT_ROLE") or "").strip()
+    if not raw and plugin_role == "gateway":
+        raw = "planner"
+    return _normalize_role_token(raw)
+
+
 def _label_with_identity(label: str) -> str:
     token = _identity_label_token()
     if not token or any(part.startswith("identity:") for part in label.split()):
@@ -191,11 +211,18 @@ def _label_with_identity(label: str) -> str:
 
 def _register_args(session_id: str, kwargs: dict[str, Any]) -> dict:
     platform = str(kwargs.get("platform") or "").strip()
+    plugin_role = _configured_role()
     label = os.environ.get("SWARM_HERMES_LABEL")
     if not label:
         parts = ["hermes"]
         if platform:
             parts.append(f"platform:{platform}")
+        if plugin_role == "gateway":
+            parts.append("mode:gateway")
+        role = _agent_role_token(plugin_role)
+        if role:
+            parts.append(role)
+        parts.append("origin:hermes")
         parts.append(f"session:{session_id[:8]}")
         label = " ".join(parts)
     label = _label_with_identity(label)
@@ -255,6 +282,12 @@ def _dedupe_paths(paths: list[str]) -> list[str]:
     return result
 
 
+def _abs_path(path: str) -> str:
+    if os.path.isabs(path):
+        return path
+    return os.path.abspath(os.path.join(_session_directory({}), path))
+
+
 def _paths_for_tool(tool_name: str, args: dict[str, Any]) -> list[str]:
     if not isinstance(args, dict):
         return []
@@ -263,22 +296,25 @@ def _paths_for_tool(tool_name: str, args: dict[str, Any]) -> list[str]:
     if tool_name == "write_file":
         path = args.get("path")
         if isinstance(path, str):
-            paths.append(path)
+            paths.append(_abs_path(path))
         return _dedupe_paths(paths)
 
     if tool_name in {"patch", "apply_patch"}:
         path = args.get("path")
         if isinstance(path, str):
-            paths.append(path)
+            paths.append(_abs_path(path))
         patch_text = args.get("patch") or args.get("patchText")
         if isinstance(patch_text, str):
-            paths.extend(match.group(1).strip() for match in _PATCH_FILE_RE.finditer(patch_text))
+            paths.extend(_abs_path(match.group(1).strip()) for match in _PATCH_FILE_RE.finditer(patch_text))
+            for match in _PATCH_MOVE_RE.finditer(patch_text):
+                paths.append(_abs_path(match.group(1).strip()))
+                paths.append(_abs_path(match.group(2).strip()))
         return _dedupe_paths(paths)
 
     for key in ("path", "file", "file_path", "filepath"):
         path = args.get(key)
         if isinstance(path, str):
-            paths.append(path)
+            paths.append(_abs_path(path))
     return _dedupe_paths(paths)
 
 
@@ -336,8 +372,6 @@ def on_pre_tool_call(
     """Auto-acquire swarm edit locks for write-like file tools when peers exist."""
     session_id = _effective_session_id(session_id)
     if tool_name not in _WRITE_TOOLS or not session_id:
-        return None
-    if get_role(session_id) == "gateway":
         return None
 
     paths = _paths_for_tool(tool_name, args or {})

@@ -108,7 +108,7 @@ explicitly on `SessionEnd`.
 | `SessionStart` (source=startup or resume) | New or resumed conversation | Compute label/scope/identity; call `swarm-mcp register`; write per-session scratch metadata including `instance_id`; publish `identity/workspace/herdr/<instance_id>` if `HERDR_PANE_ID` is present; emit `additionalContext` telling the agent it is registered and should follow the swarm role workflow. |
 | `SessionStart` (source=clear or compact) | Mid-session reset | Refresh metadata only; do not re-prompt registration. |
 | `SessionEnd` | Conversation ends | Best-effort `kv del identity/workspace/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
-| `PreToolUse` (matcher: `Write\|Edit\|MultiEdit\|NotebookEdit`) | Before each write-class tool dispatch | In gateway mode, deny inline writes unless explicit inline-write config is present. Otherwise, if peers exist in scope, `swarm-mcp lock` each path. On conflict, emit `permissionDecision: deny`. |
+| `PreToolUse` (matcher: `Write\|Edit\|MultiEdit\|NotebookEdit`) | Before each write-class tool dispatch | Gateway mode allows trivial local edits; medium/large implementation work should route through `dispatch`. If peers exist in scope, `swarm-mcp lock` each path. On conflict, emit `permissionDecision: deny`. |
 | `PostToolUse` (same matcher) | After each write-class tool dispatch | `swarm-mcp unlock` each path the matching pre acquired. |
 
 ### 5.2 Identity selector for the lock CLI

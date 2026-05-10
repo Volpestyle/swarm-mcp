@@ -23,14 +23,16 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
 import tempfile
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
+
+import swarm_adapter_contract as contract
 
 
 @dataclass(frozen=True)
@@ -147,7 +149,7 @@ class HookCore:
 
     @staticmethod
     def _truthy(value: Optional[str]) -> bool:
-        return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+        return contract.truthy(value)
 
     def plugin_role(self) -> str:
         """Return the adapter behavior role, not the swarm-visible skill role."""
@@ -188,9 +190,7 @@ class HookCore:
         ).strip()
         if not value:
             return ""
-        if not re.match(r"^[A-Za-z0-9_.-]+$", value):
-            return ""
-        return f"identity:{value}"
+        return contract.identity_token(value)
 
     def agent_role_token(self) -> str:
         """Return ``role:<name>`` if the agent has a swarm-visible skill role.
@@ -213,16 +213,11 @@ class HookCore:
             raw = (os.environ.get("SWARM_AGENT_ROLE") or "").strip()
         if not raw and self.plugin_role() == "gateway":
             raw = "planner"
-        return self._normalize_role(raw)
+        return contract.role_token(raw)
 
     @staticmethod
     def _normalize_role(value: str) -> str:
-        value = value.strip().lower()
-        if not value or value == "worker":
-            return ""
-        if not re.match(r"^[a-z0-9_.-]+$", value):
-            return ""
-        return f"role:{value}"
+        return contract.role_token(value)
 
     def _role_doctrine_lines(self, role_token: str) -> list[str]:
         """Resolve ``role:<name>`` to a pointer at the matching skill reference.
@@ -267,68 +262,27 @@ class HookCore:
         ``echo implementer > .swarm-role`` at the repo root and every adapter
         in that scope picks it up without env-var ceremony.
         """
-        try:
-            start = Path(self.session_cwd()).resolve()
-        except Exception:
-            return ""
-        scope = self.scope_arg()
-        try:
-            stop_at = Path(scope).resolve() if scope else None
-        except Exception:
-            stop_at = None
-
-        for directory in [start, *start.parents]:
-            marker = directory / ".swarm-role"
-            if marker.is_file():
-                try:
-                    for line in marker.read_text().splitlines():
-                        line = line.strip()
-                        if line and not line.startswith("#"):
-                            return line
-                except Exception:
-                    pass
-                return ""
-            if stop_at is not None and directory == stop_at:
-                break
-        return ""
+        return contract.role_from_file(self.session_cwd(), self.scope_arg())
 
     @staticmethod
     def session_short(session_id: str) -> str:
-        return (session_id or "").replace("-", "")[:8]
+        return contract.session_short(session_id)
 
     def derived_label(self, session_id: str) -> str:
-        override = self._env("LABEL") or os.environ.get("SWARM_HERMES_LABEL")
-        if override:
-            label = override
-            if any(part.startswith("identity:") for part in override.split()):
-                return self._with_session_token(label, session_id)
-            token = self.identity_token()
-            label = f"{token} {override}".strip() if token else override
-            return self._with_session_token(label, session_id)
-
-        parts: list[str] = []
-        token = self.identity_token()
-        if token:
-            parts.append(token)
-        parts.append(self.config.runtime_name)
-        parts.append("platform:cli")
-        if self.plugin_role() == "gateway":
-            parts.append("mode:gateway")
-        role = self.agent_role_token()
-        if role:
-            parts.append(role)
-        parts.append(f"origin:{self.config.runtime_name}")
-        short = self.session_short(session_id)
-        if short:
-            parts.append(f"session:{short}")
-        return " ".join(parts)
+        return contract.build_label(
+            contract.LabelConfig(
+                runtime_name=self.config.runtime_name,
+                env_prefix=self.config.env_prefix,
+                plugin_role=self.plugin_role(),
+                session_id=session_id,
+                override_label=self._env("LABEL") or os.environ.get("SWARM_HERMES_LABEL") or "",
+                identity=(self._env("IDENTITY") or os.environ.get("SWARM_HERMES_IDENTITY") or os.environ.get("AGENT_IDENTITY") or os.environ.get("SWARM_IDENTITY") or ""),
+                agent_role=(self._env("AGENT_ROLE") or self._role_from_file() or os.environ.get("SWARM_AGENT_ROLE") or ""),
+            )
+        )
 
     def _with_session_token(self, label: str, session_id: str) -> str:
-        short = self.session_short(session_id)
-        token = f"session:{short}" if short else ""
-        if token and token not in label.split():
-            return f"{label} {token}".strip()
-        return label
+        return contract.with_session_token(label, session_id)
 
     # -- Per-session scratch dir --------------------------------------------
 
@@ -436,7 +390,7 @@ class HookCore:
     # -- Lock tracking across pre/post --------------------------------------
 
     def iter_locked_paths(self, session_id: str, key: str) -> Iterable[str]:
-        path = self.session_scratch(session_id) / f"locks-{key}.json"
+        path = self.session_scratch(session_id) / f"locks-{self.lock_store_key(key)}.json"
         if not path.exists():
             return []
         try:
@@ -448,11 +402,11 @@ class HookCore:
         return [p for p in data if isinstance(p, str)]
 
     def record_locks(self, session_id: str, key: str, paths: list[str]) -> None:
-        target = self.session_scratch(session_id) / f"locks-{key}.json"
+        target = self.session_scratch(session_id) / f"locks-{self.lock_store_key(key)}.json"
         target.write_text(json.dumps(paths))
 
     def clear_locks(self, session_id: str, key: str) -> None:
-        target = self.session_scratch(session_id) / f"locks-{key}.json"
+        target = self.session_scratch(session_id) / f"locks-{self.lock_store_key(key)}.json"
         if target.exists():
             try:
                 target.unlink()
@@ -462,6 +416,9 @@ class HookCore:
     def lock_key(self, tool_name: str, tool_input: object) -> str:
         paths = "|".join(self.write_paths_for_tool(tool_name, tool_input))
         return f"{tool_name}:{paths}"
+
+    def lock_store_key(self, key: str) -> str:
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
 
     # -- High-level hook entry points ---------------------------------------
 
@@ -671,9 +628,10 @@ class HookCore:
         if plugin_role == "gateway":
             lines.append("")
             lines.append(
-                "Gateway/lead mode: delegate writes via the swarm `dispatch` tool; do not "
-                "fall back to native subagents. See the `swarm-mcp` skill (planner reference) "
-                "for the full conductor protocol and inline-write rules."
+                "Gateway/lead mode: make trivial, low-risk edits locally when that is fastest; "
+                "route medium or large implementation work through the swarm `dispatch` tool. "
+                "Do not fall back to native subagents. See the `swarm-mcp` skill (planner "
+                "reference) for the full conductor protocol."
             )
 
         if role_token:
@@ -700,30 +658,6 @@ class HookCore:
             )
 
         return "\n".join(lines)
-
-    def _gateway_inline_write_allowed(self, paths: list[str]) -> bool:
-        allow = self._truthy(
-            self._env("GATEWAY_INLINE_WRITES")
-            or os.environ.get("SWARM_GATEWAY_INLINE_WRITES")
-        )
-        mirror = (
-            self._env("GATEWAY_WORKSPACE_MIRROR")
-            or os.environ.get("SWARM_GATEWAY_WORKSPACE_MIRROR")
-            or ""
-        ).strip()
-        if not allow or not mirror:
-            return False
-        try:
-            root = Path(mirror).expanduser().resolve(strict=True)
-            resolved_paths = [Path(path).expanduser().resolve(strict=False) for path in paths]
-        except Exception:
-            return False
-        for path in resolved_paths:
-            try:
-                path.relative_to(root)
-            except ValueError:
-                return False
-        return True
 
     def run_session_start_hook(self, stdin) -> int:
         payload = self.read_hook_input(stdin)
@@ -832,16 +766,6 @@ class HookCore:
         session_id = str(payload.get("session_id") or "")
         meta = self.read_session_meta(session_id)
         scope = meta.get("scope") or self.scope_arg()
-
-        if (meta.get("plugin_role") or self.plugin_role()) == "gateway":
-            if not self._gateway_inline_write_allowed(paths):
-                env_var = f"SWARM_{self.config.env_prefix}_GATEWAY_INLINE_WRITES"
-                mirror_var = f"SWARM_{self.config.env_prefix}_GATEWAY_WORKSPACE_MIRROR"
-                self.emit_block(
-                    f"swarm gateway mode blocks inline {tool_name}; delegate this work "
-                    f"or set {env_var}=1 and {mirror_var}=<trusted mirror>."
-                )
-                return 0
 
         if not self.has_peers(scope, session_id):
             return 0

@@ -10,10 +10,15 @@ import * as ui from "./ui";
 import { file as fileFor, scope as scopeFor } from "./paths";
 import { SUBCOMMANDS, type Subcommand } from "./subcommands";
 import { TASK_TYPES, type TaskType } from "./generated/protocol";
+import * as spawnerBackend from "./spawner_backend";
 import * as workspaceIdentity from "./workspace_identity";
 import { herdrWorkspaceBackend } from "./backends/herdr";
+import { herdrSpawnerBackend } from "./backends/herdr_spawner";
+import { swarmUiSpawnerBackend } from "./backends/swarm_ui_spawner";
 
 workspaceIdentity.registerBackend(herdrWorkspaceBackend);
+spawnerBackend.registerSpawner(herdrSpawnerBackend);
+spawnerBackend.registerSpawner(swarmUiSpawnerBackend);
 
 type Flags = {
   positional: string[];

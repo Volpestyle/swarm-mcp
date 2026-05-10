@@ -63,21 +63,22 @@ class SwarmRoleConfigTests(unittest.TestCase):
         self.assertNotIn("role:gateway", args["label"])
         self.assertNotIn("role:worker", args["label"])
 
-    def test_gateway_role_suppresses_pre_tool_lock_bridge(self) -> None:
+    def test_gateway_role_keeps_pre_tool_lock_bridge(self) -> None:
         self._start_with_config({"swarm": {"role": "gateway"}})
 
         with mock.patch.object(lifecycle, "_has_peers", return_value=True) as has_peers, mock.patch.object(
-            lifecycle, "_lock_file"
+            lifecycle, "_lock_file", return_value=(True, "")
         ) as lock_file:
             result = lifecycle.on_pre_tool_call(
                 tool_name="write_file",
                 args={"path": "example.txt"},
                 session_id="session-123",
+                tool_call_id="call-1",
             )
 
         self.assertIsNone(result)
-        has_peers.assert_not_called()
-        lock_file.assert_not_called()
+        has_peers.assert_called_once_with("session-123")
+        lock_file.assert_called_once_with(os.path.abspath("example.txt"), "write_file")
 
     def test_worker_role_keeps_pre_tool_lock_bridge(self) -> None:
         self._start_with_config({"swarm": {"role": "worker"}})
@@ -93,7 +94,41 @@ class SwarmRoleConfigTests(unittest.TestCase):
             )
 
         self.assertIsNone(result)
-        lock_file.assert_called_once_with("example.txt", "write_file")
+        lock_file.assert_called_once_with(os.path.abspath("example.txt"), "write_file")
+
+    def test_default_label_matches_shared_adapter_tokens(self) -> None:
+        with mock.patch.object(lifecycle, "_load_config", return_value={"swarm": {"role": "gateway"}}):
+            args = lifecycle._register_args("session-123", {"platform": "telegram"})
+
+        self.assertIn("hermes", args["label"])
+        self.assertIn("platform:telegram", args["label"])
+        self.assertIn("mode:gateway", args["label"])
+        self.assertIn("role:planner", args["label"])
+        self.assertIn("origin:hermes", args["label"])
+        self.assertIn("session:session-", args["label"])
+
+    def test_patch_paths_are_absolute_and_include_moves(self) -> None:
+        paths = lifecycle._paths_for_tool(
+            "apply_patch",
+            {
+                "patch": """*** Begin Patch
+*** Update File: src/a.txt
+@@
+-old
++new
+*** Move File: src/b.txt -> src/c.txt
+*** End Patch""",
+            },
+        )
+
+        self.assertEqual(
+            paths,
+            [
+                os.path.abspath("src/a.txt"),
+                os.path.abspath("src/b.txt"),
+                os.path.abspath("src/c.txt"),
+            ],
+        )
 
 
 class SwarmStatusRoleTests(unittest.TestCase):
