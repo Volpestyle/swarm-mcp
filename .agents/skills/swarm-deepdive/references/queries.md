@@ -267,7 +267,7 @@ WHERE c.scope = :scope AND c.type = 'lock'
 ORDER BY c.created_at;
 ```
 
-Lock and annotation churn for one file inside the event window:
+Lock churn for one file inside the event window:
 
 ```sql
 SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
@@ -275,21 +275,8 @@ SELECT datetime(created_at, 'unixepoch', 'localtime') AS ts,
 FROM events
 WHERE scope = :scope
   AND subject = :file_path
-  AND type IN ('context.lock_acquired', 'context.lock_released', 'context.annotated')
+  AND type IN ('context.lock_acquired', 'context.lock_released')
 ORDER BY id;
-```
-
-Current annotations for one file. Non-lock annotations are cleanup-pruned after 24 hours:
-
-```sql
-SELECT datetime(c.created_at, 'unixepoch', 'localtime') AS ts,
-       COALESCE(i.label, c.instance_id) AS author,
-       c.type,
-       c.content
-FROM context c
-LEFT JOIN instances i ON i.id = c.instance_id
-WHERE c.scope = :scope AND c.file = :file_path AND c.type != 'lock'
-ORDER BY c.created_at;
 ```
 
 ## KV History

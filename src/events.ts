@@ -15,7 +15,6 @@ export type EventType =
   | "kv.set"
   | "kv.deleted"
   | "kv.appended"
-  | "context.annotated"
   | "context.lock_acquired"
   | "context.lock_released"
   | "instance.registered"
@@ -23,7 +22,7 @@ export type EventType =
   | "instance.stale_reclaimed"
   | "cleanup.messages_deleted"
   | "cleanup.terminal_tasks_deleted"
-  | "cleanup.context_annotations_deleted"
+  | "cleanup.non_lock_context_rows_deleted"
   | "cleanup.events_deleted"
   | "cleanup.kv_deleted";
 

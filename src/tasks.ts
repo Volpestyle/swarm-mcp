@@ -116,7 +116,7 @@ function unreadMessageGate(scope: string, recipient: string) {
 
   return {
     error:
-      `Unread messages pending (${count.count}). Call poll_messages before claiming new work, ` +
+      `Unread messages pending (${count.count}). Call bootstrap or poll_messages before claiming new work, ` +
       `or retry claim_task with ignore_unread_messages=true if you intentionally want to skip them. ` +
       `Latest unread message: #${latest.id} from ${latest.sender}.`,
     unread_message_count: count.count,

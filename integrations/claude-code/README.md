@@ -25,6 +25,7 @@ For the broader adapter contract, see
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
 | Publish and cleanup workspace identity | `SessionStart` / `SessionEnd` hooks → publish/delete current workspace handle when `HERDR_PANE_ID` is present |
+| Publish configured work tracker | `SessionStart` hook reads tracker config and writes `config/work_tracker/<identity>` KV |
 | Gateway conductor mode | `SWARM_CC_ROLE=gateway` registers as `role:planner`; make easy edits locally, use the MCP `dispatch` tool for medium/large task/spawn routing |
 | Peer prompt express lane | `prompt_peer` MCP tool or `swarm-mcp prompt-peer` CLI sends durable swarm message, then best-effort herdr wake |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
@@ -118,6 +119,7 @@ priority for Claude Code-specific overrides:
 | `SWARM_CC_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `SessionEnd` deregisters normally. |
 | `SWARM_CC_SCOPE` / `SWARM_HERMES_SCOPE` / `SWARM_MCP_SCOPE` | Override the coordination scope. Default: git root of `cwd`. |
 | `SWARM_CC_FILE_ROOT` / `SWARM_HERMES_FILE_ROOT` / `SWARM_MCP_FILE_ROOT` | Override the file root passed to `register`. |
+| `SWARM_CC_WORK_TRACKER` / `SWARM_WORK_TRACKER` | JSON tracker config to publish at `config/work_tracker/<identity>`; use this for Linear/Jira/GitHub policy, not credentials. |
 | `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this workspace identity for express-lane peer wakes. See [`backend-configuration.md`](../../docs/backend-configuration.md). |
 
 Default label format mirrors hermes:
@@ -168,7 +170,7 @@ If the deny message never appears, the most common causes are:
   backend selection, and peer wake.
 
 ### v0.4 — Ambient peer context
-- SessionStart additionalContext carries the current peer/lock/annotation
+- SessionStart additionalContext carries the current peer/lock/message
   snapshot so the agent starts a turn already aware of the coordination
   state
 

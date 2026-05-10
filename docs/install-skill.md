@@ -173,7 +173,7 @@ After installing the skills and mounting the `swarm` MCP server:
 1. Start a fresh session
 2. Confirm the host can see the `swarm-mcp` skill
 3. Ask the agent to join the swarm or invoke `/swarm-mcp planner`
-4. Verify it calls `register`, then checks `list_instances`, `poll_messages`, and `list_tasks`
+4. Verify it calls `register`, then `bootstrap`
 
 If the skill appears but the swarm tools do not, the skill install worked and the MCP setup did not.
 

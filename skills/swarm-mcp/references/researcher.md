@@ -5,11 +5,10 @@ Use this reference when the session should investigate code, docs, APIs, runtime
 ## Bootstrap
 
 1. Call `register` with `directory` set to the current working directory and `label` including `identity:<work|personal>` and `role:researcher`, such as `identity:work provider:claude-code role:researcher`.
-2. Call `whoami`.
-3. Call `list_instances` and note active planners and implementers.
-4. Call `poll_messages` and act on unread messages.
-5. Call `list_tasks` and look for `research` tasks assigned to you or open for claiming.
-6. Summarize your swarm ID, active agents, and research queue.
+2. Call `bootstrap`.
+3. Handle unread messages before claiming research work.
+4. Note active planners, implementers, assigned research tasks, and open research tasks from the bootstrap snapshot.
+5. Summarize your swarm ID, active agents, and research queue.
 
 ## Research Procedure
 
@@ -18,9 +17,8 @@ For each research task:
 1. `claim_task` — moves the task to `in_progress`.
 2. Read the task description and clarify the expected output.
 3. Investigate using read-only tools unless explicitly asked to produce a patch.
-4. Use `annotate` for file-specific findings, warnings, bugs, or todos.
-5. Use `kv_set` for structured findings other agents should be able to inspect, such as `research/<topic>` or `findings/<task-id>`.
-6. `update_task` to `done` with a structured summary, evidence, and recommended next actions.
+4. Use `kv_set` for structured findings other agents should be able to inspect, such as `research/<topic>` or `findings/<task-id>`.
+5. `update_task` to `done` with a structured summary, evidence, and recommended next actions.
 
 ## Result Format
 
@@ -46,16 +44,15 @@ Prefer JSON when completing research:
 
 After completing a task, or if none were initially available:
 
-1. Call `wait_for_activity` with a 30-60 second timeout.
-2. On `new_messages`, answer questions from planners/implementers.
-3. On `task_updates`, claim new `research` tasks assigned to you or open.
-4. On `kv_updates`, check relevant research handoffs or planner plan changes.
-5. On `instance_changes`, note if the planner left and avoid creating new work unless requested.
-6. On timeout, call `list_tasks` for research work, then call `wait_for_activity` again.
+1. Do a yield checkpoint with `bootstrap` or `poll_messages`.
+2. Answer unread questions from planners, implementers, or reviewers.
+3. Claim visible `research` tasks assigned to you or open for your role.
+4. If you are waiting on a specific peer answer, dependency, or planner direction, call `wait_for_activity` and act on returned changes.
+5. If no research responsibility remains, finish the turn and remain promptable. Do not loop just to stay warm.
 
 ## Must Not
 
 - Edit code unless explicitly assigned implementation work.
 - Present unsupported claims; include evidence references.
-- Leave important file-specific findings only in task text; use `annotate` where appropriate.
+- Leave important findings only in chat; put them in the task result, a follow-up task, KV, or the configured tracker.
 - Keep investigating indefinitely; ask a focused question or report uncertainty when blocked.

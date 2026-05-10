@@ -5,11 +5,10 @@ Use this reference when the session should review completed work, identify bugs 
 ## Bootstrap
 
 1. Call `register` with `directory` set to the current working directory and `label` including `identity:<work|personal>` and `role:reviewer`, such as `identity:work provider:claude-code role:reviewer`.
-2. Call `whoami`.
-3. Call `list_instances` and note active planners and implementers.
-4. Call `poll_messages` and act on unread messages.
-5. Call `list_tasks` and look for `review` tasks assigned to you or open for claiming.
-6. Summarize your swarm ID, active agents, review queue, and immediate risks.
+2. Call `bootstrap`.
+3. Handle unread messages before claiming review work.
+4. Note active planners, implementers, assigned reviews, and open review tasks from the bootstrap snapshot.
+5. Summarize your swarm ID, active agents, review queue, and immediate risks.
 
 ## Claim Reviews
 
@@ -25,12 +24,13 @@ For each review task:
 1. `claim_task` — moves the review to `in_progress`.
 2. Read the related implementation task result if referenced.
 3. Prefer structured results with `files_changed`, `test_status`, and `summary`.
-4. To see locks and peer annotations for a file, call `get_file_context`. Use `lock_file` only when you need to edit or reserve the file.
+4. To see active lock state for a file, call `get_file_lock`. Use `lock_file` only when you need to edit or reserve the file.
 5. Inspect the actual changes, not only the summary.
 6. Focus on correctness, behavioral regressions, missing tests, security/privacy risks, and concurrency/file-collision issues.
-7. Use `annotate` for file-specific findings that future agents should see.
-8. If approved, `update_task` the review to `done` with a concise approval summary.
-9. If changes are needed, `update_task` the review to `failed` and create a follow-up `fix` task with concrete instructions.
+7. If approved, `update_task` the review to `done` with a concise approval summary.
+8. If changes are needed, `update_task` the review to `failed` and create a follow-up `fix` task with concrete instructions.
+
+If the review is linked to a work tracker, update it only when the review task grants that authority and the configured same-identity tracker MCP is available. Otherwise include tracker-ready findings in the swarm review result.
 
 ## Findings Format
 
@@ -60,12 +60,11 @@ When requesting changes, create a new task instead of reopening or reusing compl
 
 After each review, or if none were initially available:
 
-1. Call `wait_for_activity` with a 30-60 second timeout.
-2. On `new_messages`, respond to questions and treat `[auto]` messages as actionable.
-3. On `task_updates`, claim new review tasks or inspect newly completed implementation/fix tasks.
-4. On `kv_updates`, check planner plans, progress keys, or handoff notes relevant to review work.
-5. On `instance_changes`, note stale implementers/planners and report orphaned review risk if needed.
-6. On timeout, call `list_tasks` for review work, then call `wait_for_activity` again.
+1. Do a yield checkpoint with `bootstrap` or `poll_messages`.
+2. Respond to unread questions and treat `[auto]` messages as actionable.
+3. Claim new review tasks when they are already visible.
+4. If you are waiting on a fix, clarification, lock release, or planner response, call `wait_for_activity` and act on returned changes.
+5. If no review responsibility remains, finish the turn and remain promptable. Do not loop just to stay warm.
 
 ## Termination
 
@@ -73,11 +72,11 @@ When you receive `[signal:complete]`:
 
 1. Finish any active review if feasible.
 2. Mark review work final.
-3. Call `deregister`.
+3. Finish the turn and idle. Call `deregister` only if you are exiting or the runtime will not keep this session available.
 
 ## Must Not
 
 - Approve based only on task summaries.
-- Hide findings in plain chat when they should become durable `annotate` entries or `fix` tasks.
+- Hide findings in plain chat when they should become `fix` tasks, tracker comments, or review results.
 - Reuse completed review tasks for follow-up work.
 - Block indefinitely on missing context; ask the planner or create a targeted research/fix task.

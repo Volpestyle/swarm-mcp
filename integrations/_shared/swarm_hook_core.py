@@ -32,7 +32,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-import swarm_adapter_contract as contract
+try:
+    import swarm_adapter_contract as contract
+except ModuleNotFoundError:  # pragma: no cover - package import path for tests
+    from . import swarm_adapter_contract as contract
 
 
 @dataclass(frozen=True)
@@ -191,6 +194,17 @@ class HookCore:
         if not value:
             return ""
         return contract.identity_token(value)
+
+    def identity_name(self) -> str:
+        return contract.identity_name(self.identity_token())
+
+    def work_tracker_config(self, cwd: str = "", scope: Optional[str] = None) -> dict:
+        return contract.work_tracker_config(
+            self.config.env_prefix,
+            cwd or self.session_cwd(),
+            scope if scope is not None else self.scope_arg(),
+            self.identity_name(),
+        )
 
     def agent_role_token(self) -> str:
         """Return ``role:<name>`` if the agent has a swarm-visible skill role.
@@ -559,6 +573,22 @@ class HookCore:
             ok = ok and rc == 0
         return ok
 
+    def _publish_work_tracker_config(
+        self,
+        instance_id: str,
+        scope: str,
+        tracker: dict,
+    ) -> bool:
+        if not tracker:
+            return False
+        key = contract.work_tracker_key(str(tracker.get("identity") or self.identity_name()))
+        blob = json.dumps(tracker, separators=(",", ":"))
+        args = ["kv", "set", key, blob, "--as", instance_id]
+        if scope:
+            args.extend(["--scope", scope])
+        rc, _, _ = self.run_swarm(args, timeout=4.0)
+        return rc == 0
+
     def _delete_herdr_identity(self, instance_id: str, scope: str) -> None:
         for key in [f"identity/workspace/herdr/{instance_id}", f"identity/herdr/{instance_id}"]:
             args = ["kv", "del", key, "--as", instance_id]
@@ -584,6 +614,7 @@ class HookCore:
         label = str(meta.get("label") or self.derived_label(session_id))
         scope = str(meta.get("scope") or self.scope_arg() or "")
         role_token = self.agent_role_token()
+        tracker = meta.get("work_tracker") if isinstance(meta.get("work_tracker"), dict) else {}
 
         if instance_id:
             lines = [
@@ -602,6 +633,14 @@ class HookCore:
             if meta.get("herdr_identity_published"):
                 lines.append(
                     f"Workspace identity published at `identity/workspace/herdr/{instance_id}` for peer wakeups."
+                )
+            if tracker:
+                key = contract.work_tracker_key(str(tracker.get("identity") or ""))
+                verb = "published" if meta.get("work_tracker_published") else "detected"
+                lines.append(
+                    f"Configured work tracker {verb} at `{key}`: "
+                    f"provider `{tracker.get('provider')}`, MCP `{tracker.get('mcp')}`. "
+                    "Use only that same-identity tracker for durable tracker updates."
                 )
         else:
             _, register_args = self._register_args(session_id, cwd)
@@ -624,12 +663,26 @@ class HookCore:
                     "```",
                 ]
             )
+            if tracker:
+                key = contract.work_tracker_key(str(tracker.get("identity") or ""))
+                blob = json.dumps(tracker, separators=(",", ":"))
+                lines.extend(
+                    [
+                        "",
+                        f"After `register` succeeds, publish the configured work tracker at `{key}`:",
+                        f'`kv_set key="{key}" value=\'{blob}\'`',
+                    ]
+                )
 
         if plugin_role == "gateway":
             lines.append("")
             lines.append(
                 "Gateway/lead mode: make trivial, low-risk edits locally when that is fastest; "
                 "route medium or large implementation work through the swarm `dispatch` tool. "
+                "For non-trivial human-trackable work, read `bootstrap.work_tracker`; if configured "
+                "and the matching MCP is available, create/link the tracker item before `dispatch`, "
+                "include the tracker URL/ID in the swarm task, and update the tracker with the final "
+                "durable outcome if the worker did not. "
                 "Do not fall back to native subagents. See the `swarm-mcp` skill (planner "
                 "reference) for the full conductor protocol."
             )
@@ -666,10 +719,12 @@ class HookCore:
         source = str(payload.get("source") or "startup")
 
         label = self.derived_label(session_id)
+        scope = self.scope_arg() or ""
+        tracker = self.work_tracker_config(cwd, scope)
         meta = {
             "label": label,
             "session_short": self.session_short(session_id),
-            "scope": self.scope_arg() or "",
+            "scope": scope,
             "file_root": self.file_root_arg() or "",
             "cwd": cwd,
             "plugin_role": self.plugin_role(),
@@ -677,6 +732,8 @@ class HookCore:
             or os.environ.get("HERDR_PANE")
             or "",
         }
+        if tracker:
+            meta["work_tracker"] = tracker
         self.write_session_meta(session_id, meta)
 
         if source not in {"startup", "resume"} or not session_id:
@@ -699,6 +756,11 @@ class HookCore:
                             instance_id,
                             scope,
                         ),
+                        "work_tracker_published": self._publish_work_tracker_config(
+                            instance_id,
+                            scope,
+                            tracker,
+                        ) if tracker else False,
                     }
                 )
                 self.write_session_meta(session_id, meta)

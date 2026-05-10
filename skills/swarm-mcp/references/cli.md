@@ -44,13 +44,13 @@ Read-only (no identity required):
 
 | Command | Purpose |
 |--|--|
-| `swarm-mcp inspect [--scope P] [--json]` | Unified dump: instances, tasks, context, kv, recent messages. |
+| `swarm-mcp inspect [--scope P] [--json]` | Unified dump: instances, tasks, locks, kv, recent messages. |
 | `swarm-mcp cleanup [--scope P] [--dry-run] [--json]` | Run retention cleanup for offline instances, TTL rows, and orphaned instance-scoped KV. |
 | `swarm-mcp instances [--scope P] [--json]` | List live instances. |
 | `swarm-mcp list-instances [--scope P] [--json]` | Alias for `instances`, useful for scripts that mirror the MCP tool name. |
 | `swarm-mcp messages [--to W] [--from W] [--limit N]` | Peek messages. Does not mark them read. |
 | `swarm-mcp tasks [--status S] [--scope P]` | List tasks. |
-| `swarm-mcp context [--scope P]` | List locks + annotations. |
+| `swarm-mcp locks [--scope P]` | List active file locks. |
 | `swarm-mcp kv list [--prefix P] [--scope P]` | List KV keys. |
 | `swarm-mcp kv get <key> [--scope P]` | Print a KV value. Exits 1 if missing. |
 
@@ -113,7 +113,7 @@ Ambiguous matches error with the list of candidates.
 
 ## Peer wakeups
 
-`prompt-peer` is the CLI equivalent of the MCP `prompt_peer` tool. It always sends the real instruction through swarm messages first. If the target has published a workspace identity row such as `identity/workspace/herdr/<instance_id>` in KV, the command then asks the backend for handle status and injects only a short wake prompt telling the worker to call `poll_messages`.
+`prompt-peer` is the CLI equivalent of the MCP `prompt_peer` tool. It always sends the real instruction through swarm messages first. If the target has published a workspace identity row such as `identity/workspace/herdr/<instance_id>` in KV, the command then asks the backend for handle status and injects only a short wake prompt telling the worker to call `bootstrap` or `poll_messages`.
 
 The work contract should live in the swarm message or task, not in raw workspace input. If no workspace identity exists, the message is still delivered and the nudge is skipped. If the target handle is `working`, the nudge is skipped unless `--force` is passed. If the published handle is an alias, `prompt-peer` validates it with the backend, rewrites the canonical `handle`, and preserves the old value in `handle_aliases`.
 
@@ -215,7 +215,7 @@ execFileSync("swarm-mcp", [
 ]);
 ```
 
-The agent calls `node harness.mjs <partner-id>` once. The script does validation, file writes, KV update, and message handoff in one atomic-from-the-agent's-POV invocation. The agent then returns to its `wait_for_activity` loop and receives the response when the partner acts.
+The agent calls `node harness.mjs <partner-id>` once. The script does validation, file writes, KV update, and message handoff in one atomic-from-the-agent's-POV invocation. If the agent expects the partner to answer soon, it can monitor with `wait_for_activity`; otherwise it should finish the turn and remain promptable.
 
 ## Caveats
 

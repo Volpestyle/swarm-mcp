@@ -56,17 +56,6 @@
       "instance_id": "inst-abc-123"
     }
   ],
-  "annotations": [
-    {
-      "id": "note-12",
-      "scope": "swarm-mcp",
-      "instance_id": "inst-abc-123",
-      "file": "apps/swarm-server/src/pair.rs",
-      "type": "finding",
-      "content": "Token entropy should come from OsRng, not rand::thread_rng.",
-      "created_at": 1745000200
-    }
-  ],
   "kv": [
     {
       "scope": "swarm-mcp",
@@ -117,10 +106,6 @@
     "locks": {
       "at": 1745000200,
       "id": "swarm-mcp\u001fapps/swarm-server/src/pair.rs"
-    },
-    "annotations": {
-      "at": 1745000200,
-      "id": "note-12"
     },
     "kv": {
       "at": 1745000050,

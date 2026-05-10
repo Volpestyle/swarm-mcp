@@ -86,9 +86,9 @@ Required capabilities:
 - Keep noisy runtime coordination out of the human tracker.
 - Accept worker-authored comments, evidence, links, and completion details when a task is linked to a human-facing issue.
 
-First implementation: Linear MCP.
+First concrete target: a configured work tracker for the current repo/scope and identity, with Linear MCP as the initial work-profile target. The tracker provider is selected by config and identity boundary, not by whichever MCP happens to be loaded.
 
-Boundary: Linear should not hold worker heartbeats, file locks, pane handles, or high-churn peer messages. Those belong in the Coordinator. Workers may update Linear when they are publishing durable human-facing work state; they should not use Linear as the live swarm bus.
+Boundary: Work trackers should not hold worker heartbeats, file locks, pane handles, or high-churn peer messages. Those belong in the Coordinator. Workers may update the configured same-identity tracker when they are publishing durable human-facing work state; they should not use Linear, Jira, GitHub Issues, or any other tracker as the live swarm bus.
 
 ### AgentRuntime
 
@@ -191,17 +191,17 @@ not the shape new contracts should copy.
 The first stack should prove this end-to-end loop:
 
 1. Operator sends a request to Hermes from Telegram or iOS.
-2. Hermes creates or links a Linear issue when the work should be human-trackable.
+2. Hermes creates or links an issue in the configured same-identity work tracker when the work should be human-trackable.
 3. Hermes calls the Coordinator to create an idempotent swarm task.
 4. If no worker is available, the gateway follows the Spawner contract: it applies spawn dedupe, then invokes herdr to create a worker pane with injected Coordinator identity.
 5. Worker registers/adopts, claims the task, and reports status.
 6. Worker locks files through the Coordinator before edits.
-7. Worker coordinates with peers through Coordinator messages, annotations, tasks, and coordinator-first wakeups when needed.
-8. Worker updates linked Linear issues with human-facing evidence, comments, links, or completion details when the assigned contract grants that authority.
+7. Worker coordinates with peers through Coordinator messages, tasks, locks, KV, and coordinator-first wakeups when needed.
+8. Worker updates linked tracker issues with human-facing evidence, comments, links, or completion details when the assigned contract grants that authority and the configured same-identity MCP is available.
 9. Worker completes the task with structured result and test status.
 10. Reviewer worker or gateway validates the result when needed.
 11. Hermes summarizes back to the operator.
-12. Linear is updated with the durable human-facing outcome if no worker already published the right tracker update.
+12. The configured work tracker is updated with the durable human-facing outcome if no worker already published the right tracker update.
 
 This is the first integration target. New abstractions should be justified by making this loop more reliable, not by theoretical swapability.
 
@@ -209,9 +209,9 @@ This is the first integration target. New abstractions should be justified by ma
 
 - Build one real stack first; keep seams generic enough to swap later.
 - Put product-specific behavior under `integrations/` or adapter packages.
-- Keep high-churn runtime state out of work trackers like Linear.
+- Keep high-churn runtime state out of work trackers.
 - Keep transport-local handles out of durable task/lock/message state.
-- Give workers the capabilities they need, but route them through the right source of truth: swarm for live coordination, Linear for human-facing work records, herdr for transport.
+- Give workers the capabilities they need, but route them through the right source of truth: swarm for live coordination, the configured same-identity tracker for human-facing work records, herdr for transport.
 - Treat `swarm-mcp` as the reference Coordinator, not as an assumption every adapter must hard-code.
 - Prefer explicit adapter contracts over hidden cross-imports; terminal/process control belongs in workspace or spawner backends, not in the coordination primitives.
 - Do not invent a generic framework layer until the concrete implementation creates pressure for it.
@@ -222,9 +222,9 @@ This is the first integration target. New abstractions should be justified by ma
 |---|---|
 | Hermes integration | AgentRuntime + NotificationGateway behavior for auto-register, locking, gateway mode, and summaries. |
 | herdr integration | WorkspaceControl + Spawner behavior for panes, status, mobile bridge, and worker adoption. |
-| Linear integration | WorkTracker bridge for issues, priorities, acceptance criteria, and result updates. |
+| WorkTracker integration | Configured same-identity tracker bridge for issues, priorities, acceptance criteria, and result updates; Linear is the initial concrete target. |
 | iOS/herdr bridge | Remote OperatorSurface using herdr as the universal workspace owner. |
-| Coordinator hardening | Task idempotency, spawn mutexes, lock cleanup, events, and exact context lookup APIs. |
+| Coordinator hardening | Task idempotency, spawn mutexes, lock cleanup, events, and exact lock lookup APIs. |
 
 ## Non-Goals For Now
 
@@ -237,6 +237,6 @@ This is the first integration target. New abstractions should be justified by ma
 
 - Which control-plane contract deserves the first stable interface package?
 - Should spawn/adoption become a first-class Coordinator primitive instead of adapter convention?
-- Should exact context lookup replace fuzzy `search_context` for synthetic resources?
+- Should spawn/adoption mutexes become dedicated Coordinator resources instead of synthetic file locks?
 - Which cross-adapter configuration belongs in repo config, user profile, launcher env, or Coordinator KV after the current [`backend-configuration.md`](./backend-configuration.md) split hardens?
 - What is the minimum remote herdr bridge needed before the iOS app feels useful?

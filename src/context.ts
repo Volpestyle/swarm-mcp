@@ -1,16 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { CLEANUP_POLICY, cleanupContextAnnotations } from "./cleanup";
+import { CLEANUP_POLICY, cleanupNonLockContextRows } from "./cleanup";
 import { db } from "./db";
 import { emit } from "./events";
 import { now } from "./time";
-
-export type ContextType =
-  | "finding"
-  | "warning"
-  | "lock"
-  | "note"
-  | "bug"
-  | "todo";
 
 type ContextRow = {
   id: string;
@@ -38,14 +30,6 @@ type LockRow = ContextRow & {
     status: string;
   }>;
 };
-
-function annotations(scope: string, file: string) {
-  return db
-    .query(
-      "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND file = ? AND type != 'lock' ORDER BY created_at DESC, id DESC",
-    )
-    .all(scope, file) as ContextRow[];
-}
 
 function enrichLock(scope: string, row: ContextRow | null): LockRow | null {
   if (!row) return null;
@@ -94,30 +78,18 @@ function activeLock(scope: string, file: string) {
   return enrichLock(scope, row);
 }
 
-export function annotate(
+function insertLock(
   instance: string,
   scope: string,
   file: string,
-  type: ContextType,
   content: string,
   taskId?: string,
 ) {
   const id = randomUUID();
   db.run(
     "INSERT INTO context (id, scope, instance_id, file, type, content, task_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [id, scope, instance, file, type, content, taskId ?? null],
+    [id, scope, instance, file, "lock", content, taskId ?? null],
   );
-  // `lock` writes go through `annotate` too — emit the more specific
-  // `context.lock_acquired` from `lock()` instead of double-firing here.
-  if (type !== "lock") {
-    emit({
-      scope,
-      type: "context.annotated",
-      actor: instance,
-      subject: file,
-      payload: { annotation_type: type, id, content },
-    });
-  }
   return id;
 }
 
@@ -140,12 +112,8 @@ export function lock(
     );
   }
 
-  // Pull non-lock annotations from peers so the caller doesn't need a
-  // separate read round-trip before editing.
-  const notes = annotations(scope, file);
-
   try {
-    const id = annotate(instance, scope, file, "lock", content, opts.taskId);
+    const id = insertLock(instance, scope, file, content, opts.taskId);
     emit({
       scope,
       type: "context.lock_acquired",
@@ -153,7 +121,7 @@ export function lock(
       subject: file,
       payload: { id, content },
     });
-    return { ok: true as const, id, annotations: notes };
+    return { ok: true as const, id };
   } catch (err) {
     if (
       !(err instanceof Error) ||
@@ -162,7 +130,7 @@ export function lock(
       throw err;
     }
 
-    return { error: "File is already locked", active: activeLock(scope, file), annotations: notes };
+    return { error: "File is already locked", active: activeLock(scope, file) };
   }
 }
 
@@ -174,20 +142,11 @@ export function lookup(scope: string, file: string) {
     .all(scope, file);
 }
 
-export function fileContext(scope: string, file: string) {
+export function fileLock(scope: string, file: string) {
   return {
     file,
     active: activeLock(scope, file),
-    annotations: annotations(scope, file),
   };
-}
-
-export function search(scope: string, pattern: string) {
-  return db
-    .query(
-      "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND (file LIKE ? OR content LIKE ?) ORDER BY created_at DESC, id DESC",
-    )
-    .all(scope, `%${pattern}%`, `%${pattern}%`);
 }
 
 export function remove(id: string) {
@@ -294,5 +253,5 @@ export function releaseInstanceEditLocks(instance: string, scope: string) {
 }
 
 export function cleanup() {
-  cleanupContextAnnotations({ mode: "manual" });
+  cleanupNonLockContextRows({ mode: "manual" });
 }

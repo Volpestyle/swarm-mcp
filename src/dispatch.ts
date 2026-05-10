@@ -171,7 +171,7 @@ function dispatchInstruction(taskId: string, title: string, message: string) {
   return [
     `Task ${taskId} is ready: ${title}`,
     body,
-    "Call poll_messages first, claim the task if it matches your role, then complete it with update_task and structured results.",
+    "Call bootstrap or poll_messages first, claim the task if it matches your role, then complete it with update_task and structured results.",
   ].join("\n\n");
 }
 
@@ -223,7 +223,7 @@ export function promptPeerResult(opts: {
   result.agent_status = status;
   if (resolved.identity_repaired) result.identity_repaired = true;
 
-  const wakePrompt = `A peer sent you a swarm message${task ? ` for task ${task}` : ""}. Call the swarm poll_messages tool, handle the message, and report back through swarm-mcp.`;
+  const wakePrompt = `A peer sent you a swarm message${task ? ` for task ${task}` : ""}. Call the swarm bootstrap or poll_messages tool, handle the message, and report back through swarm-mcp.`;
   const wakeResult = resolved.backend.wakeHandle({
     handle: workspaceHandle,
     prompt: wakePrompt,

@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cursors::{ChangeCursor, PtySeq, TableCursors};
 use crate::errors::ErrorPayload;
-use crate::state::{Annotation, Event, Instance, KvEntry, Lease, Lock, Message, PtyInfo, Task};
+use crate::state::{Event, Instance, KvEntry, Lease, Lock, Message, PtyInfo, Task};
 
 /// Envelope for every WebSocket frame.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -177,13 +177,6 @@ pub enum DeltaTableFrame {
         upserts: Vec<Lock>,
         #[serde(default)]
         removes: Vec<LockKey>,
-    },
-    Annotations {
-        cursor: ChangeCursor,
-        #[serde(default)]
-        upserts: Vec<Annotation>,
-        #[serde(default)]
-        removes: Vec<String>,
     },
     Kv {
         cursor: ChangeCursor,

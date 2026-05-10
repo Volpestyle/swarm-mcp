@@ -176,6 +176,53 @@ describe("CLI registration adoption", () => {
     expect(payload.unread_messages).toEqual([]);
     expect(payload.tasks).toBeTruthy();
   });
+
+  test("bootstrap includes configured same-identity work tracker", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-bootstrap-tracker-"));
+    const dbPath = join(dir, "swarm.db");
+    const inst = register(
+      dbPath,
+      dir,
+      dir,
+      "identity:personal codex platform:cli origin:codex session:abc12345",
+    );
+    const tracker = {
+      schema_version: 1,
+      identity: "personal",
+      provider: "github_issues",
+      mcp: "github_personal",
+      repo: "Volpestyle/swarm-mcp",
+    };
+    const set = runCli(dbPath, [
+      "kv",
+      "set",
+      "config/work_tracker/personal",
+      JSON.stringify(tracker),
+      "--scope",
+      dir,
+      "--as",
+      inst.id,
+      "--json",
+    ]);
+    expect(set.exitCode).toBe(0);
+
+    const boot = runCli(dbPath, [
+      "bootstrap",
+      dir,
+      "--scope",
+      dir,
+      "--as",
+      inst.id,
+      "--json",
+    ]);
+
+    expect(boot.exitCode).toBe(0);
+    const payload = JSON.parse(boot.stdout) as {
+      work_tracker: { key: string; value: typeof tracker } | null;
+    };
+    expect(payload.work_tracker?.key).toBe("config/work_tracker/personal");
+    expect(payload.work_tracker?.value).toEqual(tracker);
+  });
 });
 
 describe("CLI task notifications", () => {
@@ -724,7 +771,7 @@ describe("CLI file path normalization", () => {
     ]);
     expect(lock.exitCode).toBe(0);
 
-    const rows = runCli(dbPath, ["context", "--scope", dir, "--json"]);
+    const rows = runCli(dbPath, ["locks", "--scope", dir, "--json"]);
     expect(rows.exitCode).toBe(0);
     expect(JSON.parse(rows.stdout)).toMatchObject([
       { type: "lock", instance_id: worker.id, file: expectedFile },
@@ -742,7 +789,7 @@ describe("CLI file path normalization", () => {
     expect(unlock.exitCode).toBe(0);
     expect(JSON.parse(unlock.stdout)).toMatchObject({ ok: true, file: expectedFile });
 
-    const after = runCli(dbPath, ["context", "--scope", dir, "--json"]);
+    const after = runCli(dbPath, ["locks", "--scope", dir, "--json"]);
     expect(after.exitCode).toBe(0);
     expect(JSON.parse(after.stdout)).toEqual([]);
   });

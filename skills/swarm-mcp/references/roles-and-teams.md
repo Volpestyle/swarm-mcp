@@ -40,14 +40,14 @@ Use `scope` for hard separation and `team:` labels for soft grouping inside one 
 
 - claims the highest-priority open task first
 - skips `blocked` tasks (they auto-unblock when dependencies complete)
-- edits files using the check/lock/edit/annotate/unlock cycle
+- edits files using the inspect-lock/lock/edit/unlock cycle
 - reports structured results: `{ files_changed, test_status, summary }`
-- recognizes `[signal:complete]` as the cue to finish and deregister
+- recognizes `[signal:complete]` as the cue to finish active work, publish final status, then idle or deregister only if exiting
 
 ### Reviewer
 
 - inspects risks and correctness
-- reviews touched files and annotations
+- reviews touched files and task results
 - expects structured results from implementers when available
 - requests fixes or follow-up tasks when needed
 
@@ -117,9 +117,9 @@ When teams share one scope, any session can create tasks for sessions on another
 - For small cross-team requests, assign directly to an implementer
 - Use `send_message` for context that doesn't fit in the task description
 
-### Termination
+### Completion Signal
 
-The planner broadcasts `[signal:complete]` when all work is done. Implementers recognize this signal, finish current work, and deregister.
+The planner broadcasts `[signal:complete]` when all planned work is done. Workers recognize this signal, finish current work, publish final status, then idle. They deregister only when the session is actually ending or will no longer be promptable.
 
 ### Example payloads
 

@@ -28,6 +28,7 @@ parallels, see [`integrations/hermes/SPEC.md`](../../../hermes/SPEC.md) and
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
 | Publish and cleanup workspace identity | `SessionStart` / `Stop` hooks → publish/delete current workspace handle when `HERDR_PANE_ID` is present |
+| Publish configured work tracker | `SessionStart` hook reads tracker config and writes `config/work_tracker/<identity>` KV |
 | Gateway conductor mode | `SWARM_CODEX_ROLE=gateway` registers as `role:planner`; make easy edits locally, use the MCP `dispatch` tool for medium/large task/spawn routing |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 
@@ -147,6 +148,7 @@ Hooks pick up the same env knobs as the hermes / Claude Code plugins, with
 | `SWARM_CODEX_AGENT_ROLE` / `SWARM_AGENT_ROLE` | Adds a `role:<name>` token to the derived label. Accepts `planner`, `implementer`, `reviewer`, `researcher`, `generalist`, or `worker` (the default; emits no token). |
 | `SWARM_CODEX_ROLE` / `SWARM_ROLE` | `worker` by default. Set `gateway` for planner/conductor behavior. |
 | `SWARM_CODEX_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `Stop` deregisters normally. |
+| `SWARM_CODEX_WORK_TRACKER` / `SWARM_WORK_TRACKER` | JSON tracker config to publish at `config/work_tracker/<identity>`; use this for Linear/Jira/GitHub policy, not credentials. |
 | `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this workspace identity for express-lane peer wakes. See [`backend-configuration.md`](../../../../docs/backend-configuration.md). |
 
 **Repo-wide role default — `.swarm-role` file.**
@@ -220,7 +222,7 @@ If the deny message never appears, the most common causes are:
   CLI. No plugin-local tool surface is needed.
 
 ### v0.5 — Ambient peer context
-- SessionStart additionalContext carries the current peer/lock/annotation
+- SessionStart additionalContext carries the current peer/lock/message
   snapshot so the agent starts a turn already aware of the coordination
   state.
 

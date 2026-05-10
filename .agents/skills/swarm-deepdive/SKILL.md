@@ -19,7 +19,7 @@ If the user only wants to coordinate current work, use `swarm-mcp` instead. If t
 - "What happened in the swarm overnight / while I was away?"
 - "Why is task X blocked / why did agent Y stop?"
 - "Reconstruct the conversation between planner and implementer"
-- "Audit who edited, locked, or annotated a file"
+- "Audit who edited or locked a file"
 - "Did this KV value get clobbered?"
 - "Why did this UI command stay pending?"
 - "Why didn't my agent register / why was it pruned?"
@@ -29,7 +29,7 @@ If the user only wants to coordinate current work, use `swarm-mcp` instead. If t
 
 | Source | Path | What it has |
 |---|---|---|
-| Shared SQLite DB | `${SWARM_DB_PATH:-~/.swarm-mcp/swarm.db}` | Instances, tasks, messages, KV, file locks/annotations, events audit log, UI command queue |
+| Shared SQLite DB | `${SWARM_DB_PATH:-~/.swarm-mcp/swarm.db}` | Instances, tasks, messages, KV, file locks, events audit log, UI command queue |
 | Server auth DB | directory of swarm DB + `/server/server.db` | Devices, bearer tokens, pairing sessions, server audit events - not swarm coordination state |
 | Server logs | directory of swarm DB + `/server/logs/swarm-server.log.YYYY-MM-DD` | PTY lifecycle, pairing, HTTP/WSS/UDS errors, daemon startup/crashes |
 
@@ -55,10 +55,10 @@ Current event families include:
 - `task.created`, `task.claimed`, `task.updated`, `task.approved`, `task.cascade.unblocked`, `task.cascade.cancelled`
 - `message.sent`, `message.broadcast`, `message.cleared`
 - `kv.set`, `kv.deleted`, `kv.appended`
-- `context.annotated`, `context.lock_acquired`, `context.lock_released`
+- `context.lock_acquired`, `context.lock_released`
 - `ui.command.started`, `ui.command.completed`, `ui.command.failed`
 
-Each row has `scope`, `actor`, `subject`, `payload`, and `created_at`. Payloads can include sensitive content: message text, KV values, deleted prior values, appended JSON, annotation text, and UI command results. Treat raw payloads as evidence, not as automatically safe user-facing output.
+Each row has `scope`, `actor`, `subject`, `payload`, and `created_at`. Payloads can include sensitive content: message text, KV values, deleted prior values, appended JSON, lock notes, and UI command results. Treat raw payloads as evidence, not as automatically safe user-facing output.
 
 ## Retention Model
 
@@ -67,7 +67,7 @@ Each row has `scope`, `actor`, `subject`, `payload`, and `created_at`. Payloads 
 | `events` | Deleted after 24 hours when MCP cleanup runs. |
 | `messages` | Deleted after one hour by cleanup. Messages for deregistered/offline recipients are deleted immediately during release. Use `message.*` events for 24-hour reconstruction. |
 | `tasks` | Active tasks persist. Terminal `done`/`failed`/`cancelled` tasks are deleted after 24 hours when MCP cleanup runs. |
-| `context` | Locks persist until released, task completion, deregister, or offline reclaim. Non-lock annotations are deleted after 24 hours when MCP cleanup runs. |
+| `context` | Lock rows persist until released, task completion, deregister, or offline reclaim. Legacy non-lock rows are removed by cleanup. |
 | `kv` | Only current values persist. Old orphaned `progress/<instance-id>` and `plan/<instance-id>` rows are removed by cleanup; durable keys such as `plan/latest` remain until overwritten or deleted. |
 | `ui_commands` | Command rows persist unless manually cleaned; status is `pending`, `running`, `done`, or `failed`. |
 
@@ -86,7 +86,7 @@ Never assume older incidents are fully reconstructable from the DB. For older wi
 | Reconstruct a timeline, find when something happened | `references/queries.md` -> "Timeline" |
 | Trace one task end-to-end | `references/queries.md` -> "Task lifecycle" |
 | Replay messages or broadcasts | `references/queries.md` -> "Messages" |
-| Audit locks, annotations, or file contention | `references/queries.md` -> "File contention" |
+| Audit locks or file contention | `references/queries.md` -> "File contention" |
 | Track a KV key | `references/queries.md` -> "KV history" |
 | Investigate stale, pruned, or unadopted agents | `references/queries.md` -> "Stale agents" |
 | Inspect `swarm-ui` command execution | `references/queries.md` -> "UI command queue" |
@@ -117,7 +117,7 @@ swarm-mcp inspect --scope "$SCOPE" --json
 swarm-mcp instances --scope "$SCOPE" --json
 swarm-mcp tasks --scope "$SCOPE" --json
 swarm-mcp messages --scope "$SCOPE" --limit 100 --json
-swarm-mcp context --scope "$SCOPE" --json
+swarm-mcp locks --scope "$SCOPE" --json
 swarm-mcp kv list --scope "$SCOPE" --json
 ```
 

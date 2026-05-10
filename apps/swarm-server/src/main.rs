@@ -1133,9 +1133,6 @@ fn filter_snapshot_since(mut snapshot: SwarmSnapshot, cursors: &TableCursors) ->
     if cursors.locks >= snapshot.cursors.locks {
         snapshot.locks.clear();
     }
-    if cursors.annotations >= snapshot.cursors.annotations {
-        snapshot.annotations.clear();
-    }
     if cursors.kv >= snapshot.cursors.kv {
         snapshot.kv.clear();
     }
@@ -1198,23 +1195,6 @@ async fn resolve_reveal_subject(state: &AppState, subject: &str) -> Result<Strin
                 error_response(
                     StatusCode::NOT_FOUND,
                     ErrorPayload::new(ErrorClass::NotFound, "unknown message subject"),
-                )
-            });
-    }
-
-    if let Some(id) = subject.strip_prefix("annotation:") {
-        return conn
-            .query_row("SELECT content FROM context WHERE id = ?", [id], |row| {
-                row.get(0)
-            })
-            .optional()
-            .map_err(|err| {
-                internal_response(format!("failed to read annotation reveal subject: {err}"))
-            })?
-            .ok_or_else(|| {
-                error_response(
-                    StatusCode::NOT_FOUND,
-                    ErrorPayload::new(ErrorClass::NotFound, "unknown annotation subject"),
                 )
             });
     }
@@ -1380,7 +1360,8 @@ fn load_instance_info(
 
 fn reclaim_stale_pending_instances(path: &Path) -> Result<(), Response> {
     let conn = open_swarm_rw(path)?;
-    let stale_before = now_secs().saturating_sub(swarm_protocol::state::INSTANCE_OFFLINE_AFTER_SECS);
+    let stale_before =
+        now_secs().saturating_sub(swarm_protocol::state::INSTANCE_OFFLINE_AFTER_SECS);
     conn.execute(
         "DELETE FROM instances WHERE COALESCE(adopted, 1) = 0 AND heartbeat < ?",
         params![stale_before],
@@ -2549,9 +2530,6 @@ impl RedactionPolicy {
             snapshot
                 .locks
                 .retain(|row| scope_filter.contains(&&row.scope));
-            snapshot
-                .annotations
-                .retain(|row| scope_filter.contains(&&row.scope));
             snapshot.kv.retain(|row| scope_filter.contains(&&row.scope));
             snapshot
                 .events
@@ -3030,7 +3008,6 @@ mod tests {
                 read: false,
             }],
             locks: vec![],
-            annotations: vec![],
             kv: vec![],
             events: vec![],
             ptys: vec![],
@@ -3040,7 +3017,6 @@ mod tests {
                 instances: Some(swarm_protocol::ChangeCursor::new(10, "inst-1")),
                 tasks: Some(swarm_protocol::ChangeCursor::new(10, "task-1")),
                 locks: None,
-                annotations: None,
                 kv: None,
                 ptys: None,
             },
@@ -3055,7 +3031,6 @@ mod tests {
                 instances: Some(swarm_protocol::ChangeCursor::new(10, "inst-1")),
                 tasks: Some(swarm_protocol::ChangeCursor::new(9, "task-1")),
                 locks: None,
-                annotations: None,
                 kv: None,
                 ptys: None,
             },

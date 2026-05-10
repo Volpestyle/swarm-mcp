@@ -1,16 +1,17 @@
 # Coordination State
 
-Use this reference when reading or writing shared swarm state through messages, tasks, annotations, locks, or KV.
+Use this reference when reading or writing shared swarm state through messages, tasks, locks, or KV.
 
 ## MCP Access
 
 Agents see shared state through MCP tools. The skill teaches conventions; MCP provides access.
 
 - `register` establishes the session identity and scope.
-- `list_instances`, `poll_messages`, and `list_tasks` read the live coordination surface.
-- `get_file_context`, `lock_file`, `unlock_file`, and `annotate` coordinate file-level work. `get_file_context` is read-only; `lock_file` returns peer annotations alongside the lock; `unlock_file` is only needed for early per-file release (terminal `update_task` releases normal edit locks automatically).
+- `bootstrap` is the preferred yield-checkpoint read: it returns instance state, peers, unread messages, tasks, and configured work tracker metadata.
+- `list_instances`, `poll_messages`, and `list_tasks` are focused reads when you only need one part of the live coordination surface.
+- `get_file_lock`, `lock_file`, and `unlock_file` coordinate file-level work. `get_file_lock` is read-only; `unlock_file` is only needed for early per-file release (terminal `update_task` releases normal edit locks automatically).
 - `kv_list`, `kv_get`, `kv_set`, `kv_append`, and `kv_delete` read/write small shared state.
-- `wait_for_activity` wakes on `new_messages`, `task_updates`, `kv_updates`, and `instance_changes`.
+- `wait_for_activity` blocks while you are actively responsible for a peer result, dependency, lock, review, or gateway/planner delegation. It wakes on `new_messages`, `task_updates`, `kv_updates`, and `instance_changes`.
 
 ## KV Principles
 
@@ -74,9 +75,10 @@ When `wait_for_activity` returns `kv_updates`:
 ## Messages vs Tasks vs KV
 
 - Use `send_message` for targeted conversation or questions.
+- Use `send_message` when the target is busy and the note can wait until their next yield checkpoint.
+- Use `prompt_peer` when a peer should notice soon. It writes the durable swarm message first and only best-effort wakes the workspace handle.
 - Use `broadcast` for short updates all active agents need.
 - Use `request_task` for tracked work that needs ownership and a final status.
-- Use `annotate` for file-specific durable context.
 - Use KV for compact shared state that agents should poll or resume from.
 
 ## Safety

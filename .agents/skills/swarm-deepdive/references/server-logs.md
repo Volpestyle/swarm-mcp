@@ -22,7 +22,7 @@ Reach for them when:
 - An unadopted instance row appeared and you need to know whether the harness ever started
 - `ui_commands` rows stay `pending`, `running`, or `failed` and the DB alone does not explain why
 
-The logs do not record normal swarm coordination actions. Messages, tasks, KV changes, locks, annotations, and UI command status transitions live in `swarm.db` events.
+The logs do not record normal swarm coordination actions. Messages, tasks, KV changes, locks, and UI command status transitions live in `swarm.db` events.
 
 ## Format
 

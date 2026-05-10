@@ -8,25 +8,24 @@ flowchart LR
     Instances[("instances<br/>instance_id, heartbeat, labels")]
     Tasks[("tasks<br/>status, deps, assignee, result")]
     Messages[("messages + events<br/>peer activity and audit")]
-    Context[("context<br/>file locks and annotations")]
+    Context[("context<br/>active file locks")]
     KV[("kv<br/>workspace identity and small shared state")]
   end
 
   Coordinator -->|register / heartbeat / adopt| Instances
   Coordinator -->|request / claim / update| Tasks
   Coordinator -->|send / wait / audit| Messages
-  Coordinator -->|lock / annotate| Context
+  Coordinator -->|get_file_lock / lock / unlock| Context
   Coordinator -->|kv_get / kv_set| KV
 
-  Gateway -->|dispatch spawn intent| Spawner["Spawner backend<br/>herdr today / swarm-ui alt / swarm-server future"]
+  Gateway -->|dispatch spawn intent| Spawner["Spawner backend<br/>creates new workers<br/>herdr today / swarm-ui alt / swarm-server future"]
   Spawner -->|precreate row + inject SWARM_MCP_INSTANCE_ID| Instances
-  Spawner -->|launch worker process| Workspace["Workspace backend<br/>herdr panes today / swarm-server PTYs future"]
-  Workspace -->|env + PTY/session| Worker["Worker agent<br/>adopts instance_id"]
+  Spawner -->|launch worker process on chosen surface| Worker["Worker agent<br/>adopts instance_id"]
 
   Worker -->|register/adopt + coordinate| Coordinator
   Worker -->|publish transport handle| KV
-  Coordinator -->|prompt_peer resolves identity/workspace/backend/instance| KV
-  Coordinator -->|wake by instance_id| Workspace
+  Coordinator -->|prompt_peer reads identity/workspace/backend/instance| KV
+  Coordinator -->|wake existing handle| Workspace["Workspace backend<br/>resolves and wakes published handles<br/>herdr panes today / swarm-server PTYs future"]
   Workspace -->|short wake prompt only| Worker
 
   Gateway <-->|human-facing issue state| Tracker["Work tracker<br/>Linear / Jira / backlog"]

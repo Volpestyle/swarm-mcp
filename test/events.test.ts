@@ -149,22 +149,12 @@ describe("events: kv", () => {
 });
 
 describe("events: context", () => {
-  test("annotate emits context.annotated for non-lock types", () => {
-    const a = reg("alice");
-    db.exec("DELETE FROM events");
-    context.annotate(a.id, SCOPE, "/tmp/foo.ts", "finding", "NPE");
-    const e = listEvents().find((x) => x.type === "context.annotated");
-    expect(e?.actor).toBe(a.id);
-    expect(e?.subject).toBe("/tmp/foo.ts");
-  });
-
-  test("lock emits context.lock_acquired (not context.annotated)", () => {
+  test("lock emits context.lock_acquired", () => {
     const a = reg("alice");
     db.exec("DELETE FROM events");
     context.lock(a.id, SCOPE, "/tmp/foo.ts", "editing");
     const types = eventTypes();
     expect(types).toContain("context.lock_acquired");
-    expect(types).not.toContain("context.annotated");
   });
 
   test("clearLocks emits context.lock_released only when something was removed", () => {

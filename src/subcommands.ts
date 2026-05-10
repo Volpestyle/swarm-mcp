@@ -11,7 +11,7 @@ export const SUBCOMMANDS = [
   "claim",
   "update-task",
   "dispatch",
-  "context",
+  "locks",
   "kv",
   "send",
   "broadcast",

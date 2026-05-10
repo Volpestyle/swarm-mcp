@@ -75,6 +75,37 @@ def _server_prefix() -> str:
     return os.environ.get("SWARM_HERMES_MCP_NAME", "swarm")
 
 
+def _identity_name() -> str:
+    return contract.identity_name(
+        os.environ.get("SWARM_HERMES_IDENTITY")
+        or os.environ.get("AGENT_IDENTITY")
+        or os.environ.get("SWARM_IDENTITY")
+        or ""
+    )
+
+
+def _work_tracker_config(kwargs: dict[str, Any]) -> dict[str, Any]:
+    identity = _identity_name()
+    scope = os.environ.get("SWARM_HERMES_SCOPE") or os.environ.get("SWARM_MCP_SCOPE")
+    tracker = contract.work_tracker_config(
+        "HERMES",
+        _session_directory(kwargs),
+        scope,
+        identity,
+    )
+    if tracker:
+        return tracker
+
+    swarm = _load_config().get("swarm")
+    if isinstance(swarm, dict):
+        return contract.normalize_work_tracker(
+            swarm.get("work_tracker"),
+            identity,
+            "hermes-config:swarm.work_tracker",
+        )
+    return {}
+
+
 def _dispatch(tool_suffix: str, args: dict) -> Optional[dict]:
     """Call ``mcp_<server>_<tool_suffix>`` via the global registry.
 
@@ -96,6 +127,20 @@ def _dispatch(tool_suffix: str, args: dict) -> Optional[dict]:
     except json.JSONDecodeError:
         logger.debug("swarm plugin: non-JSON response from %s: %r", tool_name, raw[:200])
         return None
+
+
+def _publish_work_tracker_config(instance_id: str, tracker: dict[str, Any]) -> None:
+    if not tracker:
+        return
+    key = contract.work_tracker_key(str(tracker.get("identity") or ""))
+    payload = json.dumps(tracker, separators=(",", ":"))
+    result = _extract_payload(_dispatch("kv_set", {"key": key, "value": payload}))
+    if isinstance(result, dict) and result.get("error"):
+        logger.debug(
+            "swarm plugin: failed to publish work tracker config for %s: %s",
+            instance_id,
+            result.get("error"),
+        )
 
 
 def _decode_json_prefix(text: str) -> Any:
@@ -407,6 +452,7 @@ def on_session_start(session_id: str = "", **kwargs: Any) -> None:
         from . import prompt_peer
 
         prompt_peer.publish_current_identity(instance_id)
+        _publish_work_tracker_config(instance_id, _work_tracker_config(kwargs))
         logger.info("swarm plugin: registered as %s", instance_id)
     else:
         logger.debug(

@@ -19,8 +19,8 @@ use swarm_protocol::rpc::{
     RevokeResponse, SpawnPtyRequest, SpawnPtyResponse, WritePtyRequest,
 };
 use swarm_protocol::{
-    Annotation, ErrorPayload, Event, Frame, Instance, KvEntry, Lease, Lock, Message, PtyInfo,
-    SwarmSnapshot, TableCursors, Task,
+    ErrorPayload, Event, Frame, Instance, KvEntry, Lease, Lock, Message, PtyInfo, SwarmSnapshot,
+    TableCursors, Task,
 };
 
 fn fixtures_dir() -> PathBuf {
@@ -86,11 +86,6 @@ fn state_message() {
 #[test]
 fn state_lock() {
     round_trip::<Lock>("lock");
-}
-
-#[test]
-fn state_annotation() {
-    round_trip::<Annotation>("annotation");
 }
 
 #[test]

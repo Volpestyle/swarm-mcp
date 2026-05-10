@@ -18,6 +18,7 @@ import * as spawnerBackend from "./spawner_backend";
 import { registerDefaultSpawners } from "./spawner_defaults";
 import * as tasks from "./tasks";
 import * as workspaceIdentity from "./workspace_identity";
+import * as workTracker from "./work_tracker";
 import { herdrWorkspaceBackend } from "./backends/herdr";
 
 workspaceIdentity.registerBackend(herdrWorkspaceBackend);
@@ -38,9 +39,9 @@ const server = new McpServer({
 
 const REGISTER_PROMPT = `You are now registered with the swarm and should operate in autonomous mode.
 
-Rehydrate first: poll_messages, list_tasks, list_instances, and any role-specific KV keys you rely on.
-When idle, wait_for_activity is an optimization, not the delivery guarantee. Peers may wake you only to tell you to poll swarm state; react to messages and task changes immediately.
-Only stop when the overall goal is complete or the user explicitly tells you to stop.`;
+Rehydrate first with bootstrap, then handle unread messages before claiming or creating work.
+Use wait_for_activity only while you own active monitoring responsibility, such as a delegated task, dependency, review, lock release, or peer response.
+If no active responsibility remains, finish the turn and remain promptable instead of looping. Deregister only when exiting or no longer available.`;
 
 function missing() {
   return {
@@ -154,7 +155,7 @@ function prompt(text: string) {
 
 type ToolShape = Record<string, z.ZodTypeAny>;
 
-type ToolAnnotations = {
+type ToolMetadata = {
   readOnlyHint?: boolean;
   destructiveHint?: boolean;
   idempotentHint?: boolean;
@@ -166,16 +167,16 @@ function registeredTool<Shape extends ToolShape>(
   name: string,
   description: string,
   shape: Shape,
-  handlerOrAnnotations:
+  handlerOrMetadata:
     | ((args: z.infer<z.ZodObject<Shape>>) => Promise<unknown> | unknown)
-    | ToolAnnotations,
+    | ToolMetadata,
   maybeHandler?: (args: z.infer<z.ZodObject<Shape>>) => Promise<unknown> | unknown,
 ) {
-  const annotations =
-    typeof handlerOrAnnotations === "function" ? undefined : handlerOrAnnotations;
+  const metadata =
+    typeof handlerOrMetadata === "function" ? undefined : handlerOrMetadata;
   const handler =
-    typeof handlerOrAnnotations === "function"
-      ? handlerOrAnnotations
+    typeof handlerOrMetadata === "function"
+      ? handlerOrMetadata
       : maybeHandler!;
 
   const wrapped = (async (args: z.infer<z.ZodObject<Shape>>) => {
@@ -183,8 +184,8 @@ function registeredTool<Shape extends ToolShape>(
     return handler(args);
   }) as any;
 
-  if (annotations) {
-    (server.tool as any)(name, description, shape, annotations, wrapped);
+  if (metadata) {
+    (server.tool as any)(name, description, shape, metadata, wrapped);
   } else {
     server.tool(name, description, shape, wrapped);
   }
@@ -367,16 +368,15 @@ server.resource(
 );
 
 server.resource(
-  "context-for-file",
-  new ResourceTemplate("swarm://context{?file}", { list: undefined }),
+  "lock-for-file",
+  new ResourceTemplate("swarm://lock{?file}", { list: undefined }),
   {
-    description:
-      "Shared annotations and locks for a specific file in this swarm scope.",
+    description: "Active lock state for a specific file in this swarm scope.",
   },
   async (uri, { file }) => {
     if (!instance) return resource([], uri.href);
     return resource(
-      context.lookup(instance.scope, resolveFileInput(file as string)),
+      context.fileLock(instance.scope, resolveFileInput(file as string)),
       uri.href,
     );
   },
@@ -726,6 +726,7 @@ tryAutoAdopt();
         include_terminal,
         terminal_limit,
       }),
+      work_tracker: workTracker.configuredWorkTracker(current.scope, current.label),
     });
   },
 );
@@ -836,13 +837,13 @@ registeredTool(
 
 registeredTool(
   "prompt_peer",
-  "Send a durable swarm message to another instance, then best-effort wake its published workspace handle when supported.",
+  "Send a durable swarm message to another instance, then best-effort wake its published workspace handle when supported. By default, busy handles are not interrupted; use force only for urgent or corrective updates.",
   {
     recipient: z.string().describe("Target swarm instance id"),
     message: z.string().describe("Instruction to send through swarm"),
     task_id: z.string().optional().describe("Optional related swarm task id"),
     nudge: z.boolean().optional().default(true).describe("Whether to wake the target workspace handle"),
-    force: z.boolean().optional().default(false).describe("Wake even when the target workspace handle is working"),
+    force: z.boolean().optional().default(false).describe("Wake even when the target workspace handle is working; reserve for urgent or corrective updates"),
   },
   async ({ recipient, message, task_id, nudge, force }) => {
     const current = instance!;
@@ -1306,44 +1307,21 @@ registeredTool(
 );
 
 registeredTool(
-  "annotate",
-  "Share a finding, warning, or note about a file with all instances in this scope.",
-  {
-    file: z.string().describe("File path this annotation is about"),
-    type: z
-      .enum(["finding", "warning", "note", "bug", "todo"])
-      .describe("Type of annotation"),
-    content: z.string().describe("The annotation content"),
-  },
-  async ({ file, type, content }) => {
-    const current = instance!;
-    const id = context.annotate(
-      current.id,
-      current.scope,
-      resolveFileInput(file),
-      type,
-      content,
-    );
-    return respondJson({ annotation_id: id });
-  },
-);
-
-registeredTool(
-  "get_file_context",
-  "Read active lock and peer annotations for a file without acquiring an edit lock. Use this for review, planning, or conflict inspection when you are not about to edit the file.",
+  "get_file_lock",
+  "Read active lock state for a file without acquiring an edit lock. Use this for review, planning, or conflict inspection when you are not about to edit the file.",
   {
     file: z.string().describe("File path to inspect"),
   },
   { readOnlyHint: true },
   async ({ file }) => {
     const current = instance!;
-    return respondJson(context.fileContext(current.scope, resolveFileInput(file)));
+    return respondJson(context.fileLock(current.scope, resolveFileInput(file)));
   },
 );
 
 registeredTool(
   "lock_file",
-  "Acquire an edit lock on a file and read existing peer annotations in one call. Returns the new lock id plus any non-lock annotations on the file. Normal edit locks held by this instance are auto-released when their task reaches a terminal state via update_task. Pass task_id to associate the lock with a specific task — terminal release will then pick it up by task_id regardless of whether the file appears in the task's declared files list (use this when editing files outside the original task.files set). Pass exclusive=true to require that no lock exists on the file (including one held by this same instance) — useful for one-shot operations like spawn mutexes where same-instance re-entry is itself a conflict.",
+  "Acquire an edit lock on a file. Returns the new lock id on success or the active lock owner on conflict. Normal edit locks held by this instance are auto-released when their task reaches a terminal state via update_task. Pass task_id to associate the lock with a specific task — terminal release will then pick it up by task_id regardless of whether the file appears in the task's declared files list (use this when editing files outside the original task.files set). Pass exclusive=true to require that no lock exists on the file (including one held by this same instance) — useful for one-shot operations like spawn mutexes where same-instance re-entry is itself a conflict.",
   {
     file: z.string().describe("File path to lock"),
     reason: z.string().optional().describe("Why you're locking it"),
@@ -1382,18 +1360,6 @@ registeredTool(
     const current = instance!;
     context.clearLocks(current.id, current.scope, resolveFileInput(file));
     return respond(`Unlocked ${file}`);
-  },
-);
-
-registeredTool(
-  "search_context",
-  "Search all shared annotations in this scope by file path or content.",
-  {
-    query: z.string().describe("Search term (matches file paths and content)"),
-  },
-  { readOnlyHint: true },
-  async ({ query }) => {
-    return respondJson(context.search(instance!.scope, query));
   },
 );
 
@@ -1471,7 +1437,7 @@ registeredTool(
 
 (server.tool as any)(
   "wait_for_activity",
-  "Block until new swarm activity arrives (messages, task changes, KV changes, or instance changes), then return what changed. Use this as your idle loop to stay autonomous without user prompting. Returns immediately if there is already unread activity. Note: returned messages are marked read.",
+  "Block until new swarm activity arrives (messages, task changes, KV changes, or instance changes), then return what changed. Use this only while you own active monitoring responsibility, not as a generic idle loop. Returns immediately if there is already unread activity. Note: returned messages are marked read.",
   {
     timeout_seconds: z
       .number()

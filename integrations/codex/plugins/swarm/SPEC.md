@@ -223,7 +223,7 @@ instances` shows the session before the agent spends a tool call on
 registration.
 
 **S2: Solo write does not lock**
-Single session, no peers in scope. Apply any patch. `swarm-mcp context`
+Single session, no peers in scope. Apply any patch. `swarm-mcp locks`
 should show no lock entries during or after the edit.
 
 **S3: Lock conflict (the v0.1 contract)**
@@ -235,7 +235,7 @@ for ... locked`. Target file is **not** modified.
 **S4: Concurrent peer write releases**
 Two codex sessions in shared scope, no manual locks. Both apply patches
 on different files. Each lock is acquired pre, released post. After the
-turns, `swarm-mcp context` shows no residual locks.
+turns, `swarm-mcp locks` shows no residual locks.
 
 **S5: /swarm status**
 `/swarm` inside a registered session prints a compact summary listing
@@ -269,8 +269,7 @@ print(_common.write_paths_for_tool('apply_patch', {'input': patch}))
 Codex hooks run as subprocesses and cannot reach the hosted session's MCP tool
 surface. The hook shells to `swarm-mcp register`, stores the returned
 `instance_id` in scratch metadata, and injects context so the model can start
-with `whoami`, `list_instances`, `poll_messages`, and `list_tasks` instead of
-spending its first action on bootstrap.
+with `bootstrap` instead of spending its first action on manual registration.
 
 **Why keep `--as session:<8>` when we cache the `instance_id`?**
 The session substring is a fallback when metadata is missing or when a clear /

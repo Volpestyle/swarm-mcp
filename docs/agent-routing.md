@@ -10,7 +10,7 @@ For non-trivial coding work, prefer a swarm peer over your runtime's native suba
 
 Decision flow on session start:
 
-1. Call the swarm `list_instances` and `list_tasks` MCP tools early — before deciding how to execute.
+1. Call the swarm `bootstrap` MCP tool early, before deciding how to execute. Use focused reads such as `list_instances` and `list_tasks` only when you need a narrower refresh.
 2. **Matching peer present** (compatible `scope`, useful `role:<implementer|reviewer|researcher>`, matching `identity:<work|personal>`) → delegate via `request_task` with a concrete patch + success criterion. To wake an idle peer through its published workspace handle, send the durable swarm message via `send_message` first; the handle nudge (the plugin tool `swarm_prompt_peer` if your runtime exposes it, else a backend-specific command such as `herdr pane run` if you have that capability) is best-effort and never carries the work contract itself.
 3. **Gateway/lead mode and no matching peer** (`mode:gateway`) → for trivial, low-risk edits, work locally. For medium or large implementation work, use the swarm MCP `dispatch` tool. It creates or reuses a swarm task, wakes an exact-role or generalist live worker when one exists, or spawns through the configured Spawner backend (`herdr` for the current golden path). If no spawner surface is available for non-trivial work, ask the operator to start a worker instead of silently using native subagents. The CLI `dispatch` bridge is only for hooks, wrappers, operator shells, or sessions where MCP tools are unavailable.
 4. **Worker/generalist mode and no matching peer** → fall back to your runtime's native subagent mechanism, or do the work yourself when that is faster and safe.
@@ -41,7 +41,7 @@ These come from the swarm-mcp design contract and apply to every runtime.
 - When a user refers to a visible workspace relationship such as "the pane next to you", resolve it in two steps: use the workspace backend to identify the adjacent transport handle, then call `resolve_workspace_handle` or `swarm-mcp resolve-workspace-handle <handle> --backend <backend>` to map that handle back to a swarm `instance_id`. Send durable messages/tasks to the swarm instance, not directly to the handle.
 - Published workspace identity rows should use `identity/workspace/<backend>/<instance_id>` with a canonical `handle` from the backend. Backend adapters may keep compatibility rows such as `identity/herdr/<instance_id>`, but swarm-facing docs and APIs should use the generic workspace-handle terminology.
 - Coordination is **fail-open** for ordinary worker sessions: if swarm-mcp is unreachable, work locally — don't loop on a failed `register`. Gateway/lead sessions may also handle trivial local edits directly, but should not convert medium or large work into local implementation just because the coordinator or spawner is unavailable. A real peer-held lock conflict is always blocking and must be respected.
-- `wait_for_activity` is the warm-worker idle loop. It does not type into another agent's conversation by itself. Wake-up of an idle peer goes through the durable swarm message first; the workspace-handle nudge is best-effort.
+- `wait_for_activity` is a blocking monitor primitive for active responsibility, not idle availability. It does not type into another agent's conversation by itself. Wake-up of an idle peer goes through the durable swarm message first; the workspace-handle nudge is best-effort.
 - Solo session (only one registered instance in scope): the integration plugin skips per-edit locking automatically. Don't ceremoniously add locks when no peer can collide.
 - Worker mode is the default. Gateway-mode protocol (local edits for easy tasks, `dispatch` for medium/large work, no-double-spawn idempotency) applies only when the runtime is explicitly configured as a gateway — see the integration SPEC for your runtime.
 - Delegation across the identity boundary is forbidden. Don't `request_task` across `identity:work` ↔ `identity:personal`. If a task needs cross-identity resources, surface that to the user — let them relaunch under the right launcher or hand off.
@@ -49,6 +49,8 @@ These come from the swarm-mcp design contract and apply to every runtime.
 ## Identity and account-scoped resources
 
 Your profile may or may not have direct MCP servers for account-scoped resources (Linear, Figma, Atlassian / Jira, Datadog, etc.). If a resource is needed and the matching MCP isn't loaded in your tool surface, route through swarm: `request_task` to a peer whose launcher / config root owns the relevant MCP auth, with the resource URL in the task body and the expected MCP surface named explicitly.
+
+Work tracker selection is config-driven. Runtime hooks publish the configured tracker to `config/work_tracker/<identity>` and `bootstrap` returns it when present. Use that tracker for the repo/scope and `identity:<work|personal>` boundary, then verify that the matching MCP is available. Do not substitute a different tracker just because that MCP is loaded.
 
 The runtime-specific config file enumerates which MCPs your profile actually loads. The general identity rules (work vs personal, launcher binaries, MCP suffix conventions) live in [`./identity-boundaries.md`](./identity-boundaries.md).
 

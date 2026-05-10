@@ -122,18 +122,6 @@ pub struct Lock {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Annotation {
-    pub id: String,
-    pub scope: String,
-    pub instance_id: String,
-    pub file: String,
-    #[serde(rename = "type")]
-    pub type_: String,
-    pub content: String,
-    pub created_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Event {
     pub id: i64,
     pub scope: String,
@@ -198,8 +186,6 @@ pub struct SwarmSnapshot {
     pub messages: Vec<Message>,
     #[serde(default)]
     pub locks: Vec<Lock>,
-    #[serde(default)]
-    pub annotations: Vec<Annotation>,
     #[serde(default)]
     pub kv: Vec<KvEntry>,
     #[serde(default)]

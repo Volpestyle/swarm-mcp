@@ -35,7 +35,7 @@ The live working directory for the current session.
 
 The shared swarm boundary.
 
-- Sessions in the same scope can see each other, message each other, and share tasks, locks, annotations, and KV.
+- Sessions in the same scope can see each other, message each other, and share tasks, locks, and KV.
 - Sessions in different scopes are different swarms.
 - Use a different scope only for a separate swarm.
 - Do not use scope to split frontend/backend inside one repo; keep one shared scope and use label tokens like `team:frontend` and `team:backend`.
@@ -50,7 +50,7 @@ Use it when:
 
 - the session is running in a disposable worktree
 - multiple worktrees should share one logical file tree
-- locks and annotations should point at a stable checkout instead of a temp path
+- locks should point at a stable checkout instead of a temp path
 
 If you are working directly in the shared checkout, `file_root` can usually match `directory`.
 
@@ -68,15 +68,17 @@ The `identity:` token should match the launcher/config root (`identity:work` or 
 
 ## First Read After Register
 
-After `register`, call:
+After `register`, call `bootstrap`. It returns your current instance, peers, unread messages, task snapshot, and configured work tracker metadata in one yield-checkpoint read.
 
-- `whoami`
-- `list_instances`
-- `poll_messages`
-- `list_tasks`
+Use focused reads only when you need one part of the surface:
 
-That gives you current identity, other active sessions, unread coordination requests, and open work.
+- `whoami` for your identity only
+- `list_instances` for peers only
+- `poll_messages` for unread messages only
+- `list_tasks` for tasks only
 
-If `list_instances` returns only you, you can skip per-edit `lock_file` calls until peers join. Watch `instance_changes` from `wait_for_activity` to know when to re-enable locking.
+Handle unread messages before claiming new work.
 
-Use `get_file_context` when you only need to inspect a file's active lock and annotations. When you edit a file, `lock_file` is the coordination call — it returns peer annotations on the file as part of its response, so a separate check is unnecessary.
+If `bootstrap.peers` is empty, you can skip per-edit `lock_file` calls until peers join. Re-check peers at your next yield checkpoint, or from `instance_changes` if you are already monitoring with `wait_for_activity` for another reason.
+
+Use `get_file_lock` when you only need to inspect a file's active lock. When you edit a file, `lock_file` is the coordination call.

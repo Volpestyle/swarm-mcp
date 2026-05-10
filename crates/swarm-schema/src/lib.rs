@@ -28,6 +28,7 @@ const COLUMN_MIGRATIONS: &[(&str, &str)] = &[
     ("tasks", "idempotency_key TEXT"),
     ("tasks", "parent_task_id TEXT"),
     ("context", "scope TEXT NOT NULL DEFAULT ''"),
+    ("context", "task_id TEXT"),
 ];
 
 /// Create or migrate `swarm.db`, then validate its embedded schema version.

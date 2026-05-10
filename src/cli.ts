@@ -56,15 +56,15 @@ Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
   swarm-mcp deregister [--as <who>] [--scope <path>] [--json]
   swarm-mcp whoami [--as <who>] [--scope <path>] [--json]
   swarm-mcp inspect [--scope <path>] [--json]
-      One-shot dump of instances, tasks, context, kv, and recent messages.
+      One-shot dump of instances, tasks, locks, kv, and recent messages.
   swarm-mcp cleanup [--scope <path>] [--dry-run] [--json]
-      Run retention cleanup for offline instances, TTL rows, and orphaned KV.
+      Run retention cleanup for offline instances, old rows, and orphaned KV.
   swarm-mcp instances [--scope <path>] [--json]
   swarm-mcp list-instances [--scope <path>] [--json]
   swarm-mcp messages  [--scope <path>] [--to <who>] [--from <who>] [--limit N]
       Peeks; does not mark messages read.
   swarm-mcp tasks     [--scope <path>] [--status <status>] [--json]
-  swarm-mcp context   [--scope <path>] [--json]
+  swarm-mcp locks     [--scope <path>] [--json]
   swarm-mcp kv list   [--scope <path>] [--prefix <p>] [--json]
   swarm-mcp kv get <key> [--scope <path>] [--json]
 

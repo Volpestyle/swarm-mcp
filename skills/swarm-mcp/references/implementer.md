@@ -5,11 +5,10 @@ Use this reference when the session should claim tasks, edit code safely, report
 ## Bootstrap
 
 1. Call `register` with `directory` set to the current working directory and `label` including `identity:<work|personal>` and `role:implementer`, such as `identity:work provider:claude-code role:implementer`.
-2. Call `whoami`.
-3. Call `list_instances` and note active planners and reviewers.
-4. Call `poll_messages` and act on unread messages.
-5. Call `list_tasks` and look for tasks assigned to you or open for claiming.
-6. Summarize your swarm ID, active agents, and pending work.
+2. Call `bootstrap`.
+3. Handle unread messages before claiming work.
+4. Note active planners, reviewers, assigned tasks, and open tasks from the bootstrap snapshot.
+5. Summarize your swarm ID, active agents, and pending work.
 
 ## Claim Priority
 
@@ -27,13 +26,14 @@ For each task:
 
 1. `claim_task` — this transitions the task to `in_progress` for you in one call.
 2. For long tasks only, `kv_set("progress/<your-instance-id>", ...)` with current activity.
-3. Use `get_file_context` for read-only inspection. Before editing a file, call `lock_file`. Its response includes any peer annotations on that file, so no separate `check` call is needed. Skip locking entirely when `list_instances` shows you alone in scope.
+3. Use `get_file_lock` for read-only lock inspection. Before editing a file, call `lock_file`. Skip locking entirely when `list_instances` shows you alone in scope.
 4. Make the smallest correct code changes.
-5. `annotate` important findings, warnings, or follow-ups on touched files.
-6. Run relevant tests or checks when feasible.
-7. `unlock_file` only if you finish a file early and want peers to edit it before the task as a whole completes.
-8. `update_task` to `done`, `failed`, or `cancelled` with a useful result. Normal edit locks release automatically; internal `/__swarm/` mutex locks are managed by their owning flow.
-9. Create a `review` task assigned to the planner or reviewer when implementation or fix work needs review.
+5. Run relevant tests or checks when feasible.
+6. `unlock_file` only if you finish a file early and want peers to edit it before the task as a whole completes.
+7. `update_task` to `done`, `failed`, or `cancelled` with a useful result. Normal edit locks release automatically; internal `/__swarm/` mutex locks are managed by their owning flow.
+8. Create a `review` task assigned to the planner or reviewer when implementation or fix work needs review.
+
+If the task references a work tracker, update it only when the task contract grants that authority and the configured same-identity tracker MCP is available. Otherwise put tracker-ready details in the swarm task result for the planner or gateway.
 
 ## Structured Results
 
@@ -80,14 +80,13 @@ Example review task:
 
 After completing a task, or if none were initially available:
 
-1. Call `wait_for_activity` with a 30-60 second timeout.
-2. On `new_messages`, read and act. Treat `[auto]` task assignment messages as actionable.
-3. On `task_updates`, claim new eligible work immediately.
-4. On `kv_updates`, check planner plan changes or relevant progress/ownership updates.
-5. On `instance_changes`, if the planner left, check for open tasks you can continue independently.
-6. On timeout, call `list_tasks` for anything missed, then call `wait_for_activity` again.
+1. Do a yield checkpoint with `bootstrap` or `poll_messages`.
+2. Handle unread messages before claiming more work. Treat `[auto]` task assignment messages as actionable.
+3. If `bootstrap.tasks` or `list_tasks` shows eligible work, claim the highest-priority task and continue.
+4. If you are waiting on a dependency, review, lock, or specific peer answer, call `wait_for_activity` and act on the returned changes.
+5. If you have no active responsibility, finish the turn and remain promptable. Do not loop just to stay warm.
 
-Do not wait for user prompting between tasks. Only break the loop if genuinely stuck.
+When a busy peer needs context, use `send_message`. When a peer should notice soon, use `prompt_peer`; it stores the durable swarm message first and usually skips interrupting actively working handles.
 
 ## Termination
 
@@ -97,7 +96,7 @@ When you receive a broadcast containing `[signal:complete]`:
 2. `unlock_file` any remaining locks.
 3. `update_task` current work to a final status.
 4. Clear or update your `progress/<your-instance-id>` KV key.
-5. Call `deregister`.
+5. Finish the turn and idle. Call `deregister` only if you are actually exiting or the runtime will not keep this session available.
 
 ## Must Not
 

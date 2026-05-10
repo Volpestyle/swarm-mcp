@@ -6,8 +6,8 @@ use rusqlite::types::Type;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use swarm_protocol::frames::{DeltaTableFrame, EventAppendedFrame, KvKey, LockKey};
 use swarm_protocol::{
-    Annotation, ChangeCursor, Event, Frame, FramePayload, Instance, InstanceStatus, KvEntry, Lock,
-    Message, PtyInfo, SwarmSnapshot, TableCursors, Task, TaskStatus, TaskType,
+    ChangeCursor, Event, Frame, FramePayload, Instance, InstanceStatus, KvEntry, Lock, Message,
+    PtyInfo, SwarmSnapshot, TableCursors, Task, TaskStatus, TaskType,
 };
 
 pub const RECENT_MESSAGE_LIMIT: i64 = 100;
@@ -16,6 +16,12 @@ pub const RECENT_EVENT_LIMIT: i64 = 200;
 pub const SWARM_DB_ENV: &str = "SWARM_DB_PATH";
 
 const UI_KEY_PREFIX: &str = "ui/";
+
+#[derive(Debug, Clone)]
+struct LockRecord {
+    lock: Lock,
+    created_at: i64,
+}
 
 pub fn swarm_db_path() -> Result<PathBuf, String> {
     if let Ok(path) = std::env::var(SWARM_DB_ENV) {
@@ -47,8 +53,8 @@ pub fn load_snapshot(conn: &Connection, ptys: &[PtyInfo]) -> Result<SwarmSnapsho
     let instances = load_instances(conn)?;
     let tasks = load_tasks(conn)?;
     let messages = load_messages(conn)?;
-    let annotations = load_annotations(conn)?;
-    let locks = annotations_to_locks(&annotations);
+    let lock_records = load_lock_records(conn)?;
+    let locks = lock_records.iter().map(|row| row.lock.clone()).collect();
     let kv = load_kv(conn)?;
     let events = load_recent_events(conn)?;
     let ptys = ptys.to_vec();
@@ -59,8 +65,7 @@ pub fn load_snapshot(conn: &Connection, ptys: &[PtyInfo]) -> Result<SwarmSnapsho
             events: Some(max_i64(conn, "events", "id")?),
             instances: cursor_for_instances(&instances),
             tasks: cursor_for_tasks(&tasks),
-            locks: cursor_for_lock_annotations(&annotations),
-            annotations: cursor_for_annotations(&annotations),
+            locks: cursor_for_locks(&lock_records),
             kv: cursor_for_kv(&kv),
             ptys: cursor_for_ptys(&ptys),
         },
@@ -69,7 +74,6 @@ pub fn load_snapshot(conn: &Connection, ptys: &[PtyInfo]) -> Result<SwarmSnapsho
         tasks,
         messages,
         locks,
-        annotations,
         kv,
         events,
         ptys,
@@ -162,21 +166,6 @@ pub fn diff_snapshots(previous: &SwarmSnapshot, current: &SwarmSnapshot) -> Vec<
             removes,
         },
         current.cursors.locks.clone(),
-    );
-
-    append_string_delta(
-        &mut frames,
-        previous,
-        current,
-        previous.annotations.iter(),
-        current.annotations.iter(),
-        |annotation| annotation.id.clone(),
-        |cursor, upserts, removes| DeltaTableFrame::Annotations {
-            cursor,
-            upserts,
-            removes,
-        },
-        current.cursors.annotations.clone(),
     );
 
     append_key_delta(
@@ -469,33 +458,33 @@ fn load_messages(conn: &Connection) -> Result<Vec<Message>, String> {
     Ok(rows)
 }
 
-fn load_annotations(conn: &Connection) -> Result<Vec<Annotation>, String> {
+fn load_lock_records(conn: &Connection) -> Result<Vec<LockRecord>, String> {
     if !table_exists(conn, "context")? {
         return Ok(Vec::new());
     }
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, scope, instance_id, file, type, content, created_at
+            "SELECT scope, file, instance_id, created_at
              FROM context
+             WHERE type = 'lock'
              ORDER BY created_at DESC, id ASC",
         )
-        .map_err(|err| format!("failed to prepare annotation query: {err}"))?;
+        .map_err(|err| format!("failed to prepare lock query: {err}"))?;
 
     stmt.query_map([], |row| {
-        Ok(Annotation {
-            id: row.get(0)?,
-            scope: row.get(1)?,
-            instance_id: row.get(2)?,
-            file: row.get(3)?,
-            type_: row.get(4)?,
-            content: row.get(5)?,
-            created_at: row.get(6)?,
+        Ok(LockRecord {
+            lock: Lock {
+                scope: row.get(0)?,
+                file: row.get(1)?,
+                instance_id: row.get(2)?,
+            },
+            created_at: row.get(3)?,
         })
     })
-    .map_err(|err| format!("failed to query annotations: {err}"))?
+    .map_err(|err| format!("failed to query locks: {err}"))?
     .collect::<Result<Vec<_>, _>>()
-    .map_err(|err| format!("failed to read annotations: {err}"))
+    .map_err(|err| format!("failed to read locks: {err}"))
 }
 
 fn load_kv(conn: &Connection) -> Result<Vec<KvEntry>, String> {
@@ -525,18 +514,6 @@ fn load_kv(conn: &Connection) -> Result<Vec<KvEntry>, String> {
     .map_err(|err| format!("failed to read kv: {err}"))
 }
 
-fn annotations_to_locks(annotations: &[Annotation]) -> Vec<Lock> {
-    annotations
-        .iter()
-        .filter(|annotation| annotation.type_ == "lock")
-        .map(|annotation| Lock {
-            scope: annotation.scope.clone(),
-            file: annotation.file.clone(),
-            instance_id: annotation.instance_id.clone(),
-        })
-        .collect()
-}
-
 fn cursor_for_instances(rows: &[Instance]) -> Option<ChangeCursor> {
     rows.iter()
         .map(|instance| {
@@ -554,21 +531,14 @@ fn cursor_for_tasks(rows: &[Task]) -> Option<ChangeCursor> {
         .max()
 }
 
-fn cursor_for_lock_annotations(rows: &[Annotation]) -> Option<ChangeCursor> {
+fn cursor_for_locks(rows: &[LockRecord]) -> Option<ChangeCursor> {
     rows.iter()
-        .filter(|annotation| annotation.type_ == "lock")
-        .map(|annotation| {
+        .map(|row| {
             ChangeCursor::new(
-                annotation.created_at,
-                format!("{}\u{1f}{}", annotation.scope, annotation.file),
+                row.created_at,
+                format!("{}\u{1f}{}", row.lock.scope, row.lock.file),
             )
         })
-        .max()
-}
-
-fn cursor_for_annotations(rows: &[Annotation]) -> Option<ChangeCursor> {
-    rows.iter()
-        .map(|annotation| ChangeCursor::new(annotation.created_at, annotation.id.clone()))
         .max()
 }
 

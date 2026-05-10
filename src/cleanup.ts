@@ -9,7 +9,6 @@ export const CLEANUP_POLICY = {
   instanceReclaimAfterSecs: 60,
   messageTtlSecs: 60 * 60,
   terminalTaskTtlSecs: 24 * 60 * 60,
-  contextAnnotationTtlSecs: 24 * 60 * 60,
   eventTtlSecs: 24 * 60 * 60,
   orphanKvTtlSecs: 60 * 60,
 } as const;
@@ -34,7 +33,7 @@ export type CleanupResult = {
   locks_deleted: number;
   messages_deleted: number;
   terminal_tasks_deleted: number;
-  context_annotations_deleted: number;
+  non_lock_context_rows_deleted: number;
   events_deleted: number;
   kv_deleted: number;
   kv_keys_deleted: string[];
@@ -91,7 +90,7 @@ function emptyResult(
     locks_deleted: 0,
     messages_deleted: 0,
     terminal_tasks_deleted: 0,
-    context_annotations_deleted: 0,
+    non_lock_context_rows_deleted: 0,
     events_deleted: 0,
     kv_deleted: 0,
     kv_keys_deleted: [],
@@ -413,34 +412,29 @@ export function cleanupTerminalTasks(options: CleanupOptions = {}) {
   return sum(rows);
 }
 
-export function cleanupContextAnnotations(options: CleanupOptions = {}) {
-  const cutoff =
-    (options.nowSecs ?? now()) - CLEANUP_POLICY.contextAnnotationTtlSecs;
+export function cleanupNonLockContextRows(options: CleanupOptions = {}) {
   const scoped = scopedWhere(options.scope);
   const rows = db
     .query(
       `SELECT scope, COUNT(*) AS count
        FROM context
-       WHERE created_at < ?
-         AND type != 'lock'${scoped.clause}
+       WHERE type != 'lock'${scoped.clause}
        GROUP BY scope`,
     )
-    .all(cutoff, ...scoped.args) as Array<{ scope: string; count: number }>;
+    .all(...scoped.args) as Array<{ scope: string; count: number }>;
   if (!rows.length) return 0;
   if (options.dryRun) return sum(rows);
 
   db.run(
     `DELETE FROM context
-     WHERE created_at < ?
-       AND type != 'lock'${scoped.clause}`,
-    [cutoff, ...scoped.args],
+     WHERE type != 'lock'${scoped.clause}`,
+    scoped.args,
   );
   for (const row of rows) {
-    emitCleanup(row.scope, "cleanup.context_annotations_deleted", {
+    emitCleanup(row.scope, "cleanup.non_lock_context_rows_deleted", {
       count: row.count,
-      cutoff,
-      ttl_secs: CLEANUP_POLICY.contextAnnotationTtlSecs,
       mode: options.mode ?? "opportunistic",
+      reason: "legacy_non_lock_context_removed",
     });
   }
   return sum(rows);
@@ -590,7 +584,7 @@ export function runCleanup(options: CleanupOptions = {}): CleanupResult {
   cleanupOrphanLocks(normalized, result);
   result.messages_deleted += cleanupMessages(normalized);
   result.terminal_tasks_deleted += cleanupTerminalTasks(normalized);
-  result.context_annotations_deleted += cleanupContextAnnotations(normalized);
+  result.non_lock_context_rows_deleted += cleanupNonLockContextRows(normalized);
   result.events_deleted += cleanupEvents(normalized);
   cleanupOrphanKv(normalized, result);
 

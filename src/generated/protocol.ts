@@ -83,16 +83,6 @@ export interface Lock {
   instance_id: string;
 }
 
-export interface Annotation {
-  id: string;
-  scope: string;
-  instance_id: string;
-  file: string;
-  type: string;
-  content: string;
-  created_at: number;
-}
-
 export interface Event {
   id: number;
   scope: string;

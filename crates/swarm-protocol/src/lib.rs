@@ -30,7 +30,7 @@ pub use cursors::{ChangeCursor, PtySeq, TableCursors};
 pub use errors::{ErrorClass, ErrorPayload};
 pub use frames::{Frame, FramePayload};
 pub use state::{
-    Annotation, Event, Instance, InstanceStatus, KvEntry, Lease, Lock, Message, PtyInfo,
-    SwarmSnapshot, Task, TaskStatus, TaskType,
+    Event, Instance, InstanceStatus, KvEntry, Lease, Lock, Message, PtyInfo, SwarmSnapshot, Task,
+    TaskStatus, TaskType,
 };
 pub use version::{MIN_COMPATIBLE_VERSION, PROTOCOL_VERSION};

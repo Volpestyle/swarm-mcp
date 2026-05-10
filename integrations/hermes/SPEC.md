@@ -134,12 +134,12 @@ Before a task can be created, the gateway may need to spawn a worker that doesn'
 
 1. **In-process mutex** keyed by `(scope, role, intent_hash)`. Closes same-process concurrency races inside a single gateway hermes.
 2. **Live workers** — call `list_instances` in scope. If a matching `role:` peer exists, dispatch to it; no spawn needed.
-3. **Search for in-flight spawn** — `search_context` for the absolute synthetic path `/__swarm/spawn/<role>/<intent_hash>`. The leading slash matters: `lock_file` resolves relative paths through `file_root`, so two gateways in the same scope with different `cwd`/`file_root` would otherwise miss each other's locks. An absolute path falls through `paths.ts:file()`'s `within()` checks and returns unchanged. Filter the results exactly — `search_context` is substring-fuzzy (`WHERE file LIKE %query%`), so post-filter to `type === "lock" && file === <exact_resolved_path>`. **Any** matching lock — including one owned by this same gateway instance — means "spawn already in flight." Wait on (or attach to) the in-flight intent.
-4. **Acquire the spawn lock** — `lock_file("/__swarm/spawn/<role>/<intent_hash>", note=...)` only after step 3 confirmed no active lock. The note carries diagnostic JSON: `{task_id, intent_hash, role, started_at, pane_id?, expires_at?}`. **Handle the search→lock race**: a concurrent gateway-from-a-different-instance could have searched empty and locked between our search and our lock call. If `lock_file` returns a conflict from a different `instance_id`, treat it identically to step 3 finding an existing lock — spawn is in flight, attach. (Same-instance re-entry can't surface here since `lock_file` is re-entrant for the same `instance_id`; step 3 is the primary detector for that case.)
+3. **Acquire the spawn lock** — `lock_file("/__swarm/spawn/<role>/<intent_hash>", note=..., exclusive=true)`. The leading slash matters: `lock_file` resolves relative paths through `file_root`, so two gateways in the same scope with different `cwd`/`file_root` would otherwise miss each other's locks. An absolute path falls through `paths.ts:file()`'s `within()` checks and returns unchanged. The note carries diagnostic JSON: `{task_id, intent_hash, role, started_at, pane_id?, expires_at?}`.
+4. **Treat any lock conflict as in-flight** — `exclusive=true` conflicts on any existing lock, including one owned by the same gateway instance. That makes same-gateway retry and different-gateway retry behave the same: wait on or attach to the in-flight intent instead of spawning again.
 5. **Spawn via herdr** and wait for the worker to register or for a timeout.
 6. **Explicit release** — gateway calls `unlock_file` once the worker has both registered **and** claimed the task (or otherwise bound itself to the originating task), **or** on spawn failure/timeout. Releasing on registration alone leaves a small window between register-and-claim where a retry could see no active spawn lock and re-fire. Do not rely on `update_task` to release this lock — `update_task` only releases locks held by the *assignee* (worker), and the spawn lock is held by the *requester* (gateway).
 
-**Why the explicit search before lock:** `context.lock` is re-entrant for the same instance — it deletes the caller's existing lock on the same path before inserting a new one. Calling `lock_file` blind would let a same-gateway retry silently re-acquire its own lock and proceed to spawn again. The pre-check via `search_context` catches that.
+**Why `exclusive=true`:** normal edit locks are re-entrant for the same instance, but spawn mutexes are one-shot. A same-gateway retry must conflict with its own existing lock rather than silently replacing it.
 
 **Why explicit unlock instead of TTL:** swarm-mcp's KV has no TTL primitive, and `update_task` releases assignee-held locks not requester-held. Heartbeat prune (~30s on instance deregister) is crash-recovery only — it'll eventually clean up if the gateway dies mid-spawn, but it's not the normal release path. Healthy spawns must explicitly unlock.
 
@@ -147,12 +147,12 @@ This layered defense protects against the "Telegram message retry creates two wo
 
 ### 5.6 Peer prompt express lane
 
-`wait_for_activity` remains the reliable warm-worker inbox loop. It is not a cold-start mechanism and it does not type into an agent conversation by itself. The plugin provides `swarm_prompt_peer` as the express lane for already-running workers that have published a workspace identity:
+`wait_for_activity` is the reliable blocking monitor while an agent owns active coordination responsibility. It is not a cold-start mechanism, idle availability loop, or a way to type into another agent's conversation by itself. The plugin provides `swarm_prompt_peer` as the express lane for already-running workers that have published a workspace identity:
 
 1. Write the instruction through `mcp_swarm_send_message` first. This is the durable source of truth.
 2. Resolve the target's workspace transport handle from swarm KV at `identity/workspace/herdr/<instance_id>`.
 3. Inspect the handle status through the backend (`herdr pane get` for the current stack).
-4. If the handle is `idle`, `blocked`, `done`, or `unknown`, send a short wake prompt through the backend (`herdr pane run` today) telling the worker to call `poll_messages`.
+4. If the handle is `idle`, `blocked`, `done`, or `unknown`, send a short wake prompt through the backend (`herdr pane run` today) telling the worker to call `bootstrap` or `poll_messages`.
 5. If the handle is `working`, skip the nudge unless the caller explicitly passes `force=true`.
 
 The injected workspace text never contains the full work contract. It only tells the worker to read its swarm inbox. This keeps audit, retry, and follow-up behavior in swarm-mcp while still making local workspace workers feel immediate.
@@ -228,7 +228,7 @@ When a user intent on the gateway resolves to a write:
 
 ### 7.4 Reconciliation when gateway worked inline
 
-When gateway inline writes happen while peers exist, the lock bridge provides collision protection. For multi-step local edits, the gateway should still leave durable context with `annotate` or a small task/result record so later workers can reconcile intent.
+When gateway inline writes happen while peers exist, the lock bridge provides collision protection. For multi-step local edits, the gateway should still leave a small task/result record or tracker comment so later workers can reconcile intent.
 
 ### 7.5 Gateway default vs routine commands
 
@@ -284,7 +284,7 @@ Subcommands: `status` (default, compact summary), `instances`, `tasks`, `kv`, `m
 - Always send the durable swarm message first; use `herdr pane run` only as a best-effort wake-up
 
 ### v0.4 — Background poller / gateway notifications
-- Long-lived thread driving `wait_for_activity`
+- Long-lived monitor for active gateway/planner responsibilities using `wait_for_activity`
 - Surfaces unread messages + task-state changes
 - Target is **platform-aware**:
   - CLI: TUI banner / activity feed entry
@@ -314,7 +314,7 @@ Two pieces, shipped together because the ambient-context block wants real worker
 
 **Ambient swarm context in prompts:**
 - Hook into prompt build to add a swarm-aware context block
-- **Worker mode**: "your instance, peer list, your active locks, recent annotations on touched files"
+- **Worker mode**: "your instance, peer list, your active locks, current task/message context"
 - **Gateway mode**: "active workers, in-flight tasks, recent completions, unread messages"
 - Cache-friendly: recomputed at session boundaries only, not per-turn
 
@@ -357,7 +357,7 @@ Peer A holds a swarm lock on `notes.md`. Peer B tries `write_file` on same path.
 Single session, no peers. `write_file` proceeds without any lock attempt — no lock context entry appears in `swarm-mcp inspect`.
 
 **S5: Peer prompt express lane (v0.3)**
-Two Hermes sessions in herdr panes. Session A calls `swarm_prompt_peer(recipient=<B>, message="check your inbox")`. Verify B has an unread swarm message even if herdr injection fails. When B has published `identity/workspace/herdr/<instance_id>` and its pane is not `working`, verify `herdr pane run` injects the wake prompt and B is told to call `poll_messages` rather than receiving the full work contract through terminal text.
+Two Hermes sessions in herdr panes. Session A calls `swarm_prompt_peer(recipient=<B>, message="check your inbox")`. Verify B has an unread swarm message even if herdr injection fails. When B has published `identity/workspace/herdr/<instance_id>` and its pane is not `working`, verify `herdr pane run` injects the wake prompt and B is told to call `bootstrap` or `poll_messages` rather than receiving the full work contract through terminal text.
 
 **S6: Gateway fast-dispatch (v0.5+)**
 Gateway hermes + one worker peer. User on Telegram: "fix typo X in file Y." Gateway formulates patch, calls `swarm_fast_dispatch`. Worker claims, applies, marks task done. Gateway summarizes back to Telegram within timeout. File is modified; gateway never held a lock.
@@ -365,10 +365,10 @@ Gateway hermes + one worker peer. User on Telegram: "fix typo X in file Y." Gate
 **S7: No-double-spawn under retry (v0.5+)**
 Gateway with no live workers. Send the same user intent twice within ~5s (simulates a Telegram retry / network blip). Verify both layers:
 - **Layer 1 (task idempotency)**: `request_task` with the same `idempotency_key` returns the existing task on the second call — no duplicate task row.
-- **Layer 2 (spawn mutex)**: when the spawn flow runs, the second invocation's `search_context("/__swarm/spawn/<role>/<intent_hash>")` finds the existing exact lock (even though it was placed by this same gateway instance) and short-circuits to "in-flight" instead of re-acquiring + spawning again.
+- **Layer 2 (spawn mutex)**: when the spawn flow runs, the second invocation's `lock_file("/__swarm/spawn/<role>/<intent_hash>", exclusive=true)` conflicts with the existing exact lock (even though it was placed by this same gateway instance) and short-circuits to "in-flight" instead of re-acquiring + spawning again.
 Result: exactly one new worker pane, exactly one task row, both calls return the same `task_id`. After the worker registers and claims/binds the task, gateway explicitly `unlock_file`s the spawn path — verify with `swarm-mcp inspect` that no `/__swarm/spawn/*` lock remains.
 
-Negative case: also verify a *different-gateway-instance* retry (rare but possible during gateway restarts) sees the existing lock via `search_context` and behaves the same way.
+Negative case: also verify a *different-gateway-instance* retry (rare but possible during gateway restarts) conflicts on the existing lock and behaves the same way.
 
 **S8: Gateway local-small / dispatch-large routing (v0.5+)**
 Gateway with no workers. User asks for a trivial typo edit in one file. Gateway edits locally and summarizes. User then asks for a multi-file feature. Gateway creates/reuses a swarm task and drives `dispatch`; if no spawner surface is available, it asks the operator to start a worker or explicitly authorize local implementation.
@@ -387,8 +387,8 @@ Cover plugin behavior without a live MCP server by stubbing `lifecycle._dispatch
 - Missing-`session_id` guard: single-instance fallback fires, multi-instance refuses
 - Refcount: two `on_session_start` for same instance → only one deregister on finalize
 - No-double-spawn:
-  - first attempt: `search_context` returns empty → `lock_file` succeeds → spawn proceeds
-  - second attempt (same gateway, same intent_hash): `search_context` finds existing lock → short-circuits to in-flight task ref **without** calling `lock_file` (proving the pre-check guards against same-instance re-entry)
+  - first attempt: `lock_file(..., exclusive=true)` succeeds → spawn proceeds
+  - second attempt (same gateway, same intent_hash): `lock_file(..., exclusive=true)` returns a conflict → short-circuits to in-flight task ref
   - explicit `unlock_file` after worker registers; verify lock is gone
 - Gateway routing: trivial local edit succeeds; medium/large write request creates/reuses a dispatch task or returns an operator action request when no worker/spawner is available
 - `pane.report_agent` calls: `state=idle` on register, `working` during a stubbed dispatch, `blocked` on approval directive, `release_agent` on finalize
@@ -421,18 +421,12 @@ Pure conductor (gateway never edits) fails when the laptop is off. Pure hybrid (
 
 ## 12. Upstream tightenings recommended for swarm-mcp
 
-These are gaps in swarm-mcp itself that surfaced while designing the plugin protocol. None block plugin v0.2.1; all would simplify v0.4+ implementation.
-
-**Exclusive lock semantics — `lock_file(exclusive: bool = false)`.**
-Today `context.lock` is re-entrant for the same `instance_id` (DELETE-then-INSERT on `(scope, file, instance_id)`). Correct for the primary use case (a peer extending its own edit lock without trampling itself), but unsound for "did anyone — including me — already start this exclusive operation?" The SPEC §5.5 spawn-mutex protocol works around this with a `search_context` pre-check + post-filter + race handling — six numbered steps that would collapse to one if `lock_file(exclusive=true)` returned conflict for ANY existing lock on the path regardless of `instance_id`. Backward compatible default: `exclusive=false` keeps current re-entrant semantics.
+These are gaps in swarm-mcp itself that surfaced while designing the plugin protocol. None block plugin v0.2.1; all would simplify future implementation.
 
 **KV TTL — `kv_set(key, value, ttl_ms?: number)`.**
 KV today has no expiry primitive. v0.3 poller cache invalidation, v0.4 in-flight task tracking, and v0.5 ambient-context staleness all want short-lived state with automatic GC. Without TTL, every consumer hacks it via timestamp values + manual cleanup or via the lock heartbeat-prune side effect (which is coarse and intent-mismatched). Simple add: `expires_at` column, prune on read/list (same pattern the registry already uses for instance staleness).
 
-**Exact context lookup — `context_lookup(scope, file, type?)` or `lock_exists(file)`.**
-The §5.5 protocol filters `search_context` results manually because it's substring-fuzzy. An exact lookup tool would (a) shave a round-trip's worth of result data, (b) eliminate the silent-bug class where a poorly-chosen synthetic path matches an unrelated annotation. swarm-mcp already has `context.lookup(scope, file)` internally (`src/context.ts:85`); just expose it as an MCP tool.
-
 **First-class spawn intent — `request_spawn(role, idempotency_key, intent_metadata)`.**
 The SPEC §5.5 protocol is an external implementation of "request a worker spawn, deduped by intent." Today every gateway has to layer task-`idempotency_key` + manual spawn mutex correctly. Server-side primitive would collapse the layers and remove a class of correctness bugs. **Lower priority** — defer until v0.4 implementation reveals whether the layered design is genuinely painful in practice.
 
-**Priority order for upstream work:** exclusive locks (highest leverage, smallest change) → KV TTL (medium, broad usefulness) → exact lookup (small ergonomic) → spawn intent (largest, defer).
+**Priority order for upstream work:** KV TTL (medium, broad usefulness) → spawn intent (largest, defer).

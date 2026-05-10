@@ -75,6 +75,45 @@ class SwarmRoleConfigTests(unittest.TestCase):
             "identity:personal role:researcher custom:x session:abc123",
         )
 
+    def test_session_start_publishes_configured_work_tracker(self) -> None:
+        os.environ["SWARM_HERMES_IDENTITY"] = "work"
+        calls: list[tuple[str, dict]] = []
+
+        def fake_dispatch(tool_suffix: str, args: dict) -> dict:
+            calls.append((tool_suffix, args))
+            if tool_suffix == "register":
+                return {"id": "inst-work"}
+            if tool_suffix == "kv_set":
+                return {"ok": True}
+            return {}
+
+        config = {
+            "swarm": {
+                "role": "worker",
+                "work_tracker": {
+                    "work": {
+                        "provider": "linear",
+                        "mcp": "linear_work",
+                        "team": "ENG",
+                    }
+                },
+            }
+        }
+
+        with mock.patch.object(lifecycle, "_load_config", return_value=config), mock.patch.object(
+            lifecycle, "_dispatch", side_effect=fake_dispatch
+        ), mock.patch("integrations.hermes.prompt_peer.publish_current_identity"):
+            lifecycle.on_session_start(session_id="session-123", platform="telegram")
+
+        self.assertEqual(calls[0][0], "register")
+        self.assertEqual(calls[1][0], "kv_set")
+        self.assertEqual(calls[1][1]["key"], "config/work_tracker/work")
+        tracker = json.loads(calls[1][1]["value"])
+        self.assertEqual(tracker["identity"], "work")
+        self.assertEqual(tracker["provider"], "linear")
+        self.assertEqual(tracker["mcp"], "linear_work")
+        self.assertEqual(tracker["team"], "ENG")
+
     def test_gateway_role_skips_pre_tool_lock_bridge(self) -> None:
         self._start_with_config({"swarm": {"role": "gateway"}})
 

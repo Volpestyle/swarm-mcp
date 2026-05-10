@@ -65,9 +65,6 @@ pub struct TableCursors {
     /// `type = 'lock'`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locks: Option<ChangeCursor>,
-    /// Last observed tuple for annotations (all `context` rows).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub annotations: Option<ChangeCursor>,
     /// Last observed tuple for the `kv` table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kv: Option<ChangeCursor>,

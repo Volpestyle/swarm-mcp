@@ -83,7 +83,7 @@ Common local and remote endpoints:
 | `POST /auth/revoke` | Revoke a paired device and release its PTY leases. |
 | `GET /state` | Return a `SwarmSnapshot`; accepts cursor filtering. |
 | `GET /stream` | WebSocket stream for table deltas, events, PTY frames, ping/pong, and replay. |
-| `POST /reveal` | Reveal redacted KV/message/annotation content and audit the reveal. |
+| `POST /reveal` | Reveal redacted KV/message content and audit the reveal. |
 | `POST /pty` | Spawn a PTY. |
 | `GET /pty/:id/replay` | Return retained PTY output as text for diagnostics. |
 | `POST /pty/:id/input` | Write bytes to a PTY. |

@@ -79,7 +79,7 @@ Event families currently emitted into `swarm.db`:
 | Tasks | `task.created`, `task.claimed`, `task.updated`, `task.approved`, `task.cascade.unblocked`, `task.cascade.cancelled` |
 | Messages | `message.sent`, `message.broadcast`, `message.cleared` |
 | KV | `kv.set`, `kv.deleted`, `kv.appended` |
-| File context | `context.annotated`, `context.lock_acquired`, `context.lock_released` |
+| File locks | `context.lock_acquired`, `context.lock_released` |
 | UI commands | `ui.command.started`, `ui.command.completed`, `ui.command.failed` |
 
 Payload facts that matter for investigations:
@@ -93,25 +93,24 @@ Payload facts that matter for investigations:
 | `kv.appended` | Includes parsed `appended` JSON and resulting array `length`. |
 | `task.created` | Includes type, title, status, assignee, files, priority, dependency and parent fields, and idempotency metadata where present. |
 | `task.updated` | Includes `status`, `prior_status`, and `result` where present. |
-| `context.annotated` | Includes annotation type, annotation ID, and content. |
 | `context.lock_acquired` / `context.lock_released` | Includes lock ID/content or release count/reason. |
 | `ui.command.*` | Includes `command_id`, result or error, and command metadata. |
 
 Events are deleted after 24 hours when MCP cleanup runs. The CLI has no `events` subcommand; inspect this table with SQL.
 
-## `context` - File Locks And Annotations
+## `context` - File Locks
 
 | Column | Notes |
 |---|---|
 | `id` | UUID. |
 | `scope` | Project scope. |
-| `instance_id` | Lock owner or annotation author. |
+| `instance_id` | Lock owner. |
 | `file` | Absolute path. |
-| `type` | `lock`, `finding`, `warning`, `note`, `bug`, or `todo`. |
-| `content` | Lock reason or annotation text. |
+| `type` | `lock` for active lock rows. |
+| `content` | Lock reason. |
 | `created_at` | Unix seconds. |
 
-A unique partial index enforces one active `lock` per `(scope, file)`. Locks clear on explicit unlock, terminal task update for task files, instance deregister, or offline reclaim. Non-lock annotations are deleted after 24 hours when MCP cleanup runs.
+A unique partial index enforces one active `lock` per `(scope, file)`. Locks clear on explicit unlock, terminal task update for task files, instance deregister, or offline reclaim. Legacy non-lock rows are removed by cleanup.
 
 ## `kv` - Shared Coordination State
 

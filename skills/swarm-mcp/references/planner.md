@@ -5,11 +5,10 @@ Use this reference when the session should plan work, delegate to implementers, 
 ## Bootstrap
 
 1. Call `register` with `directory` set to the current working directory and `label` including `identity:<work|personal>` and `role:planner`, such as `identity:work provider:claude-code role:planner`.
-2. Call `whoami`.
-3. Call `list_instances` and note active implementers, reviewers, researchers, and peer planners.
-4. Call `poll_messages` and act on unread messages.
-5. Call `list_tasks` and check for review work, follow-ups, blocked tasks, failed tasks, and approval gates.
-6. Summarize your swarm ID, active agents, peer planners, open work, and coordination risks.
+2. Call `bootstrap`.
+3. Handle unread messages before creating or claiming work.
+4. Note active implementers, reviewers, researchers, peer planners, open work, blocked/failed tasks, and approval gates from the bootstrap snapshot.
+5. Summarize your swarm ID, active agents, peer planners, open work, and coordination risks.
 
 ## Ownership
 
@@ -30,6 +29,15 @@ The server maintains `owner/planner` automatically.
 - Make trivial, low-risk edits locally when that is clearly faster than delegation.
 - Route medium or large implementation work through `dispatch` so swarm-mcp can wake or spawn a worker via the configured workspace backend.
 
+## Work Tracker Linkage
+
+For non-trivial work that should be visible outside swarm, load `references/work-trackers.md`.
+
+- Use only the configured same-identity tracker for this repo/scope.
+- Do not pick Linear, Jira, GitHub Issues, or any other tracker just because that MCP is loaded.
+- If the configured tracker MCP is missing, create swarm tasks normally and record that tracker updates are skipped or route to a same-identity peer with the right MCP.
+- Put tracker URLs or IDs in swarm task descriptions or plan KV so implementers and reviewers can report durable results back through the right path.
+
 ## Stranded Task Escalation
 
 Planner escalation is a request, not authority. You may ask the controller to spawn a worker for a stranded task, but the controller decides whether policy, permissions, resource caps, and context allow it.
@@ -39,7 +47,7 @@ If you `request_task` and the task has not been claimed within about 30 seconds:
 1. Re-read the task with `get_task`. If it is `claimed`, `in_progress`, `done`, `failed`, or `cancelled`, do not escalate.
 2. Resolve the controller peer with `kv_get("clanky/controller")`.
 3. If the KV entry is missing or stale, call `list_instances(label_contains="origin:clanky role:planner")` and choose the active peer in this same scope.
-4. If no controller peer is found, annotate or checkpoint the task as waiting for capacity and continue your loop. Do not guess a recipient.
+4. If no controller peer is found, checkpoint the task as waiting for capacity and continue your loop. Do not guess a recipient.
 5. Send the controller a versioned JSON message:
 
 ```json
@@ -95,7 +103,7 @@ When an implementer sends a `review` task:
 
 - `claim_task` — this moves the review to `in_progress`.
 - Read the implementation task `result`; prefer structured JSON with `files_changed`, `test_status`, and `summary`.
-- Call `get_file_context` on each touched file you want to inspect without editing. Use `lock_file` only if you are going to edit or need to reserve the file.
+- Call `get_file_lock` on each touched file you want to inspect for active lock state. Use `lock_file` only if you are going to edit or need to reserve the file.
 - Inspect the actual changes.
 - If approved, `update_task` the review to `done`.
 - If changes are needed, `update_task` the review to `failed` and create a follow-up `fix` task.
@@ -125,16 +133,16 @@ Example checkpoint:
 
 ## Autonomous Loop
 
-After initial setup and delegation, loop until the goal is complete:
+After initial setup and delegation, monitor only while you still own active coordination responsibility:
 
-1. Call `wait_for_activity` with a 30-60 second timeout.
+1. Call `wait_for_activity` while delegated work, dependencies, reviews, or peer questions are outstanding.
 2. On `new_messages`, answer questions, unblock agents, and treat `[auto]` messages as actionable system notifications.
 3. On `task_updates`, review completed tasks, handle failures, create fix tasks, and plan the next batch when current work is done.
 4. On `kv_updates`, check implementer progress, peer planner plans, ownership changes, and `plan/latest`.
 5. On `instance_changes`, assign work to new implementers and reassign orphaned work from stale agents.
-6. On timeout, call `wait_for_activity` again.
+6. If a configured timeout returns no changes, do one `bootstrap` checkpoint and continue waiting only if you still own active monitoring responsibility.
 
-Do not wait for user prompting between iterations. Only break the loop for questions you genuinely cannot answer yourself.
+Do not loop just because the swarm exists. If all delegated work is terminal and no peer answer is expected, summarize, publish final state, and idle. If a peer should notice planner feedback soon, use `prompt_peer`; if the peer is busy and the note can wait, use `send_message`.
 
 ## Escalation
 
@@ -151,7 +159,7 @@ When all planned work is complete:
 1. Call `list_tasks` and verify no tasks are `open`, `claimed`, `in_progress`, `blocked`, or `approval_required`.
 2. Broadcast `"[signal:complete] All planned work is done. <summary>"`.
 3. Summarize results to the user.
-4. Call `deregister`.
+4. Finish the turn and idle. Call `deregister` only if you are exiting or the runtime will not keep this session available.
 
 ## Manage Stale Instances
 

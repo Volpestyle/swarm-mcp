@@ -1,6 +1,5 @@
 {
   "fixtures": [
-    "annotation",
     "error_auth",
     "error_lease_conflict",
     "error_rate_limited",

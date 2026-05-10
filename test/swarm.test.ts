@@ -1030,20 +1030,17 @@ describe("locks", () => {
     }
   });
 
-  test("fileContext reads lock and annotations without acquiring a lock", () => {
+  test("fileLock reads active lock without acquiring a lock", () => {
     const a = reg("one", "scope-a");
-    const b = reg("two", "scope-a");
     const file = paths.file(a.directory, "src/index.ts");
 
-    context.annotate(b.id, b.scope, file, "note", "watch imports");
     expect(context.lock(a.id, a.scope, file, "editing")).toMatchObject({
       ok: true,
     });
 
-    expect(context.fileContext(a.scope, file)).toMatchObject({
+    expect(context.fileLock(a.scope, file)).toMatchObject({
       file,
       active: { instance_id: a.id },
-      annotations: [{ instance_id: b.id, type: "note", content: "watch imports" }],
     });
   });
 

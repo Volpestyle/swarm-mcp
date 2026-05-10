@@ -22,20 +22,42 @@ through `ui spawn`.
 
 ## Worker and Lead Aliases
 
-For interactive local use, it is acceptable to keep paired worker/lead aliases
-for the same identity. The worker alias selects the account/config root only.
-The lead alias selects the same account/config root and also enables gateway
+For interactive local use, keep paired worker/lead launcher functions for the
+same identity. The worker launcher selects the account/config root only. The
+lead launcher selects the same account/config root and also enables gateway
 behavior plus a discoverable planner role.
+
+Launcher functions should source identity env files instead of embedding all
+configuration inline. The repo ships templates in [`../env/`](../env/):
+
+```sh
+mkdir -p ~/.config/swarm-mcp
+cp /path/to/swarm-mcp/env/work.env.example ~/.config/swarm-mcp/work.env
+cp /path/to/swarm-mcp/env/personal.env.example ~/.config/swarm-mcp/personal.env
+```
+
+Edit those local files with your config roots and configured work tracker. They
+must contain routing metadata only, not tokens.
 
 Personal example:
 
 ```sh
-alias clowd="AGENT_IDENTITY=personal CLAUDE_CONFIG_DIR=$HOME/.claude-personal claude --enable-auto-mode"
-alias clowdl='AGENT_IDENTITY=personal SWARM_CC_ROLE=gateway SWARM_CC_AGENT_ROLE=planner SWARM_MCP_BIN="bun run /Users/james.volpe/volpestyle/swarm-mcp/src/cli.ts" CLAUDE_CONFIG_DIR=$HOME/.claude-personal claude --enable-auto-mode'
+_swarm_run() (
+  local env_file="$1"
+  shift
+  set -a
+  source "$env_file"
+  set +a
+  "$@"
+)
 
-alias cdx="AGENT_IDENTITY=personal CODEX_HOME=$HOME/.codex-personal command codex"
-alias cdxl='AGENT_IDENTITY=personal SWARM_CODEX_ROLE=gateway SWARM_CODEX_AGENT_ROLE=planner SWARM_MCP_BIN="bun run /Users/james.volpe/volpestyle/swarm-mcp/src/cli.ts" CODEX_HOME=$HOME/.codex-personal command codex'
+clowd() { _swarm_run "$HOME/.config/swarm-mcp/personal.env" claude --enable-auto-mode "$@"; }
+cdx() { _swarm_run "$HOME/.config/swarm-mcp/personal.env" command codex "$@"; }
 ```
+
+Lead functions add runtime-specific gateway vars after sourcing the same env
+file. See [`../env/launchers.zsh.example`](../env/launchers.zsh.example) for a
+complete zsh example.
 
 In this convention:
 
@@ -44,6 +66,8 @@ In this convention:
 - `SWARM_<runtime>_ROLE=gateway` is the lead/conductor behavior.
 - `SWARM_<runtime>_AGENT_ROLE=planner` is the swarm routing label workers use
   to discover the lead.
+- `SWARM_WORK_TRACKER` in the sourced env file is the configured same-identity
+  tracker policy published to swarm KV by hooks.
 - Lead aliases should register labels containing both `mode:gateway` and
   `role:planner`; `mode:gateway` is not a role, it is behavior metadata.
 
@@ -127,10 +151,13 @@ Hermes and swarm planners should route work by repo and task identity:
 Dispatch flow:
 
 1. Determine `identity` from the originating repo, tracker, or explicit user instruction.
-2. Create or link the tracker item in the matching account.
-3. Create the swarm task with an `identity:<work|personal>` label in task context or assignee label matching.
-4. Spawn a worker through the matching launcher (`codex` vs `cdx`, `opencode` vs `opc`, `claude`/`clawd` vs `clowd`).
-5. Worker uses only same-identity MCPs.
+2. Select the work tracker from repo/scope/launcher/operator config for that identity.
+3. Read the hook-published `config/work_tracker/<identity>` KV row or `bootstrap.work_tracker`.
+4. Create or link the tracker item only if the configured same-identity MCP is available.
+5. Do not substitute a different loaded tracker MCP when the configured tracker is missing or ambiguous.
+6. Create the swarm task with an `identity:<work|personal>` label in task context or assignee label matching.
+7. Spawn a worker through the matching launcher (`codex` vs `cdx`, `opencode` vs `opc`, `claude`/`clawd` vs `clowd`).
+8. Worker uses only same-identity MCPs.
 
 ## Figma and Linear
 
@@ -140,6 +167,8 @@ Figma and Linear are both account-scoped sources of truth. Treat them like produ
 - Personal design tasks use `figma_personal` and `linear_personal`.
 - Workers may update Linear for durable human-facing work records, but they use swarm-mcp for live coordination.
 - Workers may create or update Figma artifacts only in the matching identity.
+
+Linear is an example of a configured account-scoped work tracker. If a repo/scope config chooses Jira, GitHub Issues, or another tracker, use that configured same-identity MCP instead. Available MCP tools are a validation step, not the source of tracker selection.
 
 
 ## Design Capability Routing

@@ -17,7 +17,6 @@ const TARGET_STRUCTS = [
   "Task",
   "Message",
   "Lock",
-  "Annotation",
   "Event",
   "KvEntry",
 ];

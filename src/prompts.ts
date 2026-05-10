@@ -15,13 +15,14 @@ Minimum to function:
 
 - \`register\` first, then \`bootstrap\` for the \`{instance, peers, unread_messages, tasks}\` snapshot. Re-run on compaction.
 - Solo scope (empty \`peers\`) → skip per-edit \`lock_file\`. Re-enable when \`instance_changes\` reports peers joining.
-- When peers exist: use \`get_file_context\` for read-only inspection and \`lock_file\` while editing. \`lock_file\` also returns peer annotations on the file, so no separate pre-check is needed. Default semantics are re-entrant for your own instance; pass \`exclusive=true\` only for one-shot mutexes (spawn coordination, singleton jobs).
+- When peers exist: use \`get_file_lock\` for read-only lock inspection and \`lock_file\` while editing. Default semantics are re-entrant for your own instance; pass \`exclusive=true\` only for one-shot mutexes (spawn coordination, singleton jobs).
 - Lock conflict → prefer to pivot (different file or task). Use \`wait_for_activity\` to block on \`context.lock_released\` only when no other productive work is available; never sleep-poll.
 - \`claim_task\` already moves a task to \`in_progress\`. Call \`update_task\` once at the end with \`done\` / \`failed\` / \`cancelled\` and a structured JSON \`result\` (\`{files_changed, test_status, summary}\`). Normal edit locks release automatically; internal \`/__swarm/\` mutex locks are managed by their owning flow.
 - \`request_task\` (or \`request_task_batch\` with \`$N\` deps) for delegation. Use explicit \`review\` tasks for code review handoff; reserve \`approval_required\` for true approval gates. Use \`priority\` to control execution order.
-- \`annotate\` for file-specific findings, \`broadcast\` for short status updates, \`send_message\` for durable targeted notes, and \`prompt_peer\` when a specific peer should notice soon.
-- Use \`wait_for_activity\` only when you still own swarm responsibility: claimed work waiting on a dependency/review/lock/peer, planner/gateway monitoring, or explicit instruction to stay warm. Use 30-60 second timeouts. On timeout, re-check messages/tasks/KV once, then wait again only if still responsible. If you have no active task, no delegated work to monitor, and no instruction to stay warm, complete/publish your result, deregister, and stop.
-- \`wait_for_activity\` is an idle optimization, not a delivery guarantee. React to \`new_messages\`, \`task_updates\`, \`kv_updates\`, \`instance_changes\`; if a peer wake prompt arrives, call \`poll_messages\` or \`bootstrap\`. \`[auto]\`-prefixed messages are system notifications; \`[signal:complete]\` broadcasts mean wrap up and deregister.
+- Use \`broadcast\` for short swarm-wide status updates, \`send_message\` for durable targeted notes to busy peers, \`request_task\` for actionable follow-up, and \`prompt_peer\` when a specific peer should notice soon. \`prompt_peer\` records the swarm message first and only best-effort wakes the workspace handle; use \`force=true\` only for urgent or corrective interruptions.
+- Do yield checkpoints with \`bootstrap\` or \`poll_messages\` before claiming more work, after \`update_task\`, after peer handoff, and before your final response.
+- Use \`wait_for_activity\` only while you still own active swarm responsibility: claimed work waiting on a dependency/review/lock/peer, or planner/gateway monitoring delegated work. If you have no active task, no delegated work to monitor, no pending dependency, and no instruction to stay warm, finish the turn and remain promptable instead of looping.
+- \`wait_for_activity\` is a blocking monitor primitive, not idle availability. React to \`new_messages\`, \`task_updates\`, \`kv_updates\`, \`instance_changes\`; if a peer wake prompt arrives, call \`poll_messages\` or \`bootstrap\`. \`[auto]\`-prefixed messages are system notifications; \`[signal:complete]\` broadcasts mean finish active work, publish final status, then idle or deregister only if exiting.
 - Long-running tasks: publish \`kv_set("progress/<your-instance-id>", ...)\` so peers can check without interrupting.
 - Treat sessions without a \`role:\` label token as generalists. Match \`role:\` / \`team:\` tokens when picking collaborators.`;
 }
@@ -37,19 +38,19 @@ Minimum: check \`kv_get("owner/planner")\` and \`kv_get("plan/latest")\` to see 
 
 Load \`references/implementer.md\` from the \`swarm-mcp\` skill for the claim / edit / handoff playbook.
 
-Minimum: claim the highest-priority \`open\` task matching your role; use \`get_file_context\` for read-only inspection and \`lock_file\` while editing (skip if alone in scope); on completion call \`update_task\` once with \`done\` / \`failed\` / \`cancelled\` and a structured \`result\` JSON (\`{files_changed, test_status, summary}\`).`,
+Minimum: claim the highest-priority \`open\` task matching your role; use \`get_file_lock\` for read-only lock inspection and \`lock_file\` while editing (skip if alone in scope); on completion call \`update_task\` once with \`done\` / \`failed\` / \`cancelled\` and a structured \`result\` JSON (\`{files_changed, test_status, summary}\`).`,
 
   reviewer: `You are a **reviewer** in this swarm.
 
 Load \`references/reviewer.md\` from the \`swarm-mcp\` skill for the review playbook.
 
-Minimum: claim \`review\`-type tasks; inspect the upstream task's \`result\` plus the actual changes; \`update_task done\` to approve, or fail and create a \`fix\` task to push back. Use \`annotate\` for file-specific findings.`,
+Minimum: claim \`review\`-type tasks; inspect the upstream task's \`result\` plus the actual changes; \`update_task done\` to approve, or fail and create a \`fix\` task to push back.`,
 
   researcher: `You are a **researcher** in this swarm.
 
 Load \`references/researcher.md\` from the \`swarm-mcp\` skill for the investigate / publish-findings playbook.
 
-Minimum: claim \`research\`-type tasks; read-only investigation; publish findings via \`annotate\` (file-specific) and \`kv_set\` (structured); \`update_task done\` with a summary \`result\`.`,
+Minimum: claim \`research\`-type tasks; read-only investigation; publish findings via \`update_task\` result, \`send_message\`/\`broadcast\`, or \`kv_set\` for structured transient state.`,
 };
 
 export function roleBootstrap(role: string | null | undefined) {

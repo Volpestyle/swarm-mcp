@@ -1,0 +1,47 @@
+# Example zsh launcher functions that load identity env files.
+# Copy into ~/.zshrc or source this file after editing SWARM_ENV_DIR.
+
+export SWARM_ENV_DIR="${SWARM_ENV_DIR:-$HOME/.config/swarm-mcp}"
+
+_swarm_run() (
+  local env_file="$1"
+  shift
+  set -a
+  source "$env_file"
+  set +a
+  "$@"
+)
+
+_swarm_run_lead() (
+  local env_file="$1"
+  local runtime="$2"
+  shift 2
+  set -a
+  source "$env_file"
+  set +a
+  case "$runtime" in
+    claude)
+      export SWARM_CC_ROLE=gateway
+      export SWARM_CC_AGENT_ROLE=planner
+      ;;
+    codex)
+      export SWARM_CODEX_ROLE=gateway
+      export SWARM_CODEX_AGENT_ROLE=planner
+      ;;
+  esac
+  "$@"
+)
+
+# Work launchers.
+clawd() { _swarm_run "$SWARM_ENV_DIR/work.env" claude --enable-auto-mode "$@"; }
+codexw() { _swarm_run "$SWARM_ENV_DIR/work.env" command codex "$@"; }
+opencodew() { _swarm_run "$SWARM_ENV_DIR/work.env" command opencode "$@"; }
+
+# Personal launchers.
+clowd() { _swarm_run "$SWARM_ENV_DIR/personal.env" claude --enable-auto-mode "$@"; }
+cdx() { _swarm_run "$SWARM_ENV_DIR/personal.env" command codex "$@"; }
+opc() { _swarm_run "$SWARM_ENV_DIR/personal.env" command opencode "$@"; }
+
+# Personal lead launchers.
+clowdl() { _swarm_run_lead "$SWARM_ENV_DIR/personal.env" claude claude --enable-auto-mode "$@"; }
+cdxl() { _swarm_run_lead "$SWARM_ENV_DIR/personal.env" codex command codex "$@"; }

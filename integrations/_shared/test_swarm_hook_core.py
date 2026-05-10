@@ -114,6 +114,48 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertIn('adopt_instance_id="inst-1"', rendered)
         self.assertNotIn("Call the `register` tool", rendered)
 
+    def test_session_start_publishes_configured_work_tracker(self) -> None:
+        os.environ["SWARM_TEST_IDENTITY"] = "personal"
+        os.environ["SWARM_TEST_WORK_TRACKER"] = json.dumps(
+            {
+                "provider": "github_issues",
+                "mcp": "github_personal",
+                "repo": "Volpestyle/swarm-mcp",
+            }
+        )
+
+        calls: list[list[str]] = []
+
+        def fake_run(args: list[str], timeout: float = 8.0) -> tuple[int, str, str]:
+            calls.append(args)
+            if args[0] == "register":
+                return (
+                    0,
+                    json.dumps({"id": "inst-1", "scope": "/repo", "file_root": "/repo"}),
+                    "",
+                )
+            if args[:2] == ["kv", "set"]:
+                return 0, "", ""
+            return 1, "", "unexpected"
+
+        with mock.patch.object(self.core, "run_swarm", side_effect=fake_run):
+            output = self.run_hook(
+                {"session_id": "abc-123", "cwd": "/repo", "source": "startup"}
+            )
+
+        self.assertEqual(calls[1][:3], ["kv", "set", "config/work_tracker/personal"])
+        tracker = json.loads(calls[1][3])
+        self.assertEqual(tracker["identity"], "personal")
+        self.assertEqual(tracker["provider"], "github_issues")
+        self.assertEqual(tracker["mcp"], "github_personal")
+        self.assertEqual(tracker["repo"], "Volpestyle/swarm-mcp")
+        self.assertEqual(tracker["source"], "env:SWARM_TEST_WORK_TRACKER")
+        meta = self.core.read_session_meta("abc-123")
+        self.assertTrue(meta["work_tracker_published"])
+        rendered = json.loads(output)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Configured work tracker published", rendered)
+        self.assertIn("MCP `github_personal`", rendered)
+
     def test_session_start_override_label_preserves_session_token(self) -> None:
         os.environ["SWARM_TEST_LABEL"] = "identity:personal role:researcher topic:debug"
 
@@ -184,6 +226,7 @@ class HookCoreLifecycleTests(unittest.TestCase):
         rendered = json.loads(output)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("mode `gateway`", rendered)
         self.assertIn("Gateway/lead mode", rendered)
+        self.assertIn("bootstrap.work_tracker", rendered)
         self.assertIn("`dispatch`", rendered)
         self.assertIn("`swarm-mcp` skill", rendered)
 

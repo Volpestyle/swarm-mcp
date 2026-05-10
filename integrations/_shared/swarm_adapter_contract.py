@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 
 PATCH_FILE_RE = re.compile(r"^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+?)\s*$", re.MULTILINE)
@@ -44,6 +45,15 @@ def identity_token(value: str) -> str:
     if not clean or not re.match(r"^[A-Za-z0-9_.-]+$", clean):
         return ""
     return f"identity:{clean}"
+
+
+def identity_name(value: str) -> str:
+    clean = value.strip()
+    if clean.startswith("identity:"):
+        clean = clean.split(":", 1)[1]
+    if not clean or not re.match(r"^[A-Za-z0-9_.-]+$", clean):
+        return ""
+    return clean
 
 
 def role_token(value: str) -> str:
@@ -164,3 +174,176 @@ def role_from_file(start_dir: str, scope: Optional[str] = None) -> str:
         if stop_at is not None and directory == stop_at:
             break
     return ""
+
+
+WORK_TRACKER_OPTIONAL_KEYS = (
+    "team",
+    "project",
+    "repo",
+    "workspace",
+    "board",
+    "url",
+    "default_state",
+    "component",
+)
+
+
+def _clean_tracker_value(value: Any, max_len: int = 512) -> str:
+    if value is None:
+        return ""
+    clean = str(value).strip()
+    if not clean or "\n" in clean or "\r" in clean:
+        return ""
+    return clean[:max_len]
+
+
+def _select_tracker_payload(raw: Any, identity: str) -> dict[str, Any]:
+    if isinstance(raw, str):
+        clean = raw.strip()
+        if not clean:
+            return {}
+        try:
+            raw = json.loads(clean)
+        except json.JSONDecodeError:
+            if ":" in clean:
+                provider, mcp = clean.split(":", 1)
+                return {"provider": provider, "mcp": mcp}
+            return {}
+
+    if not isinstance(raw, dict):
+        return {}
+
+    if "provider" in raw or "mcp" in raw or "mcp_server" in raw:
+        return raw
+
+    for container_key in ("work_tracker", "workTrackers", "trackers"):
+        nested = raw.get(container_key)
+        selected = _select_tracker_payload(nested, identity)
+        if selected:
+            return selected
+
+    if identity:
+        selected = raw.get(identity)
+        if isinstance(selected, dict):
+            return selected
+
+    default = raw.get("default")
+    if isinstance(default, dict):
+        return default
+
+    return {}
+
+
+def normalize_work_tracker(raw: Any, identity: str = "", source: str = "") -> dict[str, Any]:
+    identity = identity_name(identity)
+    payload = _select_tracker_payload(raw, identity)
+    if not identity:
+        identity = identity_name(str(payload.get("identity") or ""))
+    provider = _clean_tracker_value(payload.get("provider") or payload.get("type"))
+    mcp = _clean_tracker_value(
+        payload.get("mcp")
+        or payload.get("mcp_server")
+        or payload.get("server")
+        or payload.get("tool")
+    )
+    if not provider or not mcp:
+        return {}
+
+    result: dict[str, Any] = {
+        "schema_version": 1,
+        "identity": identity or "default",
+        "provider": provider,
+        "mcp": mcp,
+    }
+    clean_source = _clean_tracker_value(source)
+    if clean_source:
+        result["source"] = clean_source
+    for key in WORK_TRACKER_OPTIONAL_KEYS:
+        value = _clean_tracker_value(payload.get(key))
+        if value:
+            result[key] = value
+    return result
+
+
+def _env_tracker_payload(env_prefix: str, identity: str) -> dict[str, Any]:
+    prefixes = []
+    clean_prefix = env_prefix.strip().upper()
+    if clean_prefix:
+        prefixes.append(f"SWARM_{clean_prefix}_")
+    prefixes.append("SWARM_")
+
+    for prefix in prefixes:
+        name = f"{prefix}WORK_TRACKER"
+        value = os.environ.get(name)
+        if value:
+            tracker = normalize_work_tracker(value, identity, f"env:{name}")
+            if tracker:
+                return tracker
+
+    for prefix in prefixes:
+        provider = os.environ.get(f"{prefix}WORK_TRACKER_PROVIDER")
+        mcp = os.environ.get(f"{prefix}WORK_TRACKER_MCP") or os.environ.get(
+            f"{prefix}WORK_TRACKER_MCP_SERVER"
+        )
+        if not provider and not mcp:
+            continue
+        payload: dict[str, Any] = {"provider": provider, "mcp": mcp}
+        for key in WORK_TRACKER_OPTIONAL_KEYS:
+            env_key = f"{prefix}WORK_TRACKER_{key.upper()}"
+            if os.environ.get(env_key):
+                payload[key] = os.environ[env_key]
+        tracker = normalize_work_tracker(payload, identity, f"env:{prefix}WORK_TRACKER_*")
+        if tracker:
+            return tracker
+
+    return {}
+
+
+def _work_tracker_file(start_dir: str, scope: Optional[str], identity: str) -> dict[str, Any]:
+    try:
+        start = Path(start_dir).resolve()
+    except Exception:
+        return {}
+    try:
+        stop_at = Path(scope).resolve() if scope else None
+    except Exception:
+        stop_at = None
+
+    for directory in [start, *start.parents]:
+        for filename in (".swarm-work-tracker", ".swarm-work-tracker.json"):
+            marker = directory / filename
+            if not marker.is_file():
+                continue
+            try:
+                raw = json.loads(marker.read_text())
+            except Exception:
+                return {}
+            return normalize_work_tracker(raw, identity, f"file:{filename}")
+        if stop_at is not None and directory == stop_at:
+            break
+    return {}
+
+
+def work_tracker_config(
+    env_prefix: str,
+    start_dir: str,
+    scope: Optional[str] = None,
+    identity: str = "",
+) -> dict[str, Any]:
+    """Resolve configured work tracker metadata for a runtime session.
+
+    This intentionally carries only routing metadata, never credentials. Runtime
+    launchers/config roots still own actual MCP auth.
+    """
+
+    clean_identity = identity_name(identity)
+    return _env_tracker_payload(env_prefix, clean_identity) or _work_tracker_file(
+        start_dir,
+        scope,
+        clean_identity,
+    )
+
+
+def work_tracker_key(identity: str) -> str:
+    clean = identity_name(identity) or "default"
+    return f"config/work_tracker/{clean}"

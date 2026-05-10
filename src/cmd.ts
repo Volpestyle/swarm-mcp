@@ -13,6 +13,7 @@ import { TASK_TYPES, type TaskType } from "./generated/protocol";
 import * as spawnerBackend from "./spawner_backend";
 import { registerDefaultSpawners } from "./spawner_defaults";
 import * as workspaceIdentity from "./workspace_identity";
+import * as workTracker from "./work_tracker";
 import { herdrWorkspaceBackend } from "./backends/herdr";
 
 workspaceIdentity.registerBackend(herdrWorkspaceBackend);
@@ -414,6 +415,7 @@ function cmdBootstrap(flags: Flags) {
     peers,
     unread_messages: unread,
     tasks: taskStore.snapshot(current.scope),
+    work_tracker: workTracker.configuredWorkTracker(current.scope, current.label),
   };
 
   if (flags.json) return printJson(payload);
@@ -613,13 +615,13 @@ function cmdUpdate(flags: Flags) {
   console.log(`task ${taskId} -> ${status}`);
 }
 
-function cmdContext(flags: Flags) {
+function cmdLocks(flags: Flags) {
   const scope = resolveScope(flags);
   const rows = db
     .query(
       `SELECT id, instance_id, file, type, content, created_at
        FROM context
-       WHERE scope = ?
+       WHERE scope = ? AND type = 'lock'
        ORDER BY created_at ASC`,
     )
     .all(scope) as Array<{
@@ -631,10 +633,10 @@ function cmdContext(flags: Flags) {
       created_at: number;
     }>;
   if (flags.json) return printJson(rows);
-  if (!rows.length) return console.log("(no context entries)");
+  if (!rows.length) return console.log("(no locks)");
   for (const r of rows) {
     console.log(
-      `  [${r.type}] ${r.instance_id.slice(0, 8)}  ${r.file}  — ${r.content}`,
+      `  ${r.instance_id.slice(0, 8)}  ${r.file}  — ${r.content}`,
     );
   }
 }
@@ -895,7 +897,7 @@ function cmdInspect(flags: Flags) {
   const ctx = db
     .query(
       `SELECT id, instance_id, file, type, content, created_at
-       FROM context WHERE scope = ? ORDER BY created_at ASC`,
+       FROM context WHERE scope = ? AND type = 'lock' ORDER BY created_at ASC`,
     )
     .all(scope);
   const kvs = kv.keys(scope) as Array<{ key: string; updated_at: number }>;
@@ -906,7 +908,7 @@ function cmdInspect(flags: Flags) {
       instances: insts,
       messages: (msgs as unknown[]).slice().reverse(),
       tasks: tsks,
-      context: ctx,
+      locks: ctx,
       kv: kvs,
     });
   }
@@ -930,15 +932,14 @@ function cmdInspect(flags: Flags) {
       `  ${r.id.slice(0, 8)}  [${r.status}]  ${r.type}  ${r.title}`,
     );
   }
-  console.log(`\ncontext (${(ctx as unknown[]).length}):`);
+  console.log(`\nlocks (${(ctx as unknown[]).length}):`);
   for (const r of ctx as Array<{
     instance_id: string;
     file: string;
-    type: string;
     content: string;
   }>) {
     console.log(
-      `  [${r.type}] ${r.instance_id.slice(0, 8)}  ${r.file}  — ${r.content}`,
+      `  ${r.instance_id.slice(0, 8)}  ${r.file}  — ${r.content}`,
     );
   }
   console.log(`\nkv (${kvs.length}):`);
@@ -976,7 +977,7 @@ function cmdCleanup(flags: Flags) {
   console.log(`  locks deleted: ${result.locks_deleted}`);
   console.log(`  messages deleted: ${result.messages_deleted}`);
   console.log(`  terminal tasks deleted: ${result.terminal_tasks_deleted}`);
-  console.log(`  context annotations deleted: ${result.context_annotations_deleted}`);
+  console.log(`  legacy context rows deleted: ${result.non_lock_context_rows_deleted}`);
   console.log(`  events deleted: ${result.events_deleted}`);
   console.log(`  kv rows deleted: ${result.kv_deleted}`);
 }
@@ -1111,7 +1112,7 @@ const HANDLERS: Record<Subcommand, (flags: Flags) => void | Promise<void>> = {
   claim: cmdClaim,
   "update-task": cmdUpdate,
   dispatch: cmdDispatch,
-  context: cmdContext,
+  locks: cmdLocks,
   kv: cmdKv,
   send: cmdSend,
   broadcast: cmdBroadcast,

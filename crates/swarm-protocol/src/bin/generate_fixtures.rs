@@ -21,9 +21,9 @@ use swarm_protocol::rpc::{
     RevokeResponse, SpawnPtyRequest, SpawnPtyResponse, WritePtyRequest,
 };
 use swarm_protocol::{
-    Annotation, ChangeCursor, ErrorClass, ErrorPayload, Event, Frame, FramePayload, Instance,
-    InstanceStatus, KvEntry, Lease, Lock, Message, PROTOCOL_VERSION, PtyInfo, PtySeq,
-    SwarmSnapshot, TableCursors, Task, TaskStatus, TaskType,
+    ChangeCursor, ErrorClass, ErrorPayload, Event, Frame, FramePayload, Instance, InstanceStatus,
+    KvEntry, Lease, Lock, Message, PROTOCOL_VERSION, PtyInfo, PtySeq, SwarmSnapshot, TableCursors,
+    Task, TaskStatus, TaskType,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,7 +45,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     write(&out_dir, "task", &sample_task())?;
     write(&out_dir, "message", &sample_message())?;
     write(&out_dir, "lock", &sample_lock())?;
-    write(&out_dir, "annotation", &sample_annotation())?;
     write(&out_dir, "event", &sample_event())?;
     write(&out_dir, "kv_entry", &sample_kv_entry())?;
     write(&out_dir, "pty_info", &sample_pty_info())?;
@@ -238,18 +237,6 @@ fn sample_lock() -> Lock {
     }
 }
 
-fn sample_annotation() -> Annotation {
-    Annotation {
-        id: "note-12".into(),
-        scope: "swarm-mcp".into(),
-        instance_id: "inst-abc-123".into(),
-        file: "apps/swarm-server/src/pair.rs".into(),
-        type_: "finding".into(),
-        content: "Token entropy should come from OsRng, not rand::thread_rng.".into(),
-        created_at: 1_745_000_200,
-    }
-}
-
 fn sample_event() -> Event {
     Event {
         id: 891,
@@ -303,7 +290,6 @@ fn sample_table_cursors() -> TableCursors {
             1_745_000_200,
             "swarm-mcp\u{1f}apps/swarm-server/src/pair.rs",
         )),
-        annotations: Some(ChangeCursor::new(1_745_000_200, "note-12")),
         kv: Some(ChangeCursor::new(
             1_745_000_050,
             "swarm-mcp\u{1f}review/next_turn",
@@ -318,7 +304,6 @@ fn sample_swarm_snapshot() -> SwarmSnapshot {
         tasks: vec![sample_task()],
         messages: vec![sample_message()],
         locks: vec![sample_lock()],
-        annotations: vec![sample_annotation()],
         kv: vec![sample_kv_entry()],
         events: vec![sample_event()],
         ptys: vec![sample_pty_info()],

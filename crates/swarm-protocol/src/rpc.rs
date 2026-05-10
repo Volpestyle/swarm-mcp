@@ -236,8 +236,8 @@ pub struct ReleaseLeaseRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RevealRequest {
     pub v: u32,
-    /// Subject identifier the client is revealing — `kv:<scope>:<key>`,
-    /// `message:<id>`, or `annotation:<id>`. The server interprets.
+    /// Subject identifier the client is revealing — `kv:<scope>:<key>` or
+    /// `message:<id>`. The server interprets.
     pub subject: String,
 }
 

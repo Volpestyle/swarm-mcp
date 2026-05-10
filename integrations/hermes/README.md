@@ -18,12 +18,13 @@ For the full design — architecture, lifecycle contract, role topology (worker 
 | Auto-`deregister` on session finalization | `on_session_finalize` hook → `mcp_swarm_deregister` |
 | Auto-lock write-like file tools when peers are active | `pre_tool_call` → `mcp_swarm_lock_file`, `post_tool_call` → `mcp_swarm_unlock_file` |
 | Publish workspace identity for this swarm instance | `on_session_start` → publish current workspace handle when `HERDR_PANE_ID` is present |
+| Publish configured work tracker | `on_session_start` reads tracker config and writes `config/work_tracker/<identity>` KV |
 | Express-lane peer prompt | `swarm_prompt_peer` tool → `mcp_swarm_send_message`, then best-effort workspace backend wake-up (`herdr pane run` today) |
 | `/swarm` slash command (status/instances/tasks/kv/messages) | shells to `swarm-mcp` CLI, no agent turn |
 
 Failures are logged and swallowed — coordination is opt-in convenience, never critical path.
 
-`swarm_prompt_peer` does not replace `wait_for_activity`. It writes the durable swarm message first, then nudges the target workspace handle only if that instance has published a workspace identity and the handle is not actively working. If the backend is unavailable, the message remains in swarm for the worker's normal inbox loop.
+`swarm_prompt_peer` does not replace `wait_for_activity` for agents that are actively monitoring delegated work. It writes the durable swarm message first, then nudges the target workspace handle only if that instance has published a workspace identity and the handle is not actively working. If the backend is unavailable, the message remains in swarm for the worker's next yield checkpoint.
 
 The tool is safe for ordinary workers, not just planners or gateways: implementers, reviewers, researchers, and generalists may use it to wake a peer for legitimate handoff or coordination. The guardrail is that they target a swarm instance id and leave the actual instruction in swarm; raw backend commands such as `herdr pane run` remain operator/spawner-level capabilities.
 
@@ -50,6 +51,8 @@ plugins:
 The plugin assumes the swarm MCP server is registered with hermes under the name `swarm` (its tools will appear as `mcp_swarm_register`, `mcp_swarm_deregister`, etc.). If you used a different name, set `SWARM_HERMES_MCP_NAME` in your env.
 
 Identity labels are derived from `SWARM_HERMES_IDENTITY`, `AGENT_IDENTITY`, or `SWARM_IDENTITY` when present. For example, launching Hermes with `AGENT_IDENTITY=personal` registers labels like `identity:personal hermes platform:cli session:<id>`. If `SWARM_HERMES_LABEL` is set and does not already include an `identity:` token, the plugin prepends the derived identity token.
+
+Work tracker metadata is read from `SWARM_HERMES_WORK_TRACKER`, `SWARM_WORK_TRACKER`, `.swarm-work-tracker`, or Hermes config `swarm.work_tracker`, then published to `config/work_tracker/<identity>` in swarm KV. This is routing metadata only; credentials still live in the launcher/config-root MCP setup.
 
 The express-lane tool is registered under Hermes toolset `plugin_swarm`. Enable that toolset for sessions that should be allowed to nudge peers; sessions without the toolset still get auto-register, auto-lock, identity publishing, and `/swarm`.
 

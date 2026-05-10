@@ -12,6 +12,10 @@ Source: [`docs/diagrams/backend-configuration.mmd`](./diagrams/backend-configura
 
 Durable coordination uses swarm `instance_id` and state in `swarm.db`. Workspace handles such as herdr `pane_id` or a future swarm-server `pty_id` are transport-local and live behind workspace identity rows.
 
+Spawner and workspace backends are capability boundaries, not necessarily different products. The spawner creates a new worker; the workspace backend resolves or wakes an already-published handle for an existing worker. Herdr currently implements both capabilities, while `swarm-ui` is only a spawner backend.
+
+Work tracker selection is separate from workspace/backend selection. Runtime hooks publish configured same-identity tracker metadata to swarm KV at `config/work_tracker/<identity>` when present, and `bootstrap` returns the matching row. Agents should then verify the matching MCP is available; they should not choose a tracker from the loaded MCP list alone.
+
 ## Configuration Layers
 
 | Layer | Owns | Examples |
@@ -19,9 +23,10 @@ Durable coordination uses swarm `instance_id` and state in `swarm.db`. Workspace
 | MCP host config | Mounts the `swarm` MCP server in an agent host. | `.mcp.json`, `~/.codex/config.toml`, `~/.claude.json`, opencode config |
 | Runtime integration config | Hooks/plugin behavior for a host. | Hermes plugin, Claude Code hooks, Codex plugin hooks |
 | Launcher/profile config | Account and tool visibility boundary. | `clawd`, `clowd`, `cdx`, `opc`, `hermesw`, `hermesp` |
+| Work tracker config | Human-facing tracker selection by repo/scope and identity. | `~/.config/swarm-mcp/<identity>.env`, `SWARM_<runtime>_WORK_TRACKER`, `SWARM_WORK_TRACKER`, `.swarm-work-tracker`, Hermes `swarm.work_tracker` |
 | Coordinator config | Shared DB and swarm scope defaults. | `SWARM_DB_PATH`, `SWARM_MCP_SCOPE`, `SWARM_MCP_FILE_ROOT` |
-| Spawner config | Which backend creates workers. | `SWARM_SPAWNER`, `SWARM_DISPATCH_SPAWNER`, `dispatch(... spawner)` |
-| Workspace backend config | Which backend resolves/wakes published workspace handles. | Current default: `herdr`; future: configurable backend default |
+| Spawner config | Which backend creates new workers. | `SWARM_SPAWNER`, `SWARM_DISPATCH_SPAWNER`, `dispatch(... spawner)` |
+| Workspace backend config | Which backend resolves/wakes existing published workspace handles. | Current default: `herdr`; future: configurable backend default |
 
 ## Current Supported Backends
 
@@ -33,6 +38,8 @@ Durable coordination uses swarm `instance_id` and state in `swarm.db`. Workspace
 | `swarm-server` backend | Not active as a `swarm-mcp` backend yet | Requires new backend implementations before config can select it |
 
 `swarm-server` exists today as the Rust desktop/mobile daemon. It is documented in [`swarm-server.md`](./swarm-server.md), but it is not yet registered as a `swarm-mcp` workspace backend or spawner backend.
+
+The same adapter family may provide both capabilities. Keeping the contracts separate lets a gateway use one backend to request creation, then let workers publish whatever workspace handle they actually receive for later wakeups.
 
 ## Current Herdr Setup
 
