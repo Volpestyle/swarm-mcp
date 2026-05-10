@@ -10,9 +10,13 @@ const cli = join(repoRoot, "src", "cli.ts");
 const decoder = new TextDecoder();
 
 function makeEnv(dbPath: string, extra: Record<string, string> = {}) {
+  const personalRoots = [tmpdir(), "/tmp", process.env.SWARM_MCP_PERSONAL_ROOTS]
+    .filter(Boolean)
+    .join(":");
   return {
     ...process.env,
     SWARM_DB_PATH: dbPath,
+    SWARM_MCP_PERSONAL_ROOTS: personalRoots,
     SWARM_MCP_INSTANCE_ID: "",
     ...extra,
   };

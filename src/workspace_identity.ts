@@ -1,4 +1,5 @@
 import * as kv from "./kv";
+import { identityMatches } from "./identity";
 import * as registry from "./registry";
 import {
   DEFAULT_WORKSPACE_BACKEND,
@@ -222,10 +223,10 @@ function identityMatchesHandle(
   return backend.handlesForIdentity(identity).some((handle) => handles.has(handle));
 }
 
-function identityKeyRows(scope: string, backend: WorkspaceBackend) {
+function identityKeyRows(scope: string, backend: WorkspaceBackend, viewer?: string | null) {
   const rows = new Map<string, { key: string }>();
   for (const prefix of backend.identityKeys("")) {
-    const prefixRows = kv.keys(scope, prefix) as Array<{ key: string }>;
+    const prefixRows = kv.keys(scope, prefix, viewer) as Array<{ key: string }>;
     for (const row of prefixRows) rows.set(row.key, row);
   }
   return Array.from(rows.values());
@@ -253,11 +254,12 @@ export function resolveWorkspaceHandleToSwarm(opts: {
   const canonicalInputHandle = probeInfo?.handle || inputHandle;
   const comparableHandles = new Set([inputHandle, canonicalInputHandle].filter(Boolean));
   const matches = new Map<string, WorkspaceHandleSwarmMatch>();
+  const actor = opts.actor ? registry.get(opts.actor) : null;
 
   const directInstanceId = stringValue(probeInfo?.swarm_instance_id);
   if (directInstanceId && probeInfo) {
     const inst = registry.get(directInstanceId);
-    if (inst?.scope === opts.scope) {
+    if (inst?.scope === opts.scope && (!actor || identityMatches(actor, inst))) {
       matches.set(directInstanceId, {
         instance_id: directInstanceId,
         label: inst.label,
@@ -270,10 +272,10 @@ export function resolveWorkspaceHandleToSwarm(opts: {
     }
   }
 
-  for (const row of identityKeyRows(opts.scope, backend)) {
+  for (const row of identityKeyRows(opts.scope, backend, opts.actor)) {
     const instanceId = backend.instanceIdFromIdentityKey(row.key);
     if (!instanceId) continue;
-    const value = kv.get(opts.scope, row.key)?.value;
+    const value = kv.get(opts.scope, row.key, opts.actor)?.value;
     if (!value) continue;
     const parsed = parseIdentity(value);
     if (!parsed.identity) continue;
@@ -302,6 +304,7 @@ export function resolveWorkspaceHandleToSwarm(opts: {
 
     if (!matched) continue;
     const inst = registry.get(instanceId);
+    if (actor && inst && !identityMatches(actor, inst)) continue;
     matches.set(instanceId, {
       instance_id: instanceId,
       label: inst?.label ?? null,

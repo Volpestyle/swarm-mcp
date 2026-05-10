@@ -88,9 +88,9 @@ function autoPromptPeer(opts: {
   });
 }
 
-function assignedBlockedTasks(scope: string) {
+function assignedBlockedTasks(scope: string, viewer: registry.Instance) {
   const blocked = new Map<string, { assignee: string; title: string; type: string }>();
-  for (const task of tasks.list(scope, { status: "blocked" })) {
+  for (const task of tasks.list(scope, { status: "blocked", viewer })) {
     const id = typeof task.id === "string" ? task.id : "";
     const assignee = typeof task.assignee === "string" ? task.assignee : "";
     const title = typeof task.title === "string" ? task.title : "";
@@ -103,10 +103,11 @@ function assignedBlockedTasks(scope: string) {
 function notifyAssignedUnblockedTasks(opts: {
   scope: string;
   sender: string;
+  viewer: registry.Instance;
   before: Map<string, { assignee: string; title: string; type: string }>;
 }) {
   const prompts: Array<Record<string, unknown>> = [];
-  for (const task of tasks.list(opts.scope, { status: "claimed" })) {
+  for (const task of tasks.list(opts.scope, { status: "claimed", viewer: opts.viewer })) {
     const id = typeof task.id === "string" ? task.id : "";
     const assignee = typeof task.assignee === "string" ? task.assignee : "";
     if (!id || !assignee || assignee === opts.sender) continue;
@@ -354,7 +355,7 @@ server.resource(
         "swarm://tasks",
       );
 
-    return resource(tasks.snapshot(instance.scope), "swarm://tasks");
+    return resource(tasks.snapshot(instance.scope, {}, instance), "swarm://tasks");
   },
 );
 
@@ -364,7 +365,7 @@ server.resource(
   { description: "All active instances in this swarm scope." },
   async () => {
     if (!instance) return resource([], "swarm://instances");
-    return resource(registry.list(instance.scope), "swarm://instances");
+    return resource(registry.listVisible(instance), "swarm://instances");
   },
 );
 
@@ -637,7 +638,7 @@ tryAutoAdopt();
         {
           type: "text",
           text: JSON.stringify(
-            registry.list(current.scope, label_contains),
+            registry.listVisible(current, label_contains),
             null,
             2,
           ),
@@ -713,7 +714,7 @@ tryAutoAdopt();
     }
     const current = ensureInstance();
     if (!current) return missing();
-    const peers = (registry.list(current.scope) as registry.Instance[]).filter(
+    const peers = registry.listVisible(current).filter(
       (p) => p.id !== current.id,
     );
     const unread = mark_read
@@ -726,7 +727,7 @@ tryAutoAdopt();
       tasks: tasks.snapshot(current.scope, {
         include_terminal,
         terminal_limit,
-      }),
+      }, current),
       work_tracker: workTracker.configuredWorkTracker(current.scope, current.label),
     });
   },
@@ -1219,7 +1220,7 @@ registeredTool(
   },
   async ({ task_id, status, result }) => {
     const current = instance!;
-    const blockedBefore = status === "done" ? assignedBlockedTasks(current.scope) : new Map();
+    const blockedBefore = status === "done" ? assignedBlockedTasks(current.scope, current) : new Map();
     const next = tasks.update(
       task_id,
       current.scope,
@@ -1234,7 +1235,7 @@ registeredTool(
 
     // Auto-notify and wake the requester when a task reaches a terminal state.
     if ("ok" in next && (status === "done" || status === "failed")) {
-      const task = tasks.get(task_id, current.scope);
+      const task = tasks.get(task_id, current.scope, current);
       if (task && typeof task.requester === "string" && task.requester !== current.id) {
         response.prompt = autoPromptPeer({
           scope: current.scope,
@@ -1250,6 +1251,7 @@ registeredTool(
       const unblockedPrompts = notifyAssignedUnblockedTasks({
         scope: current.scope,
         sender: current.id,
+        viewer: current,
         before: blockedBefore,
       });
       if (unblockedPrompts.length) response.unblocked_prompts = unblockedPrompts;
@@ -1265,12 +1267,12 @@ registeredTool(
   { task_id: z.string().describe("The task ID to approve") },
   async ({ task_id }) => {
     const current = instance!;
-    const result = tasks.approve(task_id, current.scope);
+    const result = tasks.approve(task_id, current.scope, current.id);
 
     // Auto-notify and wake the assignee if task became claimed.
     let promptResult: Record<string, unknown> | null = null;
     if ("ok" in result && result.status === "claimed") {
-      const task = tasks.get(task_id, current.scope);
+      const task = tasks.get(task_id, current.scope, current);
       if (
         task &&
         typeof task.assignee === "string" &&
@@ -1297,7 +1299,7 @@ registeredTool(
   { readOnlyHint: true },
   async ({ task_id }) => {
     const current = instance!;
-    const task = tasks.get(task_id, current.scope);
+    const task = tasks.get(task_id, current.scope, current);
     if (!task) return { content: [{ type: "text", text: "Task not found" }] };
     return respondJson(task);
   },
@@ -1318,7 +1320,7 @@ registeredTool(
   async ({ status, assignee, requester }) => {
     const current = instance!;
     return respondJson(
-      tasks.list(current.scope, { status, assignee, requester }),
+       tasks.list(current.scope, { status, assignee, requester, viewer: current }),
     );
   },
 );
@@ -1332,7 +1334,7 @@ registeredTool(
   { readOnlyHint: true },
   async ({ file }) => {
     const current = instance!;
-    return respondJson(context.fileLock(current.scope, resolveFileInput(file)));
+    return respondJson(context.fileLock(current.scope, resolveFileInput(file), current));
   },
 );
 
@@ -1386,7 +1388,7 @@ registeredTool(
   { key: z.string().describe("The key to look up") },
   { readOnlyHint: true },
   async ({ key }) => {
-    const row = kv.get(instance!.scope, key);
+    const row = kv.get(instance!.scope, key, instance!.id);
     if (!row)
       return { content: [{ type: "text", text: `Key \"${key}\" not found` }] };
     return respondJson(row);
@@ -1403,7 +1405,8 @@ registeredTool(
       .describe("The value to store (use JSON for complex data)"),
   },
   async ({ key, value }) => {
-    kv.set(instance!.scope, key, value, instance!.id);
+    const result = kv.set(instance!.scope, key, value, instance!.id);
+    if (result && "error" in result) return respondJson(result);
     return respond(`Set \"${key}\"`);
   },
 );
@@ -1448,7 +1451,7 @@ registeredTool(
   },
   { readOnlyHint: true },
   async ({ prefix }) => {
-    return respondJson(kv.keys(instance!.scope, prefix));
+    return respondJson(kv.keys(instance!.scope, prefix, instance!.id));
   },
 );
 
@@ -1479,7 +1482,7 @@ registeredTool(
       const result: Record<string, unknown> = {
         changes: ["new_messages"],
         messages: messages.poll(current.id, current.scope, 50),
-        tasks: tasks.snapshot(current.scope),
+        tasks: tasks.snapshot(current.scope, {}, current),
       };
       return respond(JSON.stringify(result, null, 2));
     }
@@ -1513,10 +1516,10 @@ registeredTool(
           result.messages = messages.poll(instance!.id, instance!.scope, 50);
         }
         if (changes.includes("task_updates")) {
-          result.tasks = tasks.snapshot(instance!.scope);
+          result.tasks = tasks.snapshot(instance!.scope, {}, instance!);
         }
         if (changes.includes("instance_changes")) {
-          result.instances = registry.list(instance!.scope);
+          result.instances = registry.listVisible(instance!);
         }
 
         return respond(JSON.stringify(result, null, 2));

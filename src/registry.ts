@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { isAbsolute, relative, resolve } from "node:path";
 import { releaseInstanceState, runCleanup, type CleanupMode } from "./cleanup";
 import { db } from "./db";
 import { emit } from "./events";
-import { identityToken, processIdentity } from "./identity";
+import { identityName, identityToken, identityMatches, processIdentity } from "./identity";
 import { norm, root, scope as scoped } from "./paths";
 import * as planner from "./planner";
 import { now } from "./time";
@@ -18,6 +20,43 @@ function warnIdentityMismatch(label: string | null, context: string) {
         `Verify the calling agent is launched under the matching identity wrapper.`,
     );
   }
+}
+
+function envList(name: string) {
+  return (process.env[name] ?? "")
+    .split(":")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function expandHome(path: string) {
+  return path === "~" || path.startsWith("~/")
+    ? resolve(homedir(), path.slice(2))
+    : resolve(path);
+}
+
+function isUnder(path: string, base: string) {
+  const rel = relative(base, path);
+  return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function identityRoots(identity: string) {
+  const upper = identity.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+  const explicit = envList(`SWARM_MCP_${upper}_ROOTS`).map(expandHome);
+  if (explicit.length) return explicit;
+  if (identity === "personal") return [resolve(homedir(), "volpestyle")];
+  return envList("SWARM_MCP_WORK_ROOTS").map(expandHome);
+}
+
+function validateIdentityDirectory(label: string | null, dir: string, fileRoot: string) {
+  const identity = identityName({ label });
+  if (!identity) return;
+  const roots = identityRoots(identity);
+  if (!roots.length) return;
+  if (roots.some((base) => isUnder(dir, base) && isUnder(fileRoot, base))) return;
+  throw new Error(
+    `Registration blocked: identity:${identity} directory must be under one of ${roots.join(", ")}. Set SWARM_MCP_${identity.toUpperCase().replace(/[^A-Z0-9_]/g, "_")}_ROOTS to override.`,
+  );
 }
 
 export type Instance = {
@@ -125,8 +164,10 @@ export function register(
   const dir = norm(directory);
   const trimmedLabel = label?.trim() || null;
   const nextScope = scoped(dir, value);
+  const nextFileRoot = norm(fileRoot || dir);
 
   warnIdentityMismatch(trimmedLabel, "register");
+  validateIdentityDirectory(trimmedLabel, dir, nextFileRoot);
 
   if (adoptId) {
     const adopted = adoptInstanceId(directory, label, value, adoptId);
@@ -168,7 +209,7 @@ export function register(
     scope: nextScope,
     directory: dir,
     root: root(dir),
-    file_root: norm(fileRoot || dir),
+    file_root: nextFileRoot,
     pid: process.pid,
     label: trimmedLabel,
     adopted: true,
@@ -279,4 +320,10 @@ export function list(scope?: string, labelContains?: string) {
       `SELECT id, scope, directory, root, file_root, pid, label, registered_at, heartbeat, adopted, lease_until FROM instances WHERE ${where.join(" AND ")} ORDER BY registered_at ASC`,
     )
     .all(...args);
+}
+
+export function listVisible(viewer: Instance, labelContains?: string) {
+  return (list(viewer.scope, labelContains) as Instance[]).filter(
+    (item) => item.id === viewer.id || identityMatches(viewer, item),
+  );
 }

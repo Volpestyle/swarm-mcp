@@ -12,13 +12,28 @@ _swarm_run() (
   "$@"
 )
 
-_swarm_run_lead() (
-  local env_file="$1"
-  local runtime="$2"
+_swarm_run_identity() (
+  local identity="$1"
+  local env_file="$2"
   shift 2
   set -a
   source "$env_file"
   set +a
+  export SWARM_DB_PATH="$HOME/.swarm-mcp-$identity/swarm.db"
+  "$@"
+)
+
+_swarm_run_lead() (
+  local env_file="$1"
+  local runtime="$2"
+  local swarm_db_path="$SWARM_DB_PATH"
+  shift 2
+  set -a
+  source "$env_file"
+  set +a
+  if [[ -n "$swarm_db_path" ]]; then
+    export SWARM_DB_PATH="$swarm_db_path"
+  fi
   case "$runtime" in
     claude)
       export SWARM_CC_ROLE=gateway
@@ -32,16 +47,23 @@ _swarm_run_lead() (
   "$@"
 )
 
+_swarm_run_lead_identity() (
+  local identity="$1"
+  shift
+  export SWARM_DB_PATH="$HOME/.swarm-mcp-$identity/swarm.db"
+  _swarm_run_lead "$@"
+)
+
 # Work launchers.
-clawd() { _swarm_run "$SWARM_ENV_DIR/work.env" claude --enable-auto-mode "$@"; }
-codexw() { _swarm_run "$SWARM_ENV_DIR/work.env" command codex "$@"; }
-opencodew() { _swarm_run "$SWARM_ENV_DIR/work.env" command opencode "$@"; }
+clawd() { _swarm_run_identity work "$SWARM_ENV_DIR/work.env" claude --enable-auto-mode "$@"; }
+codexw() { _swarm_run_identity work "$SWARM_ENV_DIR/work.env" command codex "$@"; }
+opencodew() { _swarm_run_identity work "$SWARM_ENV_DIR/work.env" command opencode "$@"; }
 
 # Personal launchers.
-clowd() { _swarm_run "$SWARM_ENV_DIR/personal.env" claude --enable-auto-mode "$@"; }
-cdx() { _swarm_run "$SWARM_ENV_DIR/personal.env" command codex "$@"; }
-opc() { _swarm_run "$SWARM_ENV_DIR/personal.env" command opencode "$@"; }
+clowd() { _swarm_run_identity personal "$SWARM_ENV_DIR/personal.env" claude --enable-auto-mode "$@"; }
+cdx() { _swarm_run_identity personal "$SWARM_ENV_DIR/personal.env" command codex "$@"; }
+opc() { _swarm_run_identity personal "$SWARM_ENV_DIR/personal.env" command opencode "$@"; }
 
 # Personal lead launchers.
-clowdl() { _swarm_run_lead "$SWARM_ENV_DIR/personal.env" claude claude --enable-auto-mode "$@"; }
-cdxl() { _swarm_run_lead "$SWARM_ENV_DIR/personal.env" codex command codex "$@"; }
+clowdl() { _swarm_run_lead_identity personal "$SWARM_ENV_DIR/personal.env" claude claude --enable-auto-mode "$@"; }
+cdxl() { _swarm_run_lead_identity personal "$SWARM_ENV_DIR/personal.env" codex command codex "$@"; }

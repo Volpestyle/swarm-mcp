@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +24,9 @@ const registry = await import("../src/registry");
 const tasks = await import("../src/tasks");
 const paths = await import("../src/paths");
 
+const originalAllowUnlabeled = process.env.SWARM_MCP_ALLOW_UNLABELED;
+const originalPersonalRoots = process.env.SWARM_MCP_PERSONAL_ROOTS;
+
 function req(
   requester: string,
   scope: string,
@@ -37,12 +40,19 @@ function req(
 }
 
 beforeEach(() => {
+  process.env.SWARM_MCP_ALLOW_UNLABELED = "1";
+  process.env.SWARM_MCP_PERSONAL_ROOTS = "/tmp";
   db.exec("DELETE FROM context");
   db.exec("DELETE FROM tasks");
   db.exec("DELETE FROM messages");
   db.exec("DELETE FROM kv");
   db.exec("DELETE FROM kv_scope_updates");
   db.exec("DELETE FROM instances");
+});
+
+afterEach(() => {
+  restoreEnv("SWARM_MCP_ALLOW_UNLABELED", originalAllowUnlabeled);
+  restoreEnv("SWARM_MCP_PERSONAL_ROOTS", originalPersonalRoots);
 });
 
 function reg(name: string, scope: string) {
@@ -55,6 +65,11 @@ function regPlanner(name: string, scope: string) {
     `provider:test role:planner name:${name}`,
     scope,
   );
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
 }
 
 describe("database schema", () => {
@@ -980,6 +995,59 @@ describe("locks", () => {
     ).toMatchObject({ error: "File is already locked" });
   });
 
+  test("cross-identity lock attempts on another identity root are blocked", () => {
+    delete process.env.SWARM_MCP_ALLOW_CROSS_IDENTITY;
+    const priorPersonalRoots = process.env.SWARM_MCP_PERSONAL_ROOTS;
+    const scope = "scope-identity-lock";
+    const work = registry.register(
+      "/tmp/work-repo",
+      "identity:work role:implementer",
+      scope,
+    );
+    process.env.SWARM_MCP_PERSONAL_ROOTS = "/tmp/personal-repo";
+    const personal = registry.register(
+      "/tmp/personal-repo",
+      "identity:personal role:planner",
+      scope,
+    );
+    const file = paths.file(work.directory, "src/index.ts");
+
+    expect(context.lock(personal.id, personal.scope, file, "wedging")).toMatchObject({
+      error: "Cannot lock a path owned by another identity",
+      active: { hidden: true, reason: "cross_identity", file },
+    });
+    restoreEnv("SWARM_MCP_PERSONAL_ROOTS", priorPersonalRoots);
+  });
+
+  test("cross-identity lock conflicts return a redacted owner", () => {
+    delete process.env.SWARM_MCP_ALLOW_CROSS_IDENTITY;
+    const priorPersonalRoots = process.env.SWARM_MCP_PERSONAL_ROOTS;
+    const scope = "scope-hidden-lock";
+    process.env.SWARM_MCP_PERSONAL_ROOTS = "/tmp/shared-root";
+    const personal = registry.register(
+      "/tmp/shared-root",
+      "identity:personal role:planner",
+      scope,
+    );
+    const file = paths.file(personal.directory, "src/index.ts");
+
+    expect(context.lock(personal.id, personal.scope, file, "editing")).toMatchObject({
+      ok: true,
+    });
+
+    const work = registry.register(
+      "/tmp/shared-root",
+      "identity:work role:implementer",
+      scope,
+    );
+
+    expect(context.lock(work.id, work.scope, file, "editing")).toMatchObject({
+      error: "Cannot lock a path owned by another identity",
+      active: { hidden: true, reason: "cross_identity", file },
+    });
+    restoreEnv("SWARM_MCP_PERSONAL_ROOTS", priorPersonalRoots);
+  });
+
   test("clearLocks releases an exclusive lock", () => {
     const a = reg("one", "scope-a");
     const b = reg("two", "scope-a");
@@ -1558,6 +1626,30 @@ describe("kv", () => {
     const second = kv.version("scope-a");
 
     expect(second).toBeGreaterThan(first);
+  });
+
+  test("set cannot overwrite a key owned by another identity", () => {
+    const priorPersonalRoots = process.env.SWARM_MCP_PERSONAL_ROOTS;
+    const scope = "scope-kv-identity";
+    const work = registry.register(
+      "/tmp/work-kv",
+      "identity:work role:planner",
+      scope,
+    );
+    process.env.SWARM_MCP_PERSONAL_ROOTS = "/tmp/personal-kv";
+    const personal = registry.register(
+      "/tmp/personal-kv",
+      "identity:personal role:planner",
+      scope,
+    );
+
+    expect(kv.set(scope, "config/work_tracker/work", "linear", work.id)).toEqual({ ok: true });
+    expect(kv.set(scope, "config/work_tracker/work", "garbage", personal.id)).toEqual({
+      error: "KV key is owned by another identity",
+    });
+    expect(kv.get(scope, "config/work_tracker/work", work.id)?.value).toBe("linear");
+    expect(kv.get(scope, "config/work_tracker/work", personal.id)).toBeNull();
+    restoreEnv("SWARM_MCP_PERSONAL_ROOTS", priorPersonalRoots);
   });
 
   test("cleanup removes old orphaned instance-scoped kv and keeps durable plans", () => {

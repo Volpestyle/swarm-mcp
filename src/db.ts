@@ -79,6 +79,7 @@ const COLUMN_MIGRATIONS = [
   ["tasks", "parent_task_id TEXT"],
   ["context", "scope TEXT NOT NULL DEFAULT ''"],
   ["context", "task_id TEXT"],
+  ["kv", "owner_identity TEXT"],
 ] as const;
 
 function cols(table: string) {

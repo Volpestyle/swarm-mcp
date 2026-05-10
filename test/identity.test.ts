@@ -67,12 +67,16 @@ describe("processIdentity", () => {
 
 describe("crossIdentityReason", () => {
   const original = process.env.SWARM_MCP_ALLOW_CROSS_IDENTITY;
+  const originalUnlabeled = process.env.SWARM_MCP_ALLOW_UNLABELED;
   beforeEach(() => {
     delete process.env.SWARM_MCP_ALLOW_CROSS_IDENTITY;
+    delete process.env.SWARM_MCP_ALLOW_UNLABELED;
   });
   afterEach(() => {
     if (original === undefined) delete process.env.SWARM_MCP_ALLOW_CROSS_IDENTITY;
     else process.env.SWARM_MCP_ALLOW_CROSS_IDENTITY = original;
+    if (originalUnlabeled === undefined) delete process.env.SWARM_MCP_ALLOW_UNLABELED;
+    else process.env.SWARM_MCP_ALLOW_UNLABELED = originalUnlabeled;
   });
 
   test("blocks when both sides have different identity tokens", () => {
@@ -94,7 +98,26 @@ describe("crossIdentityReason", () => {
     ).toBeNull();
   });
 
-  test("allows when either side is missing an identity token (compat)", () => {
+  test("blocks when either side is missing an identity token", () => {
+    expect(
+      identity.crossIdentityReason(
+        { label: "identity:personal role:planner" },
+        { label: "role:implementer" },
+      ),
+    ).toMatch(/target has no identity token/);
+    expect(
+      identity.crossIdentityReason(
+        { label: "role:planner" },
+        { label: "identity:work role:implementer" },
+      ),
+    ).toMatch(/sender has no identity token/);
+    expect(
+      identity.crossIdentityReason({ label: null }, { label: null }),
+    ).toMatch(/sender has no identity token/);
+  });
+
+  test("honors SWARM_MCP_ALLOW_UNLABELED escape hatch", () => {
+    process.env.SWARM_MCP_ALLOW_UNLABELED = "1";
     expect(
       identity.crossIdentityReason(
         { label: "identity:personal role:planner" },

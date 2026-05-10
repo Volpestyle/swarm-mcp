@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { isAbsolute, relative } from "node:path";
 import { CLEANUP_POLICY, cleanupNonLockContextRows } from "./cleanup";
 import { db } from "./db";
 import { emit } from "./events";
+import { identityMatches } from "./identity";
+import * as registry from "./registry";
 import { now } from "./time";
 
 type ContextRow = {
@@ -30,6 +33,32 @@ type LockRow = ContextRow & {
     status: string;
   }>;
 };
+
+type HiddenLock = {
+  hidden: true;
+  reason: "cross_identity";
+  file: string;
+};
+
+function isUnder(path: string, base: string) {
+  const rel = relative(base, path);
+  return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function ownsPath(inst: registry.Instance, file: string) {
+  return isUnder(file, inst.root) || isUnder(file, inst.file_root) || isUnder(file, inst.directory);
+}
+
+function crossIdentityPathOwner(instance: string, scope: string, file: string) {
+  const actor = registry.get(instance);
+  if (!actor) return null;
+  for (const peer of registry.list(scope) as registry.Instance[]) {
+    if (peer.id === instance) continue;
+    if (!ownsPath(peer, file)) continue;
+    if (!identityMatches(actor, peer)) return peer;
+  }
+  return null;
+}
 
 function enrichLock(scope: string, row: ContextRow | null): LockRow | null {
   if (!row) return null;
@@ -69,12 +98,18 @@ function enrichLock(scope: string, row: ContextRow | null): LockRow | null {
   };
 }
 
-function activeLock(scope: string, file: string) {
+function activeLock(scope: string, file: string, viewer?: registry.Instance): LockRow | HiddenLock | null {
   const row = db
     .query(
       "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND file = ? AND type = 'lock'",
     )
     .get(scope, file) as ContextRow | null;
+  if (row && viewer && row.instance_id !== viewer.id) {
+    const owner = registry.get(row.instance_id);
+    if (owner && !identityMatches(viewer, owner)) {
+      return { hidden: true, reason: "cross_identity", file };
+    }
+  }
   return enrichLock(scope, row);
 }
 
@@ -100,6 +135,14 @@ export function lock(
   content: string,
   opts: { exclusive?: boolean; taskId?: string } = {},
 ) {
+  const otherOwner = crossIdentityPathOwner(instance, scope, file);
+  if (otherOwner) {
+    return {
+      error: "Cannot lock a path owned by another identity",
+      active: { hidden: true as const, reason: "cross_identity" as const, file },
+    };
+  }
+
   // Re-entrant by default: same-instance callers extending their own edit
   // lock should succeed, so drop their existing row before insert. With
   // `exclusive: true`, we leave any existing lock — including our own — in
@@ -130,7 +173,7 @@ export function lock(
       throw err;
     }
 
-    return { error: "File is already locked", active: activeLock(scope, file) };
+    return { error: "File is already locked", active: activeLock(scope, file, registry.get(instance) ?? undefined) };
   }
 }
 
@@ -142,10 +185,10 @@ export function lookup(scope: string, file: string) {
     .all(scope, file);
 }
 
-export function fileLock(scope: string, file: string) {
+export function fileLock(scope: string, file: string, viewer?: registry.Instance) {
   return {
     file,
-    active: activeLock(scope, file),
+    active: activeLock(scope, file, viewer),
   };
 }
 

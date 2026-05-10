@@ -26,16 +26,22 @@ export function identityName(owner: LabelOwner): string {
   return token ? token.slice(IDENTITY_PREFIX.length) : "";
 }
 
+export function sameIdentityReason(
+  actor: LabelOwner,
+  owner: LabelOwner,
+): string | null {
+  return crossIdentityReason(actor, owner);
+}
+
 export function processIdentity(): string {
   const raw = (process.env.AGENT_IDENTITY ?? "").trim();
   return raw ? `${IDENTITY_PREFIX}${raw}` : "";
 }
 
 /**
- * Returns a non-null reason string when a write from `sender` to `target`
- * should be rejected because their identity tokens conflict. Missing tokens on
- * either side are allowed (compat for legacy/unlabeled instances) but should
- * trigger a warning at the source.
+ * Returns a non-null reason string when coordination from `sender` to `target`
+ * should be rejected because their identity tokens conflict or one side is
+ * unlabeled. Use SWARM_MCP_ALLOW_UNLABELED=1 for legacy unlabeled sessions.
  */
 export function crossIdentityReason(
   sender: LabelOwner,
@@ -44,9 +50,16 @@ export function crossIdentityReason(
   if (envTruthy("SWARM_MCP_ALLOW_CROSS_IDENTITY")) return null;
   const a = identityToken(sender);
   const b = identityToken(target);
-  if (!a || !b) return null;
+  if (!a || !b) {
+    if (envTruthy("SWARM_MCP_ALLOW_UNLABELED")) return null;
+    return `Identity boundary blocked: ${!a ? "sender" : "target"} has no identity token. Add an identity:<name> label or set SWARM_MCP_ALLOW_UNLABELED=1 from a trusted shell.`;
+  }
   if (a === b) return null;
   return `Cross-identity coordination blocked: sender ${a}, target ${b}. Delegation across the identity boundary is forbidden (see swarm-mcp/docs/control-plane.md). Set SWARM_MCP_ALLOW_CROSS_IDENTITY=1 to override from a trusted shell.`;
+}
+
+export function identityMatches(actor: LabelOwner, owner: LabelOwner): boolean {
+  return crossIdentityReason(actor, owner) === null;
 }
 
 function envTruthy(name: string) {

@@ -3,13 +3,14 @@ import * as context from "./context";
 import { cleanupTerminalTasks } from "./cleanup";
 import { db } from "./db";
 import { emit } from "./events";
+import { identityMatches } from "./identity";
 import {
   TASK_STATUSES,
   TASK_TYPES,
   type TaskStatus,
   type TaskType,
 } from "./generated/protocol";
-import { prune } from "./registry";
+import { get as getInstance, prune, type Instance } from "./registry";
 import { stamp } from "./time";
 
 export { TASK_STATUSES, TASK_TYPES, type TaskStatus, type TaskType };
@@ -26,6 +27,25 @@ type TaskRow = {
   idempotency_key: string | null;
   parent_task_id: string | null;
 };
+
+function taskIdentityOwner(task: { requester?: string | null; assignee?: string | null }) {
+  if (task.requester) {
+    const requester = getInstance(task.requester);
+    if (requester) return requester;
+  }
+  if (task.assignee) return getInstance(task.assignee);
+  return null;
+}
+
+function canSeeTask(viewer: Instance | undefined, task: Record<string, unknown>) {
+  if (!viewer) return true;
+  if (task.requester === viewer.id || task.assignee === viewer.id) return true;
+  const owner = taskIdentityOwner({
+    requester: typeof task.requester === "string" ? task.requester : null,
+    assignee: typeof task.assignee === "string" ? task.assignee : null,
+  });
+  return owner ? identityMatches(viewer, owner) : false;
+}
 
 type TaskRelationFields = Pick<RequestOpts, "depends_on" | "parent_task_id">;
 type TaskCreationFields = {
@@ -423,10 +443,15 @@ export function claim(
   opts: ClaimOpts = {},
 ) {
   const before = db
-    .query("SELECT status, assignee FROM tasks WHERE id = ? AND scope = ?")
-    .get(id, scope) as { status: TaskStatus; assignee: string | null } | null;
+    .query("SELECT status, requester, assignee FROM tasks WHERE id = ? AND scope = ?")
+    .get(id, scope) as { status: TaskStatus; requester: string; assignee: string | null } | null;
 
   if (!before) return { error: "Task not found" };
+  const actor = getInstance(assignee);
+  const owner = taskIdentityOwner(before);
+  if (actor && owner && !identityMatches(actor, owner)) {
+    return { error: "Task belongs to another identity" };
+  }
 
   // Allowed: open + unassigned, or pre-assigned to this caller (status=claimed
   // when planner pre-set assignee). Everything else is a no-op.
@@ -595,15 +620,22 @@ export function update(
   return tx();
 }
 
-export function approve(id: string, scope: string) {
+export function approve(id: string, scope: string, actor?: string) {
   const tx = db.transaction(() => {
     const task = db
       .query(
-        "SELECT id, scope, depends_on, assignee, status FROM tasks WHERE id = ? AND scope = ?",
+        "SELECT id, scope, requester, depends_on, assignee, status FROM tasks WHERE id = ? AND scope = ?",
       )
       .get(id, scope) as TaskRow | null;
 
     if (!task) return { error: "Task not found" };
+    if (actor) {
+      const actorInst = getInstance(actor);
+      const owner = taskIdentityOwner(task);
+      if (actorInst && owner && !identityMatches(actorInst, owner)) {
+        return { error: "Task belongs to another identity" };
+      }
+    }
     if (task.status !== "approval_required") {
       return { error: `Task is ${task.status}, not approval_required` };
     }
@@ -897,13 +929,14 @@ export function requestBatch(
   };
 }
 
-export function get(id: string, scope: string) {
+export function get(id: string, scope: string, viewer?: Instance) {
   prune();
 
   const task = db
     .query("SELECT * FROM tasks WHERE id = ? AND scope = ?")
     .get(id, scope) as Record<string, unknown> | null;
   if (!task) return null;
+  if (!canSeeTask(viewer, task)) return null;
   return row(task);
 }
 
@@ -913,6 +946,7 @@ export function list(
     status?: TaskStatus;
     assignee?: string;
     requester?: string;
+    viewer?: Instance;
   },
 ) {
   prune();
@@ -939,10 +973,10 @@ export function list(
     )
     .all(...args) as Array<Record<string, unknown>>;
 
-  return rows.map((item) => row(item));
+  return rows.filter((item) => canSeeTask(filter?.viewer, item)).map((item) => row(item));
 }
 
-export function snapshot(scope: string, opts: SnapshotOpts = {}): TaskSnapshot {
+export function snapshot(scope: string, opts: SnapshotOpts = {}, viewer?: Instance): TaskSnapshot {
   prune();
 
   const includeTerminal = opts.include_terminal ?? true;
@@ -967,6 +1001,7 @@ export function snapshot(scope: string, opts: SnapshotOpts = {}): TaskSnapshot {
     .all(scope) as Array<Record<string, unknown>>;
 
   for (const item of rows) {
+    if (!canSeeTask(viewer, item)) continue;
     const task = row(item) as Record<string, unknown> & { status: TaskStatus };
     if (task.status === "done" || task.status === "failed" || task.status === "cancelled") {
       grouped.terminal_counts![task.status] += 1;

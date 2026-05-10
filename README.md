@@ -122,7 +122,7 @@ Source: [`docs/diagrams/backend-configuration.mmd`](./docs/diagrams/backend-conf
 
 All sessions read and write to `~/.swarm-mcp/swarm.db` by default using WAL mode, auto-vacuum, and a 3s busy timeout. Bun uses `bun:sqlite`; Node uses `better-sqlite3`.
 
-Set `SWARM_DB_PATH` before launching the server if you want a different database location.
+Set `SWARM_DB_PATH` before launching the server if you want a different database location. Work/personal identity-separated setups should use separate paths, for example `~/.swarm-mcp-work/swarm.db` and `~/.swarm-mcp-personal/swarm.db`; see [`docs/identity-boundaries.md`](./docs/identity-boundaries.md).
 
 When you call `register`, the server starts a 10s heartbeat and a 5s notification poller.
 

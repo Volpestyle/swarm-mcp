@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS kv (
   scope TEXT NOT NULL,
   key TEXT NOT NULL,
   value TEXT NOT NULL,
+  owner_identity TEXT,
   updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
   PRIMARY KEY (scope, key)
 );

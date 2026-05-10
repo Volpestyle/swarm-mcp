@@ -1,5 +1,7 @@
 import { db } from "./db";
 import { emit } from "./events";
+import { identityToken } from "./identity";
+import * as registry from "./registry";
 import { stamp } from "./time";
 
 function touch(scope: string) {
@@ -15,12 +17,38 @@ function touch(scope: string) {
   );
 }
 
-export function get(scope: string, key: string) {
-  return db
-    .query("SELECT value, updated_at FROM kv WHERE scope = ? AND key = ?")
+function actorIdentity(actor?: string | null) {
+  if (!actor) return null;
+  const inst = registry.get(actor);
+  return inst ? identityToken(inst) || null : null;
+}
+
+function readable(owner: string | null, viewer?: string | null) {
+  if (viewer === undefined) return true;
+  if (!owner) return true;
+  if (process.env.SWARM_MCP_ALLOW_CROSS_IDENTITY) return true;
+  return actorIdentity(viewer) === owner;
+}
+
+export function get(scope: string, key: string, viewer?: string | null) {
+  const row = db
+    .query("SELECT value, updated_at, owner_identity FROM kv WHERE scope = ? AND key = ?")
     .get(scope, key) as {
     value: string;
     updated_at: number;
+    owner_identity: string | null;
+  } | null;
+  if (!row || !readable(row.owner_identity, viewer)) return null;
+  return row;
+}
+
+function rawGet(scope: string, key: string) {
+  return db
+    .query("SELECT value, updated_at, owner_identity FROM kv WHERE scope = ? AND key = ?")
+    .get(scope, key) as {
+    value: string;
+    updated_at: number;
+    owner_identity: string | null;
   } | null;
 }
 
@@ -31,10 +59,15 @@ export function get(scope: string, key: string) {
  * intentionally has no per-instance column.
  */
 export function set(scope: string, key: string, value: string, actor?: string | null) {
+  const existing = rawGet(scope, key);
+  if (existing && !readable(existing.owner_identity, actor)) {
+    return { error: "KV key is owned by another identity" };
+  }
+  const owner = actorIdentity(actor);
   db.run(
-    `INSERT INTO kv (scope, key, value, updated_at) VALUES (?, ?, ?, unixepoch())
-     ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-    [scope, key, value],
+    `INSERT INTO kv (scope, key, value, owner_identity, updated_at) VALUES (?, ?, ?, ?, unixepoch())
+     ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, owner_identity = COALESCE(kv.owner_identity, excluded.owner_identity), updated_at = excluded.updated_at`,
+    [scope, key, value, owner],
   );
   touch(scope);
   emit({
@@ -44,15 +77,15 @@ export function set(scope: string, key: string, value: string, actor?: string | 
     subject: key,
     payload: { value, length: value.length },
   });
+  return { ok: true as const };
 }
 
 export function del(scope: string, key: string, actor?: string | null) {
   // Snapshot the prior value before deletion so the audit row preserves what
   // was there. After the DELETE the row is gone; without this we'd lose the
   // ability to reconstruct what the key held.
-  const prior = db
-    .query("SELECT value FROM kv WHERE scope = ? AND key = ?")
-    .get(scope, key) as { value: string } | null;
+  const prior = rawGet(scope, key);
+  if (prior && !readable(prior.owner_identity, actor)) return false;
   const result = db.run("DELETE FROM kv WHERE scope = ? AND key = ?", [scope, key]);
   if (result.changes > 0) {
     touch(scope);
@@ -66,13 +99,15 @@ export function del(scope: string, key: string, actor?: string | null) {
         : null,
     });
   }
+  return result.changes > 0;
 }
 
 export function append(scope: string, key: string, value: string, actor?: string | null) {
   const tx = db.transaction(() => {
-    const existing = db
-      .query("SELECT value FROM kv WHERE scope = ? AND key = ?")
-      .get(scope, key) as { value: string } | null;
+    const existing = rawGet(scope, key);
+    if (existing && !readable(existing.owner_identity, actor)) {
+      throw new Error("KV key is owned by another identity");
+    }
 
     let arr: unknown[];
     if (existing) {
@@ -91,9 +126,9 @@ export function append(scope: string, key: string, value: string, actor?: string
     const merged = JSON.stringify(arr);
 
     db.run(
-      `INSERT INTO kv (scope, key, value, updated_at) VALUES (?, ?, ?, unixepoch())
-       ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-      [scope, key, merged],
+      `INSERT INTO kv (scope, key, value, owner_identity, updated_at) VALUES (?, ?, ?, ?, unixepoch())
+       ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value, owner_identity = COALESCE(kv.owner_identity, excluded.owner_identity), updated_at = excluded.updated_at`,
+      [scope, key, merged, actorIdentity(actor)],
     );
     touch(scope);
     emit({
@@ -116,16 +151,23 @@ export function version(scope: string) {
   return row?.changed_at ?? 0;
 }
 
-export function keys(scope: string, prefix?: string) {
+export function keys(scope: string, prefix?: string, viewer?: string | null) {
+  const owner = actorIdentity(viewer);
+  const ownerWhere =
+    viewer === undefined
+      ? ""
+      : owner
+        ? "AND (owner_identity IS NULL OR owner_identity = ?)"
+        : "AND owner_identity IS NULL";
   if (prefix) {
     return db
       .query(
-        "SELECT key, updated_at FROM kv WHERE scope = ? AND key LIKE ? ORDER BY key",
+        `SELECT key, updated_at FROM kv WHERE scope = ? AND key LIKE ? ${ownerWhere} ORDER BY key`,
       )
-      .all(scope, prefix + "%");
+      .all(...(owner ? [scope, prefix + "%", owner] : [scope, prefix + "%"]));
   }
 
   return db
-    .query("SELECT key, updated_at FROM kv WHERE scope = ? ORDER BY key")
-    .all(scope);
+    .query(`SELECT key, updated_at FROM kv WHERE scope = ? ${ownerWhere} ORDER BY key`)
+    .all(...(owner ? [scope, owner] : [scope]));
 }

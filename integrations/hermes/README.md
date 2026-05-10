@@ -52,6 +52,23 @@ The plugin assumes the swarm MCP server is registered with hermes under the name
 
 Identity labels are derived from `SWARM_HERMES_IDENTITY`, `AGENT_IDENTITY`, or `SWARM_IDENTITY` when present. For example, launching Hermes with `AGENT_IDENTITY=personal` registers labels like `identity:personal hermes platform:cli session:<id>`. If `SWARM_HERMES_LABEL` is set and does not already include an `identity:` token, the plugin prepends the derived identity token.
 
+If Hermes launches `swarm-mcp` as an MCP server, set identity and database env on the MCP server entry too. Hermes child processes may not inherit the launcher environment:
+
+```yaml
+mcp_servers:
+  swarm:
+    command: bun
+    args:
+      - run
+      - /path/to/swarm-mcp/src/index.ts
+    enabled: true
+    env:
+      AGENT_IDENTITY: personal
+      SWARM_DB_PATH: /Users/you/.swarm-mcp-personal/swarm.db
+```
+
+Use the matching work values for a work profile: `AGENT_IDENTITY: work` and `/Users/you/.swarm-mcp-work/swarm.db`.
+
 Work tracker metadata is read from `SWARM_HERMES_WORK_TRACKER`, `SWARM_WORK_TRACKER`, `.swarm-work-tracker`, or Hermes config `swarm.work_tracker`, then published to `config/work_tracker/<identity>` in swarm KV. This is routing metadata only; credentials still live in the launcher/config-root MCP setup.
 
 The express-lane tool is registered under Hermes toolset `plugin_swarm`. Enable that toolset for sessions that should be allowed to nudge peers; sessions without the toolset still get auto-register, auto-lock, identity publishing, and `/swarm`.

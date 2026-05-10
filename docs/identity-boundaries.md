@@ -39,6 +39,21 @@ cp /path/to/swarm-mcp/env/personal.env.example ~/.config/swarm-mcp/personal.env
 Edit those local files with your config roots and configured work tracker. They
 must contain routing metadata only, not tokens.
 
+When coordination data must be isolated too, set a separate `SWARM_DB_PATH` per
+identity. The env examples use:
+
+```sh
+# work.env
+export SWARM_DB_PATH="$HOME/.swarm-mcp-work/swarm.db"
+
+# personal.env
+export SWARM_DB_PATH="$HOME/.swarm-mcp-personal/swarm.db"
+```
+
+`swarm-mcp` creates the database directory when it starts. Labels and scopes are
+not a storage boundary; every process pointed at the same database can read that
+database.
+
 Personal example:
 
 ```sh
@@ -138,6 +153,23 @@ The hard boundary is the process launched from the right profile:
 - Identity labels such as `identity:work` and `identity:personal` help planners, gateways, and reviewers route and audit work, but `swarm-mcp` does not enforce account authorization from labels.
 
 If work and personal coordination data must also be isolated, use separate `SWARM_DB_PATH` values or separate OS users. A `scope` or `identity:` label alone is not a credential boundary; every same-user process with access to the shared swarm database can read and write coordination state.
+
+Hermes needs one extra setup step when it launches `swarm-mcp` as an MCP server: Hermes may scrub the parent process environment before spawning MCP children. Put the identity and DB path directly on the `swarm` MCP server entry as well as in the launcher/profile environment:
+
+```yaml
+mcp_servers:
+  swarm:
+    command: bun
+    args:
+      - run
+      - /path/to/swarm-mcp/src/index.ts
+    enabled: true
+    env:
+      AGENT_IDENTITY: personal
+      SWARM_DB_PATH: /Users/you/.swarm-mcp-personal/swarm.db
+```
+
+Use `AGENT_IDENTITY: work` and `~/.swarm-mcp-work/swarm.db` for the work profile. Launchd-managed Hermes gateways should also set `AGENT_IDENTITY`, `SWARM_HERMES_IDENTITY`, `HERMES_HOME`, and the same `SWARM_DB_PATH` in the LaunchAgent `EnvironmentVariables` block.
 
 ## Stack Routing
 

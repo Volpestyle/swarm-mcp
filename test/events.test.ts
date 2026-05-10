@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,8 @@ const messages = await import("../src/messages");
 const registry = await import("../src/registry");
 const tasks = await import("../src/tasks");
 
+const originalAllowUnlabeled = process.env.SWARM_MCP_ALLOW_UNLABELED;
+
 // `registry.register` runs the `value` arg through `clean()` (resolve +
 // normalize), so the live scope is the normalized form — keep a literal
 // for INSERTs but read the canonical form back from `paths.scope` for
@@ -24,6 +26,7 @@ const SCOPE_HINT = "test-scope-events";
 
 let SCOPE: string;
 beforeEach(() => {
+  process.env.SWARM_MCP_ALLOW_UNLABELED = "1";
   db.exec("DELETE FROM events");
   db.exec("DELETE FROM context");
   db.exec("DELETE FROM tasks");
@@ -40,6 +43,11 @@ beforeEach(() => {
   SCOPE = tmpInst.scope;
   db.exec("DELETE FROM events");
   db.exec("DELETE FROM instances");
+});
+
+afterEach(() => {
+  if (originalAllowUnlabeled === undefined) delete process.env.SWARM_MCP_ALLOW_UNLABELED;
+  else process.env.SWARM_MCP_ALLOW_UNLABELED = originalAllowUnlabeled;
 });
 
 function reg(name: string) {

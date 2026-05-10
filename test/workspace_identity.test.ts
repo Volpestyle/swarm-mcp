@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -25,6 +25,8 @@ const registry = await import("../src/registry");
 const spawnerBackend = await import("../src/spawner_backend");
 const workspaceBackend = await import("../src/workspace_backend");
 const workspaceIdentity = await import("../src/workspace_identity");
+
+const originalPersonalRoots = process.env.SWARM_MCP_PERSONAL_ROOTS;
 
 type WakeCall = {
   backend: string;
@@ -103,6 +105,7 @@ function syntheticBackend(name: string, wakeCalls: WakeCall[] = []): WorkspaceBa
 }
 
 beforeEach(() => {
+  process.env.SWARM_MCP_PERSONAL_ROOTS = ["/tmp", tmpdir()].join(":");
   db.exec("DELETE FROM context");
   db.exec("DELETE FROM tasks");
   db.exec("DELETE FROM messages");
@@ -110,6 +113,11 @@ beforeEach(() => {
   db.exec("DELETE FROM kv_scope_updates");
   db.exec("DELETE FROM instances");
   workspaceIdentity.clearBackendsForTesting();
+});
+
+afterEach(() => {
+  if (originalPersonalRoots === undefined) delete process.env.SWARM_MCP_PERSONAL_ROOTS;
+  else process.env.SWARM_MCP_PERSONAL_ROOTS = originalPersonalRoots;
 });
 
 describe("workspace backend registry", () => {

@@ -12,6 +12,18 @@ cp env/personal.env.example ~/.config/swarm-mcp/personal.env
 
 Then edit the copies for your actual MCP names, tracker teams, repos, and config roots. These files must not contain credentials. Tokens and OAuth state belong in the runtime config root or the MCP provider's own auth store.
 
+The examples also set per-identity coordinator databases:
+
+```sh
+# work.env
+export SWARM_DB_PATH="$HOME/.swarm-mcp-work/swarm.db"
+
+# personal.env
+export SWARM_DB_PATH="$HOME/.swarm-mcp-personal/swarm.db"
+```
+
+`swarm-mcp` creates the parent directory when it opens the database. Use the same `SWARM_DB_PATH` in any host MCP config that launches `swarm-mcp` directly instead of through these shell launchers.
+
 For zsh launcher functions, copy `launchers.zsh.example` into your shell config and adjust paths if needed:
 
 ```sh

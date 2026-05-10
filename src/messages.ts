@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { emit } from "./events";
-import { list, prune } from "./registry";
+import { identityMatches } from "./identity";
+import { get, list, prune } from "./registry";
 
 function marks(size: number) {
   return Array.from({ length: size }, () => "?").join(",");
@@ -28,9 +29,10 @@ export function send(
 
 export function broadcast(sender: string, scope: string, content: string) {
   prune();
+  const senderInst = get(sender);
 
-  const rows = (list(scope) as Array<{ id: string }>).filter(
-    (item) => item.id !== sender,
+  const rows = (list(scope) as Array<{ id: string; label: string | null }>).filter(
+    (item) => item.id !== sender && (!senderInst || identityMatches(senderInst, item)),
   );
   if (!rows.length) return 0;
 
