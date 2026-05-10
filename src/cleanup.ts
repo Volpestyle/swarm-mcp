@@ -2,6 +2,7 @@ import { db } from "./db";
 import { emit } from "./events";
 import * as planner from "./planner";
 import { now, stamp } from "./time";
+import { registeredBackends } from "./workspace_backend";
 
 export const CLEANUP_POLICY = {
   instanceStaleAfterSecs: 30,
@@ -37,6 +38,7 @@ export type CleanupResult = {
   events_deleted: number;
   kv_deleted: number;
   kv_keys_deleted: string[];
+  identity_rows_deleted: number;
 };
 
 type StaleInstance = {
@@ -60,6 +62,7 @@ type ReleaseResult = {
   task_assignees_cleared: number;
   locks_deleted: number;
   messages_deleted: number;
+  identity_rows_deleted: number;
   released_tasks: ReleasedTask[];
 };
 
@@ -92,6 +95,7 @@ function emptyResult(
     events_deleted: 0,
     kv_deleted: 0,
     kv_keys_deleted: [],
+    identity_rows_deleted: 0,
   };
 }
 
@@ -129,6 +133,7 @@ function releaseInstances(ids: string[], dryRun = false): ReleaseResult {
       task_assignees_cleared: 0,
       locks_deleted: 0,
       messages_deleted: 0,
+      identity_rows_deleted: 0,
       released_tasks: [],
     };
   }
@@ -154,6 +159,7 @@ function releaseInstances(ids: string[], dryRun = false): ReleaseResult {
   const messageRows = db
     .query(`SELECT COUNT(*) AS count FROM messages WHERE recipient IN (${slots})`)
     .get(...ids) as { count: number };
+  const identityRows = identityRowsForInstances(ids);
 
   if (!dryRun) {
     db.run(
@@ -173,6 +179,10 @@ function releaseInstances(ids: string[], dryRun = false): ReleaseResult {
       ids,
     );
     db.run(`DELETE FROM messages WHERE recipient IN (${slots})`, ids);
+    for (const row of identityRows) {
+      db.run("DELETE FROM kv WHERE scope = ? AND key = ?", [row.scope, row.key]);
+      touchScope(row.scope);
+    }
   }
 
   return {
@@ -180,8 +190,37 @@ function releaseInstances(ids: string[], dryRun = false): ReleaseResult {
     task_assignees_cleared: clearedTaskRows.count,
     locks_deleted: lockRows.count,
     messages_deleted: messageRows.count,
+    identity_rows_deleted: identityRows.length,
     released_tasks: releasedTasks,
   };
+}
+
+function identityRowsForInstances(ids: string[]) {
+  const backends = registeredBackends();
+  if (!backends.length) return [];
+
+  const scopeRows = db
+    .query(
+      `SELECT id, scope FROM instances WHERE id IN (${marks(ids.length)})`,
+    )
+    .all(...ids) as Array<{ id: string; scope: string }>;
+  if (!scopeRows.length) return [];
+
+  const scopesById = new Map(scopeRows.map((row) => [row.id, row.scope]));
+  const matches: Array<{ scope: string; key: string }> = [];
+  for (const id of ids) {
+    const scope = scopesById.get(id);
+    if (!scope) continue;
+    for (const backend of backends) {
+      for (const key of backend.identityKeys(id)) {
+        const present = db
+          .query("SELECT 1 FROM kv WHERE scope = ? AND key = ?")
+          .get(scope, key);
+        if (present) matches.push({ scope, key });
+      }
+    }
+  }
+  return matches;
 }
 
 export function releaseInstanceState(id: string) {
@@ -220,6 +259,7 @@ function reclaimOfflineInstances(options: CleanupOptions, result: CleanupResult)
   result.task_assignees_cleared += release.task_assignees_cleared;
   result.locks_deleted += release.locks_deleted;
   result.messages_deleted += release.messages_deleted;
+  result.identity_rows_deleted += release.identity_rows_deleted;
 
   if (options.dryRun) return;
 

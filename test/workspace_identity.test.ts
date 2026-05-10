@@ -219,4 +219,36 @@ describe("workspace backend registry", () => {
     expect(source).not.toContain("child_process");
     expect(source).not.toContain("spawnSync");
   });
+
+  test("deregister sweeps the instance's published identity rows", () => {
+    workspaceIdentity.registerBackend(syntheticBackend("alpha"));
+    const inst = registry.register("/tmp/sweep-de", "identity:personal", "scope-deregister-sweep");
+    const peer = registry.register("/tmp/sweep-de-peer", "identity:personal", "scope-deregister-sweep");
+
+    const key = workspaceBackend.identityKey("alpha", inst.id);
+    const peerKey = workspaceBackend.identityKey("alpha", peer.id);
+    kv.set(inst.scope, key, JSON.stringify({ backend: "alpha", handle: "alpha-1" }), inst.id);
+    kv.set(peer.scope, peerKey, JSON.stringify({ backend: "alpha", handle: "alpha-2" }), peer.id);
+
+    registry.deregister(inst.id);
+
+    expect(kv.get(inst.scope, key)).toBeNull();
+    expect(kv.get(peer.scope, peerKey)).not.toBeNull();
+  });
+
+  test("stale-reclaim cleanup also sweeps identity rows", async () => {
+    const cleanup = await import("../src/cleanup");
+    workspaceIdentity.registerBackend(syntheticBackend("alpha"));
+    const inst = registry.register("/tmp/sweep-stale", "identity:personal", "scope-stale-sweep");
+
+    const key = workspaceBackend.identityKey("alpha", inst.id);
+    kv.set(inst.scope, key, JSON.stringify({ backend: "alpha", handle: "alpha-1" }), inst.id);
+
+    db.run("UPDATE instances SET heartbeat = unixepoch() - 600 WHERE id = ?", [inst.id]);
+
+    const result = cleanup.runCleanup({ mode: "manual" });
+    expect(result.instances_reclaimed).toBeGreaterThanOrEqual(1);
+    expect(result.identity_rows_deleted).toBeGreaterThanOrEqual(1);
+    expect(kv.get(inst.scope, key)).toBeNull();
+  });
 });
