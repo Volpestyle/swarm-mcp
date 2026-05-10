@@ -8,6 +8,7 @@ import { z } from "zod";
 import { runCleanup } from "./cleanup";
 import { db } from "./db";
 import * as context from "./context";
+import * as dispatch from "./dispatch";
 import * as kv from "./kv";
 import * as messages from "./messages";
 import { file as filepath, norm, scope as scopeFor } from "./paths";
@@ -93,21 +94,40 @@ function prompt(text: string) {
 
 type ToolShape = Record<string, z.ZodTypeAny>;
 
+type ToolAnnotations = {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+  title?: string;
+};
+
 function registeredTool<Shape extends ToolShape>(
   name: string,
   description: string,
   shape: Shape,
-  handler: (args: z.infer<z.ZodObject<Shape>>) => Promise<unknown> | unknown,
+  handlerOrAnnotations:
+    | ((args: z.infer<z.ZodObject<Shape>>) => Promise<unknown> | unknown)
+    | ToolAnnotations,
+  maybeHandler?: (args: z.infer<z.ZodObject<Shape>>) => Promise<unknown> | unknown,
 ) {
-  server.tool(
-    name,
-    description,
-    shape,
-    (async (args: z.infer<z.ZodObject<Shape>>) => {
-      if (!ensureInstance()) return missing();
-      return handler(args);
-    }) as any,
-  );
+  const annotations =
+    typeof handlerOrAnnotations === "function" ? undefined : handlerOrAnnotations;
+  const handler =
+    typeof handlerOrAnnotations === "function"
+      ? handlerOrAnnotations
+      : maybeHandler!;
+
+  const wrapped = (async (args: z.infer<z.ZodObject<Shape>>) => {
+    if (!ensureInstance()) return missing();
+    return handler(args);
+  }) as any;
+
+  if (annotations) {
+    (server.tool as any)(name, description, shape, annotations, wrapped);
+  } else {
+    server.tool(name, description, shape, wrapped);
+  }
 }
 
 const taskTypeSchema = z.enum(tasks.TASK_TYPES);
@@ -469,7 +489,7 @@ function ensureInstance() {
 
 tryAutoAdopt();
 
-server.tool(
+(server.tool as any)(
   "list_instances",
   "List all currently active agent sessions in this swarm scope.",
   {
@@ -480,7 +500,8 @@ server.tool(
         "Filter instances whose label contains this substring (e.g. 'role:implementer')",
       ),
   },
-  async ({ label_contains }) => {
+  { readOnlyHint: true },
+  async ({ label_contains }: { label_contains?: string }) => {
     const current = ensureInstance();
     if (!current) return missing();
     return {
@@ -498,16 +519,48 @@ server.tool(
   },
 );
 
-server.tool(
+(server.tool as any)(
   "whoami",
   "Get this instance's swarm ID and registration info.",
   {},
+  { readOnlyHint: true },
   async () => {
     const current = ensureInstance();
     if (!current) return missing();
     return {
       content: [{ type: "text", text: JSON.stringify(current, null, 2) }],
     };
+  },
+);
+
+(server.tool as any)(
+  "bootstrap",
+  "Atomic 'where am I?' for swarm state. Returns this instance, peers (excluding self), unread messages, and the task snapshot in one call. Use this on session start, after compaction, or any time you need to rejoin and rehydrate. By default consumes unread messages (mark-as-read); pass mark_read=false to peek.",
+  {
+    mark_read: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe(
+        "When true (default), unread messages are returned and marked read (matches poll_messages). When false, messages are peeked and remain unread.",
+      ),
+  },
+  { readOnlyHint: false, idempotentHint: false },
+  async ({ mark_read }: { mark_read?: boolean }) => {
+    const current = ensureInstance();
+    if (!current) return missing();
+    const peers = (registry.list(current.scope) as registry.Instance[]).filter(
+      (p) => p.id !== current.id,
+    );
+    const unread = mark_read
+      ? messages.poll(current.id, current.scope, 50)
+      : messages.peek(current.id, current.scope, 50);
+    return respondJson({
+      instance: current,
+      peers,
+      unread_messages: unread,
+      tasks: tasks.snapshot(current.scope),
+    });
   },
 );
 
@@ -676,7 +729,8 @@ registeredTool(
     if (typeof identity.socket_path === "string" && identity.socket_path) {
       env.HERDR_SOCKET_PATH = identity.socket_path;
     }
-    const getProc = spawnSync("herdr", ["pane", "get", paneId], {
+    const herdrBin = process.env.SWARM_HERDR_BIN?.trim() || "herdr";
+    const getProc = spawnSync(herdrBin, ["pane", "get", paneId], {
       encoding: "utf8",
       env,
       timeout: 5_000,
@@ -706,7 +760,7 @@ registeredTool(
     }
 
     const wakePrompt = `A peer sent you a swarm message${task_id ? ` for task ${task_id}` : ""}. Call the swarm poll_messages tool, handle the message, and report back through swarm-mcp.`;
-    const runProc = spawnSync("herdr", ["pane", "run", paneId, wakePrompt], {
+    const runProc = spawnSync(herdrBin, ["pane", "run", paneId, wakePrompt], {
       encoding: "utf8",
       env,
       timeout: 5_000,
@@ -889,6 +943,92 @@ registeredTool(
 );
 
 registeredTool(
+  "dispatch",
+  "Gateway-only: create/reuse a task, wake a live worker, or spawn a worker through the configured spawner.",
+  {
+    title: z.string().describe("Short title for the task to dispatch"),
+    message: z
+      .string()
+      .optional()
+      .describe("Instructions sent to the worker; defaults to title"),
+    type: taskTypeSchema.optional().default("implement").describe("Task type"),
+    role: z
+      .string()
+      .optional()
+      .default("implementer")
+      .describe("Worker role token without the role: prefix"),
+    files: z.array(z.string()).optional().describe("Relevant file paths"),
+    priority: z.number().int().optional().describe("Task priority"),
+    depends_on: z.array(z.string()).optional().describe("Dependency task IDs"),
+    idempotency_key: z.string().optional().describe("Dedupe key"),
+    parent_task_id: z.string().optional().describe("Parent task ID"),
+    approval_required: z.boolean().optional().default(false),
+    spawn: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("When false, create/wake only; do not spawn a worker"),
+    spawner: z
+      .string()
+      .optional()
+      .describe("Spawner backend: herdr (default) or swarm-ui"),
+    harness: z.string().optional().describe("Launcher/harness for spawned worker"),
+    cwd: z
+      .string()
+      .optional()
+      .describe("Spawn cwd; defaults to this instance directory"),
+    label: z.string().optional().describe("Additional label for spawned worker"),
+    name: z.string().optional().describe("Display name for spawned worker"),
+    wait_seconds: z
+      .number()
+      .min(0)
+      .optional()
+      .describe("Seconds to wait for worker spawn/adoption; defaults depend on spawner"),
+    nudge: z.boolean().optional().default(true).describe("Wake live worker pane"),
+    force: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe("Wake even when target pane is busy"),
+  },
+  async (args) => {
+    const current = instance!;
+    try {
+      return respondJson(
+        await dispatch.runDispatch({
+          scope: current.scope,
+          requester: current.id,
+          title: args.title,
+          message: args.message,
+          description: args.message,
+          type: args.type,
+          role: args.role,
+          files: args.files?.map((item) => resolveFileInput(item)),
+          priority: args.priority,
+          depends_on: args.depends_on,
+          idempotency_key: args.idempotency_key,
+          parent_task_id: args.parent_task_id,
+          approval_required: args.approval_required,
+          spawn: args.spawn,
+          spawner: args.spawner,
+          cwd: args.cwd ?? current.directory,
+          harness: args.harness,
+          label: args.label,
+          name: args.name,
+          wait_seconds: args.wait_seconds,
+          nudge: args.nudge,
+          force: args.force,
+        }),
+      );
+    } catch (err) {
+      return respondJson({
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  },
+);
+
+registeredTool(
   "claim_task",
   "Start work on a task: assigns it to you (if open) and transitions to in_progress in one call. Works on open+unassigned tasks and on tasks pre-assigned to you (status=claimed).",
   {
@@ -978,6 +1118,7 @@ registeredTool(
   "get_task",
   "Get full details of a specific task in this swarm scope.",
   { task_id: z.string().describe("The task ID") },
+  { readOnlyHint: true },
   async ({ task_id }) => {
     const current = instance!;
     const task = tasks.get(task_id, current.scope);
@@ -997,6 +1138,7 @@ registeredTool(
       .optional()
       .describe("Filter by requester instance ID"),
   },
+  { readOnlyHint: true },
   async ({ status, assignee, requester }) => {
     const current = instance!;
     return respondJson(
@@ -1065,6 +1207,7 @@ registeredTool(
   {
     query: z.string().describe("Search term (matches file paths and content)"),
   },
+  { readOnlyHint: true },
   async ({ query }) => {
     return respondJson(context.search(instance!.scope, query));
   },
@@ -1074,6 +1217,7 @@ registeredTool(
   "kv_get",
   "Get a value from the shared key-value store for this scope.",
   { key: z.string().describe("The key to look up") },
+  { readOnlyHint: true },
   async ({ key }) => {
     const row = kv.get(instance!.scope, key);
     if (!row)
@@ -1135,14 +1279,15 @@ registeredTool(
   {
     prefix: z.string().optional().describe("Optional key prefix to filter by"),
   },
+  { readOnlyHint: true },
   async ({ prefix }) => {
     return respondJson(kv.keys(instance!.scope, prefix));
   },
 );
 
-server.tool(
+(server.tool as any)(
   "wait_for_activity",
-  "Block until new swarm activity arrives (messages, task changes, KV changes, or instance changes), then return what changed. Use this as your idle loop to stay autonomous without user prompting. Returns immediately if there is already unread activity.",
+  "Block until new swarm activity arrives (messages, task changes, KV changes, or instance changes), then return what changed. Use this as your idle loop to stay autonomous without user prompting. Returns immediately if there is already unread activity. Note: returned messages are marked read.",
   {
     timeout_seconds: z
       .number()
@@ -1154,7 +1299,8 @@ server.tool(
         "Max seconds to wait before returning (even if nothing changed). Default 0 means wait indefinitely.",
       ),
   },
-  async ({ timeout_seconds }) => {
+  { readOnlyHint: false, idempotentHint: false, openWorldHint: false },
+  async ({ timeout_seconds = 0 }: { timeout_seconds?: number }) => {
     const current = ensureInstance();
     if (!current) return missing();
 

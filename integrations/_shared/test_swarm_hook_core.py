@@ -78,7 +78,9 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertIn("test-runtime", calls[0][3])
         self.assertEqual(calls[1][:3], ["kv", "set", "identity/herdr/inst-1"])
         rendered = json.loads(output)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("already registered", rendered)
+        self.assertIn("swarm coordination is active", rendered)
+        self.assertIn("Instance `inst-1`", rendered)
+        self.assertIn("`bootstrap`", rendered)
         self.assertNotIn("Call the `register` tool", rendered)
 
     def test_session_start_falls_back_to_manual_context_when_register_fails(self) -> None:
@@ -121,11 +123,10 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertIn("mode:gateway", calls[0][3])
         self.assertIn("role:planner", calls[0][3])
         rendered = json.loads(output)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("Plugin behavior mode: `gateway`", rendered)
-        self.assertIn("swarm gateway/lead mode", rendered)
-        self.assertIn("do not silently fall back to native", rendered)
-        self.assertIn("bun run /repo/src/cli.ts dispatch", rendered)
-        self.assertIn("Do not assume the literal `swarm-mcp` binary", rendered)
+        self.assertIn("mode `gateway`", rendered)
+        self.assertIn("Gateway/lead mode", rendered)
+        self.assertIn("`dispatch`", rendered)
+        self.assertIn("`swarm-mcp` skill", rendered)
 
     def test_session_end_deletes_identity_and_deregisters(self) -> None:
         self.core.write_session_meta(

@@ -1181,6 +1181,36 @@ describe("kv", () => {
     expect(result.kv_deleted).toBe(1);
     expect(kv.get(worker.scope, "progress/missing-worker")).not.toBeNull();
   });
+
+  test("cleanup deletes locks whose owning instance is no longer registered", () => {
+    const worker = reg("worker", "scope-a");
+    const file = paths.file(worker.directory, "src/foo.ts");
+
+    context.lock(worker.id, worker.scope, file, "editing");
+    const before = context.lookup(worker.scope, file) as Array<{ type: string }>;
+    expect(before.find((c) => c.type === "lock")).toBeDefined();
+
+    db.run("DELETE FROM instances WHERE id = ?", [worker.id]);
+
+    const result = cleanup.runCleanup({ mode: "manual" });
+
+    expect(result.locks_deleted).toBeGreaterThanOrEqual(1);
+    const after = context.lookup(worker.scope, file) as Array<{ type: string }>;
+    expect(after.find((c) => c.type === "lock")).toBeUndefined();
+  });
+
+  test("orphan-lock sweep dry-run reports without deleting", () => {
+    const worker = reg("worker", "scope-a");
+    const file = paths.file(worker.directory, "src/bar.ts");
+    context.lock(worker.id, worker.scope, file, "editing");
+    db.run("DELETE FROM instances WHERE id = ?", [worker.id]);
+
+    const result = cleanup.runCleanup({ mode: "manual", dryRun: true });
+
+    expect(result.locks_deleted).toBeGreaterThanOrEqual(1);
+    const after = context.lookup(worker.scope, file) as Array<{ type: string }>;
+    expect(after.find((c) => c.type === "lock")).toBeDefined();
+  });
 });
 
 describe("planner ownership", () => {

@@ -431,6 +431,38 @@ function scopedInstanceIdForKey(key: string) {
   return null;
 }
 
+function cleanupOrphanLocks(options: CleanupOptions, result: CleanupResult) {
+  const scoped = scopedWhere(options.scope);
+  const countRows = db
+    .query(
+      `SELECT scope, COUNT(*) AS count
+       FROM context
+       WHERE type = 'lock'
+         AND instance_id NOT IN (SELECT id FROM instances)${scoped.clause}
+       GROUP BY scope`,
+    )
+    .all(...scoped.args) as Array<{ scope: string; count: number }>;
+  if (!countRows.length) return;
+
+  result.locks_deleted += sum(countRows);
+  if (options.dryRun) return;
+
+  db.run(
+    `DELETE FROM context
+     WHERE type = 'lock'
+       AND instance_id NOT IN (SELECT id FROM instances)${scoped.clause}`,
+    scoped.args,
+  );
+
+  for (const row of countRows) {
+    emitCleanup(row.scope, "cleanup.orphan_locks_deleted", {
+      count: row.count,
+      mode: options.mode ?? "opportunistic",
+      reason: "owning_instance_no_longer_registered",
+    });
+  }
+}
+
 function cleanupOrphanKv(options: CleanupOptions, result: CleanupResult) {
   const cutoff = (options.nowSecs ?? now()) - CLEANUP_POLICY.orphanKvTtlSecs;
   const scoped = scopedWhere(options.scope);
@@ -495,6 +527,7 @@ export function runCleanup(options: CleanupOptions = {}): CleanupResult {
   const result = emptyResult(normalized);
 
   reclaimOfflineInstances(normalized, result);
+  cleanupOrphanLocks(normalized, result);
   result.messages_deleted += cleanupMessages(normalized);
   result.terminal_tasks_deleted += cleanupTerminalTasks(normalized);
   result.context_annotations_deleted += cleanupContextAnnotations(normalized);

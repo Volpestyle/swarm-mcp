@@ -25,7 +25,7 @@ If the user invoked this skill with a role argument, follow the matching role re
 1. Bootstrap into the swarm with `register`
 2. Inspect the current swarm with `whoami`, `list_instances`, `poll_messages`, and `list_tasks`
 3. While editing, call `lock_file` — its response includes any peer annotations, so a separate check call is unnecessary. Skip locking entirely when alone in scope.
-4. Delegate or coordinate with `request_task`, `send_message`, or `broadcast`
+4. Delegate or coordinate with `request_task`, gateway-only `dispatch`, `send_message`, or `broadcast`
 5. Leave durable context with `annotate` and small shared state with `kv_set`
 6. Complete a task with a single `update_task` (terminal status). Locks on the task's files release automatically.
 
@@ -86,21 +86,18 @@ When the role is unclear, do not invent one. Ask one short question or proceed a
 - Use `assignee` for a stale or unknown instance
 - Confuse direct messages with task handoff; use `request_task` for structured delegated work
 - Try to claim `blocked` tasks — they will become `open` automatically
-- Shell out to the `swarm-mcp` CLI for normal coordination primitives from inside your agent loop — use the MCP tools. Exception: gateway/lead sessions may use CLI bridge commands such as `dispatch` when they are driving launcher, herdr, or `swarm-ui` spawn flows that have no direct MCP equivalent. Resolve the command prefix from `SWARM_MCP_BIN` first; use literal `swarm-mcp` only when no launcher-provided prefix exists.
+- Shell out to the `swarm-mcp` CLI for normal coordination primitives from inside your agent loop — use the MCP tools, including `dispatch` for gateway task/spawn routing. Use the CLI bridge only from operator scripts, hooks, or gateway sessions where the MCP tools are unavailable.
 
 ## Default Behavior
 
 When the skill triggers, prefer this sequence unless the task clearly requires something else:
 
 1. Verify the swarm tools exist
-2. `register`
-3. `whoami`
-4. `list_instances`
-5. `poll_messages`
-6. `list_tasks`
-7. Summarize active specialists, open work, and collision risks before taking action
-8. Act on any pending work (claim tasks, respond to messages)
-9. Enter an autonomous loop using `wait_for_activity` — react to messages, task changes, KV updates, and instance changes as they arrive. Do not wait for user prompting between tasks.
+2. `register` — skip if a SessionStart hook already registered you (the `bootstrap` response will confirm via the `instance` field)
+3. `bootstrap` — single atomic call returning `{instance, peers, unread_messages, tasks}`. Replaces the older `whoami` + `list_instances` + `poll_messages` + `list_tasks` sequence. Pass `mark_read: false` to peek messages without consuming them.
+4. Summarize active specialists, open work, and collision risks before taking action
+5. Act on any pending work (claim tasks, respond to messages)
+6. Enter an autonomous loop using `wait_for_activity` — react to messages, task changes, KV updates, and instance changes as they arrive. Do not wait for user prompting between tasks.
 
 ## Collaboration Heuristics
 
@@ -117,19 +114,19 @@ When the skill triggers, prefer this sequence unless the task clearly requires s
 - Update your progress with `kv_set("progress/<your-instance-id>", ...)` while working on tasks so others can check on you without interrupting
 - Messages prefixed with `[auto]` are system notifications (task assignments, completions, stale-agent recovery) — treat them like any other actionable message
 - When you receive a `[signal:complete]` broadcast, the planner is signaling all work is done — finish current work, deregister, and stop
-- In gateway/lead mode, no live worker is a spawn problem, not a native-subagent fallback. Create/reuse a swarm task, dedupe the spawn intent, then use herdr or `swarm-ui` to launch a visible worker process; if you cannot access a spawner surface, ask the operator. Worker/generalist sessions do not spawn new workers; they request tracked work, message the planner/gateway, or continue locally when safe.
+- In gateway/lead mode, no live worker is a spawn problem, not a native-subagent fallback. Use the MCP `dispatch` tool to create/reuse the swarm task, wake a matching live worker, or spawn through the configured Spawner backend (`herdr` in the current stack). If `dispatch` reports no spawner surface, ask the operator. Worker/generalist sessions do not spawn new workers; they request tracked work, message the planner/gateway, or continue locally when safe.
 
-## CLI Bridge Resolution
+## CLI Bridge Fallback
 
-Most swarm coordination should use MCP tools. The CLI bridge exists for gateway-only process control, especially `dispatch` and `ui spawn`, because those flows cross into herdr or `swarm-ui` rather than only updating swarm state.
+Swarm coordination inside an agent loop should use MCP tools. The `dispatch` MCP tool is the first-class gateway path: it creates/reuses a task, wakes a live worker when one exists, or spawns through the configured Spawner backend when no worker is live. It is enforced server-side and restricted to gateway authority.
 
-When a gateway must use the CLI bridge, resolve the command prefix in this order:
+The CLI bridge remains for hooks, operator shells, and rare gateway fallback cases where the MCP tools are not mounted. When you must use it, resolve the command prefix in this order:
 
-1. Use the exact `SWARM_MCP_BIN` value if set by the launcher, for example `bun run /path/to/swarm-mcp/src/cli.ts`.
+1. Use the exact `SWARM_MCP_BIN` value if set by the launcher.
 2. Otherwise use `swarm-mcp` from `PATH`.
 3. If neither works, use herdr directly if available, or ask the operator to start the worker.
 
-Do not ask ordinary worker sessions to run `dispatch`, `ui spawn`, or raw herdr pane creation. Spawn authority belongs to `mode:gateway` sessions and operator surfaces.
+Do not ask ordinary worker sessions to run `dispatch`, `ui spawn`, or raw herdr pane creation. Spawn authority belongs to `mode:gateway` sessions and operator surfaces; non-gateway MCP callers should expect `dispatch` to reject them.
 
 ## Spawn Layout Doctrine
 

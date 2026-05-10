@@ -531,98 +531,66 @@ class HookCore:
         meta: dict,
         registration_error: str = "",
     ) -> str:
-        _, register_args = self._register_args(session_id, cwd)
-        pretty_args = json.dumps(register_args, indent=2)
-
         instance_id = str(meta.get("instance_id") or "")
         plugin_role = str(meta.get("plugin_role") or self.plugin_role())
+        label = str(meta.get("label") or self.derived_label(session_id))
+        scope = str(meta.get("scope") or self.scope_arg() or "")
+        role_token = self.agent_role_token()
+
         if instance_id:
             lines = [
                 "## swarm coordination is active",
                 "",
-                f"This session is already registered with swarm as `{instance_id}`.",
-                f"Label: `{meta.get('label') or self.derived_label(session_id)}`",
-                f"Scope: `{meta.get('scope') or self.scope_arg() or ''}`",
-                f"Plugin behavior mode: `{plugin_role}`.",
+                f"Instance `{instance_id}` · scope `{scope}` · mode `{plugin_role}`",
+                f"Label: `{label}`",
                 "",
-                "Follow the `swarm-mcp` skill now: `whoami`, `list_instances`,",
-                "`poll_messages`, `list_tasks`, then act on any pending work.",
-                "",
-                "If `whoami` unexpectedly says you are not registered, call `register`",
-                "with these args; the MCP server will adopt the hook-created row:",
-                "",
-                "```json",
-                pretty_args,
-                "```",
+                "Call the swarm `bootstrap` tool to rehydrate state, then act on any pending work.",
+                "See the `swarm-mcp` skill for the coordination protocol.",
             ]
             if meta.get("herdr_identity_published"):
-                lines.extend(
-                    [
-                        "",
-                        "Your herdr pane identity is published at",
-                        f"`identity/herdr/{instance_id}` for peer wakeups.",
-                    ]
+                lines.append(
+                    f"Herdr identity published at `identity/herdr/{instance_id}` for peer wakeups."
                 )
         else:
+            _, register_args = self._register_args(session_id, cwd)
+            pretty_args = json.dumps(register_args, indent=2)
             lines = [
                 "## swarm coordination is available",
                 "",
-                "The SessionStart hook could not auto-register this session.",
-                f"Plugin behavior mode: `{plugin_role}`.",
+                f"SessionStart hook could not auto-register this session (mode: `{plugin_role}`).",
             ]
             if registration_error:
                 lines.append(f"Hook error: `{registration_error[:240]}`")
             lines.extend(
                 [
                     "",
-                    "Call the `register` tool from the `swarm` MCP server early in this session.",
-                    "Use exactly these args so peer locks and `/swarm` can resolve your identity:",
+                    "Call the `register` tool with these exact args, then call `bootstrap`",
+                    "and follow the `swarm-mcp` skill:",
                     "",
                     "```json",
                     pretty_args,
                     "```",
-                    "",
-                    "After registering, follow the `swarm-mcp` skill: `whoami`, `list_instances`,",
-                    "`poll_messages`, `list_tasks`, then act on any pending work.",
                 ]
             )
 
-        role_token = self.agent_role_token()
         if plugin_role == "gateway":
-            cli_prefix = os.environ.get("SWARM_MCP_BIN", "").strip() or "swarm-mcp"
-            lines.extend(
-                [
-                    "",
-                    "You are running in swarm gateway/lead mode. Treat `gateway` as your",
-                    "behavior mode and `role:planner` as your discoverable swarm routing",
-                    "label. Delegate write work by default.",
-                    "",
-                    "If no matching peer is registered, do not silently fall back to native",
-                    "subagents or direct hands-on edits. Create or reuse a swarm task, then",
-                    "use the herdr / swarm-ui spawn path to start a real worker process.",
-                    f"For CLI dispatch in this session, use `{cli_prefix} dispatch ...`.",
-                    "Do not assume the literal `swarm-mcp` binary is on PATH when",
-                    "`SWARM_MCP_BIN` is set by the launcher. If no spawner surface is",
-                    "available in this session, ask the operator to launch a worker pane.",
-                    "Inline writes are blocked unless the explicit gateway inline-write",
-                    "mirror config is present.",
-                ]
+            lines.append("")
+            lines.append(
+                "Gateway/lead mode: delegate writes via the swarm `dispatch` tool; do not "
+                "fall back to native subagents. See the `swarm-mcp` skill (planner reference) "
+                "for the full conductor protocol and inline-write rules."
             )
+
         if role_token:
             doctrine_lines = self._role_doctrine_lines(role_token)
             if doctrine_lines:
                 lines.extend(doctrine_lines)
         else:
             env_var = f"SWARM_{self.config.env_prefix}_AGENT_ROLE"
-            lines.extend(
-                [
-                    "",
-                    "No `role:` was detected from env or `.swarm-role`. If you're acting as a",
-                    "specific skill role (`planner`, `implementer`, `reviewer`, `researcher`,",
-                    "`generalist`), append it to the `label` above as `role:<name>` so peers",
-                    "can route to you via `list_instances`. To make this automatic, set",
-                    f"`{env_var}` or drop a one-line `.swarm-role` file at the repo root.",
-                ]
+            lines.append("")
+            lines.append(
+                f"No `role:` detected. Set `{env_var}` or drop a `.swarm-role` "
+                "file in the repo to add a routing role to this session's label."
             )
 
         identity = self._herdr_identity()
@@ -631,12 +599,8 @@ class HookCore:
             lines.extend(
                 [
                     "",
-                    "After `register` returns your `instance_id`, also publish your herdr",
-                    "pane handle so peers can wake you with `swarm_prompt_peer`-style flows:",
-                    "",
-                    "```text",
-                    f'kv_set key="identity/herdr/<your_instance_id>" value=\'{blob}\'',
-                    "```",
+                    "After `register` returns an instance id, also publish your herdr pane handle:",
+                    f'`kv_set key="identity/herdr/<id>" value=\'{blob}\'`',
                 ]
             )
 
