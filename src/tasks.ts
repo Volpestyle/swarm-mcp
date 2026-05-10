@@ -72,6 +72,12 @@ export type TaskSnapshot = {
   cancelled: Array<Record<string, unknown>>;
   blocked: Array<Record<string, unknown>>;
   approval_required: Array<Record<string, unknown>>;
+  terminal_counts?: Record<"done" | "failed" | "cancelled", number>;
+};
+
+export type SnapshotOpts = {
+  include_terminal?: boolean;
+  terminal_limit?: number;
 };
 
 export interface ClaimOpts {
@@ -900,8 +906,11 @@ export function list(
   return rows.map((item) => row(item));
 }
 
-export function snapshot(scope: string): TaskSnapshot {
+export function snapshot(scope: string, opts: SnapshotOpts = {}): TaskSnapshot {
   prune();
+
+  const includeTerminal = opts.include_terminal ?? true;
+  const terminalLimit = Math.max(0, Math.floor(opts.terminal_limit ?? 0));
 
   const grouped: TaskSnapshot = {
     open: [],
@@ -912,6 +921,7 @@ export function snapshot(scope: string): TaskSnapshot {
     cancelled: [],
     blocked: [],
     approval_required: [],
+    terminal_counts: { done: 0, failed: 0, cancelled: 0 },
   };
 
   const rows = db
@@ -922,7 +932,20 @@ export function snapshot(scope: string): TaskSnapshot {
 
   for (const item of rows) {
     const task = row(item) as Record<string, unknown> & { status: TaskStatus };
+    if (task.status === "done" || task.status === "failed" || task.status === "cancelled") {
+      grouped.terminal_counts![task.status] += 1;
+      if (includeTerminal || (grouped[task.status]?.length ?? 0) < terminalLimit) {
+        grouped[task.status]?.push(task);
+      }
+      continue;
+    }
     grouped[task.status].push(task);
+  }
+
+  if (!includeTerminal && terminalLimit === 0) {
+    delete (grouped as Partial<TaskSnapshot>).done;
+    delete (grouped as Partial<TaskSnapshot>).failed;
+    delete (grouped as Partial<TaskSnapshot>).cancelled;
   }
 
   return grouped;

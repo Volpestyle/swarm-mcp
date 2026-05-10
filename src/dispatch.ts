@@ -67,6 +67,10 @@ function labelTokens(inst: InstanceRef) {
   return (inst.label ?? "").split(/\s+/).filter(Boolean);
 }
 
+function identityToken(inst: InstanceRef | null | undefined) {
+  return (inst?.label ?? "").split(/\s+/).find((token) => token.startsWith("identity:")) ?? "";
+}
+
 function hasRole(inst: InstanceRef, role: string | undefined) {
   const token = roleToken(role);
   if (!token) return true;
@@ -97,9 +101,13 @@ export function requireDispatchAuthority(scope: string, requester: string) {
 }
 
 function findWorker(scope: string, requester: string, role: string | undefined) {
-  const candidates = (registry.list(scope) as InstanceRef[]).filter(
-    (inst) => inst.id !== requester,
-  );
+  const requesterInst = instanceById(scope, requester);
+  const requesterIdentity = identityToken(requesterInst);
+  const candidates = (registry.list(scope) as InstanceRef[]).filter((inst) => {
+    if (inst.id === requester) return false;
+    const candidateIdentity = identityToken(inst);
+    return requesterIdentity ? candidateIdentity === requesterIdentity : true;
+  });
   return (
     candidates.find((inst) => hasRole(inst, role)) ??
     candidates.find((inst) => isGeneralist(inst)) ??
@@ -420,9 +428,14 @@ export async function runDispatch(opts: DispatchOptions) {
   const lockPath = spawnLockPath(workerRole, intentHash);
   const cwd = opts.cwd ?? process.cwd();
 
+  const liveWorker = opts.force_spawn
+    ? null
+    : findWorker(opts.scope, opts.requester, workerRole);
+
   const result = taskStore.request(opts.requester, opts.scope, taskType, title, {
     description: opts.description ?? message,
     files: opts.files?.length ? opts.files : undefined,
+    assignee: liveWorker?.id,
     priority: Number.isFinite(opts.priority) ? opts.priority : undefined,
     depends_on: opts.depends_on?.length ? opts.depends_on : undefined,
     idempotency_key: idempotencyKey,
@@ -436,9 +449,6 @@ export async function runDispatch(opts: DispatchOptions) {
     return { status: "already_terminal", task_id: result.id, task };
   }
 
-  const liveWorker = opts.force_spawn
-    ? null
-    : findWorker(opts.scope, opts.requester, workerRole);
   if (liveWorker) {
     context.clearLocks(opts.requester, opts.scope, lockPath);
     const prompt = promptPeerResult({
@@ -453,7 +463,7 @@ export async function runDispatch(opts: DispatchOptions) {
     return {
       status: "dispatched",
       task_id: result.id,
-      task,
+      task: taskStore.get(result.id, opts.scope),
       recipient: liveWorker.id,
       prompt,
     };

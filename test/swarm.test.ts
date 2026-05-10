@@ -150,9 +150,7 @@ describe("registry adoption", () => {
   test("register with an existing session label adopts instead of duplicating", () => {
     const label = "identity:personal claude-code platform:cli role:planner origin:claude-code session:abc12345";
     const first = registry.register("/tmp/repo", label, "scope-d");
-    db.run("UPDATE instances SET heartbeat = unixepoch() + 86400 WHERE id = ?", [
-      first.id,
-    ]);
+    registry.setLease(first.id, Math.floor(Date.now() / 1000) + 86400);
 
     const second = registry.register("/tmp/repo", label, "scope-d");
 
@@ -217,6 +215,23 @@ describe("registry adoption", () => {
     expect(next.scope).toBe(paths.norm("scope-g"));
     expect(registry.get(lease.id)?.scope).toBe(paths.norm("scope-f"));
   });
+
+  test("register preserves adoptInstanceId when the leased row was already pruned", () => {
+    const adoptId = "pruned-lease-id";
+
+    const next = registry.register(
+      "/tmp/repo",
+      "identity:personal codex platform:cli session:abc12345",
+      "scope-pruned-adopt",
+      undefined,
+      undefined,
+      adoptId,
+    );
+
+    expect(next.id).toBe(adoptId);
+    expect(next.adopted).toBe(true);
+    expect(next.lease_until).toBeNull();
+  });
 });
 
 describe("scope", () => {
@@ -253,6 +268,51 @@ describe("scope", () => {
     ]);
 
     expect(registry.get(item.id)).toBeNull();
+  });
+
+  test("setLease creates an unadopted placeholder hidden from list_instances", () => {
+    const placeholder = reg("leased", "scope-lease-list");
+    registry.setLease(placeholder.id, Math.floor(Date.now() / 1000) + 86400);
+
+    const peers = registry.list("scope-lease-list") as Array<{ id: string }>;
+    expect(peers.find((row) => row.id === placeholder.id)).toBeUndefined();
+
+    const stored = registry.get(placeholder.id);
+    expect(stored?.adopted).toBe(false);
+    expect(stored?.lease_until).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  });
+
+  test("leases that expire without adoption are reclaimed", () => {
+    const placeholder = reg("expired-lease", "scope-lease-expire");
+    registry.setLease(placeholder.id, Math.floor(Date.now() / 1000) - 1);
+
+    expect(registry.get(placeholder.id)).toBeNull();
+  });
+
+  test("adoption clears lease_until and flips adopted=1", () => {
+    const placeholder = reg("adopt-me", "scope-lease-adopt");
+    registry.setLease(placeholder.id, Math.floor(Date.now() / 1000) + 86400);
+
+    const adopted = registry.adoptInstanceId(
+      placeholder.directory,
+      placeholder.label ?? undefined,
+      placeholder.scope,
+      placeholder.id,
+    );
+
+    expect(adopted?.id).toBe(placeholder.id);
+    expect(adopted?.adopted).toBe(true);
+    expect(adopted?.lease_until).toBeNull();
+  });
+
+  test("legacy zombies (adopted=1 with future heartbeat, no lease_until) are reclaimed", () => {
+    const zombie = reg("zombie", "scope-zombie");
+    db.run(
+      "UPDATE instances SET heartbeat = unixepoch() + 86400, lease_until = NULL WHERE id = ?",
+      [zombie.id],
+    );
+
+    expect(registry.get(zombie.id)).toBeNull();
   });
 });
 
@@ -417,11 +477,31 @@ describe("tasks", () => {
     tasks.update(cancelled, requester.scope, requester.id, "cancelled");
 
     const snapshot = tasks.snapshot(requester.scope);
-    expect(snapshot.failed.map((task: any) => task.id)).toContain(failed);
-    expect(snapshot.cancelled.map((task: any) => task.id)).toContain(cancelled);
+    expect(snapshot.failed!.map((task: any) => task.id)).toContain(failed);
+    expect(snapshot.cancelled!.map((task: any) => task.id)).toContain(cancelled);
     expect(snapshot.approval_required.map((task: any) => task.id)).toContain(
       gated.id,
     );
+  });
+
+  test("snapshot can omit terminal rows while returning terminal counts", () => {
+    const requester = reg("requester", "scope-a");
+    const worker = reg("worker", "scope-a");
+
+    const { id: done } = req(requester.id, requester.scope, "implement", "Done");
+    const { id: failed } = req(requester.id, requester.scope, "implement", "Failed");
+    const { id: open } = req(requester.id, requester.scope, "implement", "Open");
+    tasks.claim(done, requester.scope, worker.id);
+    tasks.update(done, requester.scope, worker.id, "done");
+    tasks.claim(failed, requester.scope, worker.id);
+    tasks.update(failed, requester.scope, worker.id, "failed");
+
+    const snapshot = tasks.snapshot(requester.scope, { include_terminal: false });
+    expect(snapshot.open.map((task: any) => task.id)).toContain(open);
+    expect(snapshot.terminal_counts).toEqual({ done: 1, failed: 1, cancelled: 0 });
+    expect("done" in snapshot).toBe(false);
+    expect("failed" in snapshot).toBe(false);
+    expect("cancelled" in snapshot).toBe(false);
   });
 });
 

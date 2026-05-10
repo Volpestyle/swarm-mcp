@@ -227,9 +227,21 @@ export function releaseInstanceState(id: string) {
   return releaseInstances([id]);
 }
 
-function staleInstances(cutoff: number, scope?: string) {
-  const where = ["heartbeat < ?"];
-  const args: Array<string | number> = [cutoff];
+function staleInstances(cutoff: number, atSecs: number, scope?: string) {
+  // Reclaim conditions:
+  //   1. Live process whose heartbeat went stale (existing rule).
+  //   2. Lease that expired without ever being adopted.
+  //   3. Legacy zombie: an adopted row whose heartbeat sits in the future
+  //      with no lease_until — the pre-`lease_until` lease path used to
+  //      stash the lease deadline in heartbeat itself.
+  const conditions = [
+    "(adopted = 1 AND heartbeat < ?)",
+    "(adopted = 0 AND lease_until IS NOT NULL AND lease_until < ?)",
+    "(adopted = 1 AND lease_until IS NULL AND heartbeat > ? + 30)",
+  ];
+  const args: Array<string | number> = [cutoff, atSecs, atSecs];
+  const where = [`(${conditions.join(" OR ")})`];
+
   if (scope) {
     where.push("scope = ?");
     args.push(scope);
@@ -247,7 +259,7 @@ function staleInstances(cutoff: number, scope?: string) {
 function reclaimOfflineInstances(options: CleanupOptions, result: CleanupResult) {
   const at = options.nowSecs ?? now();
   const cutoff = at - CLEANUP_POLICY.instanceReclaimAfterSecs;
-  const stale = staleInstances(cutoff, options.scope);
+  const stale = staleInstances(cutoff, at, options.scope);
   if (!stale.length) return;
 
   const ids = stale.map((item) => item.id);

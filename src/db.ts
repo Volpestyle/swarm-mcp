@@ -69,6 +69,7 @@ const COLUMN_MIGRATIONS = [
   ["instances", "root TEXT NOT NULL DEFAULT ''"],
   ["instances", "file_root TEXT NOT NULL DEFAULT ''"],
   ["instances", "adopted INTEGER NOT NULL DEFAULT 1"],
+  ["instances", "lease_until INTEGER"],
   ["messages", "scope TEXT NOT NULL DEFAULT ''"],
   ["tasks", "scope TEXT NOT NULL DEFAULT ''"],
   ["tasks", "changed_at INTEGER NOT NULL DEFAULT 0"],

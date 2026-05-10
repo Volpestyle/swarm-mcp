@@ -365,14 +365,19 @@ function cmdRegister(flags: Flags) {
     flags.adoptInstanceId?.trim() || undefined,
   );
   let leasedHeartbeat: number | null = null;
+  let leaseUntil: number | null = null;
   if (Number.isFinite(flags.leaseSeconds) && (flags.leaseSeconds ?? 0) > 0) {
-    leasedHeartbeat = Math.floor(Date.now() / 1000) + (flags.leaseSeconds ?? 0);
-    db.run("UPDATE instances SET heartbeat = unixepoch() + ? WHERE id = ?", [
-      flags.leaseSeconds,
-      instance.id,
-    ]);
+    leaseUntil = Math.floor(Date.now() / 1000) + (flags.leaseSeconds ?? 0);
+    leasedHeartbeat = Math.floor(Date.now() / 1000);
+    registry.setLease(instance.id, leaseUntil);
   }
-  if (flags.json) return printJson(leasedHeartbeat ? { ...instance, heartbeat: leasedHeartbeat } : instance);
+  if (flags.json) {
+    return printJson(
+      leasedHeartbeat
+        ? { ...instance, adopted: false, heartbeat: leasedHeartbeat, lease_until: leaseUntil }
+        : instance,
+    );
+  }
   console.log(`registered ${instance.id}`);
 }
 

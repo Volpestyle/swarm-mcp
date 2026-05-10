@@ -565,16 +565,21 @@ function tryAdoptLeasedRegistration() {
 
   const candidates = db
     .query(
-      `SELECT id, scope, directory, root, file_root, pid, label, adopted
+      `SELECT id, scope, directory, root, file_root, pid, label, adopted, lease_until
        FROM instances
        WHERE scope = ?
          AND directory = ?
          AND label LIKE '%session:%'
-         AND heartbeat > unixepoch() + 60
+         AND adopted = 0
+         AND lease_until IS NOT NULL
+         AND lease_until > unixepoch()
        ORDER BY registered_at ASC`,
     )
     .all(scope, directory) as Array<
-      Omit<registry.Instance, "adopted"> & { adopted: number }
+      Omit<registry.Instance, "adopted"> & {
+        adopted: number;
+        lease_until: number | null;
+      }
     >;
 
   if (candidates.length !== 1) return;
@@ -669,14 +674,34 @@ tryAutoAdopt();
       .describe(
         "Optional existing leased instance ID to adopt before returning the bootstrap snapshot.",
       ),
+    include_terminal: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        "When true, include full terminal task rows. Default false keeps bootstrap compact and returns terminal_counts only.",
+      ),
+    terminal_limit: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .default(0)
+      .describe(
+        "Maximum terminal rows per status to include when include_terminal=false. Default 0 returns counts only.",
+      ),
   },
   { readOnlyHint: false, idempotentHint: false },
   async ({
     mark_read,
     adopt_instance_id,
+    include_terminal,
+    terminal_limit,
   }: {
     mark_read?: boolean;
     adopt_instance_id?: string;
+    include_terminal?: boolean;
+    terminal_limit?: number;
   }) => {
     const adoptId = adopt_instance_id?.trim() || undefined;
     if (adoptId && (!instance || instance.id !== adoptId)) {
@@ -694,7 +719,10 @@ tryAutoAdopt();
       instance: current,
       peers,
       unread_messages: unread,
-      tasks: tasks.snapshot(current.scope),
+      tasks: tasks.snapshot(current.scope, {
+        include_terminal,
+        terminal_limit,
+      }),
     });
   },
 );

@@ -214,6 +214,87 @@ describe("workspace backend registry", () => {
     expect(betaWakeCalls[0]?.handle).toBe("beta-canonical");
   });
 
+  test("dispatch routes only to compatible identity workers and reserves the task", async () => {
+    const scope = "scope-dispatch-identity";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    registry.register("/tmp/work", "identity:work role:implementer", scope);
+    const personalWorker = registry.register(
+      "/tmp/personal",
+      "identity:personal role:implementer",
+      scope,
+    );
+
+    const result = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Fix identity routing",
+      role: "implementer",
+      spawn: false,
+      nudge: false,
+    });
+
+    expect(result).toMatchObject({
+      status: "dispatched",
+      recipient: personalWorker.id,
+    });
+
+    const taskId = String(result.task_id);
+    const task = db
+      .query("SELECT status, assignee FROM tasks WHERE id = ?")
+      .get(taskId) as { status: string; assignee: string | null };
+    expect(task).toEqual({ status: "claimed", assignee: personalWorker.id });
+  });
+
+  test("dispatch does not cross identity boundary to reuse a live worker", async () => {
+    const scope = "scope-dispatch-boundary";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    registry.register("/tmp/work", "identity:work role:implementer", scope);
+
+    const result = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Needs personal worker",
+      role: "implementer",
+      spawn: false,
+      nudge: false,
+    });
+
+    expect(result).toMatchObject({ status: "no_worker", role: "implementer" });
+    const task = db
+      .query("SELECT status, assignee FROM tasks WHERE id = ?")
+      .get(String(result.task_id)) as { status: string; assignee: string | null };
+    expect(task).toEqual({ status: "open", assignee: null });
+  });
+
+  test("dispatch does not route identified work to an unlabeled worker", async () => {
+    const scope = "scope-dispatch-unlabeled";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    registry.register("/tmp/unlabeled", "role:implementer", scope);
+
+    const result = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Needs identified worker",
+      role: "implementer",
+      spawn: false,
+      nudge: false,
+    });
+
+    expect(result).toMatchObject({ status: "no_worker", role: "implementer" });
+  });
+
   test("workspace_identity does not own child process transport calls", () => {
     const source = readFileSync(join(repoRoot, "src", "workspace_identity.ts"), "utf8");
     expect(source).not.toContain("child_process");

@@ -15,14 +15,21 @@ export type Instance = {
   pid: number;
   label: string | null;
   adopted: boolean;
+  lease_until: number | null;
 };
 
-type InstanceRow = Omit<Instance, "adopted"> & { adopted: number };
+type InstanceRow = Omit<Instance, "adopted" | "lease_until"> & {
+  adopted: number;
+  lease_until: number | null;
+};
+
+const INSTANCE_COLUMNS =
+  "id, scope, directory, root, file_root, pid, label, adopted, lease_until";
 
 function instanceRow(id: string): InstanceRow | null {
   return db
     .query(
-      "SELECT id, scope, directory, root, file_root, pid, label, adopted FROM instances WHERE id = ?",
+      `SELECT ${INSTANCE_COLUMNS} FROM instances WHERE id = ?`,
     )
     .get(id) as InstanceRow | null;
 }
@@ -30,7 +37,7 @@ function instanceRow(id: string): InstanceRow | null {
 function adopt(existing: InstanceRow, nextLabel: string | null): Instance {
   db.run(
     `UPDATE instances
-     SET pid = ?, label = ?, adopted = 1, heartbeat = unixepoch()
+     SET pid = ?, label = ?, adopted = 1, heartbeat = unixepoch(), lease_until = NULL
      WHERE id = ?`,
     [process.pid, nextLabel, existing.id],
   );
@@ -44,6 +51,7 @@ function adopt(existing: InstanceRow, nextLabel: string | null): Instance {
     pid: process.pid,
     label: nextLabel,
     adopted: true,
+    lease_until: null,
   };
   emit({
     scope: adopted.scope,
@@ -126,7 +134,7 @@ export function register(
   if (!preassignedId && trimmedLabel && /\bsession:[^\s]+/.test(trimmedLabel)) {
     const existing = db
       .query(
-        `SELECT id, scope, directory, root, file_root, pid, label, adopted
+        `SELECT ${INSTANCE_COLUMNS}
          FROM instances
          WHERE scope = ? AND directory = ? AND label = ?
          ORDER BY registered_at ASC
@@ -136,8 +144,9 @@ export function register(
     if (existing) return adopt(existing, trimmedLabel);
   }
 
-  const row = {
-    id: preassignedId ?? randomUUID(),
+  const requestedId = preassignedId ?? (adoptId && !instanceRow(adoptId) ? adoptId : undefined);
+  const row: Instance = {
+    id: requestedId ?? randomUUID(),
     scope: nextScope,
     directory: dir,
     root: root(dir),
@@ -145,10 +154,11 @@ export function register(
     pid: process.pid,
     label: trimmedLabel,
     adopted: true,
+    lease_until: null,
   };
 
   db.run(
-    "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted) VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+    "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted, lease_until) VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL)",
     [row.id, row.scope, row.directory, row.root, row.file_root, row.pid, row.label],
   );
   emit({
@@ -175,11 +185,20 @@ export function get(id: string) {
   prune();
   const row = db
     .query(
-      "SELECT id, scope, directory, root, file_root, pid, label, adopted FROM instances WHERE id = ?",
+      `SELECT ${INSTANCE_COLUMNS} FROM instances WHERE id = ?`,
     )
-    .get(id) as (Omit<Instance, "adopted"> & { adopted: number }) | null;
+    .get(id) as InstanceRow | null;
   if (!row) return null;
   return { ...row, adopted: row.adopted !== 0 } as Instance;
+}
+
+export function setLease(id: string, leaseUntil: number) {
+  db.run(
+    `UPDATE instances
+     SET adopted = 0, heartbeat = unixepoch(), lease_until = ?
+     WHERE id = ?`,
+    [leaseUntil, id],
+  );
 }
 
 export function deregister(id: string) {
@@ -225,7 +244,7 @@ export function heartbeat(id: string) {
 export function list(scope?: string, labelContains?: string) {
   prune();
 
-  const where: string[] = [];
+  const where: string[] = ["adopted = 1"];
   const args: (string | number)[] = [];
 
   if (scope) {
@@ -237,10 +256,9 @@ export function list(scope?: string, labelContains?: string) {
     args.push(labelContains);
   }
 
-  const clause = where.length ? ` WHERE ${where.join(" AND ")}` : "";
   return db
     .query(
-      `SELECT id, scope, directory, root, file_root, pid, label, registered_at, heartbeat, adopted FROM instances${clause} ORDER BY registered_at ASC`,
+      `SELECT id, scope, directory, root, file_root, pid, label, registered_at, heartbeat, adopted, lease_until FROM instances WHERE ${where.join(" AND ")} ORDER BY registered_at ASC`,
     )
     .all(...args);
 }
