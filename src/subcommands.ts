@@ -1,5 +1,6 @@
 export const SUBCOMMANDS = [
   "register",
+  "bootstrap",
   "deregister",
   "whoami",
   "instances",

@@ -422,8 +422,30 @@ server.tool(
       .describe(
         "Optional canonical base directory for resolving relative file paths. Useful when multiple worktrees should share one logical file tree.",
       ),
+    adopt_instance_id: z
+      .string()
+      .optional()
+      .describe(
+        "Optional existing leased instance ID to adopt instead of creating a fresh registration.",
+      ),
   },
-  async ({ directory, label, scope, file_root }) => {
+  async ({ directory, label, scope, file_root, adopt_instance_id }) => {
+    const adoptId = adopt_instance_id?.trim() || undefined;
+    if (adoptId && (!instance || instance.id !== adoptId)) {
+      const adopted = tryAdoptExplicitRegistration(adoptId, {
+        directory,
+        label,
+        scope,
+      });
+      if (adopted) return { content: registerContent(adopted) };
+      if (instance) {
+        return respondJson({
+          error: `Could not adopt instance ${adoptId}; keeping current registration`,
+          instance,
+        });
+      }
+    }
+
     if (instance) {
       return { content: registerContent(instance) };
     }
@@ -433,7 +455,14 @@ server.tool(
     // SWARM_MCP_INSTANCE_ID. `registry.register` will adopt the existing row
     // and flip `adopted=1` instead of creating a duplicate.
     const preassignedId = process.env.SWARM_MCP_INSTANCE_ID?.trim() || undefined;
-    instance = registry.register(directory, label, scope, file_root, preassignedId);
+    instance = registry.register(
+      directory,
+      label,
+      scope,
+      file_root,
+      preassignedId,
+      adoptId,
+    );
     startInstanceTimers();
 
     return { content: registerContent(instance) };
@@ -459,6 +488,34 @@ function startInstanceTimers() {
   }, 5_000);
 }
 
+function bindInstance(next: registry.Instance) {
+  instance = next;
+  startInstanceTimers();
+  return instance;
+}
+
+function tryAdoptExplicitRegistration(
+  adoptId: string,
+  opts: {
+    directory?: string;
+    label?: string;
+    scope?: string;
+  } = {},
+) {
+  if (!adoptId) return null;
+  const directory =
+    opts.directory ?? process.env.SWARM_MCP_DIRECTORY?.trim() ?? process.cwd();
+  const scope = opts.scope ?? process.env.SWARM_MCP_SCOPE?.trim() ?? undefined;
+  const label = opts.label ?? process.env.SWARM_MCP_LABEL?.trim() ?? undefined;
+  try {
+    const adopted = registry.adoptInstanceId(directory, label, scope, adoptId);
+    return adopted ? bindInstance(adopted) : null;
+  } catch (err) {
+    console.error("[swarm-mcp] explicit registration adoption failed:", err);
+    return null;
+  }
+}
+
 /**
  * When swarm-ui spawns the host process (claude/codex/opencode), it
  * pre-creates an instance row with adopted=0 and injects its id via
@@ -482,14 +539,15 @@ function tryAutoAdopt() {
   const envFileRoot = process.env.SWARM_MCP_FILE_ROOT?.trim() || undefined;
 
   try {
-    instance = registry.register(
-      directory,
-      envLabel,
-      envScope,
-      envFileRoot,
-      preassignedId,
+    bindInstance(
+      registry.register(
+        directory,
+        envLabel,
+        envScope,
+        envFileRoot,
+        preassignedId,
+      ),
     );
-    startInstanceTimers();
   } catch (err) {
     console.error("[swarm-mcp] auto-adopt failed:", err);
   }
@@ -523,14 +581,15 @@ function tryAdoptLeasedRegistration() {
 
   const candidate = candidates[0];
   try {
-    instance = registry.register(
-      candidate.directory,
-      candidate.label ?? undefined,
-      candidate.scope,
-      envFileRoot ?? candidate.file_root,
-      candidate.id,
+    bindInstance(
+      registry.register(
+        candidate.directory,
+        candidate.label ?? undefined,
+        candidate.scope,
+        envFileRoot ?? candidate.file_root,
+        candidate.id,
+      ),
     );
-    startInstanceTimers();
   } catch (err) {
     console.error("[swarm-mcp] leased registration adoption failed:", err);
   }
@@ -604,9 +663,25 @@ tryAutoAdopt();
       .describe(
         "When true (default), unread messages are returned and marked read (matches poll_messages). When false, messages are peeked and remain unread.",
       ),
+    adopt_instance_id: z
+      .string()
+      .optional()
+      .describe(
+        "Optional existing leased instance ID to adopt before returning the bootstrap snapshot.",
+      ),
   },
   { readOnlyHint: false, idempotentHint: false },
-  async ({ mark_read }: { mark_read?: boolean }) => {
+  async ({
+    mark_read,
+    adopt_instance_id,
+  }: {
+    mark_read?: boolean;
+    adopt_instance_id?: string;
+  }) => {
+    const adoptId = adopt_instance_id?.trim() || undefined;
+    if (adoptId && (!instance || instance.id !== adoptId)) {
+      tryAdoptExplicitRegistration(adoptId);
+    }
     const current = ensureInstance();
     if (!current) return missing();
     const peers = (registry.list(current.scope) as registry.Instance[]).filter(

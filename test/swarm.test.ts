@@ -164,6 +164,59 @@ describe("registry adoption", () => {
       .all(first.scope, label) as Array<{ n: number }>;
     expect(row.n).toBe(1);
   });
+
+  test("register with adoptInstanceId adopts an existing same-scope row", () => {
+    const label = "identity:personal codex platform:cli origin:codex session:abc12345";
+    const lease = registry.register("/tmp/repo", label, "scope-e");
+    kv.set(
+      lease.scope,
+      `identity/workspace/herdr/${lease.id}`,
+      JSON.stringify({ backend: "herdr", handle: "pane-1" }),
+      lease.id,
+    );
+
+    const adopted = registry.register(
+      "/tmp/repo",
+      "identity:personal role:researcher session:abc12345",
+      "scope-e",
+      undefined,
+      undefined,
+      lease.id,
+    );
+
+    expect(adopted.id).toBe(lease.id);
+    expect(adopted.adopted).toBe(true);
+    expect(adopted.label).toBe("identity:personal role:researcher session:abc12345");
+
+    const [instances] = db
+      .query("SELECT COUNT(*) as n FROM instances WHERE scope = ? AND directory = ?")
+      .all(lease.scope, lease.directory) as Array<{ n: number }>;
+    expect(instances.n).toBe(1);
+
+    const identityRows = db
+      .query("SELECT key FROM kv WHERE scope = ? AND key LIKE 'identity/workspace/herdr/%'")
+      .all(lease.scope) as Array<{ key: string }>;
+    expect(identityRows).toEqual([
+      { key: `identity/workspace/herdr/${adopted.id}` },
+    ]);
+  });
+
+  test("register with wrong-scope adoptInstanceId falls through to a fresh row", () => {
+    const lease = registry.register("/tmp/repo", "identity:personal session:abc12345", "scope-f");
+
+    const next = registry.register(
+      "/tmp/repo",
+      "identity:personal session:def67890",
+      "scope-g",
+      undefined,
+      undefined,
+      lease.id,
+    );
+
+    expect(next.id).not.toBe(lease.id);
+    expect(next.scope).toBe(paths.norm("scope-g"));
+    expect(registry.get(lease.id)?.scope).toBe(paths.norm("scope-f"));
+  });
 });
 
 describe("scope", () => {

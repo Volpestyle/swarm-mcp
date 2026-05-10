@@ -49,6 +49,7 @@ type Flags = {
   y?: number;
   wait?: number;
   leaseSeconds?: number;
+  adoptInstanceId?: string;
   approvalRequired: boolean;
   spawn: boolean;
   forceSpawn: boolean;
@@ -121,6 +122,7 @@ function parseFlags(argv: string[]): Flags {
     if (a === "--y") { flags.y = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--wait") { flags.wait = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--lease-seconds") { flags.leaseSeconds = parseInt(argv[++i] ?? "", 10); continue; }
+    if (a === "--adopt-instance-id") { flags.adoptInstanceId = argv[++i]; continue; }
     if (a === "--approval-required") { flags.approvalRequired = true; continue; }
     if (a === "--no-spawn") { flags.spawn = false; continue; }
     if (a === "--force-spawn") { flags.forceSpawn = true; continue; }
@@ -360,6 +362,7 @@ function cmdRegister(flags: Flags) {
     flags.scope,
     flags.fileRoot,
     process.env.SWARM_MCP_INSTANCE_ID?.trim() || undefined,
+    flags.adoptInstanceId?.trim() || undefined,
   );
   let leasedHeartbeat: number | null = null;
   if (Number.isFinite(flags.leaseSeconds) && (flags.leaseSeconds ?? 0) > 0) {
@@ -371,6 +374,42 @@ function cmdRegister(flags: Flags) {
   }
   if (flags.json) return printJson(leasedHeartbeat ? { ...instance, heartbeat: leasedHeartbeat } : instance);
   console.log(`registered ${instance.id}`);
+}
+
+function cmdBootstrap(flags: Flags) {
+  const directory = flags.directory ?? flags.positional[1] ?? process.cwd();
+  let current: registry.Instance | null = null;
+
+  const adoptId = flags.adoptInstanceId?.trim();
+  if (adoptId) {
+    current = registry.adoptInstanceId(
+      directory,
+      flags.label,
+      flags.scope,
+      adoptId,
+    );
+    if (!current) {
+      throw new Error(`Could not adopt instance ${adoptId}`);
+    }
+  } else {
+    const scope = resolveScope(flags);
+    current = registry.get(resolveIdentity(scope, flags));
+  }
+
+  if (!current) throw new Error("Not registered. Call register first.");
+  const peers = (registry.list(current.scope) as registry.Instance[]).filter(
+    (p) => p.id !== current.id,
+  );
+  const unread = messages.poll(current.id, current.scope, flags.limit ?? 50);
+  const payload = {
+    instance: current,
+    peers,
+    unread_messages: unread,
+    tasks: taskStore.snapshot(current.scope),
+  };
+
+  if (flags.json) return printJson(payload);
+  console.log(JSON.stringify(payload, null, 2));
 }
 
 function cmdDeregister(flags: Flags) {
@@ -1052,6 +1091,7 @@ async function cmdUi(flags: Flags) {
 
 const HANDLERS: Record<Subcommand, (flags: Flags) => void | Promise<void>> = {
   register: cmdRegister,
+  bootstrap: cmdBootstrap,
   deregister: cmdDeregister,
   whoami: cmdWhoami,
   instances: cmdInstances,

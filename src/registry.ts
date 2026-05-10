@@ -19,6 +19,71 @@ export type Instance = {
 
 type InstanceRow = Omit<Instance, "adopted"> & { adopted: number };
 
+function instanceRow(id: string): InstanceRow | null {
+  return db
+    .query(
+      "SELECT id, scope, directory, root, file_root, pid, label, adopted FROM instances WHERE id = ?",
+    )
+    .get(id) as InstanceRow | null;
+}
+
+function adopt(existing: InstanceRow, nextLabel: string | null): Instance {
+  db.run(
+    `UPDATE instances
+     SET pid = ?, label = ?, adopted = 1, heartbeat = unixepoch()
+     WHERE id = ?`,
+    [process.pid, nextLabel, existing.id],
+  );
+
+  const adopted: Instance = {
+    id: existing.id,
+    scope: existing.scope,
+    directory: existing.directory,
+    root: existing.root,
+    file_root: existing.file_root,
+    pid: process.pid,
+    label: nextLabel,
+    adopted: true,
+  };
+  emit({
+    scope: adopted.scope,
+    type: "instance.registered",
+    actor: adopted.id,
+    subject: adopted.id,
+    payload: {
+      label: nextLabel,
+      adopted: true,
+      pid: process.pid,
+      directory: adopted.directory,
+      root: adopted.root,
+      file_root: adopted.file_root,
+    },
+  });
+  planner.ensureOwner({
+    id: adopted.id,
+    scope: adopted.scope,
+    label: adopted.label,
+  });
+  return adopted;
+}
+
+export function adoptInstanceId(
+  directory: string,
+  label: string | undefined,
+  value: string | undefined,
+  instanceId: string,
+): Instance | null {
+  prune();
+
+  const dir = norm(directory);
+  const nextScope = scoped(dir, value);
+  const trimmedLabel = label?.trim() || null;
+  const existing = instanceRow(instanceId);
+  if (!existing) return null;
+  if (existing.scope !== nextScope || existing.directory !== dir) return null;
+  return adopt(existing, trimmedLabel ?? existing.label);
+}
+
 export function prune(mode: CleanupMode = "opportunistic") {
   runCleanup({ mode });
 }
@@ -29,50 +94,17 @@ export function register(
   value?: string,
   fileRoot?: string,
   preassignedId?: string,
+  adoptId?: string,
 ): Instance {
   prune();
 
   const dir = norm(directory);
   const trimmedLabel = label?.trim() || null;
+  const nextScope = scoped(dir, value);
 
-  function adopt(existing: InstanceRow, nextLabel: string | null): Instance {
-    db.run(
-      `UPDATE instances
-       SET pid = ?, label = ?, adopted = 1, heartbeat = unixepoch()
-       WHERE id = ?`,
-      [process.pid, nextLabel, existing.id],
-    );
-
-    const adopted: Instance = {
-      id: existing.id,
-      scope: existing.scope,
-      directory: existing.directory,
-      root: existing.root,
-      file_root: existing.file_root,
-      pid: process.pid,
-      label: nextLabel,
-      adopted: true,
-    };
-    emit({
-      scope: adopted.scope,
-      type: "instance.registered",
-      actor: adopted.id,
-      subject: adopted.id,
-      payload: {
-        label: nextLabel,
-        adopted: true,
-        pid: process.pid,
-        directory: adopted.directory,
-        root: adopted.root,
-        file_root: adopted.file_root,
-      },
-    });
-    planner.ensureOwner({
-      id: adopted.id,
-      scope: adopted.scope,
-      label: adopted.label,
-    });
-    return adopted;
+  if (adoptId) {
+    const adopted = adoptInstanceId(directory, label, value, adoptId);
+    if (adopted) return adopted;
   }
 
   // Adoption path: a UI-owned instance row was pre-created with `adopted = 0`
@@ -81,11 +113,7 @@ export function register(
   // scope/directory/root/file_root alone since the UI already computed them
   // for the same directory.
   if (preassignedId) {
-    const existing = db
-      .query(
-        "SELECT id, scope, directory, root, file_root, pid, label, adopted FROM instances WHERE id = ?",
-      )
-      .get(preassignedId) as InstanceRow | null;
+    const existing = instanceRow(preassignedId);
 
     if (existing) {
       return adopt(existing, trimmedLabel ?? existing.label);
@@ -95,7 +123,6 @@ export function register(
     // so the UI's PTY binding stays valid.
   }
 
-  const nextScope = scoped(dir, value);
   if (!preassignedId && trimmedLabel && /\bsession:[^\s]+/.test(trimmedLabel)) {
     const existing = db
       .query(

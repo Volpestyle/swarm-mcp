@@ -47,6 +47,137 @@ function register(dbPath: string, dir: string, scope: string, label: string) {
   return JSON.parse(result.stdout) as { id: string };
 }
 
+describe("CLI registration adoption", () => {
+  test("register --adopt-instance-id adopts the lease row and keeps identity rows keyed to it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-adopt-register-"));
+    const dbPath = join(dir, "swarm.db");
+    const lease = runCli(dbPath, [
+      "register",
+      dir,
+      "--label",
+      "identity:personal codex platform:cli origin:codex session:abc12345",
+      "--scope",
+      dir,
+      "--lease-seconds",
+      "86400",
+      "--json",
+    ]);
+    expect(lease.exitCode).toBe(0);
+    const leased = JSON.parse(lease.stdout) as { id: string };
+
+    const key = `identity/workspace/herdr/${leased.id}`;
+    const setIdentity = runCli(dbPath, [
+      "kv",
+      "set",
+      key,
+      JSON.stringify({ backend: "herdr", handle: "pane-1" }),
+      "--scope",
+      dir,
+      "--as",
+      leased.id,
+      "--json",
+    ]);
+    expect(setIdentity.exitCode).toBe(0);
+
+    const adopted = runCli(dbPath, [
+      "register",
+      dir,
+      "--label",
+      "identity:personal role:researcher session:abc12345",
+      "--scope",
+      dir,
+      "--adopt-instance-id",
+      leased.id,
+      "--json",
+    ]);
+    expect(adopted.exitCode).toBe(0);
+    expect((JSON.parse(adopted.stdout) as { id: string }).id).toBe(leased.id);
+
+    const instances = runCli(dbPath, ["instances", "--scope", dir, "--json"]);
+    expect(instances.exitCode).toBe(0);
+    expect(JSON.parse(instances.stdout)).toHaveLength(1);
+
+    const identities = runCli(dbPath, [
+      "kv",
+      "list",
+      "--scope",
+      dir,
+      "--prefix",
+      "identity/workspace/herdr/",
+      "--json",
+    ]);
+    expect(identities.exitCode).toBe(0);
+    expect(JSON.parse(identities.stdout)).toEqual([
+      expect.objectContaining({ key }),
+    ]);
+  });
+
+  test("register --adopt-instance-id falls through when the lease is in another scope", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-adopt-wrong-scope-"));
+    const dbPath = join(dir, "swarm.db");
+    const scopeA = join(dir, "scope-a");
+    const scopeB = join(dir, "scope-b");
+    const lease = register(
+      dbPath,
+      dir,
+      scopeA,
+      "identity:personal codex platform:cli origin:codex session:abc12345",
+    );
+
+    const adopted = runCli(dbPath, [
+      "register",
+      dir,
+      "--label",
+      "identity:personal codex platform:cli origin:codex session:def67890",
+      "--scope",
+      scopeB,
+      "--adopt-instance-id",
+      lease.id,
+      "--json",
+    ]);
+
+    expect(adopted.exitCode).toBe(0);
+    expect((JSON.parse(adopted.stdout) as { id: string }).id).not.toBe(lease.id);
+    const inScopeA = runCli(dbPath, ["instances", "--scope", scopeA, "--json"]);
+    const inScopeB = runCli(dbPath, ["instances", "--scope", scopeB, "--json"]);
+    expect(JSON.parse(inScopeA.stdout)).toHaveLength(1);
+    expect(JSON.parse(inScopeB.stdout)).toHaveLength(1);
+  });
+
+  test("bootstrap --adopt-instance-id returns a snapshot for the adopted lease", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-adopt-bootstrap-"));
+    const dbPath = join(dir, "swarm.db");
+    const lease = register(
+      dbPath,
+      dir,
+      dir,
+      "identity:personal codex platform:cli origin:codex session:abc12345",
+    );
+
+    const boot = runCli(dbPath, [
+      "bootstrap",
+      dir,
+      "--scope",
+      dir,
+      "--adopt-instance-id",
+      lease.id,
+      "--json",
+    ]);
+
+    expect(boot.exitCode).toBe(0);
+    const payload = JSON.parse(boot.stdout) as {
+      instance: { id: string };
+      peers: unknown[];
+      unread_messages: unknown[];
+      tasks: unknown;
+    };
+    expect(payload.instance.id).toBe(lease.id);
+    expect(payload.peers).toEqual([]);
+    expect(payload.unread_messages).toEqual([]);
+    expect(payload.tasks).toBeTruthy();
+  });
+});
+
 describe("CLI task notifications", () => {
   test("request-task prompts an explicit assignee", () => {
     const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-request-task-prompt-"));

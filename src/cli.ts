@@ -51,7 +51,8 @@ Init flags:
   --no-skills           Skip copying skills.
 
 Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
-  swarm-mcp register [directory] [--label <tokens>] [--scope <path>] [--file-root <path>] [--lease-seconds N] [--json]
+  swarm-mcp register [directory] [--label <tokens>] [--scope <path>] [--file-root <path>] [--lease-seconds N] [--adopt-instance-id <id>] [--json]
+  swarm-mcp bootstrap [directory] [--adopt-instance-id <id>] [--scope <path>] [--json]
   swarm-mcp deregister [--as <who>] [--scope <path>] [--json]
   swarm-mcp whoami [--as <who>] [--scope <path>] [--json]
   swarm-mcp inspect [--scope <path>] [--json]
