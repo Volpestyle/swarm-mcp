@@ -76,6 +76,26 @@ the first launch after installing or changing hooks, review and approve the
 new hook entries in `/hooks`; until they are approved, Codex will not run the
 SessionStart auto-registration hook.
 
+For local plugin development, Codex discovers installed plugin versions from
+real cache directories. If you want repo edits to flow into the installed
+plugin without reinstalling, keep the version directory real and symlink the
+plugin contents inside it, for example:
+
+```sh
+mkdir -p ~/.codex-personal/plugins/cache/swarm-mcp/swarm/0.2.0/.codex-plugin
+ln -s /Users/james.volpe/volpestyle/swarm-mcp/integrations/codex/plugins/swarm/.codex-plugin/plugin.json \
+  ~/.codex-personal/plugins/cache/swarm-mcp/swarm/0.2.0/.codex-plugin/plugin.json
+ln -s /Users/james.volpe/volpestyle/swarm-mcp/integrations/codex/plugins/swarm/hooks.json \
+  ~/.codex-personal/plugins/cache/swarm-mcp/swarm/0.2.0/hooks.json
+ln -s /Users/james.volpe/volpestyle/swarm-mcp/integrations/codex/plugins/swarm/hooks \
+  ~/.codex-personal/plugins/cache/swarm-mcp/swarm/0.2.0/hooks
+ln -s /Users/james.volpe/volpestyle/swarm-mcp/integrations/codex/plugins/swarm/commands \
+  ~/.codex-personal/plugins/cache/swarm-mcp/swarm/0.2.0/commands
+```
+
+Do not leave backup version directories such as `0.2.0.cached` under the same
+plugin cache path; Codex may select them instead of the intended version.
+
 ### Make sure the swarm MCP server is mounted
 
 This plugin expects the `swarm` MCP server to already be available inside the

@@ -73,7 +73,7 @@ that a near-1:1 port works:
 | Slash commands | `commands/<name>.md` with frontmatter | `commands/<name>.md` with frontmatter |
 | MCP servers | `.mcp.json` | `.mcp.json` |
 | Skills | `skills/<name>/SKILL.md` | `skills/<name>/SKILL.md` |
-| Hook env root | `${CLAUDE_PLUGIN_ROOT}` | `${CODEX_PLUGIN_ROOT}` |
+| Hook command root | `${CLAUDE_PLUGIN_ROOT}` is available | Use paths relative to the plugin root, e.g. `python3 ./hooks/session_start.py` |
 
 What does *not* port cleanly:
 
@@ -87,7 +87,10 @@ What does *not* port cleanly:
    `tool_input` as either the patch string itself or a dict with the patch
    under `input`/`patch`/`text`/`arguments`. v0.2 will tighten once the
    contract is observed empirically.
-3. **`additionalContext` semantics.** Claude Code reliably feeds the
+3. **Hook root environment.** Claude Code exposes a plugin-root env var, but
+   Codex plugin hooks should not depend on `CODEX_PLUGIN_ROOT`; marketplace
+   plugin hook commands are written as plugin-root-relative paths.
+4. **`additionalContext` semantics.** Claude Code reliably feeds the
    `additionalContext` JSON output back into the agent's system context.
    Codex's behavior here is treated as compatible-until-proven-otherwise; if
    it is silently ignored, the bundled `swarm-mcp` skill still drives
