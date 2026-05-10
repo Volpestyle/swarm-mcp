@@ -1,0 +1,20 @@
+{
+  "name": "swarm-mcp",
+  "interface": {
+    "displayName": "swarm-mcp"
+  },
+  "plugins": [
+    {
+      "name": "swarm",
+      "source": {
+        "source": "local",
+        "path": "./integrations/codex/plugins/swarm"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

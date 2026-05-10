@@ -49,20 +49,32 @@ locked — shell-mediated writes are out of scope for v0.1.
 ## Install
 
 `codex plugin marketplace add` accepts a local marketplace root. This repo's
-`integrations/codex/` directory is a marketplace root containing the `swarm`
-plugin under `plugins/swarm/`.
+root is the marketplace root via `.agents/plugins/marketplace.json`, which
+exposes the `swarm` plugin from `integrations/codex/plugins/swarm/`. That
+matches the Claude Code setup: install the repo-level marketplace once, then
+let the host load the plugin and its hooks from the repo checkout.
 
 ```sh
 # personal profile
 CODEX_HOME=~/.codex-personal codex plugin marketplace add \
-    /Users/james.volpe/volpestyle/swarm-mcp/integrations/codex
+    /Users/james.volpe/volpestyle/swarm-mcp
 
 # or work profile
 codex plugin marketplace add \
-    /Users/james.volpe/volpestyle/swarm-mcp/integrations/codex
+    /Users/james.volpe/volpestyle/swarm-mcp
 ```
 
-Restart codex so it picks up the plugin's `hooks.json` and `commands/`.
+Plugin hooks must be enabled for the lifecycle bridge to run:
+
+```sh
+CODEX_HOME=~/.codex-personal codex features enable hooks
+CODEX_HOME=~/.codex-personal codex features enable plugin_hooks
+```
+
+Restart codex so it picks up the plugin's `hooks.json` and `commands/`. On
+the first launch after installing or changing hooks, review and approve the
+new hook entries in `/hooks`; until they are approved, Codex will not run the
+SessionStart auto-registration hook.
 
 ### Make sure the swarm MCP server is mounted
 
