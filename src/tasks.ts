@@ -119,6 +119,20 @@ function unreadMessageGate(scope: string, recipient: string) {
   };
 }
 
+function hasOtherActiveTasks(scope: string, assignee: string, taskId: string) {
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS count
+       FROM tasks
+       WHERE scope = ?
+         AND assignee = ?
+         AND id != ?
+         AND status IN ('claimed', 'in_progress')`,
+    )
+    .get(scope, assignee, taskId) as { count: number };
+  return row.count > 0;
+}
+
 // ---------------------------------------------------------------------------
 // Dependency cascade helpers
 // ---------------------------------------------------------------------------
@@ -513,11 +527,18 @@ export function update(
       },
     });
 
-    // Auto-release this actor's locks on the task's files. Saves an unlock
-    // call per file at task completion.
-    const files = task.files ? (JSON.parse(task.files) as string[]) : [];
-    if (files.length && task.assignee) {
-      context.releaseInstanceLocksForFiles(task.assignee, scope, files);
+    // Terminal task updates release this task's declared files. If this was
+    // the assignee's only active task, also sweep any remaining normal edit
+    // locks so tasks without complete file lists do not leave stale locks.
+    // Internal `/__swarm/` mutex locks are managed by their owning flow.
+    if (task.assignee) {
+      const files = task.files ? (JSON.parse(task.files) as string[]) : [];
+      if (files.length) {
+        context.releaseInstanceLocksForFiles(task.assignee, scope, files);
+      }
+      if (!hasOtherActiveTasks(scope, task.assignee, id)) {
+        context.releaseInstanceEditLocks(task.assignee, scope);
+      }
     }
 
     // Dependency cascades

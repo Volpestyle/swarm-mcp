@@ -2,12 +2,12 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as context from "./context";
 import { db } from "./db";
-import * as kv from "./kv";
 import * as messages from "./messages";
 import * as registry from "./registry";
 import * as taskStore from "./tasks";
 import * as ui from "./ui";
 import type { TaskType } from "./generated/protocol";
+import * as workspaceIdentity from "./workspace_identity";
 
 type InstanceRef = {
   id: string;
@@ -175,11 +175,15 @@ function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function runHerdrCommand(args: string[], timeout = 10_000) {
+function runHerdrCommand(
+  args: string[],
+  timeout = 10_000,
+  extraEnv: Record<string, string> = {},
+) {
   const bin = process.env.SWARM_HERDR_BIN?.trim() || "herdr";
   return spawnSync(bin, args, {
     encoding: "utf8",
-    env: { ...process.env },
+    env: { ...process.env, ...extraEnv },
     timeout,
   });
 }
@@ -298,23 +302,6 @@ function dispatchInstruction(taskId: string, title: string, message: string) {
   ].join("\n\n");
 }
 
-function herdrEnv(identity: Record<string, unknown>) {
-  const env = { ...process.env };
-  if (typeof identity.socket_path === "string" && identity.socket_path) {
-    env.HERDR_SOCKET_PATH = identity.socket_path;
-  }
-  return env;
-}
-
-function runHerdr(args: string[], identity: Record<string, unknown>) {
-  const bin = process.env.SWARM_HERDR_BIN?.trim() || "herdr";
-  return spawnSync(bin, args, {
-    encoding: "utf8",
-    env: herdrEnv(identity),
-    timeout: 5_000,
-  });
-}
-
 export function promptPeerResult(opts: {
   scope: string;
   sender: string;
@@ -339,65 +326,43 @@ export function promptPeerResult(opts: {
     return result;
   }
 
-  const identityRow = kv.get(scope, `identity/herdr/${recipient}`);
-  if (!identityRow) {
-    result.nudge_skipped = "no herdr identity is published for that instance";
+  const resolved = workspaceIdentity.resolvePublishedWorkspaceIdentity({
+    scope,
+    instanceId: recipient,
+    actor: sender,
+  });
+  if (!resolved.ok) {
+    if (resolved.handle) result.workspace_handle = resolved.handle;
+    result.nudge_skipped = resolved.reason;
     return result;
   }
 
-  let identity: Record<string, unknown>;
-  try {
-    const parsed = JSON.parse(identityRow.value);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("identity is not an object");
-    }
-    identity = parsed as Record<string, unknown>;
-  } catch {
-    result.nudge_skipped = "published herdr identity is not valid JSON";
-    return result;
-  }
-
-  const paneId = identity.pane_id;
-  if (typeof paneId !== "string" || !paneId) {
-    result.nudge_skipped = "published herdr identity has no pane_id";
-    return result;
-  }
-
-  const getProc = runHerdr(["pane", "get", paneId], identity);
-  if (getProc.error || getProc.status !== 0) {
-    result.pane_id = paneId;
-    result.nudge_skipped =
-      getProc.error?.message ||
-      getProc.stderr?.trim() ||
-      getProc.stdout?.trim() ||
-      "herdr pane get failed";
-    return result;
-  }
-
-  let status = "unknown";
-  try {
-    const payload = JSON.parse(getProc.stdout || "{}");
-    const pane = payload?.result?.pane;
-    if (pane && typeof pane.agent_status === "string") status = pane.agent_status;
-  } catch {
-    status = "unknown";
-  }
-  result.pane_id = paneId;
+  const workspaceHandle = resolved.handle;
+  const status = resolved.agent_status;
+  result.workspace_backend = resolved.backend_name;
+  result.workspace_handle = workspaceHandle;
+  result.handle_kind = resolved.handle_kind;
+  const paneId =
+    typeof resolved.identity.pane_id === "string" && resolved.identity.pane_id
+      ? resolved.identity.pane_id
+      : undefined;
+  if (paneId) result.pane_id = paneId;
   result.agent_status = status;
-
-  if (!["idle", "blocked", "done", "unknown"].includes(status) && !force) {
-    result.nudge_skipped = `target pane is ${status}; pass force=true to inject anyway`;
-    return result;
-  }
+  if (resolved.identity_repaired) result.identity_repaired = true;
 
   const wakePrompt = `A peer sent you a swarm message${task ? ` for task ${task}` : ""}. Call the swarm poll_messages tool, handle the message, and report back through swarm-mcp.`;
-  const runProc = runHerdr(["pane", "run", paneId, wakePrompt], identity);
-  if (runProc.error || runProc.status !== 0) {
-    result.nudge_error =
-      runProc.error?.message ||
-      runProc.stderr?.trim() ||
-      runProc.stdout?.trim() ||
-      "herdr pane run failed";
+  const wakeResult = resolved.backend.wakeHandle({
+    handle: workspaceHandle,
+    prompt: wakePrompt,
+    identity: resolved.identity,
+    handleInfo: resolved.handle_info,
+    force,
+    timeoutMs: 5_000,
+  });
+  if (!wakeResult.ok) {
+    result.nudge_error = wakeResult.error;
+  } else if (wakeResult.value.skipped) {
+    result.nudge_skipped = wakeResult.value.skipped;
   } else {
     result.nudged = true;
   }
@@ -518,6 +483,7 @@ export async function runDispatch(opts: DispatchOptions) {
     opts.scope,
     lockPath,
     JSON.stringify(lockNote),
+    { exclusive: true },
   );
   if ("error" in lockResult) {
     return {
@@ -598,12 +564,22 @@ export async function runDispatch(opts: DispatchOptions) {
       return {
         status: "spawn_failed",
         ...basePayload,
-        workspace_handle: { backend: "herdr", pane_id: paneId },
+        workspace_handle: {
+          backend: "herdr",
+          handle_kind: "pane",
+          handle: paneId,
+          pane_id: paneId,
+        },
         error: `herdr pane run failed: ${processError(run)}`,
       };
     }
 
-    const workspaceHandle = { backend: "herdr", pane_id: paneId };
+    const workspaceHandle = {
+      backend: "herdr",
+      handle_kind: "pane",
+      handle: paneId,
+      pane_id: paneId,
+    };
     context.lock(
       opts.requester,
       opts.scope,

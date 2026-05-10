@@ -7,10 +7,13 @@ import * as messages from "./messages";
 import * as registry from "./registry";
 import * as taskStore from "./tasks";
 import * as ui from "./ui";
-import { scope as scopeFor } from "./paths";
+import { file as fileFor, scope as scopeFor } from "./paths";
 import { SUBCOMMANDS, type Subcommand } from "./subcommands";
-import { spawnSync } from "node:child_process";
 import { TASK_TYPES, type TaskType } from "./generated/protocol";
+import * as workspaceIdentity from "./workspace_identity";
+import { herdrWorkspaceBackend } from "./backends/herdr";
+
+workspaceIdentity.registerBackend(herdrWorkspaceBackend);
 
 type Flags = {
   positional: string[];
@@ -52,12 +55,16 @@ type Flags = {
   nudge: boolean;
   enter: boolean;
   dryRun: boolean;
+  exclusive: boolean;
+  backend?: string;
 };
 
 type InstRow = {
   id: string;
   scope: string;
   directory: string;
+  root: string;
+  file_root: string;
   label: string | null;
   pid: number;
   registered_at: number;
@@ -75,6 +82,7 @@ function parseFlags(argv: string[]): Flags {
     force: false,
     nudge: true,
     dryRun: false,
+    exclusive: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -91,6 +99,7 @@ function parseFlags(argv: string[]): Flags {
     if (a === "--harness") { flags.harness = argv[++i]; continue; }
     if (a === "--role") { flags.role = argv[++i]; continue; }
     if (a === "--spawner") { flags.spawner = argv[++i]; continue; }
+    if (a === "--backend") { flags.backend = argv[++i]; continue; }
     if (a === "--label") { flags.label = argv[++i]; continue; }
     if (a === "--name") { flags.name = argv[++i]; continue; }
     if (a === "--directory") { flags.directory = argv[++i]; continue; }
@@ -116,6 +125,7 @@ function parseFlags(argv: string[]): Flags {
     if (a === "--dry-run") { flags.dryRun = true; continue; }
     if (a === "--no-nudge") { flags.nudge = false; continue; }
     if (a === "--no-enter") { flags.enter = false; continue; }
+    if (a === "--exclusive") { flags.exclusive = true; continue; }
     if (a.startsWith("--")) throw new Error(`Unknown flag: ${a}`);
     flags.positional.push(a);
   }
@@ -128,7 +138,7 @@ function resolveScope(flags: Flags): string {
 
 function instancesInScope(scope: string): InstRow[] {
   return db.query(
-    "SELECT id, scope, directory, label, pid, registered_at, heartbeat FROM instances WHERE scope = ? ORDER BY registered_at ASC",
+    "SELECT id, scope, directory, root, file_root, label, pid, registered_at, heartbeat FROM instances WHERE scope = ? ORDER BY registered_at ASC",
   ).all(scope) as InstRow[];
 }
 
@@ -174,6 +184,23 @@ function resolveIdentity(scope: string, flags: Flags): string {
   );
 }
 
+function instanceById(scope: string, id: string): InstRow {
+  const row = db
+    .query(
+      "SELECT id, scope, directory, root, file_root, label, pid, registered_at, heartbeat FROM instances WHERE scope = ? AND id = ?",
+    )
+    .get(scope, id) as InstRow | null;
+  if (!row) throw new Error(`Instance ${id} is not active in scope ${scope}`);
+  return row;
+}
+
+function resolveFileForInstance(inst: InstRow, path: string) {
+  return fileFor(inst.directory, path, {
+    root: inst.root,
+    fileRoot: inst.file_root,
+  });
+}
+
 function resolveOptionalIdentity(scope: string, flags: Flags): string | null {
   const explicit = flags.as ?? process.env.SWARM_MCP_INSTANCE_ID;
   const insts = instancesInScope(scope);
@@ -214,10 +241,6 @@ function splitCsv(value: string | undefined): string[] | undefined {
 
 function hasLabelToken(inst: InstRow | null | undefined, token: string) {
   return (inst?.label ?? "").split(/\s+/).includes(token);
-}
-
-function instanceById(scope: string, id: string) {
-  return instancesInScope(scope).find((inst) => inst.id === id) ?? null;
 }
 
 function envTruthy(name: string) {
@@ -445,11 +468,13 @@ function cmdTasks(flags: Flags) {
   }
 }
 
-function taskRequestOpts(flags: Flags, insts: InstRow[]) {
+function taskRequestOpts(flags: Flags, insts: InstRow[], requester: InstRow) {
   const assignee = flags.assignee ? resolveInstanceRef(flags.assignee, insts) : undefined;
   return {
     ...(flags.description ? { description: flags.description } : {}),
-    ...(flags.files.length ? { files: flags.files } : {}),
+    ...(flags.files.length
+      ? { files: flags.files.map((file) => resolveFileForInstance(requester, file)) }
+      : {}),
     ...(assignee ? { assignee } : {}),
     ...(Number.isFinite(flags.priority) ? { priority: flags.priority } : {}),
     ...(splitCsv(flags.dependsOn) ? { depends_on: splitCsv(flags.dependsOn) } : {}),
@@ -462,6 +487,7 @@ function taskRequestOpts(flags: Flags, insts: InstRow[]) {
 function cmdRequestTask(flags: Flags) {
   const scope = resolveScope(flags);
   const requester = resolveIdentity(scope, flags);
+  const requesterInst = instanceById(scope, requester);
   const insts = instancesInScope(scope);
 
   const typeFromPosition = flags.positional[1];
@@ -470,17 +496,32 @@ function cmdRequestTask(flags: Flags) {
   const title = titleParts.join(" ").trim();
   if (!title) throw new Error("request-task <type> <title...>");
 
+  const requestOpts = taskRequestOpts(flags, insts, requesterInst);
   const result = taskStore.request(
     requester,
     scope,
     taskType,
     title,
-    taskRequestOpts(flags, insts),
+    requestOpts,
   );
   if ("error" in result) throw new Error(result.error);
 
+  const promptResult =
+    requestOpts.assignee && !result.existing && requestOpts.assignee !== requester
+      ? dispatch.promptPeerResult({
+          scope,
+          sender: requester,
+          recipient: requestOpts.assignee,
+          task: result.id,
+          message: `[auto] New ${taskType} task assigned to you: "${title}" (task_id: ${result.id})${
+            result.status !== "claimed" ? ` (currently ${result.status} — will be claimable when ready)` : ""
+          }. Claim it with claim_task if not auto-claimed.`,
+          nudge: flags.nudge,
+          force: flags.force,
+        })
+      : null;
   const task = taskStore.get(result.id, scope);
-  if (flags.json) return printJson({ ...result, task });
+  if (flags.json) return printJson({ ...result, task, ...(promptResult ? { prompt: promptResult } : {}) });
   console.log(`${result.existing ? "existing" : "created"} task ${result.id} [${result.status}] ${title}`);
 }
 
@@ -513,6 +554,7 @@ function cmdContext(flags: Flags) {
 async function cmdDispatch(flags: Flags) {
   const scope = resolveScope(flags);
   const requester = resolveIdentity(scope, flags);
+  const requesterInst = instanceById(scope, requester);
   const taskType = parseTaskType(flags.taskType, "implement");
   const title = flags.positional.slice(1).join(" ").trim();
   if (!title) throw new Error("dispatch <title...> [--message <instructions>]");
@@ -524,7 +566,7 @@ async function cmdDispatch(flags: Flags) {
     title,
     message: flags.message,
     description: flags.description,
-    files: flags.files,
+    files: flags.files.map((file) => resolveFileForInstance(requesterInst, file)),
     priority: flags.priority,
     depends_on: splitCsv(flags.dependsOn),
     idempotency_key: flags.idempotencyKey,
@@ -554,8 +596,11 @@ async function cmdDispatch(flags: Flags) {
       `queued spawn command #${payload.ui_command_id} for task ${payload.task_id}; lock held at ${payload.spawn_lock}`,
     );
   } else if (payload.status === "spawn_in_flight") {
-    const handle = payload.workspace_handle?.pane_id
-      ? ` in herdr pane ${payload.workspace_handle.pane_id}`
+    const workspaceHandle = payload.workspace_handle;
+    const handle = workspaceHandle?.handle
+      ? ` in ${workspaceHandle.backend ?? "workspace"} ${workspaceHandle.handle_kind ?? "handle"} ${workspaceHandle.handle}`
+      : workspaceHandle?.pane_id
+        ? ` in herdr workspace handle ${workspaceHandle.pane_id}`
       : "";
     console.log(`task ${payload.task_id} is ready; spawn already in flight${handle}`);
   } else if (payload.status === "spawn_failed") {
@@ -651,111 +696,6 @@ function cmdBroadcast(flags: Flags) {
   console.log(`broadcast to ${count} recipient(s)`);
 }
 
-function herdrEnv(identity: Record<string, unknown>) {
-  const env = { ...process.env };
-  if (typeof identity.socket_path === "string" && identity.socket_path) {
-    env.HERDR_SOCKET_PATH = identity.socket_path;
-  }
-  return env;
-}
-
-function runHerdr(args: string[], identity: Record<string, unknown>) {
-  return spawnSync("herdr", args, {
-    encoding: "utf8",
-    env: herdrEnv(identity),
-    timeout: 5_000,
-  });
-}
-
-function promptPeerResult(opts: {
-  scope: string;
-  sender: string;
-  recipient: string;
-  message: string;
-  task?: string;
-  nudge: boolean;
-  force: boolean;
-}) {
-  const { scope, sender, recipient, message, task, nudge, force } = opts;
-  const durable = task ? `[task:${task}] ${message}` : message;
-  messages.send(sender, scope, recipient, durable);
-
-  const result: Record<string, unknown> = {
-    message_sent: true,
-    sender,
-    recipient,
-    nudged: false,
-  };
-  if (!nudge) {
-    result.nudge_skipped = "nudge=false";
-    return result;
-  }
-
-  const identityRow = kv.get(scope, `identity/herdr/${recipient}`);
-  if (!identityRow) {
-    result.nudge_skipped = "no herdr identity is published for that instance";
-    return result;
-  }
-
-  let identity: Record<string, unknown>;
-  try {
-    const parsed = JSON.parse(identityRow.value);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("identity is not an object");
-    }
-    identity = parsed as Record<string, unknown>;
-  } catch {
-    result.nudge_skipped = "published herdr identity is not valid JSON";
-    return result;
-  }
-
-  const paneId = identity.pane_id;
-  if (typeof paneId !== "string" || !paneId) {
-    result.nudge_skipped = "published herdr identity has no pane_id";
-    return result;
-  }
-
-  const getProc = runHerdr(["pane", "get", paneId], identity);
-  if (getProc.error || getProc.status !== 0) {
-    result.pane_id = paneId;
-    result.nudge_skipped =
-      getProc.error?.message ||
-      getProc.stderr?.trim() ||
-      getProc.stdout?.trim() ||
-      "herdr pane get failed";
-    return result;
-  }
-
-  let status = "unknown";
-  try {
-    const payload = JSON.parse(getProc.stdout || "{}");
-    const pane = payload?.result?.pane;
-    if (pane && typeof pane.agent_status === "string") status = pane.agent_status;
-  } catch {
-    status = "unknown";
-  }
-  result.pane_id = paneId;
-  result.agent_status = status;
-
-  if (!["idle", "blocked", "done", "unknown"].includes(status) && !force) {
-    result.nudge_skipped = `target pane is ${status}; pass --force to inject anyway`;
-    return result;
-  }
-
-  const wakePrompt = `A peer sent you a swarm message${task ? ` for task ${task}` : ""}. Call the swarm poll_messages tool, handle the message, and report back through swarm-mcp.`;
-  const runProc = runHerdr(["pane", "run", paneId, wakePrompt], identity);
-  if (runProc.error || runProc.status !== 0) {
-    result.nudge_error =
-      runProc.error?.message ||
-      runProc.stderr?.trim() ||
-      runProc.stdout?.trim() ||
-      "herdr pane run failed";
-  } else {
-    result.nudged = true;
-  }
-  return result;
-}
-
 function cmdPromptPeer(flags: Flags) {
   const scope = resolveScope(flags);
   const sender = resolveIdentity(scope, flags);
@@ -766,7 +706,7 @@ function cmdPromptPeer(flags: Flags) {
 
   const insts = instancesInScope(scope);
   const recipient = resolveInstanceRef(recipientRef, insts);
-  const result = promptPeerResult({
+  const result = dispatch.promptPeerResult({
     scope,
     sender,
     recipient,
@@ -778,11 +718,42 @@ function cmdPromptPeer(flags: Flags) {
 
   if (flags.json) return printJson(result);
   const suffix = result.nudged
-    ? " and nudged pane"
+    ? " and nudged workspace handle"
     : result.nudge_skipped
       ? ` (${result.nudge_skipped})`
       : "";
   console.log(`sent ${sender.slice(0, 8)} → ${recipient.slice(0, 8)}${suffix}`);
+}
+
+function cmdResolveWorkspaceHandle(flags: Flags) {
+  const handle = flags.positional[1];
+  if (!handle) throw new Error("resolve-workspace-handle <handle>");
+  const scope = resolveScope(flags);
+  const actor = resolveOptionalIdentity(scope, flags);
+  const result = workspaceIdentity.resolveWorkspaceHandleToSwarm({
+    scope,
+    backend: flags.backend ?? "herdr",
+    handleKind: flags.kind ?? "pane",
+    handle,
+    actor,
+    validate: true,
+  });
+
+  if (flags.json) return printJson(result);
+  if (result.instance_id) {
+    const label = result.matches[0]?.label ? ` (${result.matches[0].label})` : "";
+    console.log(`${result.backend}:${handle} → ${result.instance_id}${label}`);
+    return;
+  }
+  if (result.ambiguous) {
+    console.log(
+      `${result.backend}:${handle} matched multiple swarm instances: ${result.matches
+        .map((match) => formatInst({ id: match.instance_id, label: match.label }))
+        .join(", ")}`,
+    );
+    return;
+  }
+  console.log(`${result.backend}:${handle} did not match a swarm instance`);
 }
 
 function cmdLock(flags: Flags) {
@@ -790,14 +761,18 @@ function cmdLock(flags: Flags) {
   if (!file) throw new Error("lock <file>");
   const scope = resolveScope(flags);
   const inst = resolveIdentity(scope, flags);
-  const res = context.lock(inst, scope, file, flags.note ?? "");
+  const owner = instanceById(scope, inst);
+  const path = resolveFileForInstance(owner, file);
+  const res = context.lock(inst, scope, path, flags.note ?? "", {
+    exclusive: flags.exclusive,
+  });
   if ("error" in res) {
     if (flags.json) return printJson(res);
     console.error(`lock failed: ${res.error}`);
     process.exit(1);
   }
   if (flags.json) return printJson(res);
-  console.log(`locked ${file}`);
+  console.log(`locked ${path}`);
 }
 
 function cmdUnlock(flags: Flags) {
@@ -805,9 +780,11 @@ function cmdUnlock(flags: Flags) {
   if (!file) throw new Error("unlock <file>");
   const scope = resolveScope(flags);
   const inst = resolveIdentity(scope, flags);
-  context.clearLocks(inst, scope, file);
-  if (flags.json) return printJson({ ok: true, file });
-  console.log(`unlocked ${file}`);
+  const owner = instanceById(scope, inst);
+  const path = resolveFileForInstance(owner, file);
+  context.clearLocks(inst, scope, path);
+  if (flags.json) return printJson({ ok: true, file: path });
+  console.log(`unlocked ${path}`);
 }
 
 function cmdInspect(flags: Flags) {
@@ -1046,6 +1023,7 @@ const HANDLERS: Record<Subcommand, (flags: Flags) => void | Promise<void>> = {
   send: cmdSend,
   broadcast: cmdBroadcast,
   "prompt-peer": cmdPromptPeer,
+  "resolve-workspace-handle": cmdResolveWorkspaceHandle,
   lock: cmdLock,
   unlock: cmdUnlock,
   inspect: cmdInspect,

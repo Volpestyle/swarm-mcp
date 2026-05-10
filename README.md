@@ -94,6 +94,7 @@ Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting 
 - [`docs/swarm-server.md`](./docs/swarm-server.md) -- Rust daemon for desktop UI, mobile pairing, PTY streaming, and LAN access
 - [`docs/database-contracts.md`](./docs/database-contracts.md) -- `swarm.db` schema ownership and adoption contract
 - [`docs/design-batch-creation.md`](./docs/design-batch-creation.md) -- design spec for `request_task_batch`
+- [`docs/testing/herdr-swarm-agent-metadata-review.md`](./docs/testing/herdr-swarm-agent-metadata-review.md) -- retrospective from a two-agent Herdr swarm metadata implementation test
 - [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable coordination skill — main `SKILL.md` plus role references (planner, implementer, reviewer, researcher, generalist, roles-and-teams, bootstrap, coordination, cli)
 - [`skills/swarm-deepdive`](./skills/swarm-deepdive) -- installable forensic inspection skill source
 - [`integrations/hermes/`](./integrations/hermes/) and [`integrations/claude-code/`](./integrations/claude-code/) -- runtime plugins (lifecycle, lock bridge, `/swarm` slash command)
@@ -211,7 +212,7 @@ Run `swarm-mcp cleanup --dry-run --json` to inspect what the janitor would remov
 | Tool             | Description                                                   |
 | ---------------- | ------------------------------------------------------------- |
 | `annotate`       | Share findings, warnings, bugs, notes, or todos about a file. |
-| `lock_file`      | Acquire an exclusive file lock and read peer annotations on the file in one call. Locks auto-release on terminal `update_task`. |
+| `lock_file`      | Acquire a file lock and read peer annotations on the file in one call. Re-entrant for the same instance by default; pass `exclusive=true` to conflict on any existing lock (including same-instance) for one-shot mutexes like spawn coordination. Locks auto-release on terminal `update_task`. |
 | `unlock_file`    | Release a file lock early (before the task as a whole completes). |
 | `search_context` | Search annotations by file path or content.                   |
 

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { cleanupContextAnnotations } from "./cleanup";
+import { CLEANUP_POLICY, cleanupContextAnnotations } from "./cleanup";
 import { db } from "./db";
 import { emit } from "./events";
+import { now } from "./time";
 
 export type ContextType =
   | "finding"
@@ -10,6 +11,88 @@ export type ContextType =
   | "note"
   | "bug"
   | "todo";
+
+type ContextRow = {
+  id: string;
+  instance_id: string;
+  file: string;
+  type: string;
+  content: string;
+  created_at: number;
+};
+
+type LockRow = ContextRow & {
+  owner: {
+    id: string;
+    label: string | null;
+    heartbeat: number | null;
+    heartbeat_age_seconds: number | null;
+    stale: boolean;
+    reclaimable: boolean;
+    active: boolean;
+  };
+  active_tasks: Array<{
+    id: string;
+    type: string;
+    title: string;
+    status: string;
+  }>;
+};
+
+function annotations(scope: string, file: string) {
+  return db
+    .query(
+      "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND file = ? AND type != 'lock' ORDER BY created_at DESC, id DESC",
+    )
+    .all(scope, file) as ContextRow[];
+}
+
+function enrichLock(scope: string, row: ContextRow | null): LockRow | null {
+  if (!row) return null;
+
+  const owner = db
+    .query(
+      "SELECT id, label, heartbeat FROM instances WHERE id = ? AND scope = ?",
+    )
+    .get(row.instance_id, scope) as
+    | { id: string; label: string | null; heartbeat: number }
+    | null;
+
+  const age =
+    owner && Number.isFinite(owner.heartbeat) ? Math.max(0, now() - owner.heartbeat) : null;
+  const activeTasks = db
+    .query(
+      `SELECT id, type, title, status
+       FROM tasks
+       WHERE scope = ? AND assignee = ? AND status IN ('claimed', 'in_progress')
+       ORDER BY changed_at DESC
+       LIMIT 5`,
+    )
+    .all(scope, row.instance_id) as LockRow["active_tasks"];
+
+  return {
+    ...row,
+    owner: {
+      id: row.instance_id,
+      label: owner?.label ?? null,
+      heartbeat: owner?.heartbeat ?? null,
+      heartbeat_age_seconds: age,
+      stale: age === null || age > CLEANUP_POLICY.instanceStaleAfterSecs,
+      reclaimable: age === null || age > CLEANUP_POLICY.instanceReclaimAfterSecs,
+      active: owner !== null,
+    },
+    active_tasks: activeTasks,
+  };
+}
+
+function activeLock(scope: string, file: string) {
+  const row = db
+    .query(
+      "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND file = ? AND type = 'lock'",
+    )
+    .get(scope, file) as ContextRow | null;
+  return enrichLock(scope, row);
+}
 
 export function annotate(
   instance: string,
@@ -42,19 +125,23 @@ export function lock(
   scope: string,
   file: string,
   content: string,
+  opts: { exclusive?: boolean } = {},
 ) {
-  db.run(
-    "DELETE FROM context WHERE scope = ? AND file = ? AND type = 'lock' AND instance_id = ?",
-    [scope, file, instance],
-  );
+  // Re-entrant by default: same-instance callers extending their own edit
+  // lock should succeed, so drop their existing row before insert. With
+  // `exclusive: true`, we leave any existing lock — including our own — in
+  // place so the UNIQUE INDEX on (scope, file) WHERE type = 'lock' surfaces
+  // a conflict regardless of `instance_id`.
+  if (!opts.exclusive) {
+    db.run(
+      "DELETE FROM context WHERE scope = ? AND file = ? AND type = 'lock' AND instance_id = ?",
+      [scope, file, instance],
+    );
+  }
 
   // Pull non-lock annotations from peers so the caller doesn't need a
   // separate read round-trip before editing.
-  const annotations = db
-    .query(
-      "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND file = ? AND type != 'lock' ORDER BY created_at DESC, id DESC",
-    )
-    .all(scope, file);
+  const notes = annotations(scope, file);
 
   try {
     const id = annotate(instance, scope, file, "lock", content);
@@ -65,7 +152,7 @@ export function lock(
       subject: file,
       payload: { id, content },
     });
-    return { ok: true as const, id, annotations };
+    return { ok: true as const, id, annotations: notes };
   } catch (err) {
     if (
       !(err instanceof Error) ||
@@ -74,12 +161,7 @@ export function lock(
       throw err;
     }
 
-    const active = db
-      .query(
-        "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND file = ? AND type = 'lock'",
-      )
-      .get(scope, file);
-    return { error: "File is already locked", active, annotations };
+    return { error: "File is already locked", active: activeLock(scope, file), annotations: notes };
   }
 }
 
@@ -89,6 +171,14 @@ export function lookup(scope: string, file: string) {
       "SELECT id, instance_id, file, type, content, created_at FROM context WHERE scope = ? AND file = ? ORDER BY created_at DESC, id DESC",
     )
     .all(scope, file);
+}
+
+export function fileContext(scope: string, file: string) {
+  return {
+    file,
+    active: activeLock(scope, file),
+    annotations: annotations(scope, file),
+  };
 }
 
 export function search(scope: string, pattern: string) {
@@ -138,6 +228,32 @@ export function releaseInstanceLocksForFiles(
         type: "context.lock_released",
         actor: instance,
         subject: file,
+        payload: { released: result.changes, reason: "task_terminal" },
+      });
+    }
+  }
+  return released;
+}
+
+export function releaseInstanceEditLocks(instance: string, scope: string) {
+  const rows = db
+    .query(
+      "SELECT id, file FROM context WHERE scope = ? AND type = 'lock' AND instance_id = ? AND file NOT LIKE '/__swarm/%'",
+    )
+    .all(scope, instance) as Array<{ id: string; file: string }>;
+  let released = 0;
+  for (const row of rows) {
+    const result = db.run(
+      "DELETE FROM context WHERE id = ? AND type = 'lock' AND instance_id = ?",
+      [row.id, instance],
+    );
+    if (result.changes > 0) {
+      released += result.changes;
+      emit({
+        scope,
+        type: "context.lock_released",
+        actor: instance,
+        subject: row.file,
         payload: { released: result.changes, reason: "task_terminal" },
       });
     }

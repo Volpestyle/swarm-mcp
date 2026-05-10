@@ -65,7 +65,27 @@ class HookCoreLifecycleTests(unittest.TestCase):
                 return 0, "", ""
             return 1, "", "unexpected"
 
-        with mock.patch.object(self.core, "run_swarm", side_effect=fake_run):
+        pane_payload = {
+            "result": {
+                "pane": {
+                    "pane_id": "workspace-1",
+                    "workspace_id": "workspace",
+                    "tab_id": "workspace:1",
+                }
+            }
+        }
+        with (
+            mock.patch.object(self.core, "run_swarm", side_effect=fake_run),
+            mock.patch("integrations._shared.swarm_hook_core.shutil.which", return_value="herdr"),
+            mock.patch(
+                "integrations._shared.swarm_hook_core.subprocess.run",
+                return_value=mock.Mock(
+                    returncode=0,
+                    stdout=json.dumps(pane_payload),
+                    stderr="",
+                ),
+            ),
+        ):
             output = self.run_hook(
                 {"session_id": "abc-123", "cwd": "/repo", "source": "startup"}
             )
@@ -76,7 +96,17 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertTrue(meta["herdr_identity_published"])
         self.assertEqual(calls[0][:3], ["register", "/repo", "--label"])
         self.assertIn("test-runtime", calls[0][3])
-        self.assertEqual(calls[1][:3], ["kv", "set", "identity/herdr/inst-1"])
+        self.assertEqual(calls[1][:3], ["kv", "set", "identity/workspace/herdr/inst-1"])
+        self.assertEqual(calls[2][:3], ["kv", "set", "identity/herdr/inst-1"])
+        identity = json.loads(calls[1][3])
+        self.assertEqual(identity["backend"], "herdr")
+        self.assertEqual(identity["handle_kind"], "pane")
+        self.assertEqual(identity["handle"], "workspace-1")
+        self.assertEqual(identity["handle_aliases"], ["pane-1"])
+        self.assertEqual(identity["pane_id"], "workspace-1")
+        self.assertEqual(identity["pane_aliases"], ["pane-1"])
+        self.assertEqual(identity["workspace_id"], "workspace")
+        self.assertEqual(identity["tab_id"], "workspace:1")
         rendered = json.loads(output)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("swarm coordination is active", rendered)
         self.assertIn("Instance `inst-1`", rendered)
@@ -142,8 +172,9 @@ class HookCoreLifecycleTests(unittest.TestCase):
         with mock.patch.object(self.core, "run_swarm", side_effect=fake_run):
             self.core.run_session_end_hook(io.StringIO(json.dumps({"session_id": "abc-123"})))
 
-        self.assertEqual(calls[0][:3], ["kv", "del", "identity/herdr/inst-1"])
-        self.assertEqual(calls[1][:3], ["deregister", "--as", "inst-1"])
+        self.assertEqual(calls[0][:3], ["kv", "del", "identity/workspace/herdr/inst-1"])
+        self.assertEqual(calls[1][:3], ["kv", "del", "identity/herdr/inst-1"])
+        self.assertEqual(calls[2][:3], ["deregister", "--as", "inst-1"])
         self.assertFalse(self.core.session_scratch("abc-123").joinpath("meta.json").exists())
 
     def test_gateway_mode_blocks_inline_writes_unless_mirror_allows_path(self) -> None:

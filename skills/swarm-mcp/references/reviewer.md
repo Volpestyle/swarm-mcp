@@ -25,7 +25,7 @@ For each review task:
 1. `claim_task` — moves the review to `in_progress`.
 2. Read the related implementation task result if referenced.
 3. Prefer structured results with `files_changed`, `test_status`, and `summary`.
-4. To see locks and peer annotations for a file, call `lock_file` on it (the response includes annotations). For read-only inspection in a quiet swarm you can skip the lock.
+4. To see locks and peer annotations for a file, call `get_file_context`. Use `lock_file` only when you need to edit or reserve the file.
 5. Inspect the actual changes, not only the summary.
 6. Focus on correctness, behavioral regressions, missing tests, security/privacy risks, and concurrency/file-collision issues.
 7. Use `annotate` for file-specific findings that future agents should see.

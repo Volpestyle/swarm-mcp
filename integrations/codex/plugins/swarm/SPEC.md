@@ -104,8 +104,8 @@ What does *not* port cleanly:
 
 | Hook | Fires | Plugin behavior |
 |---|---|---|
-| `SessionStart` (matcher: `startup\|resume`) | New or resumed conversation | Compute label/scope/identity; call `swarm-mcp register`; write per-session scratch metadata including `instance_id`; publish `identity/herdr/<instance_id>` if `HERDR_PANE_ID` is present; emit `additionalContext` telling the agent it is registered and should follow the swarm role workflow. |
-| `Stop` | Conversation ends | Best-effort `kv del identity/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
+| `SessionStart` (matcher: `startup\|resume`) | New or resumed conversation | Compute label/scope/identity; call `swarm-mcp register`; write per-session scratch metadata including `instance_id`; publish `identity/workspace/herdr/<instance_id>` if `HERDR_PANE_ID` is present; emit `additionalContext` telling the agent it is registered and should follow the swarm role workflow. |
+| `Stop` | Conversation ends | Best-effort `kv del identity/workspace/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
 | `PreToolUse` (matcher: `apply_patch`) | Before each `apply_patch` dispatch | Parse the patch envelope; if peers exist in scope, `swarm-mcp lock` each path. On conflict, emit `permissionDecision: deny`. |
 | `PostToolUse` (matcher: `apply_patch`) | After each `apply_patch` dispatch | `swarm-mcp unlock` each path the matching pre acquired. |
 
@@ -243,8 +243,8 @@ instance count, task counts, kv key count, and recent message count.
 
 **S6: Stop identity cleanup**
 With `HERDR_PANE_ID` set and the agent having published
-`identity/herdr/<id>`, exiting the session should result in
-`swarm-mcp kv get identity/herdr/<id>` returning empty/error.
+`identity/workspace/herdr/<id>`, exiting the session should result in
+`swarm-mcp kv get identity/workspace/herdr/<id>` returning empty/error.
 
 ### 8.2 Local unit smoke (already passing)
 

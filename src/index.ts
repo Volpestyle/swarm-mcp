@@ -3,7 +3,6 @@ import {
   ResourceTemplate,
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { spawnSync } from "node:child_process";
 import { z } from "zod";
 import { runCleanup } from "./cleanup";
 import { db } from "./db";
@@ -16,6 +15,10 @@ import * as planner from "./planner";
 import * as prompts from "./prompts";
 import * as registry from "./registry";
 import * as tasks from "./tasks";
+import * as workspaceIdentity from "./workspace_identity";
+import { herdrWorkspaceBackend } from "./backends/herdr";
+
+workspaceIdentity.registerBackend(herdrWorkspaceBackend);
 
 let instance: registry.Instance | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -30,11 +33,11 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-const REGISTER_PROMPT = `You are now registered with the swarm. Operate in autonomous mode.
+const REGISTER_PROMPT = `You are now registered with the swarm and should operate in autonomous mode.
 
-Rehydrate via \`bootstrap\` (single atomic \`{instance, peers, unread_messages, tasks}\` call). When idle, use \`wait_for_activity\` as the loop. Stop only when the overall goal is complete or the user says so.
-
-Load the \`swarm-mcp\` skill for the full coordination playbook. If your runtime cannot load skills, fetch the \`protocol\` prompt from this MCP server for an inline fallback.`;
+Rehydrate first: poll_messages, list_tasks, list_instances, and any role-specific KV keys you rely on.
+When idle, wait_for_activity is an optimization, not the delivery guarantee. Peers may wake you only to tell you to poll swarm state; react to messages and task changes immediately.
+Only stop when the overall goal is complete or the user explicitly tells you to stop.`;
 
 function missing() {
   return {
@@ -64,6 +67,60 @@ function respond(text: string) {
 
 function respondJson(value: unknown) {
   return respond(JSON.stringify(value, null, 2));
+}
+
+function autoPromptPeer(opts: {
+  scope: string;
+  sender: string;
+  recipient: string;
+  message: string;
+  task?: string;
+}) {
+  return dispatch.promptPeerResult({
+    ...opts,
+    nudge: true,
+    force: false,
+  });
+}
+
+function assignedBlockedTasks(scope: string) {
+  const blocked = new Map<string, { assignee: string; title: string; type: string }>();
+  for (const task of tasks.list(scope, { status: "blocked" })) {
+    const id = typeof task.id === "string" ? task.id : "";
+    const assignee = typeof task.assignee === "string" ? task.assignee : "";
+    const title = typeof task.title === "string" ? task.title : "";
+    const type = typeof task.type === "string" ? task.type : "";
+    if (id && assignee) blocked.set(id, { assignee, title, type });
+  }
+  return blocked;
+}
+
+function notifyAssignedUnblockedTasks(opts: {
+  scope: string;
+  sender: string;
+  before: Map<string, { assignee: string; title: string; type: string }>;
+}) {
+  const prompts: Array<Record<string, unknown>> = [];
+  for (const task of tasks.list(opts.scope, { status: "claimed" })) {
+    const id = typeof task.id === "string" ? task.id : "";
+    const assignee = typeof task.assignee === "string" ? task.assignee : "";
+    if (!id || !assignee || assignee === opts.sender) continue;
+    const prior = opts.before.get(id);
+    if (!prior || prior.assignee !== assignee) continue;
+
+    prompts.push({
+      task_id: id,
+      recipient: assignee,
+      prompt: autoPromptPeer({
+        scope: opts.scope,
+        sender: opts.sender,
+        recipient: assignee,
+        task: id,
+        message: `[auto] Task "${prior.title}" (${id}) is unblocked and claimed by you. Call claim_task to start it.`,
+      }),
+    });
+  }
+  return prompts;
 }
 
 function resource<T>(text: T, uri: string) {
@@ -673,13 +730,13 @@ registeredTool(
 
 registeredTool(
   "prompt_peer",
-  "Send a durable swarm message to another instance, then best-effort wake its herdr pane if it published identity/herdr/<instance_id>.",
+  "Send a durable swarm message to another instance, then best-effort wake its published workspace handle when supported.",
   {
     recipient: z.string().describe("Target swarm instance id"),
     message: z.string().describe("Instruction to send through swarm"),
     task_id: z.string().optional().describe("Optional related swarm task id"),
-    nudge: z.boolean().optional().default(true).describe("Whether to wake the target herdr pane"),
-    force: z.boolean().optional().default(false).describe("Wake even when the target pane is working"),
+    nudge: z.boolean().optional().default(true).describe("Whether to wake the target workspace handle"),
+    force: z.boolean().optional().default(false).describe("Wake even when the target workspace handle is working"),
   },
   async ({ recipient, message, task_id, nudge, force }) => {
     const current = instance!;
@@ -691,93 +748,53 @@ registeredTool(
       return respondJson({ error: "Cannot prompt yourself" });
     }
 
-    const durable = task_id ? `[task:${task_id}] ${message}` : message;
-    messages.send(current.id, current.scope, target.id, durable);
+    return respondJson(
+      dispatch.promptPeerResult({
+        scope: current.scope,
+        sender: current.id,
+        recipient: target.id,
+        message,
+        task: task_id,
+        nudge,
+        force,
+      }),
+    );
+  },
+);
 
-    const result: Record<string, unknown> = {
-      message_sent: true,
-      recipient: target.id,
-      nudged: false,
-    };
-    if (!nudge) {
-      result.nudge_skipped = "nudge=false";
-      return respondJson(result);
-    }
-
-    const identityRow = kv.get(current.scope, `identity/herdr/${target.id}`);
-    if (!identityRow) {
-      result.nudge_skipped = "no herdr identity is published for that instance";
-      return respondJson(result);
-    }
-
-    let identity: Record<string, unknown>;
-    try {
-      const parsed = JSON.parse(identityRow.value);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("identity is not an object");
-      }
-      identity = parsed as Record<string, unknown>;
-    } catch {
-      result.nudge_skipped = "published herdr identity is not valid JSON";
-      return respondJson(result);
-    }
-
-    const paneId = identity.pane_id;
-    if (typeof paneId !== "string" || !paneId) {
-      result.nudge_skipped = "published herdr identity has no pane_id";
-      return respondJson(result);
-    }
-
-    const env = { ...process.env };
-    if (typeof identity.socket_path === "string" && identity.socket_path) {
-      env.HERDR_SOCKET_PATH = identity.socket_path;
-    }
-    const herdrBin = process.env.SWARM_HERDR_BIN?.trim() || "herdr";
-    const getProc = spawnSync(herdrBin, ["pane", "get", paneId], {
-      encoding: "utf8",
-      env,
-      timeout: 5_000,
-    });
-    result.pane_id = paneId;
-    if (getProc.error || getProc.status !== 0) {
-      result.nudge_skipped =
-        getProc.error?.message ||
-        getProc.stderr?.trim() ||
-        getProc.stdout?.trim() ||
-        "herdr pane get failed";
-      return respondJson(result);
-    }
-
-    let status = "unknown";
-    try {
-      const payload = JSON.parse(getProc.stdout || "{}");
-      const pane = payload?.result?.pane;
-      if (pane && typeof pane.agent_status === "string") status = pane.agent_status;
-    } catch {
-      status = "unknown";
-    }
-    result.agent_status = status;
-    if (!["idle", "blocked", "done", "unknown"].includes(status) && !force) {
-      result.nudge_skipped = `target pane is ${status}; pass force=true to inject anyway`;
-      return respondJson(result);
-    }
-
-    const wakePrompt = `A peer sent you a swarm message${task_id ? ` for task ${task_id}` : ""}. Call the swarm poll_messages tool, handle the message, and report back through swarm-mcp.`;
-    const runProc = spawnSync(herdrBin, ["pane", "run", paneId, wakePrompt], {
-      encoding: "utf8",
-      env,
-      timeout: 5_000,
-    });
-    if (runProc.error || runProc.status !== 0) {
-      result.nudge_error =
-        runProc.error?.message ||
-        runProc.stderr?.trim() ||
-        runProc.stdout?.trim() ||
-        "herdr pane run failed";
-    } else {
-      result.nudged = true;
-    }
-    return respondJson(result);
+registeredTool(
+  "resolve_workspace_handle",
+  "Resolve a transport-local workspace handle to the matching swarm instance by validating published workspace identity mappings.",
+  {
+    backend: z
+      .string()
+      .optional()
+      .default("herdr")
+      .describe("Workspace backend name. The current bundled backend is herdr."),
+    handle_kind: z
+      .string()
+      .optional()
+      .default("pane")
+      .describe("Type of workspace handle, such as pane"),
+    handle: z.string().describe("Transport-local workspace handle from the backend"),
+    validate: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Validate published identities through the backend and repair stale aliases"),
+  },
+  async ({ backend, handle_kind, handle, validate }) => {
+    const current = instance!;
+    return respondJson(
+      workspaceIdentity.resolveWorkspaceHandleToSwarm({
+        scope: current.scope,
+        backend,
+        handleKind: handle_kind,
+        handle,
+        actor: current.id,
+        validate,
+      }),
+    );
   },
 );
 
@@ -858,24 +875,27 @@ registeredTool(
       return { content: [{ type: "text", text: result.error }] };
     }
 
-    // Auto-notify only for newly-created tasks assigned to another session.
+    let promptResult: Record<string, unknown> | null = null;
+    // Auto-notify and wake only for newly-created tasks assigned to another session.
     if (assignee && !result.existing && assignee !== current.id) {
       const statusNote =
         result.status !== "claimed"
           ? ` (currently ${result.status} — will be claimable when ready)`
           : "";
-      messages.send(
-        current.id,
-        current.scope,
-        assignee,
-        `[auto] New ${type} task assigned to you: "${title}" (task_id: ${result.id})${statusNote}. Claim it with claim_task if not auto-claimed.`,
-      );
+      promptResult = autoPromptPeer({
+        scope: current.scope,
+        sender: current.id,
+        recipient: assignee,
+        task: result.id,
+        message: `[auto] New ${type} task assigned to you: "${title}" (task_id: ${result.id})${statusNote}. Claim it with claim_task if not auto-claimed.`,
+      });
     }
 
     return respondJson({
       task_id: result.id,
       status: result.status,
       ...(result.existing ? { existing: true } : {}),
+      ...(promptResult ? { prompt: promptResult } : {}),
     });
   },
 );
@@ -915,7 +935,7 @@ registeredTool(
       return respondJson(result);
     }
 
-    // Send auto-notifications grouped by assignee
+    // Send auto-notifications grouped by assignee, with best-effort wakeups.
     const notifs = new Map<string, string[]>();
     for (let i = 0; i < taskSpecs.length; i++) {
       const spec = taskSpecs[i];
@@ -930,18 +950,22 @@ registeredTool(
         notifs.set(spec.assignee, list);
       }
     }
+    const prompts: Array<Record<string, unknown>> = [];
     for (const [assignee, taskList] of notifs) {
       if (assignee !== current.id) {
-        messages.send(
-          current.id,
-          current.scope,
-          assignee,
-          `[auto] ${taskList.length} task(s) assigned to you: ${taskList.join(", ")}. Claim open tasks with claim_task.`,
-        );
+        prompts.push({
+          recipient: assignee,
+          prompt: autoPromptPeer({
+            scope: current.scope,
+            sender: current.id,
+            recipient: assignee,
+            message: `[auto] ${taskList.length} task(s) assigned to you: ${taskList.join(", ")}. Claim open tasks with claim_task.`,
+          }),
+        });
       }
     }
 
-    return respondJson(result);
+    return respondJson({ ...result, ...(prompts.length ? { prompts } : {}) });
   },
 );
 
@@ -987,12 +1011,12 @@ registeredTool(
       .min(0)
       .optional()
       .describe("Seconds to wait for worker spawn/adoption; defaults depend on spawner"),
-    nudge: z.boolean().optional().default(true).describe("Wake live worker pane"),
+    nudge: z.boolean().optional().default(true).describe("Wake live worker handle"),
     force: z
       .boolean()
       .optional()
       .default(false)
-      .describe("Wake even when target pane is busy"),
+      .describe("Wake even when target workspace handle is busy"),
   },
   async (args) => {
     const current = instance!;
@@ -1063,6 +1087,7 @@ registeredTool(
   },
   async ({ task_id, status, result }) => {
     const current = instance!;
+    const blockedBefore = status === "done" ? assignedBlockedTasks(current.scope) : new Map();
     const next = tasks.update(
       task_id,
       current.scope,
@@ -1071,20 +1096,34 @@ registeredTool(
       result,
     );
 
-    // Auto-notify the requester when a task reaches a terminal state
+    if (!("ok" in next)) return respondJson(next);
+
+    const response: Record<string, unknown> = { ...next };
+
+    // Auto-notify and wake the requester when a task reaches a terminal state.
     if ("ok" in next && (status === "done" || status === "failed")) {
       const task = tasks.get(task_id, current.scope);
       if (task && typeof task.requester === "string" && task.requester !== current.id) {
-        messages.send(
-          current.id,
-          current.scope,
-          task.requester,
-          `[auto] Task "${task.title}" (${task_id}) is now ${status}.${result ? ` Result: ${result}` : ""}`,
-        );
+        response.prompt = autoPromptPeer({
+          scope: current.scope,
+          sender: current.id,
+          recipient: task.requester,
+          task: task_id,
+          message: `[auto] Task "${task.title}" (${task_id}) is now ${status}.${result ? ` Result: ${result}` : ""}`,
+        });
       }
     }
 
-    return respondJson(next);
+    if (status === "done") {
+      const unblockedPrompts = notifyAssignedUnblockedTasks({
+        scope: current.scope,
+        sender: current.id,
+        before: blockedBefore,
+      });
+      if (unblockedPrompts.length) response.unblocked_prompts = unblockedPrompts;
+    }
+
+    return respondJson(response);
   },
 );
 
@@ -1096,7 +1135,8 @@ registeredTool(
     const current = instance!;
     const result = tasks.approve(task_id, current.scope);
 
-    // Auto-notify the assignee if task became claimed
+    // Auto-notify and wake the assignee if task became claimed.
+    let promptResult: Record<string, unknown> | null = null;
     if ("ok" in result && result.status === "claimed") {
       const task = tasks.get(task_id, current.scope);
       if (
@@ -1104,16 +1144,17 @@ registeredTool(
         typeof task.assignee === "string" &&
         task.assignee !== current.id
       ) {
-        messages.send(
-          current.id,
-          current.scope,
-          task.assignee,
-          `[auto] Task "${task.title}" (${task_id}) has been approved and is now claimed by you.`,
-        );
+        promptResult = autoPromptPeer({
+          scope: current.scope,
+          sender: current.id,
+          recipient: task.assignee,
+          task: task_id,
+          message: `[auto] Task "${task.title}" (${task_id}) has been approved and is now claimed by you.`,
+        });
       }
     }
 
-    return respondJson(result);
+    return respondJson({ ...result, ...(promptResult ? { prompt: promptResult } : {}) });
   },
 );
 
@@ -1174,13 +1215,32 @@ registeredTool(
 );
 
 registeredTool(
+  "get_file_context",
+  "Read active lock and peer annotations for a file without acquiring an edit lock. Use this for review, planning, or conflict inspection when you are not about to edit the file.",
+  {
+    file: z.string().describe("File path to inspect"),
+  },
+  { readOnlyHint: true },
+  async ({ file }) => {
+    const current = instance!;
+    return respondJson(context.fileContext(current.scope, resolveFileInput(file)));
+  },
+);
+
+registeredTool(
   "lock_file",
-  "Acquire an edit lock on a file and read existing peer annotations in one call. Returns the new lock id plus any non-lock annotations on the file. Locks held by this instance are auto-released when its task reaches a terminal state via update_task.",
+  "Acquire an edit lock on a file and read existing peer annotations in one call. Returns the new lock id plus any non-lock annotations on the file. Normal edit locks held by this instance are auto-released when its task reaches a terminal state via update_task. Pass exclusive=true to require that no lock exists on the file (including one held by this same instance) — useful for one-shot operations like spawn mutexes where same-instance re-entry is itself a conflict.",
   {
     file: z.string().describe("File path to lock"),
     reason: z.string().optional().describe("Why you're locking it"),
+    exclusive: z
+      .boolean()
+      .optional()
+      .describe(
+        "If true, conflict on ANY existing lock for the file — including one held by this same instance. Default false keeps re-entrant semantics.",
+      ),
   },
-  async ({ file, reason }) => {
+  async ({ file, reason, exclusive }) => {
     const current = instance!;
     const path = resolveFileInput(file);
     const result = context.lock(
@@ -1188,6 +1248,7 @@ registeredTool(
       current.scope,
       path,
       reason ?? "actively editing",
+      { exclusive: exclusive ?? false },
     );
     return respondJson(result);
   },

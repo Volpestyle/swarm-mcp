@@ -488,35 +488,117 @@ class HookCore:
             return {}
         return parsed if isinstance(parsed, dict) else {}
 
-    def _herdr_identity(self) -> dict[str, str]:
+    def _herdr_identity(self) -> dict[str, object]:
         herdr_pane = os.environ.get("HERDR_PANE_ID") or os.environ.get("HERDR_PANE")
         if not herdr_pane:
             return {}
-        payload: dict[str, str] = {"pane_id": herdr_pane}
+        payload: dict[str, object] = {
+            "schema_version": 1,
+            "backend": "herdr",
+            "handle_kind": "pane",
+            "handle": herdr_pane,
+            "pane_id": herdr_pane,
+        }
         socket_path = os.environ.get("HERDR_SOCKET_PATH")
         if socket_path:
             payload["socket_path"] = socket_path
         workspace_id = os.environ.get("HERDR_WORKSPACE_ID")
         if workspace_id:
             payload["workspace_id"] = workspace_id
-        return payload
+        return self._canonicalize_herdr_identity(payload, herdr_pane)
+
+    def _canonicalize_herdr_identity(
+        self, identity: dict[str, object], requested_pane_id: str
+    ) -> dict[str, object]:
+        herdr_bin = os.environ.get("SWARM_HERDR_BIN") or shutil.which("herdr")
+        if not herdr_bin:
+            return identity
+
+        env = os.environ.copy()
+        socket_path = identity.get("socket_path")
+        if isinstance(socket_path, str) and socket_path:
+            env["HERDR_SOCKET_PATH"] = socket_path
+        try:
+            proc = subprocess.run(
+                [herdr_bin, "pane", "get", requested_pane_id],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env=env,
+            )
+        except Exception:
+            return identity
+        if proc.returncode != 0:
+            return identity
+
+        try:
+            payload = json.loads(proc.stdout or "{}")
+        except json.JSONDecodeError:
+            return identity
+        pane = payload.get("result", {}).get("pane") if isinstance(payload, dict) else None
+        if not isinstance(pane, dict):
+            return identity
+
+        canonical = pane.get("pane_id") or pane.get("id") or requested_pane_id
+        if not isinstance(canonical, str) or not canonical:
+            return identity
+
+        next_identity = dict(identity)
+        prior_handle = next_identity.get("handle")
+        prior_pane = next_identity.get("pane_id")
+        raw_handle_aliases = next_identity.get("handle_aliases")
+        raw_pane_aliases = next_identity.get("pane_aliases")
+        existing_aliases = []
+        if isinstance(raw_handle_aliases, list):
+            existing_aliases.extend(raw_handle_aliases)
+        if isinstance(raw_pane_aliases, list):
+            existing_aliases.extend(raw_pane_aliases)
+        aliases = [
+            item
+            for item in [
+                *existing_aliases,
+                prior_handle if prior_handle != canonical else None,
+                prior_pane if prior_pane != canonical else None,
+                requested_pane_id if requested_pane_id != canonical else None,
+            ]
+            if isinstance(item, str) and item
+        ]
+        next_identity["backend"] = "herdr"
+        next_identity["handle_kind"] = "pane"
+        next_identity["handle"] = canonical
+        next_identity["pane_id"] = canonical
+        if aliases:
+            unique_aliases = sorted(set(aliases))
+            next_identity["handle_aliases"] = unique_aliases
+            next_identity["pane_aliases"] = unique_aliases
+        workspace_id = pane.get("workspace_id")
+        if isinstance(workspace_id, str) and workspace_id:
+            next_identity["workspace_id"] = workspace_id
+        tab_id = pane.get("tab_id")
+        if isinstance(tab_id, str) and tab_id:
+            next_identity["tab_id"] = tab_id
+        return next_identity
 
     def _publish_herdr_identity(self, instance_id: str, scope: str) -> bool:
         identity = self._herdr_identity()
         if not identity:
             return False
         blob = json.dumps(identity, separators=(",", ":"))
-        args = ["kv", "set", f"identity/herdr/{instance_id}", blob, "--as", instance_id]
-        if scope:
-            args.extend(["--scope", scope])
-        rc, _, _ = self.run_swarm(args, timeout=4.0)
-        return rc == 0
+        ok = True
+        for key in [f"identity/workspace/herdr/{instance_id}", f"identity/herdr/{instance_id}"]:
+            args = ["kv", "set", key, blob, "--as", instance_id]
+            if scope:
+                args.extend(["--scope", scope])
+            rc, _, _ = self.run_swarm(args, timeout=4.0)
+            ok = ok and rc == 0
+        return ok
 
     def _delete_herdr_identity(self, instance_id: str, scope: str) -> None:
-        args = ["kv", "del", f"identity/herdr/{instance_id}", "--as", instance_id]
-        if scope:
-            args.extend(["--scope", scope])
-        self.run_swarm(args, timeout=4.0)
+        for key in [f"identity/workspace/herdr/{instance_id}", f"identity/herdr/{instance_id}"]:
+            args = ["kv", "del", key, "--as", instance_id]
+            if scope:
+                args.extend(["--scope", scope])
+            self.run_swarm(args, timeout=4.0)
 
     def _deregister_instance(self, instance_id: str, scope: str) -> None:
         args = ["deregister", "--as", instance_id, "--json"]
@@ -549,7 +631,7 @@ class HookCore:
             ]
             if meta.get("herdr_identity_published"):
                 lines.append(
-                    f"Herdr identity published at `identity/herdr/{instance_id}` for peer wakeups."
+                    f"Workspace identity published at `identity/workspace/herdr/{instance_id}` for peer wakeups."
                 )
         else:
             _, register_args = self._register_args(session_id, cwd)
@@ -599,8 +681,8 @@ class HookCore:
             lines.extend(
                 [
                     "",
-                    "After `register` returns an instance id, also publish your herdr pane handle:",
-                    f'`kv_set key="identity/herdr/<id>" value=\'{blob}\'`',
+                    "After `register` returns an instance id, also publish your workspace handle:",
+                    f'`kv_set key="identity/workspace/herdr/<id>" value=\'{blob}\'`',
                 ]
             )
 

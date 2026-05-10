@@ -94,7 +94,7 @@ When an implementer sends a `review` task:
 
 - `claim_task` — this moves the review to `in_progress`.
 - Read the implementation task `result`; prefer structured JSON with `files_changed`, `test_status`, and `summary`.
-- Call `lock_file` on each touched file you want to inspect; the response includes peer annotations. (You can skip locking if you're only reading and other peers aren't actively editing.)
+- Call `get_file_context` on each touched file you want to inspect without editing. Use `lock_file` only if you are going to edit or need to reserve the file.
 - Inspect the actual changes.
 - If approved, `update_task` the review to `done`.
 - If changes are needed, `update_task` the review to `failed` and create a follow-up `fix` task.

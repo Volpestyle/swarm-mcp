@@ -69,7 +69,7 @@ Writes (require an identity):
 | `swarm-mcp request-task <type> <title...> [--description D] [--file P] [--priority N] [--idempotency-key K]` | Create a task as the current identity. |
 | `swarm-mcp dispatch <title...> [--message M] [--type T] [--role R] [--spawner herdr\|swarm-ui] [--harness H] [--idempotency-key K] [--no-spawn] [--wait N]` | Create/reuse a task, wake a live `role:R` worker, or spawn through the configured backend. |
 | `swarm-mcp send --to <who> <content...>` | Send a direct message. |
-| `swarm-mcp prompt-peer --to <who> --message <text> [--task ID] [--force] [--no-nudge]` | Send a durable direct message, then best-effort wake the target's published herdr pane. |
+| `swarm-mcp prompt-peer --to <who> --message <text> [--task ID] [--force] [--no-nudge]` | Send a durable direct message, then best-effort wake the target's published workspace handle. |
 | `swarm-mcp broadcast <content...>` | Fan out to every other instance in scope. |
 | `swarm-mcp kv set <key> <value>` | Set a KV entry. |
 | `swarm-mcp kv append <key> <json>` | Append to a KV array value. |
@@ -113,9 +113,11 @@ Ambiguous matches error with the list of candidates.
 
 ## Peer wakeups
 
-`prompt-peer` is the CLI equivalent of the MCP `prompt_peer` tool. It always sends the real instruction through swarm messages first. If the target has published `identity/herdr/<instance_id>` in KV, the command then asks herdr for the pane status and injects only a short wake prompt telling the worker to call `poll_messages`.
+`prompt-peer` is the CLI equivalent of the MCP `prompt_peer` tool. It always sends the real instruction through swarm messages first. If the target has published a workspace identity row such as `identity/workspace/herdr/<instance_id>` in KV, the command then asks the backend for handle status and injects only a short wake prompt telling the worker to call `poll_messages`.
 
-The work contract should live in the swarm message or task, not in raw pane input. If no herdr identity exists, the message is still delivered and the nudge is skipped. If the target pane is `working`, the nudge is skipped unless `--force` is passed.
+The work contract should live in the swarm message or task, not in raw workspace input. If no workspace identity exists, the message is still delivered and the nudge is skipped. If the target handle is `working`, the nudge is skipped unless `--force` is passed. If the published handle is an alias, `prompt-peer` validates it with the backend, rewrites the canonical `handle`, and preserves the old value in `handle_aliases`.
+
+Use `resolve-workspace-handle <handle> --backend herdr --kind pane` when the user identifies a visible workspace handle rather than a swarm instance, for example "the pane next to you." First use the workspace backend to determine the relevant handle, then map that transport handle back to a durable swarm `instance_id`.
 
 ## Dispatch Helper
 

@@ -790,6 +790,162 @@ describe("locks", () => {
       ok: true,
     });
   });
+
+  test("default lock is re-entrant for the same instance", () => {
+    const a = reg("one", "scope-a");
+    const file = paths.file(a.directory, "src/index.ts");
+
+    const first = context.lock(a.id, a.scope, file, "editing");
+    expect(first).toMatchObject({ ok: true });
+
+    const second = context.lock(a.id, a.scope, file, "still editing");
+    expect(second).toMatchObject({ ok: true });
+    if ("ok" in second) {
+      expect(second.id).not.toBe("id" in first ? first.id : "");
+    }
+  });
+
+  test("exclusive=true conflicts on same-instance re-entry", () => {
+    const a = reg("one", "scope-a");
+    const file = paths.file(a.directory, "src/index.ts");
+
+    expect(context.lock(a.id, a.scope, file, "first")).toMatchObject({
+      ok: true,
+    });
+    const result = context.lock(a.id, a.scope, file, "second", {
+      exclusive: true,
+    });
+    expect(result).toMatchObject({ error: "File is already locked" });
+    if ("error" in result) {
+      expect((result.active as { instance_id: string }).instance_id).toBe(a.id);
+    }
+  });
+
+  test("exclusive=true conflicts on different-instance lock", () => {
+    const a = reg("one", "scope-a");
+    const b = reg("two", "scope-a");
+    const file = paths.file(a.directory, "src/index.ts");
+
+    expect(context.lock(a.id, a.scope, file, "editing")).toMatchObject({
+      ok: true,
+    });
+    expect(
+      context.lock(b.id, b.scope, file, "editing", { exclusive: true }),
+    ).toMatchObject({ error: "File is already locked" });
+  });
+
+  test("exclusive=true succeeds when no lock exists", () => {
+    const a = reg("one", "scope-a");
+    const file = paths.file(a.directory, "src/index.ts");
+
+    expect(
+      context.lock(a.id, a.scope, file, "spawning", { exclusive: true }),
+    ).toMatchObject({ ok: true });
+
+    expect(
+      context.lock(a.id, a.scope, file, "spawning again", { exclusive: true }),
+    ).toMatchObject({ error: "File is already locked" });
+  });
+
+  test("clearLocks releases an exclusive lock", () => {
+    const a = reg("one", "scope-a");
+    const b = reg("two", "scope-a");
+    const file = paths.file(a.directory, "src/index.ts");
+
+    expect(
+      context.lock(a.id, a.scope, file, "spawning", { exclusive: true }),
+    ).toMatchObject({ ok: true });
+
+    context.clearLocks(a.id, a.scope, file);
+
+    expect(
+      context.lock(b.id, b.scope, file, "editing", { exclusive: true }),
+    ).toMatchObject({ ok: true });
+  });
+
+  test("lock conflict includes owner and active task context", () => {
+    const requester = reg("requester", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const other = reg("other", "scope-a");
+    const file = paths.file(worker.directory, "src/index.ts");
+    const { id } = req(requester.id, requester.scope, "fix", "Fix bug", {
+      files: [file],
+      assignee: worker.id,
+    });
+    expect(
+      tasks.claim(id, worker.scope, worker.id, { ignoreUnreadMessages: true }),
+    ).toEqual({ ok: true });
+
+    expect(context.lock(worker.id, worker.scope, file, "editing")).toMatchObject({
+      ok: true,
+    });
+    const result = context.lock(other.id, other.scope, file, "editing");
+
+    expect(result).toMatchObject({ error: "File is already locked" });
+    if ("error" in result) {
+      expect(result.active).toMatchObject({
+        instance_id: worker.id,
+        owner: {
+          id: worker.id,
+          label: "worker",
+          active: true,
+          stale: false,
+          reclaimable: false,
+        },
+        active_tasks: [{ id, status: "in_progress" }],
+      });
+    }
+  });
+
+  test("fileContext reads lock and annotations without acquiring a lock", () => {
+    const a = reg("one", "scope-a");
+    const b = reg("two", "scope-a");
+    const file = paths.file(a.directory, "src/index.ts");
+
+    context.annotate(b.id, b.scope, file, "note", "watch imports");
+    expect(context.lock(a.id, a.scope, file, "editing")).toMatchObject({
+      ok: true,
+    });
+
+    expect(context.fileContext(a.scope, file)).toMatchObject({
+      file,
+      active: { instance_id: a.id },
+      annotations: [{ instance_id: b.id, type: "note", content: "watch imports" }],
+    });
+  });
+
+  test("terminal task update releases edit locks but keeps internal locks", () => {
+    const requester = reg("requester", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const fileA = paths.file(worker.directory, "src/index.ts");
+    const fileB = paths.file(worker.directory, "src/context.ts");
+    const internal = "/__swarm/spawn/implementer/hash";
+    const { id } = req(requester.id, requester.scope, "fix", "Fix bug", {
+      files: [fileA],
+      assignee: worker.id,
+    });
+    expect(
+      tasks.claim(id, worker.scope, worker.id, { ignoreUnreadMessages: true }),
+    ).toEqual({ ok: true });
+
+    expect(context.lock(worker.id, worker.scope, fileA, "editing")).toMatchObject({
+      ok: true,
+    });
+    expect(context.lock(worker.id, worker.scope, fileB, "editing")).toMatchObject({
+      ok: true,
+    });
+    expect(context.lock(worker.id, worker.scope, internal, "spawning")).toMatchObject({
+      ok: true,
+    });
+
+    expect(tasks.update(id, worker.scope, worker.id, "done")).toEqual({ ok: true });
+
+    expect(context.lookup(worker.scope, fileA)).toEqual([]);
+    expect(context.lookup(worker.scope, fileB)).toEqual([]);
+    expect(context.lookup(worker.scope, internal)).toMatchObject([
+      { type: "lock", instance_id: worker.id },
+    ]);
+  });
 });
 
 describe("batch creation", () => {

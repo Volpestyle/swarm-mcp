@@ -17,15 +17,15 @@ For the full design — architecture, lifecycle contract, role topology (worker 
 | Auto-`register` on session start | `on_session_start` hook → `mcp_swarm_register` |
 | Auto-`deregister` on session finalization | `on_session_finalize` hook → `mcp_swarm_deregister` |
 | Auto-lock write-like file tools when peers are active | `pre_tool_call` → `mcp_swarm_lock_file`, `post_tool_call` → `mcp_swarm_unlock_file` |
-| Publish herdr pane identity for this swarm instance | `on_session_start` → `mcp_swarm_kv_set identity/herdr/<instance_id>` when `HERDR_PANE_ID` is present |
-| Express-lane peer prompt | `swarm_prompt_peer` tool → `mcp_swarm_send_message`, then best-effort `herdr pane run` wake-up |
+| Publish workspace identity for this swarm instance | `on_session_start` → `mcp_swarm_kv_set identity/workspace/herdr/<instance_id>` when `HERDR_PANE_ID` is present |
+| Express-lane peer prompt | `swarm_prompt_peer` tool → `mcp_swarm_send_message`, then best-effort workspace backend wake-up (`herdr pane run` today) |
 | `/swarm` slash command (status/instances/tasks/kv/messages) | shells to `swarm-mcp` CLI, no agent turn |
 
 Failures are logged and swallowed — coordination is opt-in convenience, never critical path.
 
-`swarm_prompt_peer` does not replace `wait_for_activity`. It writes the durable swarm message first, then nudges the target pane only if that instance has published a herdr identity and the pane is not actively working. If herdr is unavailable, the message remains in swarm for the worker's normal inbox loop.
+`swarm_prompt_peer` does not replace `wait_for_activity`. It writes the durable swarm message first, then nudges the target workspace handle only if that instance has published a workspace identity and the handle is not actively working. If the backend is unavailable, the message remains in swarm for the worker's normal inbox loop.
 
-The tool is safe for ordinary workers, not just planners or gateways: implementers, reviewers, researchers, and generalists may use it to wake a peer for legitimate handoff or coordination. The guardrail is that they target a swarm instance id and leave the actual instruction in swarm; raw `herdr pane run` remains an operator/spawner-level capability.
+The tool is safe for ordinary workers, not just planners or gateways: implementers, reviewers, researchers, and generalists may use it to wake a peer for legitimate handoff or coordination. The guardrail is that they target a swarm instance id and leave the actual instruction in swarm; raw backend commands such as `herdr pane run` remain operator/spawner-level capabilities.
 
 ## Roadmap
 

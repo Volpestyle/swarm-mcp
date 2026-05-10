@@ -24,10 +24,10 @@ If the user invoked this skill with a role argument, follow the matching role re
 
 1. Bootstrap into the swarm with `register`
 2. Inspect the current swarm with `whoami`, `list_instances`, `poll_messages`, and `list_tasks`
-3. While editing, call `lock_file` — its response includes any peer annotations, so a separate check call is unnecessary. Skip locking entirely when alone in scope.
+3. For read-only inspection, call `get_file_context`; while editing, call `lock_file` — its response also includes peer annotations, so a separate check call is unnecessary. Skip locking entirely when alone in scope.
 4. Delegate or coordinate with `request_task`, gateway-only `dispatch`, `send_message`, or `broadcast`
 5. Leave durable context with `annotate` and small shared state with `kv_set`
-6. Complete a task with a single `update_task` (terminal status). Locks on the task's files release automatically.
+6. Complete a task with a single `update_task` (terminal status). Normal edit locks release automatically; internal `/__swarm/` mutex locks are managed by their owning flow.
 
 For planner sessions, the server maintains `owner/planner` automatically. Check it with `kv_get` to see whether you currently own planner duties.
 
@@ -69,7 +69,7 @@ When the role is unclear, do not invent one. Ask one short question or proceed a
 
 - Call `register` before using other swarm tools
 - Use `whoami`, `list_instances`, `poll_messages`, and `list_tasks` early in the session. If `list_instances` returns only you, skip per-edit locking until peers join.
-- Call `lock_file` while editing when peers are present. Read the returned annotations as your pre-edit check.
+- Use `get_file_context` for read-only inspection, and call `lock_file` while editing when peers are present. Read the returned annotations as your pre-edit check.
 - Use `update_task` once at task completion (terminal status). `claim_task` already moved the task to `in_progress`.
 - Use explicit `review` tasks for normal review handoff
 - Use `identity:work` or `identity:personal` to match the launcher/config root
@@ -97,19 +97,20 @@ When the skill triggers, prefer this sequence unless the task clearly requires s
 3. `bootstrap` — single atomic call returning `{instance, peers, unread_messages, tasks}`. Replaces the older `whoami` + `list_instances` + `poll_messages` + `list_tasks` sequence. Pass `mark_read: false` to peek messages without consuming them.
 4. Summarize active specialists, open work, and collision risks before taking action
 5. Act on any pending work (claim tasks, respond to messages)
-6. Enter an autonomous loop using `wait_for_activity` — react to messages, task changes, KV updates, and instance changes as they arrive. Do not wait for user prompting between tasks.
+6. Enter an autonomous idle loop using `wait_for_activity` when useful, but treat it as an optimization. Direct peer delivery is swarm message/task first, with `prompt_peer` wakeups when a specific peer should notice soon.
 
 ## Collaboration Heuristics
 
 - Prefer `request_task` when the work should be tracked and completed
 - Prefer explicit `review` tasks over passive review scans
-- Prefer `send_message` for targeted coordination that does not need task state
+- Prefer `send_message` for durable targeted notes that do not need task state
+- Prefer `prompt_peer` when a specific peer should notice the message soon; it records the swarm message first, then best-effort wakes the workspace handle
 - Prefer `broadcast` for short status updates that help everyone
 - Prefer `annotate` for file-specific findings another agent may need later
 - Prefer a matching `role:` token when choosing a specialist
 - Prefer a matching `team:` token when the swarm uses soft teams
 - Fall back to any matching specialist, then to a generalist, when the ideal collaborator is unavailable
-- Use `wait_for_activity` as your idle loop — it blocks until new messages, task changes, KV updates, or instance changes arrive, then returns the updates so you can act immediately
+- Use `wait_for_activity` as an idle optimization, not the delivery guarantee — peers may wake you with a short prompt to call `poll_messages` / `bootstrap`
 - If you are acting as a planner, watch `owner/planner` on `kv_updates` so you can resume from `plan/latest` after failover
 - Update your progress with `kv_set("progress/<your-instance-id>", ...)` while working on tasks so others can check on you without interrupting
 - Messages prefixed with `[auto]` are system notifications (task assignments, completions, stale-agent recovery) — treat them like any other actionable message
@@ -126,7 +127,7 @@ The CLI bridge remains for hooks, operator shells, and rare gateway fallback cas
 2. Otherwise use `swarm-mcp` from `PATH`.
 3. If neither works, use herdr directly if available, or ask the operator to start the worker.
 
-Do not ask ordinary worker sessions to run `dispatch`, `ui spawn`, or raw herdr pane creation. Spawn authority belongs to `mode:gateway` sessions and operator surfaces; non-gateway MCP callers should expect `dispatch` to reject them.
+Do not ask ordinary worker sessions to run `dispatch`, `ui spawn`, or raw workspace-backend pane/node creation. Spawn authority belongs to `mode:gateway` sessions and operator surfaces; non-gateway MCP callers should expect `dispatch` to reject them.
 
 ## Spawn Layout Doctrine
 

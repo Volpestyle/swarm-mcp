@@ -13,6 +13,7 @@ export const SUBCOMMANDS = [
   "send",
   "broadcast",
   "prompt-peer",
+  "resolve-workspace-handle",
   "lock",
   "unlock",
   "inspect",

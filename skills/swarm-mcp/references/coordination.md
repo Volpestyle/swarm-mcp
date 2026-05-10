@@ -8,7 +8,7 @@ Agents see shared state through MCP tools. The skill teaches conventions; MCP pr
 
 - `register` establishes the session identity and scope.
 - `list_instances`, `poll_messages`, and `list_tasks` read the live coordination surface.
-- `lock_file`, `unlock_file`, and `annotate` coordinate file-level work. `lock_file` returns peer annotations alongside the lock; `unlock_file` is only needed for early per-file release (terminal `update_task` releases task-file locks automatically).
+- `get_file_context`, `lock_file`, `unlock_file`, and `annotate` coordinate file-level work. `get_file_context` is read-only; `lock_file` returns peer annotations alongside the lock; `unlock_file` is only needed for early per-file release (terminal `update_task` releases normal edit locks automatically).
 - `kv_list`, `kv_get`, `kv_set`, `kv_append`, and `kv_delete` read/write small shared state.
 - `wait_for_activity` wakes on `new_messages`, `task_updates`, `kv_updates`, and `instance_changes`.
 

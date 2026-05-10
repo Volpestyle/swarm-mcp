@@ -27,7 +27,7 @@ parallels, see [`integrations/hermes/SPEC.md`](../../../hermes/SPEC.md) and
 | Auto-lock writes when peers exist | `PreToolUse` (matcher: `apply_patch`) → parses the patch envelope, calls `swarm-mcp lock` per path |
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
-| Publish and cleanup `identity/herdr/<instance_id>` | `SessionStart` / `Stop` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
+| Publish and cleanup `identity/workspace/herdr/<instance_id>` | `SessionStart` / `Stop` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
 | Gateway conductor mode | `SWARM_CODEX_ROLE=gateway` registers as `role:planner`, blocks inline writes unless explicitly opted in; use the MCP `dispatch` tool for task/spawn routing |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 

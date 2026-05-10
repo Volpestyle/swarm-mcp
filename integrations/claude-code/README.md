@@ -25,7 +25,7 @@ in the hermes case, see [`integrations/hermes/SPEC.md`](../hermes/SPEC.md).
 | Auto-lock write-class file tools when peers exist | `PreToolUse` (matcher: `Write\|Edit\|MultiEdit\|NotebookEdit`) → `swarm-mcp lock` |
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
-| Publish and cleanup `identity/herdr/<instance_id>` | `SessionStart` / `SessionEnd` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
+| Publish and cleanup `identity/workspace/herdr/<instance_id>` | `SessionStart` / `SessionEnd` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
 | Gateway conductor mode | `SWARM_CC_ROLE=gateway` registers as `role:planner`, blocks inline writes unless explicitly opted in; use the MCP `dispatch` tool for task/spawn routing |
 | Peer prompt express lane | `prompt_peer` MCP tool or `swarm-mcp prompt-peer` CLI sends durable swarm message, then best-effort herdr wake |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |

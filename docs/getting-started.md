@@ -176,6 +176,7 @@ You can also test shared coordination tools:
 
 - `broadcast` to announce progress to all other sessions
 - `request_task` to hand work to another session
+- `get_file_context` for read-only inspection
 - `lock_file` while editing (its response also surfaces peer annotations)
 - `annotate` to leave shared notes on a file
 
@@ -191,6 +192,7 @@ The minimum collaboration loop is:
 
 - Call `register` at session start
 - Call `poll_messages` and `list_tasks` before starting work
+- Call `get_file_context` for read-only file inspection
 - Call `lock_file` while editing (skip if you're alone in scope; the response includes peer annotations)
 - Call `broadcast` or `update_task` when handing work off
 

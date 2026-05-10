@@ -79,4 +79,4 @@ That gives you current identity, other active sessions, unread coordination requ
 
 If `list_instances` returns only you, you can skip per-edit `lock_file` calls until peers join. Watch `instance_changes` from `wait_for_activity` to know when to re-enable locking.
 
-When you do edit a file, `lock_file` is the single coordination call — it returns peer annotations on the file as part of its response, so a separate check is unnecessary.
+Use `get_file_context` when you only need to inspect a file's active lock and annotations. When you edit a file, `lock_file` is the coordination call — it returns peer annotations on the file as part of its response, so a separate check is unnecessary.

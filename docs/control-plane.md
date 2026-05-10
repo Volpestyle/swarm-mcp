@@ -27,8 +27,8 @@ The first concrete stack is:
 | Agent runtimes | Claude Code, Codex, OpenCode, Hermes Agent |
 | Workspace control | herdr |
 | User gateway | Hermes Agent via Telegram / future iOS |
-| Spawner | herdr pane spawn |
-| Identity bridge | swarm `instance_id` <-> herdr `pane_id` <-> Linear issue/task |
+| Spawner | workspace backend spawn (`herdr` pane spawn today) |
+| Identity bridge | swarm `instance_id` <-> workspace handle (`herdr` `pane_id` today) <-> Linear issue/task |
 
 This stack is the golden path, not the boundary of the system.
 
@@ -161,6 +161,8 @@ First implementation: Hermes Agent gateway via Telegram.
 
 Boundary: the gateway may read and plan inline, but writes should flow through Coordinator tasks by default. Inline writes require explicit trusted workspace configuration.
 
+Single-intent dispatch is the gateway's default backend path, not a user-facing mode. When the operator says "fix this issue", the gateway should create/reuse the task, route or spawn a worker, and summarize without asking the operator to think about dispatch. The user-facing layer is routine dispatch: named commands or buttons that expand into multiple role-specific tasks, monitor them, and return one summary.
+
 ### IdentityBridge
 
 Owns mapping between durable identities and transport handles.
@@ -173,6 +175,14 @@ Required capabilities:
 - Avoid treating short-lived handles as durable identities.
 
 First implementation: swarm `instance_id` plus herdr `pane_id`, with labels such as `provider:claude role:implementer`.
+
+Coordinator-facing APIs and docs should name the generic concept: workspace
+backend plus transport handle. The first backend is `herdr` and the first
+handle kind is `pane`, but core coordination should expose names like
+`resolve_workspace_handle` and KV rows like
+`identity/workspace/herdr/<instance_id>`. Herdr-specific rows such as
+`identity/herdr/<instance_id>` are compatibility details for current adapters,
+not the shape new contracts should copy.
 
 ## Golden Path
 

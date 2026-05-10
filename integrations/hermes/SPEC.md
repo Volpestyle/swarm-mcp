@@ -147,22 +147,25 @@ This layered defense protects against the "Telegram message retry creates two wo
 
 ### 5.6 Peer prompt express lane
 
-`wait_for_activity` remains the reliable warm-worker inbox loop. It is not a cold-start mechanism and it does not type into an agent conversation by itself. The plugin provides `swarm_prompt_peer` as the express lane for already-running workers that have published a herdr pane identity:
+`wait_for_activity` remains the reliable warm-worker inbox loop. It is not a cold-start mechanism and it does not type into an agent conversation by itself. The plugin provides `swarm_prompt_peer` as the express lane for already-running workers that have published a workspace identity:
 
 1. Write the instruction through `mcp_swarm_send_message` first. This is the durable source of truth.
-2. Resolve the target's herdr transport handle from swarm KV at `identity/herdr/<instance_id>`.
-3. Inspect the pane status with `herdr pane get`.
-4. If the pane is `idle`, `blocked`, `done`, or `unknown`, send a short wake prompt via `herdr pane run` telling the worker to call `poll_messages`.
-5. If the pane is `working`, skip the nudge unless the caller explicitly passes `force=true`.
+2. Resolve the target's workspace transport handle from swarm KV at `identity/workspace/herdr/<instance_id>`.
+3. Inspect the handle status through the backend (`herdr pane get` for the current stack).
+4. If the handle is `idle`, `blocked`, `done`, or `unknown`, send a short wake prompt through the backend (`herdr pane run` today) telling the worker to call `poll_messages`.
+5. If the handle is `working`, skip the nudge unless the caller explicitly passes `force=true`.
 
-The injected pane text never contains the full work contract. It only tells the worker to read its swarm inbox. This keeps audit, retry, and follow-up behavior in swarm-mcp while still making local herdr workers feel immediate.
+The injected workspace text never contains the full work contract. It only tells the worker to read its swarm inbox. This keeps audit, retry, and follow-up behavior in swarm-mcp while still making local workspace workers feel immediate.
 
-This capability is not planner-only. Any gateway, planner, implementer, reviewer, researcher, or generalist may wake a peer when there is a real coordination reason. The boundary is the mechanism: target a swarm `instance_id`, send the durable swarm message first, and let herdr carry only the wake-up. Raw `herdr pane run` against another worker is an operator/spawner capability, not a normal worker coordination path.
+This capability is not planner-only. Any gateway, planner, implementer, reviewer, researcher, or generalist may wake a peer when there is a real coordination reason. The boundary is the mechanism: target a swarm `instance_id`, send the durable swarm message first, and let the workspace backend carry only the wake-up. Raw backend commands such as `herdr pane run` against another worker are operator/spawner capabilities, not normal worker coordination paths.
 
-Hermes sessions publish their current herdr identity during `on_session_start` when `HERDR_PANE_ID` is present:
+Hermes sessions publish their current workspace identity during `on_session_start` when `HERDR_PANE_ID` is present:
 
 ```json
 {
+  "backend": "herdr",
+  "handle_kind": "pane",
+  "handle": "w64e95948145ed1-1",
   "pane_id": "w64e95948145ed1-1",
   "socket_path": "/path/to/herdr.sock",
   "workspace_id": "w64e95948145ed1"
@@ -171,7 +174,7 @@ Hermes sessions publish their current herdr identity during `on_session_start` w
 
 The plugin deletes this key during `on_session_finalize`. Stale keys are advisory only; a failed `herdr pane get` or `herdr pane run` degrades to normal swarm delivery.
 
-Workers that are not Hermes-hosted can participate by publishing the same KV shape through their own adapter or launcher. They do not need to run this plugin as long as the identity key maps their swarm `instance_id` to the current herdr `pane_id`.
+Workers that are not Hermes-hosted can participate by publishing the same KV shape through their own adapter or launcher. They do not need to run this plugin as long as the identity key maps their swarm `instance_id` to the current workspace handle. The legacy `identity/herdr/<instance_id>` key may be written for current Herdr consumers, but new docs and APIs should use the `identity/workspace/<backend>/<instance_id>` convention.
 
 ### 5.7 Spawn layout policy
 
@@ -219,7 +222,7 @@ The plugin diverges by role (env or config):
 
 When a user intent on the gateway resolves to a write:
 
-1. **Delegate (default).** Gateway formulates a concrete patch + success criterion, dispatches via `swarm_fast_dispatch` (see §9 v0.4). When a worker is available this becomes a near-synchronous round-trip — claim → apply → `update_task` → summarize. This is the path for ~all production traffic.
+1. **Delegate (default).** Gateway formulates a concrete patch + success criterion, then uses the dispatch primitive (see §9 v0.5) to create/reuse the task, wake or spawn a worker, and monitor the result. When a worker is available this becomes a near-synchronous round-trip — claim → apply → `update_task` → summarize. This is the path for ~all production traffic.
 2. **Inline fallback.** Gateway may write inline **only when all three are true**:
    - `swarm.gateway.inline_writes: true` (explicit opt-in; behavior framing, not permission framing)
    - `swarm.gateway.workspace_mirror` resolves to a path the gateway has trusted, current access to (synced repo, read-write mirror, etc.)
@@ -240,6 +243,28 @@ With `workspace_mirror: null`, the gateway can read/status/plan but **must not**
 ### 7.4 Reconciliation when gateway worked inline
 
 When tier-3 inline writes happen, the plugin emits an `[auto]` swarm broadcast: `gateway worked alone on <files> between T1–T2 — expect to reconcile`. This surfaces in `wait_for_activity` for any worker that comes online afterward, and in `/swarm status` summaries, so reconciliation isn't silent.
+
+### 7.5 Gateway default vs routine commands
+
+Single-intent dispatch is not a product feature the operator should have to invoke. If the operator messages the gateway "fix this issue", Hermes should already behave that way by default: make or reuse a durable task, choose a suitable worker, wake or spawn it, pass the work contract through swarm, then summarize the result.
+
+`dispatch` exists to make that default behavior reliable and inspectable across transports:
+- dedupe Telegram/iOS/CLI retries before spawning duplicate workers
+- reuse live workers before creating new panes
+- preserve scope, identity, role, task, and message audit trails
+- give every front end the same backend route instead of hand-coded spawn logic
+
+The user-facing command layer is **routine dispatch**: named shortcuts that expand into a small task graph and route each part to the right role. For example:
+
+```text
+/release-check
+  implementer -> run build/tests and fix obvious failures
+  reviewer    -> review the branch for regressions
+  researcher  -> check linked issue/release context
+  gateway     -> collect results and ask for approval
+```
+
+The dispatch primitive remains single-task routing: one intent, one task, one best worker. Routine dispatch composes `request_task_batch`, per-role dispatch/wake/spawn, monitoring, and a final summary. That is the slash-command/button/product surface; the single-intent accelerator is plumbing for the gateway's normal behavior.
 
 ## 8. CLI bridge (`/swarm`)
 
@@ -266,8 +291,8 @@ Subcommands: `status` (default, compact summary), `instances`, `tasks`, `kv`, `m
 - `pre_tool_call` falls back to single registered instance when `session_id` missing
 - Multi-session ambiguity refuses to guess
 
-### v0.3 — Herdr identity + peer prompt express lane ✓
-- Publish `identity/herdr/<instance_id>` on session start when herdr env is present
+### v0.3 — Workspace identity + peer prompt express lane ✓
+- Publish `identity/workspace/herdr/<instance_id>` on session start when herdr env is present
 - Delete the identity key on session finalization
 - Register `swarm_prompt_peer` as a plugin tool
 - Always send the durable swarm message first; use `herdr pane run` only as a best-effort wake-up
@@ -280,15 +305,22 @@ Subcommands: `status` (default, compact summary), `instances`, `tasks`, `kv`, `m
   - Gateway (Telegram/Discord/etc.): pushed message via the active gateway adapter
 - Suppressible via `swarm.background_poll: false`
 
-### v0.5 — Gateway role + fast-dispatch
+### v0.5 — Gateway role + dispatch primitive
 - Plugin reads `swarm.role: gateway|worker` from config
 - CLI precursor: `swarm-mcp dispatch` creates/reuses an idempotent task,
   wakes a live worker, or invokes the configured Spawner backend (`herdr`
   for the first stack) for non-MCP gateway wrappers.
-- New tool `swarm_fast_dispatch(intent, patch, expect, timeout_s, fallback)`
-  - Wraps `request_task` + `wait_for_activity` + summarize as a single synchronous-feeling call
+- Optional Hermes helper `swarm_fast_dispatch(intent, patch, expect, timeout_s, fallback)`
+  - Wraps the dispatch primitive + `wait_for_activity` + summarize as a single synchronous-feeling call for gateway implementations
   - Returns `{status: "no_worker"}` if nothing claims within timeout; gateway can then ask user, escalate, or fall back to inline
 - In gateway mode, lock bridge is suppressed (gateway doesn't write)
+
+### v0.5.1 — Routine dispatch UX
+- Named slash commands / buttons / saved prompts expand into role-specific task graphs
+- Use `request_task_batch` for multi-task creation when dependencies matter
+- Route each task through the dispatch primitive only when a live matching worker is absent or needs a wake/spawn
+- Gateway monitors completion and produces one operator-facing summary
+- Examples: `/release-check`, `/review-branch`, `/fix-tests`, `/prep-deploy`
 
 ### v0.6 — Ambient context + herdr status reporting
 
@@ -339,7 +371,7 @@ Peer A holds a swarm lock on `notes.md`. Peer B tries `write_file` on same path.
 Single session, no peers. `write_file` proceeds without any lock attempt — no lock context entry appears in `swarm-mcp inspect`.
 
 **S5: Peer prompt express lane (v0.3)**
-Two Hermes sessions in herdr panes. Session A calls `swarm_prompt_peer(recipient=<B>, message="check your inbox")`. Verify B has an unread swarm message even if herdr injection fails. When B has published `identity/herdr/<instance_id>` and its pane is not `working`, verify `herdr pane run` injects the wake prompt and B is told to call `poll_messages` rather than receiving the full work contract through terminal text.
+Two Hermes sessions in herdr panes. Session A calls `swarm_prompt_peer(recipient=<B>, message="check your inbox")`. Verify B has an unread swarm message even if herdr injection fails. When B has published `identity/workspace/herdr/<instance_id>` and its pane is not `working`, verify `herdr pane run` injects the wake prompt and B is told to call `poll_messages` rather than receiving the full work contract through terminal text.
 
 **S6: Gateway fast-dispatch (v0.5+)**
 Gateway hermes + one worker peer. User on Telegram: "fix typo X in file Y." Gateway formulates patch, calls `swarm_fast_dispatch`. Worker claims, applies, marks task done. Gateway summarizes back to Telegram within timeout. File is modified; gateway never held a lock.

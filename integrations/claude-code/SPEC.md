@@ -74,7 +74,7 @@ The result:
 | Block on lock conflict | Same — emit `permissionDecision: deny`. |
 | `/swarm` slash command | Markdown command; same shape, slightly different surface. |
 | `swarm_prompt_peer` tool | Implemented adapter-neutrally as the swarm MCP `prompt_peer` tool and `swarm-mcp prompt-peer` CLI. |
-| Herdr identity publish on session start | `SessionStart` publishes `identity/herdr/<instance_id>` directly after CLI registration. |
+| Workspace identity publish on session start | `SessionStart` publishes `identity/workspace/herdr/<instance_id>` directly after CLI registration. |
 
 ## 4. CLI surface for full autonomy
 
@@ -105,9 +105,9 @@ explicitly on `SessionEnd`.
 
 | Hook | Fires | Plugin behavior |
 |---|---|---|
-| `SessionStart` (source=startup or resume) | New or resumed conversation | Compute label/scope/identity; call `swarm-mcp register`; write per-session scratch metadata including `instance_id`; publish `identity/herdr/<instance_id>` if `HERDR_PANE_ID` is present; emit `additionalContext` telling the agent it is registered and should follow the swarm role workflow. |
+| `SessionStart` (source=startup or resume) | New or resumed conversation | Compute label/scope/identity; call `swarm-mcp register`; write per-session scratch metadata including `instance_id`; publish `identity/workspace/herdr/<instance_id>` if `HERDR_PANE_ID` is present; emit `additionalContext` telling the agent it is registered and should follow the swarm role workflow. |
 | `SessionStart` (source=clear or compact) | Mid-session reset | Refresh metadata only; do not re-prompt registration. |
-| `SessionEnd` | Conversation ends | Best-effort `kv del identity/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
+| `SessionEnd` | Conversation ends | Best-effort `kv del identity/workspace/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
 | `PreToolUse` (matcher: `Write\|Edit\|MultiEdit\|NotebookEdit`) | Before each write-class tool dispatch | In gateway mode, deny inline writes unless explicit inline-write config is present. Otherwise, if peers exist in scope, `swarm-mcp lock` each path. On conflict, emit `permissionDecision: deny`. |
 | `PostToolUse` (same matcher) | After each write-class tool dispatch | `swarm-mcp unlock` each path the matching pre acquired. |
 
@@ -209,8 +209,8 @@ instance count, task counts, kv key count, and recent message count.
 
 **S6: SessionEnd identity cleanup**
 With `HERDR_PANE_ID` set and the agent having published
-`identity/herdr/<id>`, exiting the session should result in
-`swarm-mcp kv get identity/herdr/<id>` returning empty/error.
+`identity/workspace/herdr/<id>`, exiting the session should result in
+`swarm-mcp kv get identity/workspace/herdr/<id>` returning empty/error.
 
 ### 8.2 Mocked unit tests
 

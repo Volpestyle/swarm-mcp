@@ -27,12 +27,12 @@ For each task:
 
 1. `claim_task` — this transitions the task to `in_progress` for you in one call.
 2. For long tasks only, `kv_set("progress/<your-instance-id>", ...)` with current activity.
-3. Before editing a file, call `lock_file`. Its response includes any peer annotations on that file, so no separate `check` call is needed. Skip locking entirely when `list_instances` shows you alone in scope.
+3. Use `get_file_context` for read-only inspection. Before editing a file, call `lock_file`. Its response includes any peer annotations on that file, so no separate `check` call is needed. Skip locking entirely when `list_instances` shows you alone in scope.
 4. Make the smallest correct code changes.
 5. `annotate` important findings, warnings, or follow-ups on touched files.
 6. Run relevant tests or checks when feasible.
 7. `unlock_file` only if you finish a file early and want peers to edit it before the task as a whole completes.
-8. `update_task` to `done`, `failed`, or `cancelled` with a useful result. Locks on the task's files release automatically.
+8. `update_task` to `done`, `failed`, or `cancelled` with a useful result. Normal edit locks release automatically; internal `/__swarm/` mutex locks are managed by their owning flow.
 9. Create a `review` task assigned to the planner or reviewer when implementation or fix work needs review.
 
 ## Structured Results
@@ -102,7 +102,7 @@ When you receive a broadcast containing `[signal:complete]`:
 ## Must Not
 
 - Edit a file other peers may also touch without calling `lock_file` first.
-- Hold locks longer than needed (terminal `update_task` releases them; use `unlock_file` for early per-file release).
+- Hold locks longer than needed (terminal `update_task` releases normal edit locks; use `unlock_file` for early per-file release).
 - Forget to `update_task` when finished.
 - Create planning/decomposition tasks unless the planner asked you to.
 - Claim `blocked` tasks.
