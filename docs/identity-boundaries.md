@@ -1,6 +1,6 @@
 # Identity and Auth Boundaries
 
-Auth separation is a core pillar of the native agent stack. Work and personal workers must be separated by launcher profile, config root, MCP server names, OAuth/token storage, and swarm labels. The model should not have to remember which account is safe to use; the wrong account's tools should not be loaded in that process.
+Work and personal workers must be separated by launcher profile, config root, MCP server names, OAuth/token storage, and swarm labels. The model should not have to remember which account is safe to use; the wrong account's tools should not be loaded in that process.
 
 > **The hard boundary is the launched process and its config root, not a label.** `clawd`/`codex`/`opencode`/`hermesw` (work) and `clowd`/`cdx`/`opc`/`hermesp` (personal) start a worker against a specific config root, which loads only same-identity account-scoped MCPs. Swarm `identity:` labels are routing and audit metadata; they do not authorize anything by themselves. Anything that needs strong account isolation must come from the launcher and config root, not from a label.
 
@@ -188,4 +188,4 @@ Swarm tasks for design work should state the expected MCP surface explicitly. Ex
 
 Raw bearer tokens in agent config are fragile: they are easy to leak through config inspection, shell history, or logs. Prefer OAuth blocks or secret-store-backed env injection. If a token is printed in logs or tool output, rotate it before continuing to use that account.
 
-Product language: account auth separation is physical, not aspirational. The correct launcher creates a worker that can only see the correct account-scoped tools. Coordination visibility follows the chosen swarm database and OS-user boundary.
+The correct launcher creates a worker that can only see the correct account-scoped tools. Coordination visibility follows the chosen swarm database and OS-user boundary.

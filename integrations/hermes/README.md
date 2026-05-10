@@ -30,7 +30,7 @@ The tool is safe for ordinary workers, not just planners or gateways: implemente
 
 ## Roadmap
 
-See [SPEC.md §9](SPEC.md#9-roadmap). The roadmap got reordered when the gateway/worker split landed in the design — keeping it in one place avoids drift.
+See [SPEC.md §9](SPEC.md#9-roadmap) for the canonical roadmap.
 
 ## Install
 

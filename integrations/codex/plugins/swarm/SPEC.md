@@ -282,9 +282,9 @@ where collisions are unlikely. Path-level locks scale to multiple agents on
 disjoint files in the same scope, which is the common case.
 
 **Why fail-open on non-conflict errors?**
-Same reason as the other plugins: a swarm outage shouldn't tank productive
-editing. Lock conflicts are exactly what the user wanted protection from;
-everything else is bonus.
+Same reason as the other plugins: a swarm outage shouldn't block productive
+editing. Lock conflicts are the case the user wanted protection from;
+everything else is best-effort.
 
 ## 10. Upstream tightenings recommended for swarm-mcp
 

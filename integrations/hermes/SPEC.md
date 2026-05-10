@@ -64,7 +64,7 @@ The iOS app (and any future remote operator surface) is a **herdr client** — s
 
 **v1 (recommended): Tailscale + bridge daemon.** Phone joins the user's tailnet. A small daemon on the host running herdr exposes the herdr Unix socket as TCP/WSS. The daemon does only protocol translation (unix-socket ⇄ network); Tailscale handles auth, encryption, and NAT traversal. Bind the listener to the Tailscale interface only, or to localhost behind `tailscale serve`.
 
-The bridge daemon is unavoidable: iOS clients literally cannot speak Unix sockets. Tailscale removes the *security* layer of the work, not the *protocol* layer.
+The bridge daemon is unavoidable: iOS clients can't speak Unix sockets. Tailscale removes the *security* layer of the work, not the *protocol* layer.
 
 **v2 upgrade paths (later, optional):**
 - Native network mode in herdr — TCP/WSS listener with Bonjour/PSK pairing (eliminates Tailscale dependency)
@@ -86,10 +86,10 @@ you (phone) ──Telegram──▶ [hermes-gateway]   (always-on host)
 ```
 
 Two distinct hermes roles:
-- **gateway** — your voice. Translates intent, summarizes results, holds long-running context. Always-on.
-- **worker** — does the editing. Lives in herdr panes. Comes and goes.
+- **gateway** — the operator-facing role. Translates intent, summarizes results, holds long-running context. Always-on.
+- **worker** — the editor. Lives in herdr panes; spawned per task.
 
-swarm-mcp is the fabric that makes them appear as one system. The plugin's behavior differs by which side it runs on (§7).
+swarm-mcp is what makes them coordinate as one system. The plugin's behavior differs by which side it runs on (§7).
 
 **Out of scope for v1:** "remote runners" without a herdr host (raw Modal/Daytona/SSH workers spawned directly by the gateway, bypassing herdr). The §3.2 universal-PTY-owner commitment means workers always live inside a herdr instance — local or remote. Spawning a worker on a remote host eventually means herdr-on-that-host with the gateway driving its socket via the bridge daemon. That's an m3+ direction, not v1.
 
@@ -402,7 +402,7 @@ Hermes fires `on_session_end` after every `run_conversation()` turn — that's p
 The slash command should work even when swarm MCP tools aren't mounted (server disabled, agent context loaded without them). Shelling to the CLI is independent of the agent's tool surface.
 
 **Why fail-open on coordination errors but block on lock conflicts?**
-Coordination is opt-in. A swarm outage shouldn't tank productive tool calls. But a peer-held lock is exactly the case the user wanted protection from — failing through it would defeat the point.
+Coordination is opt-in. A swarm outage shouldn't block productive tool calls. But a peer-held lock is exactly the case the user wanted protection from — failing through it would defeat the point.
 
 **Why not unify herdr and swarm-mcp?**
 They solve different problems. herdr is local + ephemeral + transport. swarm-mcp is durable + structured + portable. Unifying loses one or the other. Bridge them at the edges (this plugin, and the planned `SWARM_MCP_INSTANCE_ID` injection).
@@ -417,7 +417,7 @@ Tailscale + a tiny unix-socket-to-TCP/WSS daemon ships in days. Native pairing/a
 The gateway/worker distinction is shaped by *how this operator uses hermes* (Telegram-primary). Other operators may have different topologies. Keeping role-aware behavior in the plugin avoids opinionating hermes core.
 
 **Why "read-hybrid, write-conductor" instead of full hybrid?**
-Pure conductor (gateway never edits) fails when the laptop is off. Pure hybrid (gateway sometimes edits) means stale workspace state, lock contention with workers, divergent branches. Read-hybrid + write-conductor is the cleanest version: gateway reasons inline, dispatches edits as fast atomic tasks. UX feels the same to the operator, architecture stays clean.
+Pure conductor (gateway never edits) fails when the laptop is off. Pure hybrid (gateway sometimes edits) means stale workspace state, lock contention with workers, divergent branches. Read-hybrid + write-conductor: the gateway reasons inline and dispatches edits as fast atomic tasks. The operator UX is unchanged and the workspace state stays consistent.
 
 ## 12. Upstream tightenings recommended for swarm-mcp
 

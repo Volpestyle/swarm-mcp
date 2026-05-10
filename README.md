@@ -12,7 +12,7 @@ Each session spawns its own swarm-mcp server process via stdio. They all share o
 
 **New here? Read [`docs/quickstart.md`](./docs/quickstart.md) first.** It walks you from zero to two Claude Code sessions seeing each other in about five minutes, with the expected output at each step.
 
-The rest of this section is a condensed reference for power users and non-Claude hosts. For a first-run walkthrough on a local clone, see [`docs/getting-started.md`](./docs/getting-started.md). For the broader modular architecture this repo is growing toward, read [`docs/control-plane.md`](./docs/control-plane.md). Backend and consumer config lives in [`docs/backend-configuration.md`](./docs/backend-configuration.md).
+The rest of this section is a condensed reference for non-Claude hosts. For a first-run walkthrough on a local clone, see [`docs/getting-started.md`](./docs/getting-started.md). For the broader modular architecture this repo is growing toward, read [`docs/control-plane.md`](./docs/control-plane.md). Backend and consumer config lives in [`docs/backend-configuration.md`](./docs/backend-configuration.md).
 
 Install dependencies:
 
@@ -104,7 +104,7 @@ Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting 
 
 ## MCP server vs swarm-server
 
-The TypeScript `swarm-mcp` process is the stdio MCP server used by coding-agent hosts. It is enough for local multi-agent coordination through tools, resources, prompts, and the shared SQLite database. Its core job is the lightweight bus: instance identity, tasks, messages, locks, KV, and best-effort wakeups.
+The TypeScript `swarm-mcp` process is the stdio MCP server used by coding-agent hosts. It is enough for local multi-agent coordination through tools, resources, prompts, and the shared SQLite database. Its core job is the coordination bus: instance identity, tasks, messages, locks, KV, and best-effort wakeups.
 
 Spawner backends are adapters around that bus. The default adapter is `herdr`; `swarm-ui` remains available as a fallback/control-surface adapter. New terminal managers should plug in as spawner/workspace backends rather than changing the task/message/lock contract.
 

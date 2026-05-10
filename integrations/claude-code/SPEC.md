@@ -238,9 +238,9 @@ metadata and uses that for lock/unlock. The session substring remains a
 fallback when metadata is missing.
 
 **Why fail-open on non-conflict errors?**
-Same reason as hermes: a swarm outage shouldn't tank productive editing.
-Lock conflicts are exactly what the user wanted protection from; everything
-else is bonus.
+Same reason as hermes: a swarm outage shouldn't block productive editing.
+Lock conflicts are the case the user wanted protection from; everything else
+is best-effort.
 
 **Why no `pre_compact` / `subagent_stop` integration?**
 Out of scope for v0.1. The hermes plugin's `subagent_stop` bridge maps a

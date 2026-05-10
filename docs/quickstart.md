@@ -49,7 +49,7 @@ That writes a `.mcp.json` pointing Claude Code at `npx -y swarm-mcp` and copies 
 
 ## 3. Install the Claude Code plugin
 
-The plugin auto-registers each session, releases locks on session end, and adds a `/swarm` slash command. If you install it from the marketplace, it bundles the role-doctrine skill too — and if it doesn't, the copy from step 2 picks up the slack, so you won't notice the difference.
+The plugin auto-registers each session, releases locks on session end, and adds a `/swarm` slash command. A marketplace install also bundles the role-doctrine skill; if it doesn't, the copy from step 2 covers it.
 
 Add the plugin to `~/.claude.json`:
 
@@ -90,7 +90,7 @@ Then have one session call `bootstrap`. Expected shape:
 }
 ```
 
-The `peers` array containing the other session is the signal that everything works.
+If `peers` lists the other session, the two are coordinating through the same database.
 
 ## 5. Verify from outside the sessions
 
@@ -106,9 +106,13 @@ You should see both instances listed under `instances`, with matching `scope` an
 swarm-mcp instances
 ```
 
-Lists just the live peers, one per line, for a quick sanity check.
+Lists just the live peers, one per line.
 
-(Future: `swarm-mcp doctor` will roll the install check, MCP wiring, plugin presence, and live registration into a single command. For now, `inspect` + `instances` are the manual version.)
+For a one-shot health report covering binary, db, scope, skill/plugin install, and env knobs:
+
+```sh
+swarm-mcp doctor
+```
 
 ## Send a message between them
 
