@@ -837,6 +837,56 @@ describe("CLI file path normalization", () => {
   });
 });
 
+describe("CLI doctor", () => {
+  test("doctor reports OK on a fresh db and exits 0", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-doctor-"));
+    const dbPath = join(dir, "swarm.db");
+    const result = runCli(dbPath, ["doctor", "--scope", dir]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("swarm-mcp doctor");
+    expect(result.stdout).toContain("binary:");
+    expect(result.stdout).toContain("database:");
+    expect(result.stdout).toContain("scope:");
+    expect(result.stdout).toContain("live_instances:");
+    expect(result.stdout).toContain("stale_instances:");
+    expect(result.stdout).toContain("skill_discovery:");
+    expect(result.stdout).toContain("plugin_discovery:");
+    expect(result.stdout).toContain("env:");
+    expect(result.stdout).toContain("All FAIL-class checks passed.");
+  });
+
+  test("doctor --json emits a structured report with checks array", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-doctor-json-"));
+    const dbPath = join(dir, "swarm.db");
+    const result = runCli(dbPath, ["doctor", "--scope", dir, "--json"]);
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      failed: number;
+      scope: string;
+      checks: Array<{ name: string; status: string; message: string }>;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.failed).toBe(0);
+    expect(payload.scope).toBe(dir);
+    const names = payload.checks.map((c) => c.name).sort();
+    expect(names).toEqual(
+      [
+        "binary",
+        "database",
+        "env",
+        "live_instances",
+        "plugin_discovery",
+        "scope",
+        "skill_discovery",
+        "stale_instances",
+      ].sort(),
+    );
+    const db = payload.checks.find((c) => c.name === "database");
+    expect(db?.status).toBe("ok");
+  });
+});
+
 describe("CLI claim and update-task", () => {
   test("claim transitions an open task to in_progress and update-task moves it to a terminal status", () => {
     const dir = mkdtempSync(join(tmpdir(), "swarm-cli-claim-"));

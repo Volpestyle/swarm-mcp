@@ -7,8 +7,20 @@ import * as messages from "./messages";
 import * as registry from "./registry";
 import * as taskStore from "./tasks";
 import * as ui from "./ui";
-import { file as fileFor, scope as scopeFor } from "./paths";
+import { file as fileFor, root as rootFor, scope as scopeFor } from "./paths";
 import { SUBCOMMANDS, type Subcommand } from "./subcommands";
+import {
+  accessSync,
+  constants as fsConstants,
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readlinkSync,
+  statSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { TASK_TYPES, type TaskType } from "./generated/protocol";
 import * as spawnerBackend from "./spawner_backend";
 import { registerDefaultSpawners } from "./spawner_defaults";
@@ -1096,6 +1108,408 @@ async function cmdUi(flags: Flags) {
 }
 
 // ---------------------------------------------------------------------------
+// Doctor
+// ---------------------------------------------------------------------------
+
+type DoctorStatus = "ok" | "fail" | "warn" | "info";
+
+type DoctorCheck = {
+  name: string;
+  status: DoctorStatus;
+  message: string;
+  details?: Record<string, unknown>;
+};
+
+const DOCTOR_ENV_KEYS = [
+  "SWARM_DB_PATH",
+  "SWARM_MCP_BIN",
+  "SWARM_MCP_SCOPE",
+  "SWARM_MCP_INSTANCE_ID",
+  "AGENT_IDENTITY",
+  "SWARM_IDENTITY",
+  "SWARM_WORK_TRACKER",
+] as const;
+
+const DOCTOR_SKILL_LOCATIONS = [
+  { kind: "project", path: ".claude/skills/swarm-mcp" },
+  { kind: "project", path: ".agents/skills/swarm-mcp" },
+  { kind: "user", path: "~/.claude/skills/swarm-mcp" },
+  { kind: "user", path: "~/.claude-personal/skills/swarm-mcp" },
+  { kind: "user", path: "~/.codex/skills/swarm-mcp" },
+  { kind: "user", path: "~/.config/opencode/skills/swarm-mcp" },
+] as const;
+
+const DOCTOR_PLUGIN_LOCATIONS = [
+  "~/.claude/plugins/installed_plugins.json",
+  "~/.claude-personal/plugins/installed_plugins.json",
+] as const;
+
+function expandTilde(path: string) {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/")) return join(homedir(), path.slice(2));
+  return path;
+}
+
+function statusGlyph(status: DoctorStatus) {
+  if (status === "ok") return "OK  ";
+  if (status === "fail") return "FAIL";
+  if (status === "warn") return "WARN";
+  return "INFO";
+}
+
+function readPackageVersion(): { version: string; path: string | null } {
+  // dist/cmd.js or src/cmd.ts → walk up to find package.json
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    for (let dir = here, prev = ""; dir !== prev; prev = dir, dir = dirname(dir)) {
+      const candidate = join(dir, "package.json");
+      if (existsSync(candidate)) {
+        const parsed = JSON.parse(readFileSync(candidate, "utf8")) as {
+          name?: string;
+          version?: string;
+        };
+        if (parsed?.name === "swarm-mcp" && parsed?.version) {
+          return { version: parsed.version, path: candidate };
+        }
+      }
+    }
+  } catch {
+    // fall through
+  }
+  return { version: "unknown", path: null };
+}
+
+function checkBinary(): DoctorCheck {
+  const binPath = process.argv[1] ?? "(unknown)";
+  const { version, path: pkgPath } = readPackageVersion();
+  return {
+    name: "binary",
+    status: "ok",
+    message: `swarm-mcp v${version} (${binPath})`,
+    details: { bin_path: binPath, version, package_json: pkgPath },
+  };
+}
+
+function checkDatabase(): DoctorCheck {
+  const dbPath = process.env.SWARM_DB_PATH?.trim() || join(homedir(), ".swarm-mcp", "swarm.db");
+  const fromEnv = !!process.env.SWARM_DB_PATH?.trim();
+  const details: Record<string, unknown> = { path: dbPath, source: fromEnv ? "env" : "default" };
+
+  if (!existsSync(dbPath)) {
+    // db.ts already opened (or created) the SQLite file at import time; if it
+    // doesn't exist here, something is very wrong with our resolution.
+    return {
+      name: "database",
+      status: "fail",
+      message: `db file does not exist at ${dbPath}`,
+      details,
+    };
+  }
+
+  try {
+    accessSync(dbPath, fsConstants.W_OK);
+  } catch {
+    return {
+      name: "database",
+      status: "fail",
+      message: `db is not writable: ${dbPath}`,
+      details,
+    };
+  }
+
+  try {
+    const row = db.query("SELECT 1 AS one").get() as { one: number } | null;
+    if (!row || row.one !== 1) {
+      return {
+        name: "database",
+        status: "fail",
+        message: `db SELECT 1 returned unexpected value`,
+        details,
+      };
+    }
+  } catch (err) {
+    return {
+      name: "database",
+      status: "fail",
+      message: `db query failed: ${err instanceof Error ? err.message : String(err)}`,
+      details,
+    };
+  }
+
+  let size = 0;
+  try {
+    size = statSync(dbPath).size;
+  } catch {
+    // ignore
+  }
+  details.size_bytes = size;
+  return {
+    name: "database",
+    status: "ok",
+    message: `${dbPath} (${size} bytes, writable, SELECT 1 ok)`,
+    details,
+  };
+}
+
+function checkScope(flags: Flags): DoctorCheck {
+  const cwd = process.cwd();
+  const gitRoot = rootFor(cwd);
+  const scope = scopeFor(cwd, flags.scope);
+  const usingGit = gitRoot !== cwd ? true : existsSync(join(cwd, ".git"));
+  const details = {
+    cwd,
+    git_root: usingGit ? gitRoot : null,
+    scope,
+    scope_source: flags.scope ? "flag" : usingGit ? "git_root" : "cwd_fallback",
+  };
+  if (!usingGit && !flags.scope) {
+    return {
+      name: "scope",
+      status: "warn",
+      message: `no git root above ${cwd}; scope falls back to cwd (${scope})`,
+      details,
+    };
+  }
+  return {
+    name: "scope",
+    status: "ok",
+    message: `scope=${scope}${flags.scope ? " (from --scope)" : usingGit ? " (git root)" : ""}`,
+    details,
+  };
+}
+
+function checkLiveInstances(scope: string): DoctorCheck {
+  const rows = instancesInScope(scope);
+  const live = rows.filter((r) => Math.floor(Date.now() / 1000) - r.heartbeat <= CLEANUP_POLICY.instanceStaleAfterSecs);
+  const details = {
+    count: live.length,
+    instances: live.map((r) => ({ id: r.id, label: r.label, heartbeat: r.heartbeat })),
+  };
+  if (!live.length) {
+    return {
+      name: "live_instances",
+      status: "info",
+      message: `0 live instances in scope`,
+      details,
+    };
+  }
+  const labels = live.map((r) => `${r.id.slice(0, 8)} ${r.label ?? "-"}`);
+  return {
+    name: "live_instances",
+    status: "info",
+    message: `${live.length} live: ${labels.join(", ")}`,
+    details,
+  };
+}
+
+function checkStaleInstances(scope: string): DoctorCheck {
+  const rows = instancesInScope(scope);
+  const now = Math.floor(Date.now() / 1000);
+  const stale = rows.filter((r) => now - r.heartbeat > CLEANUP_POLICY.instanceStaleAfterSecs);
+  const details = {
+    count: stale.length,
+    threshold_secs: CLEANUP_POLICY.instanceStaleAfterSecs,
+    instances: stale.map((r) => ({
+      id: r.id,
+      label: r.label,
+      idle_secs: now - r.heartbeat,
+    })),
+  };
+  if (!stale.length) {
+    return {
+      name: "stale_instances",
+      status: "ok",
+      message: `0 stale (>${CLEANUP_POLICY.instanceStaleAfterSecs}s) instances`,
+      details,
+    };
+  }
+  return {
+    name: "stale_instances",
+    status: "warn",
+    message: `${stale.length} stale instance(s) (>${CLEANUP_POLICY.instanceStaleAfterSecs}s) — run \`swarm-mcp cleanup\``,
+    details,
+  };
+}
+
+type SkillFinding = {
+  kind: "project" | "user";
+  path: string;
+  exists: boolean;
+  symlink: boolean;
+  target: string | null;
+};
+
+function inspectPath(rawPath: string, kind: "project" | "user"): SkillFinding {
+  const resolved = kind === "project" ? resolve(process.cwd(), rawPath) : expandTilde(rawPath);
+  let exists = false;
+  let symlink = false;
+  let target: string | null = null;
+  try {
+    const lst = lstatSync(resolved);
+    exists = true;
+    if (lst.isSymbolicLink()) {
+      symlink = true;
+      try {
+        target = readlinkSync(resolved);
+      } catch {
+        target = null;
+      }
+    }
+  } catch {
+    exists = false;
+  }
+  return { kind, path: resolved, exists, symlink, target };
+}
+
+function checkSkillDiscovery(): DoctorCheck {
+  const findings = DOCTOR_SKILL_LOCATIONS.map((loc) => inspectPath(loc.path, loc.kind));
+  const found = findings.filter((f) => f.exists);
+  const details = { locations: findings };
+  if (!found.length) {
+    return {
+      name: "skill_discovery",
+      status: "warn",
+      message: `swarm-mcp skill not found in any common location (run \`swarm-mcp init\`)`,
+      details,
+    };
+  }
+  const summary = found
+    .map((f) => `${f.path}${f.symlink ? ` → ${f.target ?? "?"}` : ""}`)
+    .join("; ");
+  return {
+    name: "skill_discovery",
+    status: "ok",
+    message: `${found.length} skill install(s): ${summary}`,
+    details,
+  };
+}
+
+type PluginFinding = {
+  manifest: string;
+  exists: boolean;
+  swarm_installs: Array<{
+    key: string;
+    version: string;
+    install_path: string;
+    install_path_exists: boolean;
+  }>;
+};
+
+function checkPluginDiscovery(): DoctorCheck {
+  const findings: PluginFinding[] = [];
+  for (const rawPath of DOCTOR_PLUGIN_LOCATIONS) {
+    const manifest = expandTilde(rawPath);
+    if (!existsSync(manifest)) {
+      findings.push({ manifest, exists: false, swarm_installs: [] });
+      continue;
+    }
+    const swarmInstalls: PluginFinding["swarm_installs"] = [];
+    try {
+      const parsed = JSON.parse(readFileSync(manifest, "utf8")) as {
+        plugins?: Record<string, Array<{ installPath?: string; version?: string }>>;
+      };
+      const plugins = parsed?.plugins ?? {};
+      for (const [key, entries] of Object.entries(plugins)) {
+        if (!key.startsWith("swarm@") && !key.includes("/swarm@")) continue;
+        for (const entry of entries ?? []) {
+          const installPath = entry?.installPath ?? "";
+          swarmInstalls.push({
+            key,
+            version: entry?.version ?? "unknown",
+            install_path: installPath,
+            install_path_exists: installPath ? existsSync(installPath) : false,
+          });
+        }
+      }
+    } catch {
+      // malformed JSON: leave swarm_installs empty
+    }
+    findings.push({ manifest, exists: true, swarm_installs: swarmInstalls });
+  }
+
+  const allInstalls = findings.flatMap((f) =>
+    f.swarm_installs.map((s) => ({ manifest: f.manifest, ...s })),
+  );
+  const details = { findings };
+  if (!allInstalls.length) {
+    return {
+      name: "plugin_discovery",
+      status: "info",
+      message: `no swarm Claude Code plugin installed (informational)`,
+      details,
+    };
+  }
+  const summary = allInstalls
+    .map((i) => `${i.key} v${i.version}`)
+    .join(", ");
+  return {
+    name: "plugin_discovery",
+    status: "info",
+    message: `${allInstalls.length} swarm plugin install(s): ${summary}`,
+    details,
+  };
+}
+
+function checkEnvKnobs(): DoctorCheck {
+  const seen: Record<string, string> = {};
+  for (const key of DOCTOR_ENV_KEYS) {
+    const value = process.env[key];
+    if (value !== undefined && value !== "") seen[key] = value;
+  }
+  const details = { env: seen };
+  const setKeys = Object.keys(seen);
+  if (!setKeys.length) {
+    return {
+      name: "env",
+      status: "info",
+      message: `none of ${DOCTOR_ENV_KEYS.join(", ")} are set`,
+      details,
+    };
+  }
+  const summary = setKeys.map((k) => `${k}=${seen[k]}`).join(" ");
+  return {
+    name: "env",
+    status: "info",
+    message: summary,
+    details,
+  };
+}
+
+function cmdDoctor(flags: Flags) {
+  const scope = resolveScope(flags);
+  const checks: DoctorCheck[] = [
+    checkBinary(),
+    checkDatabase(),
+    checkScope(flags),
+    checkLiveInstances(scope),
+    checkStaleInstances(scope),
+    checkSkillDiscovery(),
+    checkPluginDiscovery(),
+    checkEnvKnobs(),
+  ];
+
+  const failed = checks.filter((c) => c.status === "fail").length;
+
+  if (flags.json) {
+    printJson({
+      ok: failed === 0,
+      failed,
+      scope,
+      checks,
+    });
+  } else {
+    console.log(`swarm-mcp doctor — scope ${scope}\n`);
+    for (const check of checks) {
+      console.log(`  [${statusGlyph(check.status)}] ${check.name}: ${check.message}`);
+    }
+    console.log("");
+    console.log(failed === 0 ? "All FAIL-class checks passed." : `${failed} FAIL check(s); see above.`);
+  }
+
+  if (failed > 0) process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
 
@@ -1122,6 +1536,7 @@ const HANDLERS: Record<Subcommand, (flags: Flags) => void | Promise<void>> = {
   unlock: cmdUnlock,
   inspect: cmdInspect,
   cleanup: cmdCleanup,
+  doctor: cmdDoctor,
   ui: cmdUi,
 };
 export { SUBCOMMANDS };

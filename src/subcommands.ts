@@ -21,6 +21,7 @@ export const SUBCOMMANDS = [
   "unlock",
   "inspect",
   "cleanup",
+  "doctor",
   "ui",
 ] as const;
 

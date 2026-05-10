@@ -1,5 +1,7 @@
 # Getting Started
 
+> Looking for the fastest path? See [`quickstart.md`](./quickstart.md). This page covers the local-clone development setup and per-host details.
+
 This guide gets you from a fresh clone to two coding-agent sessions that can see each other and exchange messages through `swarm-mcp`.
 
 It assumes:

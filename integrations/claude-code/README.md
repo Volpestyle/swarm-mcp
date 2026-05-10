@@ -15,7 +15,7 @@ repo:
 For the broader adapter contract, see
 [`docs/control-plane.md`](../../docs/control-plane.md). Backend selection and workspace identity conventions are centralized in [`docs/backend-configuration.md`](../../docs/backend-configuration.md). For the design parallel in the hermes case, see [`integrations/hermes/SPEC.md`](../hermes/SPEC.md).
 
-## What it does (v0.2.0)
+## What it does (v0.3.0)
 
 | Responsibility | Mechanism |
 |---|---|
@@ -29,6 +29,7 @@ For the broader adapter contract, see
 | Gateway conductor mode | `SWARM_CC_ROLE=gateway` registers as `role:planner`; make easy edits locally, use the MCP `dispatch` tool for medium/large task/spawn routing |
 | Peer prompt express lane | `prompt_peer` MCP tool or `swarm-mcp prompt-peer` CLI sends durable swarm message, then best-effort herdr wake |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
+| Bundled role-doctrine skill | `skills/swarm-mcp/` ships with the plugin (relative symlink to the canonical `skills/swarm-mcp/` source); installs alongside hooks so agents pick up the planner/implementer/reviewer/researcher/generalist role doctrine automatically — no separate skill symlink needed |
 
 Worker-mode coordination failures are swallowed — coordination is opt-in
 convenience for ordinary sessions, never critical path. Gateway mode can handle
@@ -85,9 +86,12 @@ session — it does not install it for you. The simplest way is:
 swarm-mcp init --dir .
 ```
 
-That writes a project-local `.mcp.json` and copies the packaged `swarm-mcp` skill. See
-[`docs/install-skill.md`](../../docs/install-skill.md) for global installs and
-non-Claude hosts.
+That writes a project-local `.mcp.json` so the session can reach the swarm
+MCP server. As of v0.3 the role-doctrine skill ships inside the plugin
+(`skills/swarm-mcp/`), so a successful plugin install brings doctrine
+alongside lifecycle automation — no separate skill symlink is required for
+Claude Code users. See [`docs/install-skill.md`](../../docs/install-skill.md)
+for global installs and non-Claude hosts.
 
 ### CLI resolution
 
@@ -158,13 +162,16 @@ If the deny message never appears, the most common causes are:
 - /swarm slash command
 - Best-effort identity KV cleanup on SessionEnd
 
-### v0.2 — Autonomous lifecycle + gateway mode ✓ (this version)
+### v0.2 — Autonomous lifecycle + gateway mode ✓
 - `swarm-mcp register` / `deregister` / `list-instances`
 - SessionStart/SessionEnd hooks call lifecycle commands directly
 - `prompt_peer` MCP tool and `swarm-mcp prompt-peer`
 - `SWARM_CC_ROLE=gateway` planner/conductor labels and local-small/dispatch-large routing
 
-### v0.3 — Dispatch/spawn orchestration
+### v0.3 — Bundle role-doctrine skill ✓ (this version)
+- `skills/swarm-mcp/` ships inside the plugin (relative symlink to the
+  canonical `skills/swarm-mcp/` source), so a single plugin install brings
+  doctrine + lifecycle. No separate skill symlink step on the user side.
 - MCP `dispatch` plus CLI `swarm-mcp dispatch` fallback for idempotent task
   creation, worker selection, no-double-spawn locking, configured spawner
   backend selection, and peer wake.
@@ -197,8 +204,10 @@ integrations/claude-code/
 │   ├── session_end.py           -- 12-line stub: core.run_session_end_hook
 │   ├── pre_tool_use.py          -- 12-line stub: core.run_pre_tool_use_hook
 │   └── post_tool_use.py         -- 12-line stub: core.run_post_tool_use_hook
-└── commands/
-    └── swarm.md                 -- /swarm slash command
+├── commands/
+│   └── swarm.md                 -- /swarm slash command
+└── skills/
+    └── swarm-mcp -> ../../../skills/swarm-mcp  -- bundled role doctrine (canonical source lives at repo-root skills/swarm-mcp/)
 ```
 
 Lifecycle methods (registration, lock-conflict detection, peer scan, identity publication,

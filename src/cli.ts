@@ -57,6 +57,8 @@ Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
   swarm-mcp whoami [--as <who>] [--scope <path>] [--json]
   swarm-mcp inspect [--scope <path>] [--json]
       One-shot dump of instances, tasks, locks, kv, and recent messages.
+  swarm-mcp doctor [--scope <path>] [--json]
+      Health report: binary, db, scope, instances, skill/plugin install, env knobs. Exits non-zero on FAIL.
   swarm-mcp cleanup [--scope <path>] [--dry-run] [--json]
       Run retention cleanup for offline instances, old rows, and orphaned KV.
   swarm-mcp instances [--scope <path>] [--json]

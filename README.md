@@ -10,7 +10,9 @@ Each session spawns its own swarm-mcp server process via stdio. They all share o
 
 ## Quick start
 
-If you want a first-run walkthrough, start with [`docs/getting-started.md`](./docs/getting-started.md). If you want the broader modular architecture this repo is growing toward, read [`docs/control-plane.md`](./docs/control-plane.md). Backend and consumer config lives in [`docs/backend-configuration.md`](./docs/backend-configuration.md).
+**New here? Read [`docs/quickstart.md`](./docs/quickstart.md) first.** It walks you from zero to two Claude Code sessions seeing each other in about five minutes, with the expected output at each step.
+
+The rest of this section is a condensed reference for power users and non-Claude hosts. For a first-run walkthrough on a local clone, see [`docs/getting-started.md`](./docs/getting-started.md). For the broader modular architecture this repo is growing toward, read [`docs/control-plane.md`](./docs/control-plane.md). Backend and consumer config lives in [`docs/backend-configuration.md`](./docs/backend-configuration.md).
 
 Install dependencies:
 
@@ -261,6 +263,7 @@ Inspection:
 ```sh
 swarm-mcp inspect                    # unified dump of instances, tasks, kv, locks, recent messages
 swarm-mcp inspect --scope /path      # pin to an explicit scope
+swarm-mcp doctor                     # health report: binary, db, scope, skill/plugin install, env knobs (--json supported)
 swarm-mcp messages --from <who>      # peek (does not mark read)
 swarm-mcp cleanup --dry-run --json   # inspect cleanup without deleting
 swarm-mcp kv list --prefix pixel:
