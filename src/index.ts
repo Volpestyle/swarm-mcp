@@ -995,6 +995,13 @@ registeredTool(
       .optional()
       .default(true)
       .describe("When false, create/wake only; do not spawn a worker"),
+    force_spawn: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        "Skip live-worker matching and go straight to the spawn path. Use when you explicitly want a fresh worker pane even if a generalist or matching peer exists.",
+      ),
     spawner: z
       .string()
       .optional()
@@ -1037,6 +1044,7 @@ registeredTool(
           parent_task_id: args.parent_task_id,
           approval_required: args.approval_required,
           spawn: args.spawn,
+          force_spawn: args.force_spawn,
           spawner: args.spawner,
           cwd: args.cwd ?? current.directory,
           harness: args.harness,

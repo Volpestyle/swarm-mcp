@@ -67,7 +67,7 @@ Writes (require an identity):
 | Command | Purpose |
 |--|--|
 | `swarm-mcp request-task <type> <title...> [--description D] [--file P] [--priority N] [--idempotency-key K]` | Create a task as the current identity. |
-| `swarm-mcp dispatch <title...> [--message M] [--type T] [--role R] [--spawner herdr\|swarm-ui] [--harness H] [--idempotency-key K] [--no-spawn] [--wait N]` | Create/reuse a task, wake a live `role:R` worker, or spawn through the configured backend. |
+| `swarm-mcp dispatch <title...> [--message M] [--type T] [--role R] [--spawner herdr\|swarm-ui] [--harness H] [--idempotency-key K] [--no-spawn] [--force-spawn] [--wait N]` | Create/reuse a task, wake a live `role:R` worker, or spawn through the configured backend. `--force-spawn` skips live-worker matching when a fresh worker is required. |
 | `swarm-mcp send --to <who> <content...>` | Send a direct message. |
 | `swarm-mcp prompt-peer --to <who> --message <text> [--task ID] [--force] [--no-nudge]` | Send a durable direct message, then best-effort wake the target's published workspace handle. |
 | `swarm-mcp broadcast <content...>` | Fan out to every other instance in scope. |

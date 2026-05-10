@@ -69,7 +69,7 @@ Inspect / interact with a live swarm (operates on ~/.swarm-mcp/swarm.db):
 
 Write commands (require identity):
   swarm-mcp request-task <type> <title...> [--description <text>] [--file <path>] [--priority N] [--idempotency-key <key>] [--as <who>] [--json]
-  swarm-mcp dispatch <title...> [--message <text>] [--type <type>] [--role <role>] [--spawner <herdr|swarm-ui>] [--harness <harness>] [--idempotency-key <key>] [--no-spawn] [--wait <seconds>] [--as <who>] [--json]
+  swarm-mcp dispatch <title...> [--message <text>] [--type <type>] [--role <role>] [--spawner <herdr|swarm-ui>] [--harness <harness>] [--idempotency-key <key>] [--no-spawn] [--force-spawn] [--wait <seconds>] [--as <who>] [--json]
   swarm-mcp send --to <who> <content...> [--as <who>]
   swarm-mcp prompt-peer --to <who> --message <text> [--task <id>] [--force] [--no-nudge] [--as <who>]
   swarm-mcp resolve-workspace-handle <handle> [--backend herdr] [--kind pane] [--scope <path>] [--as <who>] [--json]

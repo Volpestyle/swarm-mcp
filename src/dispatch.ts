@@ -36,6 +36,7 @@ export interface DispatchOptions {
   approval_required?: boolean;
   role?: string;
   spawn?: boolean;
+  force_spawn?: boolean;
   spawner?: string;
   cwd?: string;
   harness?: string;
@@ -435,7 +436,9 @@ export async function runDispatch(opts: DispatchOptions) {
     return { status: "already_terminal", task_id: result.id, task };
   }
 
-  const liveWorker = findWorker(opts.scope, opts.requester, workerRole);
+  const liveWorker = opts.force_spawn
+    ? null
+    : findWorker(opts.scope, opts.requester, workerRole);
   if (liveWorker) {
     context.clearLocks(opts.requester, opts.scope, lockPath);
     const prompt = promptPeerResult({

@@ -187,6 +187,45 @@ describe("CLI dispatch spawn authority", () => {
     expect(payload.spawner).toBeUndefined();
   });
 
+  test("dispatch --force-spawn bypasses live worker matching", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-force-spawn-"));
+    const dbPath = join(dir, "swarm.db");
+    const gateway = register(
+      dbPath,
+      dir,
+      dir,
+      "identity:personal mode:gateway role:planner",
+    );
+    register(dbPath, dir, dir, "identity:personal role:generalist");
+
+    const result = runCli(dbPath, [
+      "dispatch",
+      "Discuss project state",
+      "--scope",
+      dir,
+      "--as",
+      gateway.id,
+      "--spawner",
+      "swarm-ui",
+      "--force-spawn",
+      "--wait",
+      "0",
+      "--json",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      status: string;
+      spawner: string;
+      recipient?: string;
+      ui_command_id?: number;
+    };
+    expect(payload.status).toBe("spawn_in_flight");
+    expect(payload.spawner).toBe("swarm-ui");
+    expect(payload.recipient).toBeUndefined();
+    expect(payload.ui_command_id).toBeGreaterThan(0);
+  });
+
   test("dispatch prefers an exact role over a generalist", () => {
     const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-exact-role-"));
     const dbPath = join(dir, "swarm.db");

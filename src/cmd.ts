@@ -51,6 +51,7 @@ type Flags = {
   leaseSeconds?: number;
   approvalRequired: boolean;
   spawn: boolean;
+  forceSpawn: boolean;
   force: boolean;
   nudge: boolean;
   enter: boolean;
@@ -78,6 +79,7 @@ function parseFlags(argv: string[]): Flags {
     files: [],
     approvalRequired: false,
     spawn: true,
+    forceSpawn: false,
     enter: true,
     force: false,
     nudge: true,
@@ -121,6 +123,7 @@ function parseFlags(argv: string[]): Flags {
     if (a === "--lease-seconds") { flags.leaseSeconds = parseInt(argv[++i] ?? "", 10); continue; }
     if (a === "--approval-required") { flags.approvalRequired = true; continue; }
     if (a === "--no-spawn") { flags.spawn = false; continue; }
+    if (a === "--force-spawn") { flags.forceSpawn = true; continue; }
     if (a === "--force") { flags.force = true; continue; }
     if (a === "--dry-run") { flags.dryRun = true; continue; }
     if (a === "--no-nudge") { flags.nudge = false; continue; }
@@ -574,6 +577,7 @@ async function cmdDispatch(flags: Flags) {
     approval_required: flags.approvalRequired,
     role: flags.role,
     spawn: flags.spawn,
+    force_spawn: flags.forceSpawn,
     spawner: flags.spawner,
     cwd: flags.directory ?? process.cwd(),
     harness: flags.harness,
