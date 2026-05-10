@@ -86,6 +86,18 @@ function paneIdFromSplit(stdout: string) {
   }
 }
 
+function paneIdFromWorkspaceCreate(stdout: string) {
+  try {
+    const payload = JSON.parse(stdout || "{}");
+    const pane =
+      payload?.result?.root_pane?.pane_id ??
+      payload?.result?.root_pane?.id;
+    return typeof pane === "string" && pane.trim() ? pane.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 function parentPane() {
   return (
     process.env.SWARM_HERDR_PARENT_PANE?.trim() ||
@@ -159,35 +171,52 @@ export const herdrSpawnerBackend: SpawnerBackend = {
   },
   async spawn(input) {
     const pane = parentPane();
-    if (!pane) {
-      return {
-        status: "spawn_failed",
-        error: "herdr spawner requires HERDR_PANE_ID, HERDR_PANE, or SWARM_HERDR_PARENT_PANE",
-      };
-    }
-
-    const direction = process.env.SWARM_HERDR_SPLIT_DIRECTION?.trim() || "right";
-    const split = runHerdrCommand([
-      "pane",
-      "split",
-      pane,
-      "--direction",
-      direction,
-      "--cwd",
-      input.cwd,
-      "--no-focus",
-    ]);
-    if (split.error || split.status !== 0) {
-      return { status: "spawn_failed", error: `herdr pane split failed: ${processError(split)}` };
-    }
-
-    const paneId = paneIdFromSplit(split.stdout);
-    if (!paneId) {
-      return {
-        status: "spawn_failed",
-        error: "herdr pane split returned no pane id",
-        herdr_stdout: split.stdout,
-      };
+    let paneId = "";
+    if (pane) {
+      const direction = process.env.SWARM_HERDR_SPLIT_DIRECTION?.trim() || "right";
+      const split = runHerdrCommand([
+        "pane",
+        "split",
+        pane,
+        "--direction",
+        direction,
+        "--cwd",
+        input.cwd,
+        "--no-focus",
+      ]);
+      if (split.error || split.status !== 0) {
+        return { status: "spawn_failed", error: `herdr pane split failed: ${processError(split)}` };
+      }
+      paneId = paneIdFromSplit(split.stdout);
+      if (!paneId) {
+        return {
+          status: "spawn_failed",
+          error: "herdr pane split returned no pane id",
+          herdr_stdout: split.stdout,
+        };
+      }
+    } else {
+      const created = runHerdrCommand([
+        "workspace",
+        "create",
+        "--cwd",
+        input.cwd,
+        "--no-focus",
+      ]);
+      if (created.error || created.status !== 0) {
+        return {
+          status: "spawn_failed",
+          error: `herdr workspace create failed: ${processError(created)}`,
+        };
+      }
+      paneId = paneIdFromWorkspaceCreate(created.stdout);
+      if (!paneId) {
+        return {
+          status: "spawn_failed",
+          error: "herdr workspace create returned no root pane id",
+          herdr_stdout: created.stdout,
+        };
+      }
     }
 
     const label = labelWithLaunchToken({
