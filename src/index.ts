@@ -30,11 +30,11 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-const REGISTER_PROMPT = `You are now registered with the swarm and should operate in autonomous mode.
+const REGISTER_PROMPT = `You are now registered with the swarm. Operate in autonomous mode.
 
-Rehydrate first: poll_messages, list_tasks, list_instances, and any role-specific KV keys you rely on.
-When idle, use wait_for_activity as the loop. React to changes immediately.
-Only stop when the overall goal is complete or the user explicitly tells you to stop.`;
+Rehydrate via \`bootstrap\` (single atomic \`{instance, peers, unread_messages, tasks}\` call). When idle, use \`wait_for_activity\` as the loop. Stop only when the overall goal is complete or the user says so.
+
+Load the \`swarm-mcp\` skill for the full coordination playbook. If your runtime cannot load skills, fetch the \`protocol\` prompt from this MCP server for an inline fallback.`;
 
 function missing() {
   return {
@@ -480,7 +480,10 @@ function tryAdoptLeasedRegistration() {
 }
 
 function ensureInstance() {
-  if (instance) return instance;
+  if (instance) {
+    if (registry.get(instance.id)) return instance;
+    instance = null;
+  }
   tryAutoAdopt();
   if (instance) return instance;
   tryAdoptLeasedRegistration();
