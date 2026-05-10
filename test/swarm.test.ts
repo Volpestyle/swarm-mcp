@@ -946,6 +946,43 @@ describe("locks", () => {
       { type: "lock", instance_id: worker.id },
     ]);
   });
+
+  test("terminal task update keeps edit locks for other active tasks", () => {
+    const requester = reg("requester", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const fileA = paths.file(worker.directory, "src/index.ts");
+    const fileB = paths.file(worker.directory, "src/context.ts");
+    const taskA = req(requester.id, requester.scope, "fix", "Fix A", {
+      files: [fileA],
+      assignee: worker.id,
+    });
+    const taskB = req(requester.id, requester.scope, "fix", "Fix B", {
+      files: [fileB],
+      assignee: worker.id,
+    });
+    expect(
+      tasks.claim(taskA.id, worker.scope, worker.id, { ignoreUnreadMessages: true }),
+    ).toEqual({ ok: true });
+    expect(
+      tasks.claim(taskB.id, worker.scope, worker.id, { ignoreUnreadMessages: true }),
+    ).toEqual({ ok: true });
+
+    expect(context.lock(worker.id, worker.scope, fileA, "editing A")).toMatchObject({
+      ok: true,
+    });
+    expect(context.lock(worker.id, worker.scope, fileB, "editing B")).toMatchObject({
+      ok: true,
+    });
+
+    expect(tasks.update(taskA.id, worker.scope, worker.id, "done")).toEqual({
+      ok: true,
+    });
+
+    expect(context.lookup(worker.scope, fileA)).toEqual([]);
+    expect(context.lookup(worker.scope, fileB)).toMatchObject([
+      { type: "lock", instance_id: worker.id },
+    ]);
+  });
 });
 
 describe("batch creation", () => {

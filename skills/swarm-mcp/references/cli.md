@@ -74,7 +74,7 @@ Writes (require an identity):
 | `swarm-mcp kv set <key> <value>` | Set a KV entry. |
 | `swarm-mcp kv append <key> <json>` | Append to a KV array value. |
 | `swarm-mcp kv del <key>` | Delete a KV entry. |
-| `swarm-mcp lock <file> [--note "..."]` | Acquire an exclusive file lock. |
+| `swarm-mcp lock <file> [--note "..."] [--exclusive]` | Acquire a re-entrant edit lock by default; pass `--exclusive` for one-shot mutexes that should conflict on any existing lock, including your own. |
 | `swarm-mcp unlock <file>` | Release your file lock. |
 
 State, write, and UI commands accept `--json` for machine-readable output where supported by `swarm-mcp help`.
