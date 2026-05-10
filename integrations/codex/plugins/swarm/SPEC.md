@@ -291,9 +291,9 @@ everything else is bonus.
 
 Same list as the Claude Code SPEC; restating the codex-specific ones:
 
-- **First-class in-agent dispatch/spawn orchestration.** The CLI now has
-  `dispatch`; the remaining gap is a hosted-session tool that wraps the same
-  path without asking the model to shell out.
+- **First-class in-agent dispatch/spawn orchestration.** Implemented via the
+  swarm MCP `dispatch` tool. Keep the CLI bridge for hooks, wrappers, operator
+  shells, and fallback sessions where MCP tools are unavailable.
 - **Empirical hook contract documentation.** Once codex commits to a
   documented PreToolUse / PostToolUse payload schema, the defensive parsing
   in `_common.write_paths_for_tool` can simplify.

@@ -13,7 +13,12 @@ Auth separation is a core pillar of the native agent stack. Work and personal wo
 
 Launchers choose identity before the agent starts. Do not ask a running agent to switch identities mid-session.
 
-`swarm-ui` accepts every launcher above as a `--harness` value when spawning new panes. The Hermes plugin (see `integrations/hermes/`) auto-registers from inside an already-running Hermes session, so most Hermes workers will be adopted rather than spawned through `ui spawn`.
+Spawner backends must choose one of these launchers when creating a worker.
+The current golden-path spawner is herdr; `swarm-ui` remains a legacy/fallback
+backend and its launcher support may lag the table above. The Hermes plugin
+(see `integrations/hermes/`) auto-registers from inside an already-running
+Hermes session, so most Hermes workers will be adopted rather than spawned
+through `ui spawn`.
 
 ## Worker and Lead Aliases
 

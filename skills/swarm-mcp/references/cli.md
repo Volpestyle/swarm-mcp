@@ -6,26 +6,21 @@ The `swarm-mcp` CLI has three uses:
 2. Control a running `swarm-ui` app through the `swarm-mcp ui ...` command family
 3. Install project-local MCP config and the bundled skills with `swarm-mcp init`
 
-Inside an MCP-enabled agent session, prefer the MCP tools for swarm coordination primitives — they are the primary, structured, notification-integrated interface. Reach for the CLI when you are writing a helper script, operating from a plain terminal, or the user explicitly wants to drive `swarm-ui` from the CLI.
+Inside an MCP-enabled agent session, prefer the MCP tools for swarm coordination primitives — they are the primary, structured, notification-integrated interface. Gateway agents should use the MCP `dispatch` tool rather than shelling out. Reach for the CLI when you are writing a helper script, operating from a plain terminal, or the user explicitly wants to drive `swarm-ui` from the CLI.
 
-When launcher aliases set `SWARM_MCP_BIN`, use that value as the command prefix
-instead of assuming a literal `swarm-mcp` binary exists on `PATH`. For example,
-if `SWARM_MCP_BIN='bun run /path/to/swarm-mcp/src/cli.ts'`, run:
-
-```sh
-bun run /path/to/swarm-mcp/src/cli.ts dispatch ...
-```
-
-Use `swarm-mcp ...` only when no launcher-provided prefix exists and the binary
-is actually resolvable.
+When launcher aliases set `SWARM_MCP_BIN`, scripts and fallback CLI calls should
+use that exact value as the command prefix instead of assuming a literal
+`swarm-mcp` binary exists on `PATH`. Inside an agent loop, do not expand that
+path just to dispatch work; call the MCP `dispatch` tool.
 
 The CLI talks to the same SQLite database as the MCP server. For state/coordination commands it is a non-MCP transport for the same primitives. The `ui` subcommands add a small queue-based control surface for `swarm-ui`.
 
 Two higher-level helpers exist for non-MCP callers: `request-task` creates an
-idempotent swarm task, and `dispatch` creates/reuses a task, wakes a matching
-live worker when one exists, or queues a guarded `swarm-ui` spawn. Inside an
-MCP-enabled agent session, prefer `request_task`, `prompt_peer`, and related
-MCP tools directly.
+idempotent swarm task, and `dispatch` mirrors the MCP dispatch flow by
+creating/reusing a task, waking a matching live worker when one exists, or
+spawning through the configured Spawner backend. Inside an MCP-enabled agent
+session, prefer `request_task`, `dispatch`, `prompt_peer`, and related MCP
+tools directly.
 
 ## When to reach for the CLI
 
@@ -72,7 +67,7 @@ Writes (require an identity):
 | Command | Purpose |
 |--|--|
 | `swarm-mcp request-task <type> <title...> [--description D] [--file P] [--priority N] [--idempotency-key K]` | Create a task as the current identity. |
-| `swarm-mcp dispatch <title...> [--message M] [--type T] [--role R] [--harness H] [--idempotency-key K] [--no-spawn] [--wait N]` | Create/reuse a task, wake a live `role:R` worker, or enqueue a guarded `swarm-ui` spawn. |
+| `swarm-mcp dispatch <title...> [--message M] [--type T] [--role R] [--spawner herdr\|swarm-ui] [--harness H] [--idempotency-key K] [--no-spawn] [--wait N]` | Create/reuse a task, wake a live `role:R` worker, or spawn through the configured backend. |
 | `swarm-mcp send --to <who> <content...>` | Send a direct message. |
 | `swarm-mcp prompt-peer --to <who> --message <text> [--task ID] [--force] [--no-nudge]` | Send a durable direct message, then best-effort wake the target's published herdr pane. |
 | `swarm-mcp broadcast <content...>` | Fan out to every other instance in scope. |
@@ -125,31 +120,40 @@ The work contract should live in the swarm message or task, not in raw pane inpu
 ## Dispatch Helper
 
 `swarm-mcp dispatch` is the CLI bridge for gateway-style flows that cannot call
-MCP tools directly or need to cross into herdr/`swarm-ui` process control. In
-launcher-managed sessions, replace `swarm-mcp` with `SWARM_MCP_BIN` when that
-environment variable is set. The helper does four things:
+MCP tools directly. In MCP-enabled gateway sessions, call the MCP `dispatch`
+tool instead. The CLI helper does four things:
 
 1. Creates or reuses a task using `--idempotency-key` when provided, otherwise
    an auto-derived key from scope, type, title, message, and role.
 2. Looks for a live peer whose label contains `role:<role>` (default:
-   `role:implementer`). If found, it sends the task instruction through
-   `prompt-peer`.
-3. If no worker is live and spawning is allowed, it enqueues `ui spawn` for a
-   running `swarm-ui` app.
-4. While the spawn command is pending/running, it holds a synthetic lock at
+   `role:implementer`). If none exists, it falls back to `role:generalist` or
+   a label-less peer before spawning. If a worker is found, it sends the task
+   instruction through `prompt-peer`.
+3. If no worker is live and spawning is allowed, it calls the configured
+   Spawner backend. The default is `herdr`; set `SWARM_SPAWNER=swarm-ui` or
+   pass `--spawner swarm-ui` to keep the legacy queue-backed desktop path
+   available.
+4. While the spawn attempt is pending/running, it holds a synthetic lock at
    `/__swarm/spawn/<role>/<intent_hash>` so retries return `spawn_in_flight`
-   instead of queueing duplicate workers.
+   instead of creating duplicate workers.
 
-If no `swarm-ui` app is running, the UI command remains pending and the spawn
-lock remains in place. A later retry with the same idempotency key sees the
-in-flight lock instead of creating another pane.
+If the selected backend cannot complete immediately, the spawn lock remains in
+place. A later retry with the same idempotency key sees the in-flight lock
+instead of creating another pane.
+
+Herdr dispatch uses the current pane from `HERDR_PANE_ID`, `HERDR_PANE`, or
+`SWARM_HERDR_PARENT_PANE`, then creates a split with `herdr pane split` and
+launches the worker with `herdr pane run`. Use `SWARM_WORKER_HARNESS` (or
+`--harness`) to choose the worker launcher; personal identities default to
+`clowd`, work identities default to `clawd`, and unknown identities default to
+`claude`. `SWARM_HERDR_BIN` may point at a non-default herdr binary.
 
 Spawn/dispatch authority is intentionally narrow: gateway/lead sessions and
 operator surfaces may use this helper; ordinary worker/generalist sessions
 should create or claim tasks, message the planner/gateway, or continue locally
-when safe. The CLI enforces this for identified callers by requiring the
-requester label to include `mode:gateway`; trusted operator shells can override
-the guard with `SWARM_MCP_ALLOW_SPAWN=1`.
+when safe. The MCP and CLI dispatch paths enforce this for identified callers
+by requiring the requester label to include `mode:gateway`; trusted operator
+shells can override the guard with `SWARM_MCP_ALLOW_SPAWN=1`.
 
 ## UI command model
 

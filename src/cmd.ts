@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { CLEANUP_POLICY, runCleanup } from "./cleanup";
 import * as context from "./context";
+import * as dispatch from "./dispatch";
 import * as kv from "./kv";
 import * as messages from "./messages";
 import * as registry from "./registry";
@@ -9,7 +10,6 @@ import * as ui from "./ui";
 import { scope as scopeFor } from "./paths";
 import { SUBCOMMANDS, type Subcommand } from "./subcommands";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { TASK_TYPES, type TaskType } from "./generated/protocol";
 
 type Flags = {
@@ -26,6 +26,7 @@ type Flags = {
   target?: string;
   harness?: string;
   role?: string;
+  spawner?: string;
   label?: string;
   name?: string;
   directory?: string;
@@ -89,6 +90,7 @@ function parseFlags(argv: string[]): Flags {
     if (a === "--target") { flags.target = argv[++i]; continue; }
     if (a === "--harness") { flags.harness = argv[++i]; continue; }
     if (a === "--role") { flags.role = argv[++i]; continue; }
+    if (a === "--spawner") { flags.spawner = argv[++i]; continue; }
     if (a === "--label") { flags.label = argv[++i]; continue; }
     if (a === "--name") { flags.name = argv[++i]; continue; }
     if (a === "--directory") { flags.directory = argv[++i]; continue; }
@@ -210,21 +212,6 @@ function splitCsv(value: string | undefined): string[] | undefined {
   return items.length ? items : undefined;
 }
 
-function terminalTaskStatus(status: unknown) {
-  return status === "done" || status === "failed" || status === "cancelled";
-}
-
-function roleToken(role: string | undefined) {
-  const clean = (role ?? "").trim();
-  return clean ? `role:${clean}` : "";
-}
-
-function hasRole(inst: InstRow, role: string | undefined) {
-  const token = roleToken(role);
-  if (!token) return true;
-  return (inst.label ?? "").split(/\s+/).includes(token);
-}
-
 function hasLabelToken(inst: InstRow | null | undefined, token: string) {
   return (inst?.label ?? "").split(/\s+/).includes(token);
 }
@@ -244,14 +231,6 @@ function requireSpawnAuthority(scope: string, requester: string, action: string)
   throw new Error(
     `${action} is gateway-only. Use a requester labeled mode:gateway, or set SWARM_MCP_ALLOW_SPAWN=1 from a trusted operator shell.`,
   );
-}
-
-function findWorker(scope: string, requester: string, role: string | undefined) {
-  return instancesInScope(scope).find((inst) => inst.id !== requester && hasRole(inst, role)) ?? null;
-}
-
-function hashIntent(parts: string[]) {
-  return createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 16);
 }
 
 const UI_WAIT_POLL_MS = 100;
@@ -531,222 +510,63 @@ function cmdContext(flags: Flags) {
   }
 }
 
-type SpawnLockRow = {
-  id: string;
-  instance_id: string;
-  file: string;
-  content: string;
-};
-
-function spawnLockPath(role: string, intentHash: string) {
-  const cleanRole = role.replace(/[^A-Za-z0-9_.-]/g, "_") || "worker";
-  return `/__swarm/spawn/${cleanRole}/${intentHash}`;
-}
-
-function exactSpawnLock(scope: string, file: string) {
-  return db
-    .query(
-      "SELECT id, instance_id, file, content FROM context WHERE scope = ? AND file = ? AND type = 'lock' LIMIT 1",
-    )
-    .get(scope, file) as SpawnLockRow | null;
-}
-
-function activeSpawnLock(scope: string, file: string) {
-  const lock = exactSpawnLock(scope, file);
-  if (!lock) return null;
-
-  try {
-    const payload = JSON.parse(lock.content) as { ui_command_id?: unknown };
-    const id = Number(payload.ui_command_id);
-    if (Number.isInteger(id)) {
-      const row = ui.get(id);
-      if (row?.status === "done" || row?.status === "failed") {
-        context.clearLocks(lock.instance_id, scope, file);
-        return null;
-      }
-    }
-  } catch {
-    // Older lock notes may be plain text. Treat them as active.
-  }
-  return lock;
-}
-
-function dispatchInstruction(taskId: string, title: string, message: string) {
-  const body = message.trim() || title;
-  return [
-    `Task ${taskId} is ready: ${title}`,
-    body,
-    "Call poll_messages first, claim the task if it matches your role, then complete it with update_task and structured results.",
-  ].join("\n\n");
-}
-
 async function cmdDispatch(flags: Flags) {
   const scope = resolveScope(flags);
   const requester = resolveIdentity(scope, flags);
-  requireSpawnAuthority(scope, requester, "dispatch");
   const taskType = parseTaskType(flags.taskType, "implement");
   const title = flags.positional.slice(1).join(" ").trim();
   if (!title) throw new Error("dispatch <title...> [--message <instructions>]");
 
-  const message = flags.message ?? flags.description ?? title;
-  const workerRole = (flags.role ?? "implementer").trim();
-  const idempotencyKey =
-    flags.idempotencyKey ??
-    `dispatch:${hashIntent([scope, taskType, title, message, workerRole])}`;
-  const intentHash = hashIntent([idempotencyKey]);
-  const lockPath = spawnLockPath(workerRole, intentHash);
-
-  const result = taskStore.request(requester, scope, taskType, title, {
-    description: flags.description ?? message,
-    files: flags.files.length ? flags.files : undefined,
-    priority: Number.isFinite(flags.priority) ? flags.priority : undefined,
+  const payload = (await dispatch.runDispatch({
+    scope,
+    requester,
+    type: taskType,
+    title,
+    message: flags.message,
+    description: flags.description,
+    files: flags.files,
+    priority: flags.priority,
     depends_on: splitCsv(flags.dependsOn),
-    idempotency_key: idempotencyKey,
+    idempotency_key: flags.idempotencyKey,
     parent_task_id: flags.parentTaskId,
     approval_required: flags.approvalRequired,
-  });
-  if ("error" in result) throw new Error(result.error);
+    role: flags.role,
+    spawn: flags.spawn,
+    spawner: flags.spawner,
+    cwd: flags.directory ?? process.cwd(),
+    harness: flags.harness,
+    label: flags.label,
+    name: flags.name,
+    wait_seconds: flags.wait,
+    nudge: flags.nudge,
+    force: flags.force,
+  })) as Record<string, any>;
 
-  const task = taskStore.get(result.id, scope);
-  if (terminalTaskStatus(task?.status)) {
-    const payload = { status: "already_terminal", task_id: result.id, task };
-    if (flags.json) return printJson(payload);
-    console.log(`task ${result.id} is already ${task?.status}`);
-    return;
-  }
-
-  const liveWorker = findWorker(scope, requester, workerRole);
-  if (liveWorker) {
-    context.clearLocks(requester, scope, lockPath);
-    const prompt = promptPeerResult({
-      scope,
-      sender: requester,
-      recipient: liveWorker.id,
-      message: dispatchInstruction(result.id, title, message),
-      task: result.id,
-      nudge: flags.nudge,
-      force: flags.force,
-    });
-    const payload = {
-      status: "dispatched",
-      task_id: result.id,
-      task,
-      recipient: liveWorker.id,
-      prompt,
-    };
-    if (flags.json) return printJson(payload);
-    console.log(`dispatched task ${result.id} to ${formatInst(liveWorker)}`);
-    return;
-  }
-
-  if (!flags.spawn) {
-    const payload = { status: "no_worker", task_id: result.id, task, role: workerRole };
-    if (flags.json) return printJson(payload);
-    console.log(`created task ${result.id}; no role:${workerRole} worker is live`);
-    return;
-  }
-
-  const existingLock = activeSpawnLock(scope, lockPath);
-  if (existingLock) {
-    const payload = {
-      status: "spawn_in_flight",
-      task_id: result.id,
-      task,
-      lock: existingLock,
-    };
-    if (flags.json) return printJson(payload);
-    console.log(`task ${result.id} is ready; spawn already in flight at ${lockPath}`);
-    return;
-  }
-
-  const startedAt = new Date().toISOString();
-  const lockNote = {
-    task_id: result.id,
-    intent_hash: intentHash,
-    role: workerRole,
-    started_at: startedAt,
-  };
-  const lockResult = context.lock(requester, scope, lockPath, JSON.stringify(lockNote));
-  if ("error" in lockResult) {
-    const payload = {
-      status: "spawn_in_flight",
-      task_id: result.id,
-      task,
-      lock: lockResult.active,
-    };
-    if (flags.json) return printJson(payload);
-    console.log(`task ${result.id} is ready; spawn already in flight at ${lockPath}`);
-    return;
-  }
-
-  const commandId = ui.enqueue(
-    scope,
-    "spawn_shell",
-    {
-      cwd: flags.directory ?? process.cwd(),
-      harness: flags.harness ?? "claude",
-      role: workerRole,
-      label: flags.label ?? null,
-      name: flags.name ?? null,
-    },
-    requester,
-  );
-  context.lock(
-    requester,
-    scope,
-    lockPath,
-    JSON.stringify({ ...lockNote, ui_command_id: commandId }),
-  );
-
-  const row = await maybeWaitForUiCommand(commandId, flags, 5);
-  const basePayload = {
-    task_id: result.id,
-    task,
-    ui_command_id: commandId,
-    spawn_lock: lockPath,
-  };
-
-  if (!row || row.status === "pending" || row.status === "running") {
-    const payload = { status: "spawn_in_flight", ...basePayload, ui_command: row };
-    if (flags.json) return printJson(payload);
-    console.log(`queued spawn command #${commandId} for role:${workerRole}; lock held at ${lockPath}`);
-    return;
-  }
-
-  if (row.status === "failed") {
-    context.clearLocks(requester, scope, lockPath);
-    const payload = { status: "spawn_failed", ...basePayload, ui_command: row };
-    if (flags.json) return printJson(payload);
-    console.log(`spawn command #${commandId} failed: ${row.error ?? "unknown error"}`);
-    return;
-  }
-
-  context.clearLocks(requester, scope, lockPath);
-  const spawnResult = parseJsonMaybe(row.result) as { instance_id?: unknown } | null;
-  const spawnedInstance =
-    spawnResult && typeof spawnResult.instance_id === "string" ? spawnResult.instance_id : "";
-  const prompt = spawnedInstance
-    ? promptPeerResult({
-        scope,
-        sender: requester,
-        recipient: spawnedInstance,
-        message: dispatchInstruction(result.id, title, message),
-        task: result.id,
-        nudge: false,
-        force: flags.force,
-      })
-    : null;
-  const payload = {
-    status: "spawned",
-    ...basePayload,
-    spawned_instance: spawnedInstance || null,
-    ui_command: row,
-    prompt,
-  };
   if (flags.json) return printJson(payload);
-  console.log(
-    `spawned role:${workerRole} for task ${result.id}${spawnedInstance ? ` (${spawnedInstance.slice(0, 8)})` : ""}`,
-  );
+  if (payload.status === "already_terminal") {
+    console.log(`task ${payload.task_id} is already ${payload.task?.status}`);
+  } else if (payload.status === "dispatched") {
+    console.log(`dispatched task ${payload.task_id} to ${String(payload.recipient).slice(0, 8)}`);
+  } else if (payload.status === "no_worker") {
+    console.log(`created task ${payload.task_id}; no role:${payload.role} worker is live`);
+  } else if (payload.status === "spawn_in_flight" && "ui_command_id" in payload) {
+    console.log(
+      `queued spawn command #${payload.ui_command_id} for task ${payload.task_id}; lock held at ${payload.spawn_lock}`,
+    );
+  } else if (payload.status === "spawn_in_flight") {
+    const handle = payload.workspace_handle?.pane_id
+      ? ` in herdr pane ${payload.workspace_handle.pane_id}`
+      : "";
+    console.log(`task ${payload.task_id} is ready; spawn already in flight${handle}`);
+  } else if (payload.status === "spawn_failed") {
+    const reason = payload.ui_command?.error ?? payload.error ?? "unknown error";
+    console.log(`spawn failed: ${reason}`);
+  } else if (payload.status === "spawned") {
+    const spawned = payload.spawned_instance ? ` (${String(payload.spawned_instance).slice(0, 8)})` : "";
+    console.log(`spawned worker for task ${payload.task_id}${spawned}`);
+  } else {
+    console.log(JSON.stringify(payload));
+  }
 }
 
 function cmdKv(flags: Flags) {

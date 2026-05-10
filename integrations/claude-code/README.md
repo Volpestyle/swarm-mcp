@@ -26,28 +26,23 @@ in the hermes case, see [`integrations/hermes/SPEC.md`](../hermes/SPEC.md).
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
 | Publish and cleanup `identity/herdr/<instance_id>` | `SessionStart` / `SessionEnd` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
-| Gateway conductor mode | `SWARM_CC_ROLE=gateway` registers as `role:planner`, blocks inline writes unless explicitly opted in |
+| Gateway conductor mode | `SWARM_CC_ROLE=gateway` registers as `role:planner`, blocks inline writes unless explicitly opted in; use the MCP `dispatch` tool for task/spawn routing |
 | Peer prompt express lane | `prompt_peer` MCP tool or `swarm-mcp prompt-peer` CLI sends durable swarm message, then best-effort herdr wake |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 
 Worker-mode coordination failures are swallowed — coordination is opt-in
 convenience for ordinary sessions, never critical path. Gateway mode still
 blocks inline writes by default: no live peer means create/reuse a swarm task
-and drive the herdr / `swarm-ui` spawn path, not native subagents or local
+and drive the configured Spawner backend, not native subagents or local
 implementation. Solo worker sessions (no peers in scope) skip locking entirely.
 
-### Remaining gaps vs. the hermes plugin
+### Gateway dispatch
 
-The Claude Code plugin now has lifecycle parity for registration, locking,
-identity publication, and peer prompting. The remaining gap is the higher-level
-gateway dispatch/spawn path:
-
-- **In-agent fast dispatch.** Gateway mode blocks direct writes and gives the
-  agent planner identity. The CLI now has `swarm-mcp dispatch` for idempotent
-  task creation, live-worker wakeups, and spawn requests through `swarm-ui`,
-  but Claude Code still does not have a plugin-local `swarm_fast_dispatch`
-  tool. The CLI helper is the bridge for hooks, launcher scripts, and gateway
-  wrappers that cannot call MCP tools directly.
+Claude Code should use the swarm MCP `dispatch` tool for in-agent gateway
+routing. It creates or reuses the task, wakes a matching live worker, or runs a
+guarded spawn through the configured backend (`herdr` by default for this
+stack). The CLI `swarm-mcp dispatch` helper remains for hooks, launcher
+scripts, operator shells, and fallback sessions where MCP tools are unavailable.
 
 ## Install
 
@@ -170,11 +165,9 @@ If the deny message never appears, the most common causes are:
 - `SWARM_CC_ROLE=gateway` planner/conductor labels and inline-write blocking
 
 ### v0.3 — Dispatch/spawn orchestration
-- `swarm-mcp request-task` and `swarm-mcp dispatch` for idempotent task
-  creation, worker selection, no-double-spawn locking, `swarm-ui` spawn queue,
-  and peer wake.
-- Later: expose a synchronous-feeling in-agent helper if Claude Code gains a
-  suitable plugin tool surface.
+- MCP `dispatch` plus CLI `swarm-mcp dispatch` fallback for idempotent task
+  creation, worker selection, no-double-spawn locking, configured spawner
+  backend selection, and peer wake.
 
 ### v0.4 — Ambient peer context
 - SessionStart additionalContext carries the current peer/lock/annotation

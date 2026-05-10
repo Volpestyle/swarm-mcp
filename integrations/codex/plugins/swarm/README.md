@@ -28,13 +28,13 @@ parallels, see [`integrations/hermes/SPEC.md`](../../../hermes/SPEC.md) and
 | Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
 | Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
 | Publish and cleanup `identity/herdr/<instance_id>` | `SessionStart` / `Stop` hooks → `swarm-mcp kv set/del` when `HERDR_PANE_ID` is present |
-| Gateway conductor mode | `SWARM_CODEX_ROLE=gateway` registers as `role:planner`, blocks inline writes unless explicitly opted in |
+| Gateway conductor mode | `SWARM_CODEX_ROLE=gateway` registers as `role:planner`, blocks inline writes unless explicitly opted in; use the MCP `dispatch` tool for task/spawn routing |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 
 Worker-mode coordination failures are swallowed — coordination is opt-in
 convenience for ordinary sessions, never critical path. Gateway mode still
 blocks inline writes by default: no live peer means create/reuse a swarm task
-and drive the herdr / `swarm-ui` spawn path, not native subagents or local
+and route it through the MCP `dispatch` tool, not native subagents or local
 implementation. Solo worker sessions (no peers in scope) skip locking entirely.
 
 ### Codex specifics
@@ -210,7 +210,7 @@ If the deny message never appears, the most common causes are:
 ### v0.2 — Autonomous lifecycle + gateway mode ✓ (this version)
 - `swarm-mcp register` / `deregister` / `list-instances`
 - SessionStart/Stop hooks call lifecycle commands directly
-- Gateway-mode planner labels and inline-write blocking
+- Gateway-mode planner labels, inline-write blocking, and MCP `dispatch`
 
 ### v0.3 — Verify hook payload contract
 - Empirically confirm codex's PreToolUse / PostToolUse stdin schema and

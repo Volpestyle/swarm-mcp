@@ -257,6 +257,6 @@ unblock this adapter specifically:
 - **Exclusive lock semantics (already on the hermes list).** Not strictly
   required for this plugin, but if added, makes the hook's deny path more
   precise without needing the substring `locked` heuristic.
-- **First-class in-agent dispatch/spawn orchestration.** The CLI now has
-  `dispatch`; the remaining gap is a hosted-session tool that wraps the same
-  path without asking the model to shell out.
+- **First-class in-agent dispatch/spawn orchestration.** Implemented via the
+  swarm MCP `dispatch` tool. Keep the CLI bridge for hooks, wrappers, operator
+  shells, and fallback sessions where MCP tools are unavailable.
