@@ -76,10 +76,12 @@ When `wait_for_activity` returns `kv_updates`:
 
 - Use `send_message` for targeted conversation or questions.
 - Use `send_message` when the target is busy and the note can wait until their next yield checkpoint.
-- Use `prompt_peer` when a peer should notice soon. It writes the durable swarm message first and only best-effort wakes the workspace handle.
+- Use `prompt_peer` when a peer should get a live-interface nudge. It writes the durable swarm message first, then best-effort wakes the workspace handle with only a short instruction to check messages.
 - Use `broadcast` for short updates all active agents need.
 - Use `request_task` for tracked work that needs ownership and a final status.
 - Use KV for compact shared state that agents should poll or resume from.
+
+If you receive a live wake prompt from another peer, call `bootstrap` or `poll_messages` and act on unread messages. Do not treat the live prompt itself as the full work contract.
 
 ## Safety
 

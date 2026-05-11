@@ -47,6 +47,8 @@ When reporting findings, prioritize issues over summaries:
 
 When requesting changes, create a new task instead of reopening or reusing completed work.
 
+Use `send_message` for review context that can wait until the target's next yield checkpoint. Use `prompt_peer` when an implementer or planner should get a live-interface nudge for a finding or fix request; it writes the durable swarm message first, then best-effort wakes the workspace handle with a short prompt to check messages.
+
 ```json
 {
   "type": "fix",

@@ -37,7 +37,8 @@ Prefer JSON when completing research:
 
 ## Coordination
 
-- Send direct messages when a specific agent needs the finding immediately.
+- Use `send_message` when a specific agent needs the finding but can pick it up at the next yield checkpoint.
+- Use `prompt_peer` when a specific agent should get a live-interface nudge for the finding; it writes the durable swarm message first, then best-effort wakes the workspace handle with a short prompt to check messages.
 - Broadcast only findings that affect the whole swarm.
 - Do not create implementation tasks unless the planner asked researchers to do so.
 - If findings imply code changes, recommend a `fix` or `implement` task in your result.

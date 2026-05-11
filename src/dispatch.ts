@@ -512,8 +512,8 @@ export async function runDispatch(opts: DispatchOptions) {
         recipient: spawnedInstance,
         message: dispatchInstruction(result.id, title, message),
         task: result.id,
-        nudge: false,
-        force: opts.force ?? false,
+        nudge: opts.nudge ?? true,
+        force: true,
       })
     : null;
 

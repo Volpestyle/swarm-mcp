@@ -144,7 +144,7 @@ After initial setup and delegation, monitor only while you still own active coor
 5. On `instance_changes`, assign work to new implementers and reassign orphaned work from stale agents.
 6. If a configured timeout returns no changes, do one `bootstrap` checkpoint and continue waiting only if you still own active monitoring responsibility.
 
-Do not loop just because the swarm exists. If all delegated work is terminal and no peer answer is expected, summarize, publish final state, and idle. If a peer should notice planner feedback soon, use `prompt_peer`; if the peer is busy and the note can wait, use `send_message`.
+Do not loop just because the swarm exists. If all delegated work is terminal and no peer answer is expected, summarize, publish final state, and idle. If a peer should get a live-interface nudge for planner feedback, use `prompt_peer`; if the peer is busy and the note can wait, use `send_message`.
 
 ## Escalation
 

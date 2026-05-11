@@ -77,7 +77,7 @@ Use focused reads only when you need one part of the surface:
 - `poll_messages` for unread messages only
 - `list_tasks` for tasks only
 
-Handle unread messages before claiming new work.
+Handle unread messages before claiming new work. If your live interface receives a peer wake prompt, call `bootstrap` or `poll_messages` immediately; the live prompt is only a nudge, and unread swarm messages are the source of truth.
 
 If `bootstrap.peers` is empty, no peer can collide; the integration plugin's peer-lock check has nothing to block on, and you have no reason to take a manual `lock_file` either. Re-check peers at your next yield checkpoint, or from `instance_changes` if you are already monitoring with `wait_for_activity` for another reason.
 

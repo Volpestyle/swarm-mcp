@@ -160,7 +160,7 @@ If a pane exists but no worker claims the task:
 If a live worker is busy:
 
 - Prefer `send_message` for non-urgent context.
-- Use `prompt_peer` for soon-needed attention; it records the durable message first and best-effort wakes the handle.
+- Use `prompt_peer` when the worker should get a live-interface nudge; it records the durable message first and best-effort wakes the handle with a short prompt to check messages.
 - Use `force=true` only for urgent, corrective, or blocking updates.
 
 ## User Summary

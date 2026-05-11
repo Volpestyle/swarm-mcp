@@ -41,6 +41,7 @@ type WakeCall = {
   backend: string;
   handle: string;
   prompt: string;
+  force?: boolean;
 };
 
 function stringValue(value: unknown) {
@@ -63,7 +64,11 @@ function restoreEnv(name: string, value: string | undefined) {
   else process.env[name] = value;
 }
 
-function syntheticBackend(name: string, wakeCalls: WakeCall[] = []): WorkspaceBackend {
+function syntheticBackend(
+  name: string,
+  wakeCalls: WakeCall[] = [],
+  agentStatus = "idle",
+): WorkspaceBackend {
   const canonical = (handle: string) =>
     handle.endsWith("-alias") ? `${handle.slice(0, -"alias".length)}canonical` : handle;
 
@@ -89,13 +94,16 @@ function syntheticBackend(name: string, wakeCalls: WakeCall[] = []): WorkspaceBa
         backend: name,
         handle_kind: handleKind || "unit",
         handle: canonical(handle),
-        agent_status: "idle",
+        agent_status: agentStatus,
       };
       return { ok: true, value: info };
     },
 
-    wakeHandle({ handle, prompt }) {
-      wakeCalls.push({ backend: name, handle, prompt });
+    wakeHandle({ handle, prompt, force }) {
+      wakeCalls.push({ backend: name, handle, prompt, force });
+      if (agentStatus === "working" && !force) {
+        return { ok: true, value: { skipped: "target workspace handle is working" } };
+      }
       return { ok: true, value: {} };
     },
 
@@ -625,6 +633,65 @@ describe("workspace backend registry", () => {
       .query("SELECT COUNT(*) AS count FROM context WHERE scope = ? AND file LIKE '/__swarm/spawn/%'")
       .get(scope) as { count: number };
     expect(locks.count).toBe(0);
+  });
+
+  test("dispatch nudges a spawned worker by default", async () => {
+    const scope = "scope-dispatch-spawn-nudge";
+    const wakeCalls: WakeCall[] = [];
+    workspaceIdentity.registerBackend(syntheticBackend("alpha", wakeCalls, "working"));
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    const spawned = registry.register(
+      "/tmp/spawned",
+      "identity:personal role:implementer launch:testtoken",
+      scope,
+    );
+    kv.set(
+      gateway.scope,
+      workspaceBackend.identityKey("alpha", spawned.id),
+      JSON.stringify({ backend: "alpha", handle_kind: "unit", handle: "spawned-handle" }),
+      gateway.id,
+    );
+    const spawnerName = "test-spawn-nudge";
+    spawnerBackend.registerSpawner({
+      name: spawnerName,
+      defaultWaitSeconds: 0,
+      defaultHarness() {
+        return "test";
+      },
+      spawn() {
+        return {
+          status: "spawned",
+          spawned_instance: spawned.id,
+        };
+      },
+    });
+
+    const result = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Wake spawned task",
+      role: "implementer",
+      spawner: spawnerName,
+      force_spawn: true,
+    });
+
+    expect(result).toMatchObject({
+      status: "spawned",
+      spawned_instance: spawned.id,
+      prompt: { message_sent: true, nudged: true, recipient: spawned.id },
+    });
+    expect(wakeCalls).toEqual([
+      {
+        backend: "alpha",
+        handle: "spawned-handle",
+        prompt: expect.stringContaining(`task ${result.task_id}`),
+        force: true,
+      },
+    ]);
   });
 
   test("herdr spawner pre-creates a leased instance and publishes pane identity", async () => {

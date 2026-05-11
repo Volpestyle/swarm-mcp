@@ -24,7 +24,7 @@ If the user invoked this skill with a role argument, follow the matching role re
 
 1. Call `register`, unless a hook already did it.
 2. Call `bootstrap` for `{instance, peers, unread_messages, tasks}`.
-3. Handle unread messages before claiming work.
+3. Handle unread messages before claiming work. If your live interface was woken by a peer prompt, call `bootstrap` or `poll_messages` first; the durable instruction is in swarm messages.
 4. Claim the highest-priority open task that matches your role.
 5. Edit normally — plugin-supported runtimes (Hermes, Claude Code, Codex) check write tools against peer-held locks. Call `lock_file` only when you need a wider critical section (see Locking below).
 6. Coordinate through `request_task`, `dispatch` (gateway only), `send_message`, `prompt_peer`, `broadcast`, and KV.
@@ -76,7 +76,7 @@ Use swarm as an event-driven coordination fabric, not a token-burning poll loop.
 - **Monitoring**: call `wait_for_activity` only while you still own an active coordination obligation, such as a dependency, review, lock release, peer response, or gateway/planner delegation.
 - **Idle**: if you have no active task, no delegated work to monitor, no pending dependency, and no instruction to stay warm, do not call `wait_for_activity` in a loop. Finish the turn and remain promptable if the runtime/workspace keeps the session alive.
 
-Use `send_message` for durable notes to busy peers. Use `prompt_peer` generously when a peer should notice soon; it records the swarm message first and only best-effort wakes the workspace handle. Do not use `force=true` unless the update is urgent, corrective, or blocking.
+Use `send_message` for durable notes to busy peers. Use `prompt_peer` when a specific peer's live agent interface should be nudged, not only when you want to leave inbox mail; it records the full swarm message first, then best-effort injects a short wake prompt telling the peer to check messages. Do not use `force=true` unless the update is urgent, corrective, or blocking.
 
 Deregister only when you are actually exiting, ending a one-shot session, or otherwise will not remain available. Plugin-managed sessions usually handle deregistration at runtime finalization.
 
@@ -113,7 +113,7 @@ Deregister only when you are actually exiting, ending a one-shot session, or oth
 - Prefer `request_task` when the work should be tracked and completed
 - Prefer explicit `review` tasks over passive review scans
 - Prefer `send_message` for durable targeted notes that do not need task state
-- Prefer `prompt_peer` when a specific peer should notice the message soon; it records the swarm message first, then best-effort wakes the workspace handle
+- Prefer `prompt_peer` when a specific peer should get a live-interface nudge; it records the swarm message first, then best-effort wakes the workspace handle to make the peer check messages
 - Prefer `broadcast` for short status updates that help everyone
 - Prefer `request_task` or tracker comments for findings that must survive the current swarm session
 - Prefer a matching `role:` token when choosing a specialist

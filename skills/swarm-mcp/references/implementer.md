@@ -93,7 +93,7 @@ After completing a task, or if none were initially available:
 4. If you are waiting on a dependency, review, lock, or specific peer answer, call `wait_for_activity` and act on the returned changes.
 5. If you have no active responsibility, finish the turn and remain promptable. Do not loop just to stay warm.
 
-When a busy peer needs context, use `send_message`. When a peer should notice soon, use `prompt_peer`; it stores the durable swarm message first and usually skips interrupting actively working handles.
+When a busy peer needs context, use `send_message`. When a peer should get a live-interface nudge, use `prompt_peer`; it stores the durable swarm message first and best-effort wakes the peer with a short prompt to check messages, usually without interrupting actively working handles.
 
 ## Termination
 
