@@ -112,6 +112,78 @@ class SwarmRoleConfigTests(unittest.TestCase):
         self.assertEqual(tracker["mcp"], "linear_work")
         self.assertEqual(tracker["team"], "ENG")
 
+    def test_session_start_reports_herdr_agent_status_when_env_present(self) -> None:
+        os.environ["HERDR_PANE_ID"] = "pane-1"
+        os.environ["HERDR_SOCKET_PATH"] = "/tmp/herdr.sock"
+
+        def fake_dispatch(tool_suffix: str, args: dict) -> dict:
+            self.assertEqual(tool_suffix, "register")
+            return {"id": "inst-session-123"}
+
+        with (
+            mock.patch.object(lifecycle, "_load_config", return_value={"swarm": {"role": "worker"}}),
+            mock.patch.object(lifecycle, "_dispatch", side_effect=fake_dispatch),
+            mock.patch("integrations.hermes.prompt_peer.publish_current_identity"),
+            mock.patch.object(
+                lifecycle.herdr_agent_report,
+                "report_agent",
+                return_value=True,
+            ) as report_agent,
+        ):
+            lifecycle.on_session_start(session_id="session-123", platform="telegram")
+
+        report_agent.assert_called_once_with(
+            agent="hermes",
+            state="idle",
+            source="swarm-mcp:hermes:inst-session-123",
+            message="swarm session registered",
+        )
+
+    def test_session_start_ignores_herdr_agent_report_exceptions(self) -> None:
+        os.environ["HERDR_PANE_ID"] = "pane-1"
+        os.environ["HERDR_SOCKET_PATH"] = "/tmp/herdr.sock"
+
+        def fake_dispatch(tool_suffix: str, args: dict) -> dict:
+            self.assertEqual(tool_suffix, "register")
+            return {"id": "inst-session-123"}
+
+        with (
+            mock.patch.object(lifecycle, "_load_config", return_value={"swarm": {"role": "worker"}}),
+            mock.patch.object(lifecycle, "_dispatch", side_effect=fake_dispatch),
+            mock.patch("integrations.hermes.prompt_peer.publish_current_identity"),
+            mock.patch.object(
+                lifecycle.herdr_agent_report,
+                "report_agent",
+                side_effect=RuntimeError("socket unavailable"),
+            ),
+        ):
+            lifecycle.on_session_start(session_id="session-123", platform="telegram")
+
+        self.assertEqual(lifecycle.get_instance_id("session-123"), "inst-session-123")
+
+    def test_session_finalize_releases_herdr_agent_when_env_present(self) -> None:
+        os.environ["HERDR_PANE_ID"] = "pane-1"
+        os.environ["HERDR_SOCKET_PATH"] = "/tmp/herdr.sock"
+        lifecycle._instances["session-123"] = "inst-session-123"
+        lifecycle._roles_by_session["session-123"] = "worker"
+        lifecycle._refcounts["inst-session-123"] = 1
+
+        with (
+            mock.patch("integrations.hermes.prompt_peer.delete_current_identity"),
+            mock.patch.object(lifecycle, "_dispatch", return_value={"ok": True}),
+            mock.patch.object(
+                lifecycle.herdr_agent_report,
+                "release_agent",
+                return_value=True,
+            ) as release_agent,
+        ):
+            lifecycle.on_session_finalize(session_id="session-123")
+
+        release_agent.assert_called_once_with(
+            agent="hermes",
+            source="swarm-mcp:hermes:inst-session-123",
+        )
+
     def test_gateway_role_skips_pre_tool_lock_check(self) -> None:
         self._start_with_config({"swarm": {"role": "gateway"}})
 

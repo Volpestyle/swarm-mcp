@@ -318,10 +318,9 @@ Two pieces, shipped together because the ambient-context block wants real worker
 **Herdr `pane.report_agent` integration** (promoted from v0.6+):
 - When `HERDR_SOCKET_PATH` + `HERDR_PANE_ID` env present, plugin calls herdr's status RPC directly:
   - `on_session_start` → `agent=hermes state=idle`
-  - tool/LLM activity in flight → `state=working`
-  - approval/block directive → `state=blocked`
   - `on_session_finalize` → `pane.release_agent`
-- Replaces regex-based status detection in herdr for hermes panes; regex stays as fallback for sessions where the env vars aren't injected.
+- Follow-up hook coverage can report `working` and `blocked` when the runtime exposes reliable activity/approval boundaries.
+- Replaces regex-based status detection in herdr for panes where the direct RPC succeeds; regex stays as fallback when the env vars aren't injected or the herdr socket/RPC is unavailable.
 
 ### v0.7+ — Open territory
 - `subagent_stop` bridge: `delegate_task` outcome → `update_task` if subagent prompt carried a task id
@@ -392,7 +391,7 @@ Cover plugin behavior without a live MCP server by stubbing `lifecycle._dispatch
   - second attempt (same gateway, same intent_hash): `lock_file(..., exclusive=true)` returns a conflict → short-circuits to in-flight task ref
   - explicit `unlock_file` after worker registers; verify lock is gone
 - Gateway routing: trivial local edit succeeds; medium/large write request creates/reuses a dispatch task or returns an operator action request when no worker/spawner is available
-- `pane.report_agent` calls: `state=idle` on register, `working` during a stubbed dispatch, `blocked` on approval directive, `release_agent` on finalize
+- `pane.report_agent` calls: `state=idle` on register and `release_agent` on finalize; negative tests cover missing herdr env and socket/report failures remaining fail-open.
 
 ## 11. Design decisions
 

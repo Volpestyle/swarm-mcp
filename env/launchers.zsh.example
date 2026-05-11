@@ -54,15 +54,30 @@ _swarm_run_lead_identity() (
   _swarm_run_lead "$@"
 )
 
+_swarm_herdr() (
+  local socket_path="$1"
+  local session="$2"
+  shift 2
+  mkdir -p "${socket_path:h}"
+  HERDR_SOCKET_PATH="$socket_path" herdr --session "$session" "$@"
+)
+
+# Visible herdr instances. Launch the matching identity gateway/workers against
+# the same socket path so workspace wakeups and pane status use the right server.
+herdrw() { _swarm_herdr "${HERMES_HOST_HOME:-$HOME}/.herdr/work/herdr.sock" work "$@"; }
+herdrp() { _swarm_herdr "${HERMES_HOST_HOME:-$HOME}/volpestyle/.herdr/personal/herdr.sock" personal "$@"; }
+
 # Work launchers.
 clawd() { _swarm_run_identity work "$SWARM_ENV_DIR/work.env" claude --enable-auto-mode "$@"; }
 codexw() { _swarm_run_identity work "$SWARM_ENV_DIR/work.env" command codex "$@"; }
 opencodew() { _swarm_run_identity work "$SWARM_ENV_DIR/work.env" command opencode "$@"; }
+hermesw() { _swarm_run_identity work "$SWARM_ENV_DIR/work.env" command hermes "$@"; }
 
 # Personal launchers.
 clowd() { _swarm_run_identity personal "$SWARM_ENV_DIR/personal.env" claude --enable-auto-mode "$@"; }
 cdx() { _swarm_run_identity personal "$SWARM_ENV_DIR/personal.env" command codex "$@"; }
 opc() { _swarm_run_identity personal "$SWARM_ENV_DIR/personal.env" command opencode "$@"; }
+hermesp() { _swarm_run_identity personal "$SWARM_ENV_DIR/personal.env" command hermes "$@"; }
 
 # Personal lead launchers.
 clowdl() { _swarm_run_lead_identity personal "$SWARM_ENV_DIR/personal.env" claude claude --enable-auto-mode "$@"; }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from unittest import mock
 
 from integrations._shared import swarm_adapter_contract as contract
 
@@ -53,6 +54,33 @@ class SwarmAdapterContractTests(unittest.TestCase):
                 os.path.abspath("src/c.txt"),
             ],
         )
+
+    def test_personal_herdr_socket_prefers_host_volpestyle_root(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "HERMES_HOST_HOME": "/Users/james.volpe",
+                "HOME": "/sandbox/home",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                contract.resolved_herdr_socket_path("personal"),
+                os.path.abspath(
+                    "/Users/james.volpe/volpestyle/.herdr/personal/herdr.sock"
+                ),
+            )
+
+    def test_work_identity_gets_separate_host_herdr_socket_default(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"HERMES_HOST_HOME": "/Users/james.volpe", "HOME": "/sandbox/home"},
+            clear=True,
+        ):
+            self.assertEqual(
+                contract.resolved_herdr_socket_path("work"),
+                os.path.abspath("/Users/james.volpe/.herdr/work/herdr.sock"),
+            )
 
 
 if __name__ == "__main__":

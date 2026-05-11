@@ -33,6 +33,8 @@ The adoption flow is the cross-stack contract for `instances`:
 5. Heartbeats and normal deregistration are owned by the adopted MCP server.
 6. UI/server cleanup may only delete rows where `adopted = 0`; manual UI cleanup can remove stale adopted rows only after checking that no live PTY is bound.
 
+The Herdr spawner follows the same contract without making `pane_id` a coordination identifier: after `herdr pane split` or `herdr workspace create` returns a pane, it creates an unadopted leased `instances` row, publishes advisory workspace identity rows at `identity/workspace/herdr/<instance_id>` and `identity/herdr/<instance_id>`, then runs the worker command with `SWARM_MCP_INSTANCE_ID` plus `HERDR_PANE_ID`. `list_instances` may show the pane as display metadata, and lock-conflict messages may include it, but tasks, messages, and locks still target only `instance_id`.
+
 `swarm-server` may attach a PTY to an existing unadopted pending row when `POST /pty` includes `instance_id`. Pending rows can have fresh heartbeats before adoption, so `adopted = 0` is the authoritative signal that the row is still attachable; adopted online rows must not be reattached. If a pending row is pruned before adoption, the MCP server may insert a fresh adopted row using the same preassigned id so the PTY binding remains stable. `swarm-server` also periodically reclaims unadopted rows that are offline and no longer bound to a live PTY.
 
 ## ui_commands

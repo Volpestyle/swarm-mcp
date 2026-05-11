@@ -8,7 +8,7 @@ Ordinary workers should not spawn agents. They claim tasks, message the planner/
 
 1. `bootstrap` and handle unread messages first.
 2. For trivial, low-risk work, edit locally when that is clearly faster than spawning.
-3. For medium or large work, create/link the configured same-identity tracker item when applicable, then call MCP `dispatch`.
+3. For medium or large work, create/link the configured same-identity tracker item when applicable, then call MCP `dispatch` with an explicit `idempotency_key` for retryable handoffs.
 4. Use `placement` when spawning multiple workers so they land in a readable herdr layout.
 5. Monitor with durable task state, not pane reads.
 6. Summarize task IDs, worker identities, completion state, and where workers landed.
@@ -23,9 +23,12 @@ Common MCP shapes:
 {
   "title": "Implement retry backoff",
   "message": "Add exponential backoff and tests. Report files changed and test status.",
-  "role": "implementer"
+  "role": "implementer",
+  "idempotency_key": "retry-backoff-v1"
 }
 ```
+
+Use an explicit `idempotency_key` for batches, retries, and user-visible work. The default key is derived from the dispatch intent; changing the title, message, type, role, or harness can create a separate task/spawn instead of observing the same handoff.
 
 Force a fresh worker pane even when a matching live worker exists:
 
@@ -49,6 +52,15 @@ Create/wake only, never spawn:
 }
 ```
 
+Common dispatch statuses:
+
+- `dispatched`: an existing live worker was assigned and prompted.
+- `spawned`: a worker was started, adopted/registering completed, and the task was bound to it.
+- `spawn_in_flight`: a spawn is already underway for this intent; retry with the same `idempotency_key` to observe it.
+- `no_worker`: no live worker matched and spawning was disabled.
+- `spawn_failed`: the configured spawner failed before producing a worker.
+- `already_terminal`: the idempotent task already reached `done`, `failed`, or `cancelled`.
+
 ## Completion Waiting
 
 Dispatch returns after handoff/spawn by default. That is the normal background delegation behavior.
@@ -66,7 +78,7 @@ Use `completion_wait_seconds` only when the current user turn or platform wrappe
 
 Interpretation:
 
-- `completion.status = "completed"`: task reached `done`, `failed`, or `cancelled`; summarize the terminal task result.
+- `completion.status = "completed"`: task reached a terminal state; inspect `completion.terminal_status` for `done`, `failed`, or `cancelled` before summarizing.
 - `completion.status = "timeout"`: handoff/spawn may still be valid; tell the user it is still running and monitor through task events if you own that responsibility.
 - No `completion`: dispatch returned immediately by design.
 
@@ -75,6 +87,8 @@ Do not use long completion waits for batches. For batch work, dispatch tasks, ch
 ## Herdr Placement
 
 When spawning through herdr, keep workers grouped and readable.
+
+`placement` is used only when dispatch actually spawns a pane. If dispatch reuses a live worker, placement does not move that worker. For batch layouts where fresh panes are intentional, use `force_spawn: true` with `placement`.
 
 Default policy:
 
@@ -125,13 +139,15 @@ For 2-6 related workers:
 5. Use `wait_for_activity` only while you still own active monitoring.
 6. When all tasks are terminal, broadcast `[signal:complete]` and summarize.
 
+Checkpoint in KV so another gateway/planner can recover, for example `kv_set("plan/latest", "<serialized plan with task IDs, owners, expected outputs, and next step>")`.
+
 ## Recovery
 
 If dispatch says `spawn_in_flight`:
 
 - Check the returned `task_id`, `expected_instance`, `launch_token`, and `workspace_handle`.
 - The task may still be open while the worker starts. Do not duplicate the spawn with a new idempotency key unless you intentionally want another worker.
-- Re-run dispatch with the same `idempotency_key` to observe the same in-flight handoff.
+- Re-run dispatch with the same `idempotency_key` to observe the same in-flight handoff. If you omitted the key, keep the dispatch intent unchanged so the auto-derived key remains stable.
 
 If a pane exists but no worker claims the task:
 

@@ -151,7 +151,7 @@ Hooks pick up the same env knobs as the hermes / Claude Code plugins, with
 | `SWARM_CODEX_ROLE` / `SWARM_ROLE` | `worker` by default. Set `gateway` for planner/conductor behavior. |
 | `SWARM_CODEX_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `Stop` deregisters normally. |
 | `SWARM_CODEX_WORK_TRACKER` / `SWARM_WORK_TRACKER` | JSON tracker config to publish at `config/work_tracker/<identity>`; use this for Linear/Jira/GitHub policy, not credentials. |
-| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this workspace identity for express-lane peer wakes. See [`backend-configuration.md`](../../../../docs/backend-configuration.md). |
+| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, SessionStart publishes workspace identity for peer wakes and reports `pane.report_agent state=idle`; Stop releases that herdr agent authority. Missing env/socket failures fall back to herdr heuristics. See [`backend-configuration.md`](../../../../docs/backend-configuration.md). |
 
 **Repo-wide role default — `.swarm-role` file.**
 If `SWARM_CODEX_AGENT_ROLE` is unset, the hook walks up from `cwd` to the

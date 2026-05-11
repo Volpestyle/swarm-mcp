@@ -53,7 +53,12 @@ export const swarmUiSpawnerBackend: SpawnerBackend = {
       input.requester,
       input.scope,
       input.lock_path,
-      JSON.stringify({ ...input.lock_note, ui_command_id: commandId, harness: input.harness }),
+      JSON.stringify({
+        ...input.lock_note,
+        ui_command_id: commandId,
+        harness: input.harness,
+        identity: input.identity,
+      }),
     );
 
     const row =

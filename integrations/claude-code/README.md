@@ -125,7 +125,7 @@ priority for Claude Code-specific overrides:
 | `SWARM_CC_SCOPE` / `SWARM_HERMES_SCOPE` / `SWARM_MCP_SCOPE` | Override the coordination scope. Default: git root of `cwd`. |
 | `SWARM_CC_FILE_ROOT` / `SWARM_HERMES_FILE_ROOT` / `SWARM_MCP_FILE_ROOT` | Override the file root passed to `register`. |
 | `SWARM_CC_WORK_TRACKER` / `SWARM_WORK_TRACKER` | JSON tracker config to publish at `config/work_tracker/<identity>`; use this for Linear/Jira/GitHub policy, not credentials. |
-| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, the SessionStart hook publishes this workspace identity for express-lane peer wakes. See [`backend-configuration.md`](../../docs/backend-configuration.md). |
+| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, SessionStart publishes workspace identity for peer wakes and reports `pane.report_agent state=idle`; SessionEnd releases that herdr agent authority. Missing env/socket failures fall back to herdr heuristics. See [`backend-configuration.md`](../../docs/backend-configuration.md). |
 
 Default label format mirrors hermes:
 `identity:<id> claude-code platform:cli [mode:gateway] [role:<name>] origin:claude-code session:<id-prefix>`.

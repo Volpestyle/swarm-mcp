@@ -48,9 +48,25 @@ Herdr-launched workers publish workspace identity when these env vars are presen
 | Env var | Purpose |
 |---|---|
 | `HERDR_PANE_ID` / `HERDR_PANE` | Transport-local pane handle to publish. |
-| `HERDR_SOCKET_PATH` | Herdr socket used by wake/status calls. |
+| `HERDR_SOCKET_PATH` | Herdr socket used by wake/status calls and direct `pane.report_agent` status reporting. |
 | `HERDR_WORKSPACE_ID` | Optional workspace metadata. |
 | `SWARM_HERDR_BIN` | Optional non-default `herdr` binary path. |
+
+For local development, prefer identity-scoped shared herdr sockets:
+
+```sh
+# work
+export HERDR_SOCKET_PATH=/Users/james.volpe/.herdr/work/herdr.sock
+
+# personal
+export HERDR_SOCKET_PATH=/Users/james.volpe/volpestyle/.herdr/personal/herdr.sock
+```
+
+Launch both the visible desktop herdr server and the matching-identity gateway
+with the same value. The personal path is visible to sandboxed personal gateways
+that can access `/Users/james.volpe/volpestyle`, while keeping it separate from
+work identity state. Work identities use their own host-visible socket under
+`/Users/james.volpe/.herdr/work`.
 
 The published KV row is:
 
@@ -74,6 +90,13 @@ with a value like:
 
 Runtime integrations also write the legacy compatibility key `identity/herdr/<instance_id>` for current consumers. New integrations should publish the generic `identity/workspace/<backend>/<instance_id>` shape.
 
+When both `HERDR_SOCKET_PATH` and `HERDR_PANE_ID`/`HERDR_PANE` are present,
+runtime hooks also report pane agent status directly to herdr with
+`pane.report_agent` after successful swarm registration and call
+`pane.release_agent` during cleanup. Missing env vars, socket errors, or herdr
+RPC errors are fail-open: the workspace identity KV still publishes when
+possible, and herdr falls back to its normal process/output heuristics.
+
 ## Current Dispatch/Spawner Setup
 
 Gateway sessions should call the MCP `dispatch` tool. Operator shells and hooks can use `swarm-mcp dispatch`.
@@ -94,7 +117,21 @@ Herdr dispatch uses:
 | `SWARM_WORKER_HARNESS` / `SWARM_DISPATCH_HARNESS` | Worker launcher command. |
 | `SWARM_HERDR_BIN` | Optional non-default `herdr` binary path. |
 
-The herdr spawner pre-creates a swarm instance lease, injects `SWARM_MCP_INSTANCE_ID`, and waits for the worker to adopt/register. Dispatch releases the spawn mutex only after the worker is registered and bound to the task.
+Dispatch chooses the worker launcher from the requester identity, not from the
+current shell alone. Personal dispatches default to `clowd` and normalize
+generic harness requests to personal launchers: `claude` -> `clowd`, `codex` ->
+`cdx`, `opencode` -> `opc`, and `hermes`/`hermesw` -> `hermesp`. Work
+dispatches default to `clawd` and keep the work-side launchers. The herdr
+spawner pre-creates a swarm instance lease with the requester `identity:` token,
+injects `SWARM_MCP_INSTANCE_ID` and `SWARM_MCP_LABEL`, and waits for the worker
+to adopt/register. Dispatch releases the spawn mutex only after the worker is
+registered and bound to the task.
+
+Dispatch itself still returns immediately after task handoff/spawn unless the
+caller opts into task completion monitoring. Use MCP
+`completion_wait_seconds` or CLI `--wait-for-completion <seconds>` to wait for
+the task state to reach `done`, `failed`, or `cancelled`; the response keeps
+the normal dispatch status and adds a `completion` object.
 
 ## Switching To Swarm Server Later
 

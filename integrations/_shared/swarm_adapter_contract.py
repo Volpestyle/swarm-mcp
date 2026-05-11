@@ -347,3 +347,53 @@ def work_tracker_config(
 def work_tracker_key(identity: str) -> str:
     clean = identity_name(identity) or "default"
     return f"config/work_tracker/{clean}"
+
+
+PERSONAL_HERDR_SOCKET_PARTS = (".herdr", "personal", "herdr.sock")
+WORK_HERDR_SOCKET_PARTS = (".herdr", "work", "herdr.sock")
+
+
+def _host_home() -> str:
+    return (
+        os.environ.get("HERMES_HOST_HOME")
+        or os.environ.get("SWARM_HOST_HOME")
+        or str(Path.home())
+    )
+
+
+def _expand_home(path: str) -> str:
+    clean = str(path or "").strip()
+    if clean == "~":
+        return os.path.abspath(_host_home())
+    if clean.startswith("~/"):
+        return os.path.abspath(os.path.join(_host_home(), clean[2:]))
+    return os.path.abspath(os.path.expanduser(clean))
+
+
+def personal_control_root() -> str:
+    configured = os.environ.get("SWARM_MCP_PERSONAL_ROOTS", "").strip()
+    if configured:
+        first_root = next((item.strip() for item in configured.split(os.pathsep) if item.strip()), "")
+        if first_root:
+            return _expand_home(first_root)
+    return os.path.abspath(os.path.join(_host_home(), "volpestyle"))
+
+
+def preferred_personal_herdr_socket_path() -> str:
+    return os.path.join(personal_control_root(), *PERSONAL_HERDR_SOCKET_PARTS)
+
+
+def preferred_work_herdr_socket_path() -> str:
+    return os.path.join(_host_home(), *WORK_HERDR_SOCKET_PARTS)
+
+
+def resolved_herdr_socket_path(identity: str = "") -> str:
+    explicit = os.environ.get("HERDR_SOCKET_PATH", "").strip()
+    if explicit:
+        return explicit
+    clean_identity = identity_name(identity)
+    if clean_identity == "personal":
+        return preferred_personal_herdr_socket_path()
+    if clean_identity == "work":
+        return preferred_work_herdr_socket_path()
+    return ""

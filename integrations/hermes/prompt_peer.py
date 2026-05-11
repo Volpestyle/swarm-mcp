@@ -41,7 +41,7 @@ def current_herdr_identity() -> dict[str, Any]:
         "handle": pane_id,
         "pane_id": pane_id,
     }
-    socket_path = os.environ.get("HERDR_SOCKET_PATH")
+    socket_path = lifecycle.contract.resolved_herdr_socket_path(lifecycle._identity_name())
     if socket_path:
         identity["socket_path"] = socket_path
     workspace_id = os.environ.get("HERDR_WORKSPACE_ID")
@@ -187,6 +187,8 @@ def _content_text(payload: Any) -> str:
 def _herdr_env(identity: dict[str, Any]) -> dict[str, str]:
     env = os.environ.copy()
     socket_path = identity.get("socket_path")
+    if not isinstance(socket_path, str) or not socket_path:
+        socket_path = lifecycle.contract.resolved_herdr_socket_path(lifecycle._identity_name())
     if isinstance(socket_path, str) and socket_path:
         env["HERDR_SOCKET_PATH"] = socket_path
     return env

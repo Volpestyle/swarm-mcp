@@ -64,6 +64,7 @@ type Flags = {
   x?: number;
   y?: number;
   wait?: number;
+  completionWait?: number;
   leaseSeconds?: number;
   adoptInstanceId?: string;
   approvalRequired: boolean;
@@ -137,6 +138,7 @@ function parseFlags(argv: string[]): Flags {
     if (a === "--x") { flags.x = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--y") { flags.y = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--wait") { flags.wait = parseFloat(argv[++i] ?? ""); continue; }
+    if (a === "--wait-for-completion" || a === "--completion-wait") { flags.completionWait = parseFloat(argv[++i] ?? ""); continue; }
     if (a === "--lease-seconds") { flags.leaseSeconds = parseInt(argv[++i] ?? "", 10); continue; }
     if (a === "--adopt-instance-id") { flags.adoptInstanceId = argv[++i]; continue; }
     if (a === "--approval-required") { flags.approvalRequired = true; continue; }
@@ -358,13 +360,17 @@ async function enqueueUiCommand(
 
 function cmdInstances(flags: Flags) {
   const scope = resolveScope(flags);
-  const rows = instancesInScope(scope);
+  const rows = workspaceIdentity.annotateInstancesWithPublishedHandles(
+    scope,
+    instancesInScope(scope),
+  );
   if (flags.json) return printJson(rows);
   if (!rows.length) return console.log(`(no instances in scope ${scope})`);
   console.log(`scope: ${scope}`);
   for (const r of rows) {
+    const pane = typeof r.pane_id === "string" && r.pane_id ? `  pane=${r.pane_id}` : "";
     console.log(
-      `  ${r.id.slice(0, 8)}  ${r.label ?? "-"}  pid=${r.pid}  ${idleLabel(r.heartbeat)}`,
+      `  ${r.id.slice(0, 8)}  ${r.label ?? "-"}  pid=${r.pid}  ${idleLabel(r.heartbeat)}${pane}`,
     );
   }
 }
@@ -627,8 +633,18 @@ function cmdUpdate(flags: Flags) {
   console.log(`task ${taskId} -> ${status}`);
 }
 
+function lockOwnerDisplay(row: {
+  instance_id: string;
+  owner_label?: string | null;
+  pane_id?: string | null;
+}) {
+  const label = row.owner_label?.trim() || row.instance_id.slice(0, 8);
+  return row.pane_id ? `${label} (pane ${row.pane_id})` : label;
+}
+
 function cmdLocks(flags: Flags) {
   const scope = resolveScope(flags);
+  const actor = flags.as ? resolveIdentity(scope, flags) : undefined;
   const rows = db
     .query(
       `SELECT id, instance_id, file, type, content, created_at
@@ -639,16 +655,34 @@ function cmdLocks(flags: Flags) {
     .all(scope) as Array<{
       id: string;
       instance_id: string;
-      file: string;
-      type: string;
-      content: string;
-      created_at: number;
-    }>;
-  if (flags.json) return printJson(rows);
-  if (!rows.length) return console.log("(no locks)");
-  for (const r of rows) {
+    file: string;
+    type: string;
+    content: string;
+    created_at: number;
+  }>;
+  const enriched = rows.map((row) => {
+    const owner = registry.get(row.instance_id);
+    const workspace = workspaceIdentity.publishedWorkspaceSummary({
+      scope,
+      instanceId: row.instance_id,
+      actor,
+    });
+    return {
+      ...row,
+      owner_label: owner?.label ?? null,
+      ...(workspace ? { workspace } : {}),
+      ...(workspace?.backend ? { workspace_backend: workspace.backend } : {}),
+      ...(workspace?.workspace_handle
+        ? { workspace_handle: workspace.workspace_handle }
+        : {}),
+      ...(workspace?.pane_id ? { pane_id: workspace.pane_id } : {}),
+    };
+  });
+  if (flags.json) return printJson(enriched);
+  if (!enriched.length) return console.log("(no locks)");
+  for (const r of enriched) {
     console.log(
-      `  ${r.instance_id.slice(0, 8)}  ${r.file}  — ${r.content}`,
+      `  ${lockOwnerDisplay(r)}  ${r.file}  — ${r.content}`,
     );
   }
 }
@@ -683,20 +717,28 @@ async function cmdDispatch(flags: Flags) {
     label: flags.label,
     name: flags.name,
     wait_seconds: flags.wait,
+    completion_wait_seconds: flags.completionWait,
     nudge: flags.nudge,
     force: flags.force,
   })) as Record<string, any>;
 
   if (flags.json) return printJson(payload);
+  const completion = payload.completion;
+  const completionSuffix =
+    completion?.status === "completed"
+      ? `; completed ${completion.terminal_status}`
+      : completion?.status === "timeout"
+        ? `; completion wait timed out with task ${completion.task?.status ?? "missing"}`
+        : "";
   if (payload.status === "already_terminal") {
     console.log(`task ${payload.task_id} is already ${payload.task?.status}`);
   } else if (payload.status === "dispatched") {
-    console.log(`dispatched task ${payload.task_id} to ${String(payload.recipient).slice(0, 8)}`);
+    console.log(`dispatched task ${payload.task_id} to ${String(payload.recipient).slice(0, 8)}${completionSuffix}`);
   } else if (payload.status === "no_worker") {
-    console.log(`created task ${payload.task_id}; no role:${payload.role} worker is live`);
+    console.log(`created task ${payload.task_id}; no role:${payload.role} worker is live${completionSuffix}`);
   } else if (payload.status === "spawn_in_flight" && "ui_command_id" in payload) {
     console.log(
-      `queued spawn command #${payload.ui_command_id} for task ${payload.task_id}; lock held at ${payload.spawn_lock}`,
+      `queued spawn command #${payload.ui_command_id} for task ${payload.task_id}; lock held at ${payload.spawn_lock}${completionSuffix}`,
     );
   } else if (payload.status === "spawn_in_flight") {
     const workspaceHandle = payload.workspace_handle;
@@ -705,13 +747,13 @@ async function cmdDispatch(flags: Flags) {
       : workspaceHandle?.pane_id
         ? ` in herdr workspace handle ${workspaceHandle.pane_id}`
       : "";
-    console.log(`task ${payload.task_id} is ready; spawn already in flight${handle}`);
+    console.log(`task ${payload.task_id} is ready; spawn already in flight${handle}${completionSuffix}`);
   } else if (payload.status === "spawn_failed") {
     const reason = payload.ui_command?.error ?? payload.error ?? "unknown error";
-    console.log(`spawn failed: ${reason}`);
+    console.log(`spawn failed: ${reason}${completionSuffix}`);
   } else if (payload.status === "spawned") {
     const spawned = payload.spawned_instance ? ` (${String(payload.spawned_instance).slice(0, 8)})` : "";
-    console.log(`spawned worker for task ${payload.task_id}${spawned}`);
+    console.log(`spawned worker for task ${payload.task_id}${spawned}${completionSuffix}`);
   } else {
     console.log(JSON.stringify(payload));
   }

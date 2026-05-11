@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 from uuid import uuid4
 
+from integrations._shared import herdr_agent_report
 from integrations._shared.swarm_hook_core import HookCore, RuntimeConfig
 
 
@@ -113,6 +114,60 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertIn('adopt_instance_id="inst-1"', rendered)
         self.assertNotIn("Call the `register` tool", rendered)
 
+    def test_session_start_personal_gateway_defaults_to_shared_herdr_socket(self) -> None:
+        os.environ["SWARM_TEST_IDENTITY"] = "personal"
+        os.environ["SWARM_TEST_ROLE"] = "gateway"
+        os.environ["HERMES_HOST_HOME"] = "/Users/james.volpe"
+        os.environ["HOME"] = "/sandbox/home"
+        os.environ["HERDR_PANE_ID"] = "pane-1"
+
+        calls: list[list[str]] = []
+        herdr_envs: list[dict[str, str]] = []
+
+        def fake_run(args: list[str], timeout: float = 8.0) -> tuple[int, str, str]:
+            calls.append(args)
+            if args[0] == "register":
+                return (
+                    0,
+                    json.dumps({"id": "inst-1", "scope": "/repo", "file_root": "/repo"}),
+                    "",
+                )
+            if args[:2] == ["kv", "set"]:
+                return 0, "", ""
+            return 1, "", "unexpected"
+
+        expected_socket = (
+            "/Users/james.volpe/volpestyle/.herdr/personal/herdr.sock"
+        )
+        pane_payload = {
+            "result": {
+                "pane": {
+                    "pane_id": "workspace-1",
+                    "workspace_id": "workspace",
+                    "tab_id": "workspace:1",
+                }
+            }
+        }
+
+        def fake_subprocess_run(*args, **kwargs):
+            herdr_envs.append(kwargs.get("env", {}))
+            return mock.Mock(returncode=0, stdout=json.dumps(pane_payload), stderr="")
+
+        with (
+            mock.patch.object(self.core, "run_swarm", side_effect=fake_run),
+            mock.patch("integrations._shared.swarm_hook_core.shutil.which", return_value="herdr"),
+            mock.patch(
+                "integrations._shared.swarm_hook_core.subprocess.run",
+                side_effect=fake_subprocess_run,
+            ),
+        ):
+            self.run_hook({"session_id": "abc-123", "cwd": "/repo", "source": "startup"})
+
+        self.assertEqual(herdr_envs[0]["HERDR_SOCKET_PATH"], expected_socket)
+        identity = json.loads(calls[1][3])
+        self.assertEqual(identity["socket_path"], expected_socket)
+        self.assertEqual(identity["backend"], "herdr")
+
     def test_session_start_publishes_configured_work_tracker(self) -> None:
         os.environ["SWARM_TEST_IDENTITY"] = "personal"
         os.environ["SWARM_TEST_WORK_TRACKER"] = json.dumps(
@@ -154,6 +209,73 @@ class HookCoreLifecycleTests(unittest.TestCase):
         rendered = json.loads(output)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("Configured work tracker published", rendered)
         self.assertIn("MCP `github_personal`", rendered)
+
+    def test_session_start_reports_herdr_agent_status_when_env_present(self) -> None:
+        os.environ["HERDR_PANE_ID"] = "pane-1"
+        os.environ["HERDR_SOCKET_PATH"] = "/tmp/herdr.sock"
+
+        def fake_run(args: list[str], timeout: float = 8.0) -> tuple[int, str, str]:
+            if args[0] == "register":
+                return (
+                    0,
+                    json.dumps({"id": "inst-1", "scope": "/repo", "file_root": "/repo"}),
+                    "",
+                )
+            return 0, "{}", ""
+
+        with (
+            mock.patch.object(self.core, "run_swarm", side_effect=fake_run),
+            mock.patch.object(self.core, "_publish_herdr_identity", return_value=True),
+            mock.patch(
+                "integrations._shared.swarm_hook_core.herdr_agent_report.report_agent",
+                return_value=True,
+            ) as report_agent,
+        ):
+            output = self.run_hook(
+                {"session_id": "abc-123", "cwd": "/repo", "source": "startup"}
+            )
+
+        report_agent.assert_called_once_with(
+            agent="test-runtime",
+            state="idle",
+            source="swarm-mcp:test-runtime:inst-1",
+            message="swarm session registered",
+        )
+        meta = self.core.read_session_meta("abc-123")
+        self.assertTrue(meta["herdr_agent_reported"])
+        rendered = json.loads(output)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Instance `inst-1`", rendered)
+
+    def test_session_start_ignores_herdr_agent_report_exceptions(self) -> None:
+        os.environ["HERDR_PANE_ID"] = "pane-1"
+        os.environ["HERDR_SOCKET_PATH"] = "/tmp/herdr.sock"
+
+        def fake_run(args: list[str], timeout: float = 8.0) -> tuple[int, str, str]:
+            if args[0] == "register":
+                return (
+                    0,
+                    json.dumps({"id": "inst-1", "scope": "/repo", "file_root": "/repo"}),
+                    "",
+                )
+            return 0, "{}", ""
+
+        with (
+            mock.patch.object(self.core, "run_swarm", side_effect=fake_run),
+            mock.patch.object(self.core, "_publish_herdr_identity", return_value=True),
+            mock.patch(
+                "integrations._shared.swarm_hook_core.herdr_agent_report.report_agent",
+                side_effect=RuntimeError("socket unavailable"),
+            ),
+        ):
+            output = self.run_hook(
+                {"session_id": "abc-123", "cwd": "/repo", "source": "startup"}
+            )
+
+        meta = self.core.read_session_meta("abc-123")
+        self.assertEqual(meta["instance_id"], "inst-1")
+        self.assertFalse(meta["herdr_agent_reported"])
+        rendered = json.loads(output)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("swarm coordination is active", rendered)
 
     def test_session_start_override_label_preserves_session_token(self) -> None:
         os.environ["SWARM_TEST_LABEL"] = "identity:personal role:researcher topic:debug"
@@ -248,6 +370,67 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertEqual(calls[2][:3], ["deregister", "--as", "inst-1"])
         self.assertFalse(self.core.session_scratch("abc-123").joinpath("meta.json").exists())
 
+    def test_session_end_releases_herdr_agent_when_env_present(self) -> None:
+        os.environ["HERDR_PANE_ID"] = "pane-1"
+        os.environ["HERDR_SOCKET_PATH"] = "/tmp/herdr.sock"
+        self.core.write_session_meta(
+            "abc-123",
+            {"instance_id": "inst-1", "scope": "/repo", "label": "test-runtime"},
+        )
+        calls: list[list[str]] = []
+
+        def fake_run(args: list[str], timeout: float = 8.0) -> tuple[int, str, str]:
+            calls.append(args)
+            return 0, "{}", ""
+
+        with (
+            mock.patch.object(self.core, "run_swarm", side_effect=fake_run),
+            mock.patch(
+                "integrations._shared.swarm_hook_core.herdr_agent_report.release_agent",
+                return_value=True,
+            ) as release_agent,
+        ):
+            self.core.run_session_end_hook(io.StringIO(json.dumps({"session_id": "abc-123"})))
+
+        release_agent.assert_called_once_with(
+            agent="test-runtime",
+            source="swarm-mcp:test-runtime:inst-1",
+        )
+        self.assertEqual(calls[0][:3], ["kv", "del", "identity/workspace/herdr/inst-1"])
+        self.assertEqual(calls[1][:3], ["kv", "del", "identity/herdr/inst-1"])
+        self.assertEqual(calls[2][:3], ["deregister", "--as", "inst-1"])
+
+    def test_herdr_report_agent_skips_without_required_env(self) -> None:
+        os.environ["HERDR_PANE_ID"] = "pane-1"
+
+        with mock.patch(
+            "integrations._shared.herdr_agent_report.socket.socket"
+        ) as socket_factory:
+            ok = herdr_agent_report.report_agent(
+                agent="codex",
+                state="idle",
+                source="swarm-mcp:codex:inst-1",
+            )
+
+        self.assertFalse(ok)
+        socket_factory.assert_not_called()
+
+    def test_herdr_report_agent_returns_false_on_socket_error(self) -> None:
+        os.environ["HERDR_PANE_ID"] = "pane-1"
+        os.environ["HERDR_SOCKET_PATH"] = "/tmp/herdr.sock"
+
+        with mock.patch(
+            "integrations._shared.herdr_agent_report.socket.socket",
+            side_effect=OSError("connect failed"),
+        ):
+            ok = herdr_agent_report.report_agent(
+                agent="codex",
+                state="idle",
+                source="swarm-mcp:codex:inst-1",
+            )
+
+        self.assertFalse(ok)
+
     def _run_pre_tool(
         self,
         payload: dict,
@@ -324,6 +507,34 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertIn("/repo/file.txt", reason)
         self.assertIn("inst-pee", reason)  # 8-char prefix of holder
         self.assertIn("refactoring auth flow", reason)
+
+    def test_pre_tool_lock_reason_uses_owner_label_and_pane_when_available(self) -> None:
+        self.core.write_session_meta(
+            "abc-123", {"instance_id": "inst-self", "scope": "/repo"}
+        )
+
+        output = self._run_pre_tool(
+            {
+                "session_id": "abc-123",
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/repo/file.txt"},
+            },
+            locks_response=[
+                {
+                    "id": "lock-1",
+                    "instance_id": "inst-peer-xyz",
+                    "owner_label": "role:implementer name:bob",
+                    "pane_id": "pane-3",
+                    "file": "/repo/file.txt",
+                    "type": "lock",
+                    "content": "",
+                    "created_at": 0,
+                }
+            ],
+        )
+
+        reason = json.loads(output)["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("held by role:implementer name:bob (pane pane-3)", reason)
 
     def test_pre_tool_allows_write_when_lock_is_self_held(self) -> None:
         """Re-entrant: an agent that declared a wider critical section keeps editing."""

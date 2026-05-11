@@ -17,7 +17,7 @@ For the full design — architecture, lifecycle contract, role topology (worker 
 | Auto-`register` on session start | `on_session_start` hook → `mcp_swarm_register` |
 | Auto-`deregister` on session finalization | `on_session_finalize` hook → `mcp_swarm_deregister` |
 | Enforce peer-declared locks on write-like file tools | `pre_tool_call` → `mcp_swarm_get_file_lock` per target path; blocks the call when a peer (not this session) holds it. Never acquires. |
-| Publish workspace identity for this swarm instance | `on_session_start` → publish current workspace handle when `HERDR_PANE_ID` is present |
+| Publish workspace identity and pane status for this swarm instance | `on_session_start` → publish current workspace handle when `HERDR_PANE_ID` is present; with `HERDR_SOCKET_PATH`, report `pane.report_agent state=idle` and release it on finalize |
 | Publish configured work tracker | `on_session_start` reads tracker config and writes `config/work_tracker/<identity>` KV |
 | Express-lane peer prompt | `swarm_prompt_peer` tool → `mcp_swarm_send_message`, then best-effort workspace backend wake-up (`herdr pane run` today) |
 | `/swarm` slash command (status/instances/tasks/kv/messages) | shells to `swarm-mcp` CLI, no agent turn |

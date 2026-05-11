@@ -21,6 +21,7 @@ _INTEGRATIONS_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_INTEGRATIONS_ROOT / "_shared"))
 
 import swarm_adapter_contract as contract  # noqa: E402
+import herdr_agent_report  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +169,32 @@ def _publish_work_tracker_config(instance_id: str, tracker: dict[str, Any]) -> N
             instance_id,
             result.get("error"),
         )
+
+
+def _herdr_agent_source(instance_id: str) -> str:
+    return herdr_agent_report.agent_source("hermes", instance_id)
+
+
+def _report_herdr_agent(instance_id: str, state: str, message: str = "") -> None:
+    try:
+        herdr_agent_report.report_agent(
+            agent="hermes",
+            state=state,
+            source=_herdr_agent_source(instance_id),
+            message=message or None,
+        )
+    except Exception:
+        logger.debug("swarm plugin: herdr report_agent failed", exc_info=True)
+
+
+def _release_herdr_agent(instance_id: str) -> None:
+    try:
+        herdr_agent_report.release_agent(
+            agent="hermes",
+            source=_herdr_agent_source(instance_id),
+        )
+    except Exception:
+        logger.debug("swarm plugin: herdr release_agent failed", exc_info=True)
 
 
 def _decode_json_prefix(text: str) -> Any:
@@ -467,6 +494,7 @@ def on_session_start(session_id: str = "", **kwargs: Any) -> None:
         from . import prompt_peer
 
         prompt_peer.publish_current_identity(instance_id)
+        _report_herdr_agent(instance_id, "idle", "swarm session registered")
         _publish_work_tracker_config(instance_id, _work_tracker_config(kwargs))
         logger.info("swarm plugin: registered as %s", instance_id)
     else:
@@ -492,6 +520,7 @@ def on_session_finalize(session_id: str = "", **_: Any) -> None:
 
     from . import prompt_peer
 
+    _release_herdr_agent(instance_id)
     prompt_peer.delete_current_identity(instance_id)
     result = _dispatch("deregister", {})
     if result and result.get("error"):

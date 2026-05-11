@@ -20,6 +20,13 @@ backend and its launcher support may lag the table above. The Hermes plugin
 Hermes session, so most Hermes workers will be adopted rather than spawned
 through `ui spawn`.
 
+Dispatch uses the requester's `identity:` token as the spawn identity. For a
+personal requester, generic harness selections are rewritten to personal
+launchers before the worker is created: `claude`/`clawd` -> `clowd`, `codex` ->
+`cdx`, `opencode` -> `opc`, and `hermes`/`hermesw` -> `hermesp`. The spawned
+instance label also carries `identity:personal`, so future live-worker reuse
+stays inside the same boundary.
+
 ## Worker and Lead Aliases
 
 For interactive local use, keep paired worker/lead launcher functions for the
@@ -54,6 +61,21 @@ export SWARM_DB_PATH="$HOME/.swarm-mcp-personal/swarm.db"
 not a storage boundary; every process pointed at the same database can read that
 database.
 
+Launchers also set identity-scoped herdr sockets, for example:
+
+```sh
+# work
+export HERDR_SOCKET_PATH=/Users/james.volpe/.herdr/work/herdr.sock
+
+# personal
+export HERDR_SOCKET_PATH=/Users/james.volpe/volpestyle/.herdr/personal/herdr.sock
+```
+
+Use the matching path for the visible desktop herdr server and that identity's
+gateway. This avoids relying on a sandboxed `$HOME` or the default host profile
+socket at `~/.config/herdr/herdr.sock`, and it keeps personal herdr state
+separate from work.
+
 Personal example:
 
 ```sh
@@ -68,6 +90,8 @@ _swarm_run() (
 
 clowd() { _swarm_run "$HOME/.config/swarm-mcp/personal.env" claude --enable-auto-mode "$@"; }
 cdx() { _swarm_run "$HOME/.config/swarm-mcp/personal.env" command codex "$@"; }
+opc() { _swarm_run "$HOME/.config/swarm-mcp/personal.env" command opencode "$@"; }
+hermesp() { _swarm_run "$HOME/.config/swarm-mcp/personal.env" command hermes "$@"; }
 ```
 
 Lead functions add runtime-specific gateway vars after sourcing the same env
@@ -76,7 +100,7 @@ complete zsh example.
 
 In this convention:
 
-- `clowd` / `cdx` are personal workers.
+- `clowd` / `cdx` / `opc` / `hermesp` are personal workers.
 - `clowdl` / `cdxl` are personal leads.
 - `SWARM_<runtime>_ROLE=gateway` is the lead/conductor behavior.
 - `SWARM_<runtime>_AGENT_ROLE=planner` is the swarm routing label workers use
@@ -190,7 +214,7 @@ Dispatch flow:
 4. Create or link the tracker item only if the configured same-identity MCP is available.
 5. Do not substitute a different loaded tracker MCP when the configured tracker is missing or ambiguous.
 6. Create the swarm task with an `identity:<work|personal>` label in task context or assignee label matching.
-7. Spawn a worker through the matching launcher (`codex` vs `cdx`, `opencode` vs `opc`, `claude`/`clawd` vs `clowd`).
+7. Spawn a worker through the matching launcher (`codex` vs `cdx`, `opencode` vs `opc`, `claude`/`clawd` vs `clowd`, `hermesw` vs `hermesp`).
 8. Worker uses only same-identity MCPs.
 
 ## Figma and Linear

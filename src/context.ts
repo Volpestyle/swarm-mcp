@@ -6,6 +6,7 @@ import { emit } from "./events";
 import { identityMatches } from "./identity";
 import * as registry from "./registry";
 import { now } from "./time";
+import * as workspaceIdentity from "./workspace_identity";
 
 type ContextRow = {
   id: string;
@@ -25,7 +26,11 @@ type LockRow = ContextRow & {
     stale: boolean;
     reclaimable: boolean;
     active: boolean;
+    workspace_backend?: string;
+    workspace_handle?: string;
+    pane_id?: string;
   };
+  workspace?: workspaceIdentity.PublishedWorkspaceSummary;
   active_tasks: Array<{
     id: string;
     type: string;
@@ -60,7 +65,11 @@ function crossIdentityPathOwner(instance: string, scope: string, file: string) {
   return null;
 }
 
-function enrichLock(scope: string, row: ContextRow | null): LockRow | null {
+function enrichLock(
+  scope: string,
+  row: ContextRow | null,
+  viewer?: registry.Instance,
+): LockRow | null {
   if (!row) return null;
 
   const owner = db
@@ -82,6 +91,11 @@ function enrichLock(scope: string, row: ContextRow | null): LockRow | null {
        LIMIT 5`,
     )
     .all(scope, row.instance_id) as LockRow["active_tasks"];
+  const workspace = workspaceIdentity.publishedWorkspaceSummary({
+    scope,
+    instanceId: row.instance_id,
+    actor: viewer?.id,
+  });
 
   return {
     ...row,
@@ -93,7 +107,13 @@ function enrichLock(scope: string, row: ContextRow | null): LockRow | null {
       stale: age === null || age > CLEANUP_POLICY.instanceStaleAfterSecs,
       reclaimable: age === null || age > CLEANUP_POLICY.instanceReclaimAfterSecs,
       active: owner !== null,
+      ...(workspace?.backend ? { workspace_backend: workspace.backend } : {}),
+      ...(workspace?.workspace_handle
+        ? { workspace_handle: workspace.workspace_handle }
+        : {}),
+      ...(workspace?.pane_id ? { pane_id: workspace.pane_id } : {}),
     },
+    ...(workspace ? { workspace } : {}),
     active_tasks: activeTasks,
   };
 }
@@ -110,7 +130,7 @@ function activeLock(scope: string, file: string, viewer?: registry.Instance): Lo
       return { hidden: true, reason: "cross_identity", file };
     }
   }
-  return enrichLock(scope, row);
+  return enrichLock(scope, row, viewer);
 }
 
 function insertLock(

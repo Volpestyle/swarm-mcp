@@ -67,7 +67,7 @@ Writes (require an identity):
 | Command | Purpose |
 |--|--|
 | `swarm-mcp request-task <type> <title...> [--description D] [--file P] [--priority N] [--idempotency-key K]` | Create a task as the current identity. |
-| `swarm-mcp dispatch <title...> [--message M] [--type T] [--role R] [--spawner herdr\|swarm-ui] [--harness H] [--idempotency-key K] [--no-spawn] [--force-spawn] [--wait N]` | Create/reuse a task, wake a live `role:R` worker, or spawn through the configured backend. `--force-spawn` skips live-worker matching when a fresh worker is required. |
+| `swarm-mcp dispatch <title...> [--message M] [--type T] [--role R] [--spawner herdr\|swarm-ui] [--harness H] [--idempotency-key K] [--no-spawn] [--force-spawn] [--wait N] [--wait-for-completion N]` | Create/reuse a task, wake a live `role:R` worker, or spawn through the configured backend. `--force-spawn` skips live-worker matching when a fresh worker is required. |
 | `swarm-mcp send --to <who> <content...>` | Send a direct message. |
 | `swarm-mcp prompt-peer --to <who> --message <text> [--task ID] [--force] [--no-nudge]` | Send a durable direct message, then best-effort wake the target's published workspace handle. |
 | `swarm-mcp broadcast <content...>` | Fan out to every other instance in scope. |
@@ -143,12 +143,21 @@ If the selected backend cannot complete immediately, the spawn lock remains in
 place. A later retry with the same idempotency key sees the in-flight lock
 instead of creating another pane.
 
+Dispatch returns immediately after handoff/spawn by default. Pass
+`--wait-for-completion <seconds>` (or MCP `completion_wait_seconds`) when a
+gateway wants a synchronous wrapper that waits for the task to become `done`,
+`failed`, or `cancelled`. The result keeps the normal dispatch `status` and
+adds a `completion` object with either the terminal task or a timeout snapshot.
+
 Herdr dispatch uses the current pane from `HERDR_PANE_ID`, `HERDR_PANE`, or
 `SWARM_HERDR_PARENT_PANE`, then creates a split with `herdr pane split` and
 launches the worker with `herdr pane run`. Use `SWARM_WORKER_HARNESS` (or
 `--harness`) to choose the worker launcher; personal identities default to
 `clowd`, work identities default to `clawd`, and unknown identities default to
-`claude`. `SWARM_HERDR_BIN` may point at a non-default herdr binary.
+`claude`. Dispatch normalizes generic launcher requests through the requester's
+identity before spawning: personal `claude`/`codex`/`opencode`/`hermesw` become
+`clowd`/`cdx`/`opc`/`hermesp`. `SWARM_HERDR_BIN` may point at a non-default
+herdr binary.
 
 Spawn/dispatch authority is intentionally narrow: gateway/lead sessions and
 operator surfaces may use this helper; ordinary worker/generalist sessions

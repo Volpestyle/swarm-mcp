@@ -77,7 +77,7 @@ Write commands (require identity):
       --force ignores the unread-message gate (use only when intentionally claiming despite unread messages).
   swarm-mcp update-task <task-id> --status <done|failed|cancelled> [--note <result>] [--as <who>] [--json]
       Move a claimed/in_progress task to a terminal status. Auto-releases this instance's locks on the task's listed files.
-  swarm-mcp dispatch <title...> [--message <text>] [--type <type>] [--role <role>] [--spawner <herdr|swarm-ui>] [--harness <harness>] [--idempotency-key <key>] [--no-spawn] [--force-spawn] [--wait <seconds>] [--as <who>] [--json]
+  swarm-mcp dispatch <title...> [--message <text>] [--type <type>] [--role <role>] [--spawner <herdr|swarm-ui>] [--harness <harness>] [--idempotency-key <key>] [--no-spawn] [--force-spawn] [--wait <seconds>] [--wait-for-completion <seconds>] [--as <who>] [--json]
   swarm-mcp send --to <who> <content...> [--as <who>]
   swarm-mcp prompt-peer --to <who> --message <text> [--task <id>] [--force] [--no-nudge] [--as <who>]
   swarm-mcp resolve-workspace-handle <handle> [--backend herdr] [--kind pane] [--scope <path>] [--as <who>] [--json]

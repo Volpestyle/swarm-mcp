@@ -332,6 +332,41 @@ describe("CLI dispatch spawn authority", () => {
     expect(result.stdout).toContain("no role:implementer worker is live");
   });
 
+  test("dispatch --wait-for-completion returns a completion timeout snapshot", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-completion-wait-"));
+    const dbPath = join(dir, "swarm.db");
+    const gateway = register(
+      dbPath,
+      dir,
+      dir,
+      "identity:personal mode:gateway role:planner",
+    );
+
+    const result = runCli(dbPath, [
+      "dispatch",
+      "Discuss project state",
+      "--scope",
+      dir,
+      "--as",
+      gateway.id,
+      "--no-spawn",
+      "--wait-for-completion",
+      "0.01",
+      "--json",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      status: string;
+      task: { status: string };
+      completion: { status: string; task: { status: string } };
+    };
+    expect(payload.status).toBe("no_worker");
+    expect(payload.task.status).toBe("open");
+    expect(payload.completion.status).toBe("timeout");
+    expect(payload.completion.task.status).toBe("open");
+  });
+
   test("dispatch falls back to a live generalist before spawning", () => {
     const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-generalist-"));
     const dbPath = join(dir, "swarm.db");
@@ -476,8 +511,9 @@ describe("CLI dispatch spawn authority", () => {
     expect(payload.spawner).toBe("swarm-ui");
     expect(payload.ui_command_id).toBeGreaterThan(0);
     expect(JSON.parse(payload.ui_command?.payload ?? "{}")).toMatchObject({
-      harness: "claude",
+      harness: "clowd",
       role: "implementer",
+      label: "identity:personal",
     });
   });
 
@@ -491,6 +527,7 @@ describe("CLI dispatch spawn authority", () => {
       [
         "#!/bin/sh",
         "printf '%s\\n' \"$*\" >> \"$HERDR_LOG\"",
+        "printf 'HERDR_SOCKET_PATH=%s\\n' \"$HERDR_SOCKET_PATH\" >> \"$HERDR_LOG\"",
         "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"split\" ]; then",
         "  printf '%s\\n' '{\"result\":{\"pane\":{\"pane_id\":\"pane-test\"}}}'",
         "  exit 0",
@@ -509,6 +546,7 @@ describe("CLI dispatch spawn authority", () => {
       dir,
       "identity:personal mode:gateway role:planner",
     );
+    const personalRoot = resolve(repoRoot, "..");
 
     const result = runCli(
       dbPath,
@@ -525,9 +563,11 @@ describe("CLI dispatch spawn authority", () => {
       ],
       {
         AGENT_IDENTITY: "personal",
+        HERDR_SOCKET_PATH: "",
         HERDR_LOG: herdrLog,
         HERDR_PANE_ID: "pane-root",
         SWARM_HERDR_BIN: fakeHerdr,
+        SWARM_MCP_PERSONAL_ROOTS: personalRoot,
       },
     );
 
@@ -547,7 +587,7 @@ describe("CLI dispatch spawn authority", () => {
     expect(payload.status).toBe("spawn_in_flight");
     expect(payload.spawner).toBe("herdr");
     expect(payload.ui_command_id).toBeUndefined();
-    expect(payload.workspace_handle).toEqual({
+    expect(payload.workspace_handle).toMatchObject({
       backend: "herdr",
       handle_kind: "pane",
       handle: "pane-test",
@@ -555,10 +595,16 @@ describe("CLI dispatch spawn authority", () => {
     });
 
     const log = readFileSync(herdrLog, "utf8");
+    const expectedSocket = join(personalRoot, ".herdr", "personal", "herdr.sock");
     expect(log).toContain("pane split pane-root --direction right");
     expect(log).toContain("pane run pane-test");
+    expect(log).toContain(`HERDR_SOCKET_PATH=${expectedSocket}`);
+    expect(log).toContain(`HERDR_SOCKET_PATH='${expectedSocket}'`);
     expect(log).toContain("SWARM_MCP_SCOPE=");
+    expect(log).toContain("SWARM_MCP_LABEL=");
+    expect(log).toContain("AGENT_IDENTITY='personal'");
     expect(log).toContain("SWARM_CC_LABEL=");
+    expect(log).toContain("identity:personal");
     expect(log).toContain(`launch:${payload.launch_token}`);
     expect(log).toContain("clowd");
   });

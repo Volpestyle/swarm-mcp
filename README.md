@@ -212,7 +212,7 @@ Run `swarm-mcp cleanup --dry-run --json` to inspect what the janitor would remov
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `request_task`       | Post a task (types: `review`, `implement`, `fix`, `test`, `research`, `other`). Use `review` for routine code review handoff. Supports `priority`, `depends_on`, `idempotency_key`, `parent_task_id`, and `approval_required`. |
 | `request_task_batch` | Create multiple tasks atomically in a single transaction. Supports `$N` references (1-indexed) for intra-batch dependencies. |
-| `dispatch`           | Gateway-only: create/reuse a task, wake a matching live worker, or spawn through the configured spawner backend. Ordinary workers should not call this. |
+| `dispatch`           | Gateway-only: create/reuse a task, wake a matching live worker, or spawn through the configured spawner backend. Ordinary workers should not call this. Pass `completion_wait_seconds` only when the caller wants to wait for terminal task completion; default dispatch returns immediately after handoff/spawn. |
 | `claim_task`         | Start work on a task: assigns and transitions to `in_progress` in one call. Prevents double-claiming and blocks on unread messages until `poll_messages` (or explicit override). Also accepts tasks pre-assigned to you (status=`claimed`). |
 | `update_task`        | Move a task to a terminal status (`done`, `failed`, `cancelled`). Auto-releases the actor's locks on the task's files. Attach a result when useful. |
 | `approve_task`       | Approve a task in `approval_required` status. Transitions to `open`/`claimed` (or `blocked` if deps unmet).               |
@@ -297,7 +297,9 @@ These commands enqueue work for a running `swarm-ui` app to claim and execute. I
 Notes:
 
 - `swarm-mcp ui spawn`, `ui prompt`, `ui move`, and `ui organize` wait up to 5 seconds by default for the desktop app to claim + complete the command. Pass `--wait 0` to return immediately after enqueue.
+- `swarm-mcp dispatch` returns immediately after task handoff/spawn by default. Pass `--wait-for-completion <seconds>` when a gateway wrapper should wait for the task to become `done`, `failed`, or `cancelled`; JSON output includes a `completion` object with the terminal task or timeout snapshot.
 - `ui spawn` accepts the work-identity launchers `--harness claude` / `--harness codex` / `--harness opencode` / `--harness hermesw` (and `--harness clawd` for Claude with `--enable-auto-mode`) and the personal-identity launchers `--harness clowd` / `--harness cdx` / `--harness opc` / `--harness hermesp`; omit `--harness` for a plain shell. Pick the launcher whose identity matches the worker you intend to spawn — see [identity boundaries](docs/identity-boundaries.md).
+- `dispatch` normalizes spawned worker harnesses through the requester's identity. Personal dispatches default to `clowd` and map generic `claude` / `codex` / `opencode` / `hermes` requests to `clowd` / `cdx` / `opc` / `hermesp`.
 - Identified `dispatch` / `ui spawn` callers must be registered with a `mode:gateway` label. Trusted operator shells can bypass that accidental-use guard with `SWARM_MCP_ALLOW_SPAWN=1`.
 - Use `swarm-mcp ui list` and `swarm-mcp ui get <id>` to inspect queued, running, completed, or failed UI commands.
 - `--target` accepts `bound:<instance-id>`, `instance:<instance-id>`, `pty:<pty-id>`, or a bare instance / PTY reference. Bare instance refs resolve by full UUID, unique UUID prefix, or unique label substring in scope. Bare PTY refs resolve by full PTY id, unique PTY id prefix, or a unique substring of the PTY command.

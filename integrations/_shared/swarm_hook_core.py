@@ -36,6 +36,11 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - package import path for tests
     from . import swarm_adapter_contract as contract
 
+try:
+    import herdr_agent_report
+except ModuleNotFoundError:  # pragma: no cover - package import path for tests
+    from . import herdr_agent_report
+
 
 _WARNED_MISSING_IDENTITY: set[str] = set()
 
@@ -505,7 +510,7 @@ class HookCore:
             "handle": herdr_pane,
             "pane_id": herdr_pane,
         }
-        socket_path = os.environ.get("HERDR_SOCKET_PATH")
+        socket_path = contract.resolved_herdr_socket_path(self.identity_name())
         if socket_path:
             payload["socket_path"] = socket_path
         workspace_id = os.environ.get("HERDR_WORKSPACE_ID")
@@ -621,6 +626,29 @@ class HookCore:
             if scope:
                 args.extend(["--scope", scope])
             self.run_swarm(args, timeout=4.0)
+
+    def _herdr_agent_source(self, instance_id: str) -> str:
+        return herdr_agent_report.agent_source(self.config.runtime_name, instance_id)
+
+    def _report_herdr_agent(self, instance_id: str, state: str, message: str = "") -> bool:
+        try:
+            return herdr_agent_report.report_agent(
+                agent=self.config.runtime_name,
+                state=state,
+                source=self._herdr_agent_source(instance_id),
+                message=message or None,
+            )
+        except Exception:
+            return False
+
+    def _release_herdr_agent(self, instance_id: str) -> bool:
+        try:
+            return herdr_agent_report.release_agent(
+                agent=self.config.runtime_name,
+                source=self._herdr_agent_source(instance_id),
+            )
+        except Exception:
+            return False
 
     def _deregister_instance(self, instance_id: str, scope: str) -> None:
         args = ["deregister", "--as", instance_id, "--json"]
@@ -782,6 +810,11 @@ class HookCore:
                             instance_id,
                             scope,
                         ),
+                        "herdr_agent_reported": self._report_herdr_agent(
+                            instance_id,
+                            "idle",
+                            "swarm session registered",
+                        ),
                         "work_tracker_published": self._publish_work_tracker_config(
                             instance_id,
                             scope,
@@ -849,9 +882,30 @@ class HookCore:
         file = str(conflict.get("file") or "")
         holder = str(conflict.get("instance_id") or "")
         holder_short = holder[:8] if holder else "peer"
+        owner = conflict.get("owner")
+        owner_label = ""
+        if isinstance(owner, dict):
+            raw_label = owner.get("label")
+            if isinstance(raw_label, str):
+                owner_label = raw_label.strip()
+        raw_label = conflict.get("owner_label")
+        if isinstance(raw_label, str) and raw_label.strip():
+            owner_label = raw_label.strip()
+        workspace = conflict.get("workspace")
+        pane_id = ""
+        if isinstance(workspace, dict):
+            raw_pane = workspace.get("pane_id")
+            if isinstance(raw_pane, str):
+                pane_id = raw_pane.strip()
+        raw_pane = conflict.get("pane_id")
+        if isinstance(raw_pane, str) and raw_pane.strip():
+            pane_id = raw_pane.strip()
+        holder_display = owner_label or holder_short
+        if pane_id:
+            holder_display = f"{holder_display} (pane {pane_id})"
         note = str(conflict.get("content") or "").strip()
         reason = (
-            f"swarm lock blocked {tool_name} for {file}: held by {holder_short}"
+            f"swarm lock blocked {tool_name} for {file}: held by {holder_display}"
             + (f" ({note})" if note else "")
         )
         self.emit_block(reason)
@@ -898,6 +952,7 @@ class HookCore:
 
         instance_id = str(meta.get("instance_id") or "") or self._resolve_instance_id(session_id, scope)
         if instance_id:
+            self._release_herdr_agent(instance_id)
             self._delete_herdr_identity(instance_id, scope)
             self._deregister_instance(instance_id, scope)
 
