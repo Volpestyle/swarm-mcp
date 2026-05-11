@@ -79,6 +79,50 @@ the first launch after installing or changing hooks, review and approve the
 new hook entries in `/hooks`; until they are approved, Codex will not run the
 SessionStart auto-registration hook.
 
+### `plugin_hooks` is under-development — install the GA-`hooks` fallback
+
+Codex flags `plugin_hooks` as an under-development feature, and in observed
+sessions its `SessionStart` dispatch silently no-ops, leaving the agent
+unregistered with no error visible to the operator. The symptom is that
+`swarm-mcp instances` does not show the session even though the plugin is
+installed, trusted, and version-pinned in the cache.
+
+Until `plugin_hooks` stabilizes, mirror the same `session_start.py` invocation
+from the GA `hooks` surface in your per-identity `~/.codex*/hooks.json`. That
+file is read directly by Codex without going through the `plugin_hooks`
+dispatcher.
+
+Since the file is user-local, point straight at the repo checkout — there is
+no need to repeat the plugin's cache-discovery dance (the plugin only needs
+that because Codex doesn't expose a plugin-root env var to hook subprocesses):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /path/to/swarm-mcp/integrations/codex/plugins/swarm/hooks/session_start.py",
+            "statusMessage": "Registering with swarm-mcp..."
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Codex will surface an approval prompt on next launch because the hook hash
+changed; accept it once. The script no-ops cleanly if `SWARM_MCP_BIN` /
+`swarm-mcp` is unreachable — coordination is fail-open for workers.
+
+Once Codex's `plugin_hooks` `SessionStart` dispatch is observed to fire
+reliably, remove the fallback to avoid double-registration. There is no
+idempotency guard between the two surfaces today.
+
 Codex runs hook commands from the session cwd, not the plugin root, and does
 not currently expose a plugin-root environment variable to hook subprocesses.
 For that reason, this plugin's hook commands locate the installed plugin under
