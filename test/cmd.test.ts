@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -532,6 +532,10 @@ describe("CLI dispatch spawn authority", () => {
         "  printf '%s\\n' '{\"result\":{\"pane\":{\"pane_id\":\"pane-test\"}}}'",
         "  exit 0",
         "fi",
+        "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"get\" ]; then",
+        "  printf '%s\\n' '{\"result\":{\"pane\":{\"pane_id\":\"pane-test\",\"agent_status\":\"idle\"}}}'",
+        "  exit 0",
+        "fi",
         "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"run\" ]; then",
         "  exit 0",
         "fi",
@@ -575,8 +579,11 @@ describe("CLI dispatch spawn authority", () => {
     const payload = JSON.parse(result.stdout) as {
       status: string;
       spawner: string;
+      task_id: string;
+      expected_instance: string;
       launch_token: string;
       ui_command_id?: number;
+      kickstart_prompt?: { message_sent?: boolean; nudged?: boolean; recipient?: string };
       workspace_handle?: {
         backend: string;
         handle_kind: string;
@@ -595,18 +602,37 @@ describe("CLI dispatch spawn authority", () => {
     });
 
     const log = readFileSync(herdrLog, "utf8");
-    const expectedSocket = join(personalRoot, ".herdr", "personal", "herdr.sock");
+    const expectedSocket = join(
+      process.env.HERMES_HOST_HOME || process.env.HOME || homedir(),
+      ".config",
+      "herdr",
+      "sessions",
+      "personal",
+      "herdr.sock",
+    );
     expect(log).toContain("pane split pane-root --direction right");
-    expect(log).toContain("pane run pane-test");
+    expect(log).toContain("pane run pane-test /bin/sh");
+    expect(log).toContain("pane get pane-test");
+    expect(log).toContain("A peer sent you a swarm message for task");
+    expect(payload.kickstart_prompt).toMatchObject({
+      message_sent: true,
+      nudged: true,
+      recipient: payload.expected_instance,
+    });
     expect(log).toContain(`HERDR_SOCKET_PATH=${expectedSocket}`);
-    expect(log).toContain(`HERDR_SOCKET_PATH='${expectedSocket}'`);
-    expect(log).toContain("SWARM_MCP_SCOPE=");
-    expect(log).toContain("SWARM_MCP_LABEL=");
-    expect(log).toContain("AGENT_IDENTITY='personal'");
-    expect(log).toContain("SWARM_CC_LABEL=");
-    expect(log).toContain("identity:personal");
-    expect(log).toContain(`launch:${payload.launch_token}`);
-    expect(log).toContain("clowd");
+    const launchScriptPath = log.match(/pane run pane-test \/bin\/sh '([^']+)'/)?.[1];
+    expect(launchScriptPath).toBeTruthy();
+    const launchScript = readFileSync(launchScriptPath!, "utf8");
+    expect(launchScript).toContain(`HERDR_SOCKET_PATH='${expectedSocket}'`);
+    expect(launchScript).toContain("SWARM_MCP_SCOPE=");
+    expect(launchScript).toContain("SWARM_MCP_LABEL=");
+    expect(launchScript).toContain(`SWARM_DB_PATH='${dbPath}'`);
+    expect(launchScript).toContain(`SWARM_MCP_PERSONAL_ROOTS='${personalRoot}'`);
+    expect(launchScript).toContain("AGENT_IDENTITY='personal'");
+    expect(launchScript).toContain("SWARM_CC_LABEL=");
+    expect(launchScript).toContain("identity:personal");
+    expect(launchScript).toContain(`launch:${payload.launch_token}`);
+    expect(launchScript).toContain("exec clowd");
   });
 
   test("dispatch rejects unknown spawner before creating work", () => {

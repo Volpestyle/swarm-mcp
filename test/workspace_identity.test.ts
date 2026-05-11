@@ -704,10 +704,14 @@ describe("workspace backend registry", () => {
 
     const command = readFileSync(commandPath, "utf8");
     expect(readFileSync(runPanePath, "utf8").trim()).toBe("pane-123");
-    expect(command).toContain(`SWARM_MCP_INSTANCE_ID='${expectedInstance}'`);
-    expect(command).toContain("SWARM_MCP_LABEL='identity:personal role:implementer provider:cdx launch:launch123 provider:codex-cli linear:VUH-19'");
-    expect(command).toContain("HERDR_PANE_ID='pane-123'");
-    expect(command).toContain("HERDR_WORKSPACE_ID='workspace-1'");
+    expect(command).toContain("/bin/sh");
+    const launchScriptPath = command.match(/\/bin\/sh '([^']+)'/)?.[1];
+    expect(launchScriptPath).toBeTruthy();
+    const launchScript = readFileSync(launchScriptPath!, "utf8");
+    expect(launchScript).toContain(`SWARM_MCP_INSTANCE_ID='${expectedInstance}'`);
+    expect(launchScript).toContain("SWARM_MCP_LABEL='identity:personal role:implementer provider:cdx launch:launch123 provider:codex-cli linear:VUH-19'");
+    expect(launchScript).toContain("HERDR_PANE_ID='pane-123'");
+    expect(launchScript).toContain("HERDR_WORKSPACE_ID='workspace-1'");
   });
 
   test("herdr spawner reuses a scope workspace when no parent pane is known", async () => {

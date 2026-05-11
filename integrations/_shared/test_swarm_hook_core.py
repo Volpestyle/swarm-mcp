@@ -137,7 +137,7 @@ class HookCoreLifecycleTests(unittest.TestCase):
             return 1, "", "unexpected"
 
         expected_socket = (
-            "/Users/james.volpe/volpestyle/.herdr/personal/herdr.sock"
+            "/Users/james.volpe/.config/herdr/sessions/personal/herdr.sock"
         )
         pane_payload = {
             "result": {

@@ -56,17 +56,17 @@ For local development, prefer identity-scoped shared herdr sockets:
 
 ```sh
 # work
-export HERDR_SOCKET_PATH=/Users/james.volpe/.herdr/work/herdr.sock
+export HERDR_SOCKET_PATH=/Users/james.volpe/.config/herdr/sessions/work/herdr.sock
 
 # personal
-export HERDR_SOCKET_PATH=/Users/james.volpe/volpestyle/.herdr/personal/herdr.sock
+export HERDR_SOCKET_PATH=/Users/james.volpe/.config/herdr/sessions/personal/herdr.sock
 ```
 
 Launch both the visible desktop herdr server and the matching-identity gateway
 with the same value. The personal path is visible to sandboxed personal gateways
 that can access `/Users/james.volpe/volpestyle`, while keeping it separate from
 work identity state. Work identities use their own host-visible socket under
-`/Users/james.volpe/.herdr/work`.
+`/Users/james.volpe/.config/herdr/sessions/work`.
 
 The published KV row is:
 

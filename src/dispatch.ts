@@ -478,7 +478,24 @@ export async function runDispatch(opts: DispatchOptions) {
     return maybeWaitForCompletion(opts, { ...basePayload, ...spawn });
   }
   if (spawn.status === "spawn_in_flight") {
-    return maybeWaitForCompletion(opts, { ...basePayload, ...spawn });
+    const expectedInstance =
+      typeof spawn.expected_instance === "string" ? spawn.expected_instance : "";
+    const kickstart = expectedInstance
+      ? promptPeerResult({
+          scope: opts.scope,
+          sender: opts.requester,
+          recipient: expectedInstance,
+          message: dispatchInstruction(result.id, title, message),
+          task: result.id,
+          nudge: true,
+          force: true,
+        })
+      : null;
+    return maybeWaitForCompletion(opts, {
+      ...basePayload,
+      ...spawn,
+      ...(kickstart ? { kickstart_prompt: kickstart } : {}),
+    });
   }
 
   const spawnedInstance =

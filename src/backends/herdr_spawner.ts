@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as context from "../context";
 import { herdrEnvWithSocket, resolvedHerdrSocketPath } from "../herdr_socket";
 import { identityNameFromToken, identityTokenFromName } from "../launcher_identity";
@@ -85,6 +88,10 @@ function labelWithLaunchToken(opts: {
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function safeFilename(value: string, fallback: string) {
+  return cleanLabelValue(value, fallback).slice(0, 96);
 }
 
 function envForHerdrCommand(identity?: string | null) {
@@ -465,7 +472,7 @@ async function placePane(input: SpawnRequest): Promise<PanePlacement | { error: 
   }
 }
 
-function launchCommand(opts: {
+type LaunchCommandOpts = {
   scope: string;
   cwd: string;
   role: string;
@@ -476,7 +483,9 @@ function launchCommand(opts: {
   paneId: string;
   workspaceId?: string;
   tabId?: string;
-}) {
+};
+
+function launchEnv(opts: LaunchCommandOpts) {
   const env: Record<string, string> = {
     SWARM_MCP_INSTANCE_ID: opts.instanceId,
     SWARM_MCP_SCOPE: opts.scope,
@@ -509,13 +518,48 @@ function launchCommand(opts: {
   if (socketPath) {
     env.HERDR_SOCKET_PATH = socketPath;
   }
+  for (const key of [
+    "HERMES_HOST_HOME",
+    "SWARM_DB_PATH",
+    "SWARM_MCP_PERSONAL_ROOTS",
+    "SWARM_MCP_WORK_ROOTS",
+  ]) {
+    const value = process.env[key]?.trim();
+    if (value) env[key] = value;
+  }
   if (process.env.SWARM_MCP_BIN?.trim()) {
     env.SWARM_MCP_BIN = process.env.SWARM_MCP_BIN.trim();
   }
-  const assignments = Object.entries(env)
-    .map(([key, value]) => `${key}=${shellQuote(value)}`)
-    .join(" ");
-  return `cd ${shellQuote(opts.cwd)} && ${assignments} ${opts.harness}`;
+  return env;
+}
+
+function launchScriptDir() {
+  const dir = process.env.SWARM_MCP_LAUNCH_DIR?.trim() || join(tmpdir(), "swarm-mcp-launch");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
+}
+
+function writeLaunchScript(opts: LaunchCommandOpts) {
+  const path = join(launchScriptDir(), `launch-${safeFilename(opts.instanceId, "worker")}.sh`);
+  const exports = Object.entries(launchEnv(opts))
+    .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
+    .join("\n");
+  const script = [
+    "#!/bin/sh",
+    "set -eu",
+    'rm -f "$0"',
+    `cd ${shellQuote(opts.cwd)}`,
+    exports,
+    `exec ${opts.harness}`,
+    "",
+  ].join("\n");
+  writeFileSync(path, script, { mode: 0o700 });
+  chmodSync(path, 0o700);
+  return path;
+}
+
+function launchCommand(opts: LaunchCommandOpts) {
+  return `/bin/sh ${shellQuote(writeLaunchScript(opts))}`;
 }
 
 function workspaceIdentityPayload(

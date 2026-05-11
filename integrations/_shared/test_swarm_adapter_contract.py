@@ -55,7 +55,7 @@ class SwarmAdapterContractTests(unittest.TestCase):
             ],
         )
 
-    def test_personal_herdr_socket_prefers_host_volpestyle_root(self) -> None:
+    def test_personal_herdr_socket_prefers_host_session_socket(self) -> None:
         with mock.patch.dict(
             os.environ,
             {
@@ -67,7 +67,7 @@ class SwarmAdapterContractTests(unittest.TestCase):
             self.assertEqual(
                 contract.resolved_herdr_socket_path("personal"),
                 os.path.abspath(
-                    "/Users/james.volpe/volpestyle/.herdr/personal/herdr.sock"
+                    "/Users/james.volpe/.config/herdr/sessions/personal/herdr.sock"
                 ),
             )
 
@@ -79,7 +79,7 @@ class SwarmAdapterContractTests(unittest.TestCase):
         ):
             self.assertEqual(
                 contract.resolved_herdr_socket_path("work"),
-                os.path.abspath("/Users/james.volpe/.herdr/work/herdr.sock"),
+                os.path.abspath("/Users/james.volpe/.config/herdr/sessions/work/herdr.sock"),
             )
 
 

@@ -3,8 +3,7 @@ import { delimiter, resolve } from "node:path";
 
 type Env = Record<string, string | undefined>;
 
-export const PERSONAL_HERDR_SOCKET_PARTS = [".herdr", "personal", "herdr.sock"];
-export const WORK_HERDR_SOCKET_PARTS = [".herdr", "work", "herdr.sock"];
+export const HERDR_SOCKET_PARTS = [".config", "herdr", "sessions"];
 
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
@@ -53,11 +52,11 @@ export function personalControlRoot(env: Env = process.env) {
 }
 
 export function preferredPersonalHerdrSocketPath(env: Env = process.env) {
-  return resolve(personalControlRoot(env), ...PERSONAL_HERDR_SOCKET_PARTS);
+  return resolve(hostHome(env), ...HERDR_SOCKET_PARTS, "personal", "herdr.sock");
 }
 
 export function preferredWorkHerdrSocketPath(env: Env = process.env) {
-  return resolve(hostHome(env), ...WORK_HERDR_SOCKET_PARTS);
+  return resolve(hostHome(env), ...HERDR_SOCKET_PARTS, "work", "herdr.sock");
 }
 
 export function resolvedHerdrSocketPath(env: Env = process.env) {

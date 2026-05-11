@@ -18,7 +18,7 @@ describe("herdr socket path defaults", () => {
     ).toBe("/custom/herdr.sock");
   });
 
-  test("defaults personal identities to a sandbox-visible volpestyle socket", () => {
+  test("defaults personal identities to the host personal herdr session socket", () => {
     const env = {
       AGENT_IDENTITY: "personal",
       HERMES_HOST_HOME: "/Users/james.volpe",
@@ -28,21 +28,22 @@ describe("herdr socket path defaults", () => {
     expect(identityFromEnv(env)).toBe("personal");
     expect(personalControlRoot(env)).toBe(resolve("/Users/james.volpe/volpestyle"));
     expect(preferredPersonalHerdrSocketPath(env)).toBe(
-      resolve("/Users/james.volpe/volpestyle/.herdr/personal/herdr.sock"),
+      resolve("/Users/james.volpe/.config/herdr/sessions/personal/herdr.sock"),
     );
     expect(resolvedHerdrSocketPath(env)).toBe(
-      resolve("/Users/james.volpe/volpestyle/.herdr/personal/herdr.sock"),
+      resolve("/Users/james.volpe/.config/herdr/sessions/personal/herdr.sock"),
     );
   });
 
-  test("honors the first configured personal root", () => {
+  test("configured personal roots do not change the herdr control socket", () => {
     const env = {
       AGENT_IDENTITY: "identity:personal",
+      HERMES_HOST_HOME: "/Users/james.volpe",
       SWARM_MCP_PERSONAL_ROOTS: ["/tmp/personal-root", "/tmp/other-root"].join(delimiter),
     };
 
     expect(resolvedHerdrSocketPath(env)).toBe(
-      resolve("/tmp/personal-root/.herdr/personal/herdr.sock"),
+      resolve("/Users/james.volpe/.config/herdr/sessions/personal/herdr.sock"),
     );
   });
 
@@ -54,10 +55,10 @@ describe("herdr socket path defaults", () => {
     };
 
     expect(preferredWorkHerdrSocketPath(env)).toBe(
-      resolve("/Users/james.volpe/.herdr/work/herdr.sock"),
+      resolve("/Users/james.volpe/.config/herdr/sessions/work/herdr.sock"),
     );
     expect(resolvedHerdrSocketPath(env)).toBe(
-      resolve("/Users/james.volpe/.herdr/work/herdr.sock"),
+      resolve("/Users/james.volpe/.config/herdr/sessions/work/herdr.sock"),
     );
   });
 });

@@ -65,10 +65,10 @@ Launchers also set identity-scoped herdr sockets, for example:
 
 ```sh
 # work
-export HERDR_SOCKET_PATH=/Users/james.volpe/.herdr/work/herdr.sock
+export HERDR_SOCKET_PATH=/Users/james.volpe/.config/herdr/sessions/work/herdr.sock
 
 # personal
-export HERDR_SOCKET_PATH=/Users/james.volpe/volpestyle/.herdr/personal/herdr.sock
+export HERDR_SOCKET_PATH=/Users/james.volpe/.config/herdr/sessions/personal/herdr.sock
 ```
 
 Use the matching path for the visible desktop herdr server and that identity's

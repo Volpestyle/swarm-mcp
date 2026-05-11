@@ -64,8 +64,8 @@ _swarm_herdr() (
 
 # Visible herdr instances. Launch the matching identity gateway/workers against
 # the same socket path so workspace wakeups and pane status use the right server.
-herdrw() { _swarm_herdr "${HERMES_HOST_HOME:-$HOME}/.herdr/work/herdr.sock" work "$@"; }
-herdrp() { _swarm_herdr "${HERMES_HOST_HOME:-$HOME}/volpestyle/.herdr/personal/herdr.sock" personal "$@"; }
+herdrw() { _swarm_herdr "${HERMES_HOST_HOME:-$HOME}/.config/herdr/sessions/work/herdr.sock" work "$@"; }
+herdrp() { _swarm_herdr "${HERMES_HOST_HOME:-$HOME}/.config/herdr/sessions/personal/herdr.sock" personal "$@"; }
 
 # Work launchers.
 clawd() { _swarm_run_identity work "$SWARM_ENV_DIR/work.env" claude --enable-auto-mode "$@"; }

@@ -28,10 +28,10 @@ The env examples also set identity-scoped herdr socket paths:
 
 ```sh
 # work.env
-HERDR_SOCKET_PATH=${HERMES_HOST_HOME:-$HOME}/.herdr/work/herdr.sock
+HERDR_SOCKET_PATH=${HERMES_HOST_HOME:-$HOME}/.config/herdr/sessions/work/herdr.sock
 
 # personal.env
-HERDR_SOCKET_PATH=${HERMES_HOST_HOME:-$HOME}/volpestyle/.herdr/personal/herdr.sock
+HERDR_SOCKET_PATH=${HERMES_HOST_HOME:-$HOME}/.config/herdr/sessions/personal/herdr.sock
 ```
 
 Use the matching value when launching the visible desktop herdr server and that

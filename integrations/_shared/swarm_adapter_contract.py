@@ -349,8 +349,7 @@ def work_tracker_key(identity: str) -> str:
     return f"config/work_tracker/{clean}"
 
 
-PERSONAL_HERDR_SOCKET_PARTS = (".herdr", "personal", "herdr.sock")
-WORK_HERDR_SOCKET_PARTS = (".herdr", "work", "herdr.sock")
+HERDR_SOCKET_PARTS = (".config", "herdr", "sessions")
 
 
 def _host_home() -> str:
@@ -380,11 +379,11 @@ def personal_control_root() -> str:
 
 
 def preferred_personal_herdr_socket_path() -> str:
-    return os.path.join(personal_control_root(), *PERSONAL_HERDR_SOCKET_PARTS)
+    return os.path.join(_host_home(), *HERDR_SOCKET_PARTS, "personal", "herdr.sock")
 
 
 def preferred_work_herdr_socket_path() -> str:
-    return os.path.join(_host_home(), *WORK_HERDR_SOCKET_PARTS)
+    return os.path.join(_host_home(), *HERDR_SOCKET_PARTS, "work", "herdr.sock")
 
 
 def resolved_herdr_socket_path(identity: str = "") -> str:
