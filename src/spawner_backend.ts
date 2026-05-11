@@ -1,15 +1,26 @@
+export type SpawnPlacement = {
+  workspace?: string | null;
+  tab?: string | null;
+  group?: string | null;
+  parent_pane_id?: string | null;
+  split_direction?: string | null;
+  max_panes_per_tab?: number | null;
+};
+
 export type SpawnRequest = {
   scope: string;
   requester: string;
   cwd: string;
   role: string;
   harness: string;
+  identity?: string | null;
   label?: string | null;
   name?: string | null;
   launch_token: string;
   lock_path: string;
   lock_note: Record<string, unknown>;
   wait_seconds: number;
+  placement?: SpawnPlacement | null;
 };
 
 export type SpawnResult = Record<string, unknown> & {

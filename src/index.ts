@@ -633,12 +633,17 @@ tryAutoAdopt();
   async ({ label_contains }: { label_contains?: string }) => {
     const current = ensureInstance();
     if (!current) return missing();
+    const visible = registry.listVisible(current, label_contains);
     return {
       content: [
         {
           type: "text",
           text: JSON.stringify(
-            registry.listVisible(current, label_contains),
+            workspaceIdentity.annotateInstancesWithPublishedHandles(
+              current.scope,
+              visible,
+              current.id,
+            ),
             null,
             2,
           ),
@@ -1143,6 +1148,43 @@ registeredTool(
       .min(0)
       .optional()
       .describe("Seconds to wait for worker spawn/adoption; defaults depend on spawner"),
+    placement: z
+      .object({
+        workspace: z
+          .string()
+          .optional()
+          .describe('Workspace placement policy: "reuse_scope" (default), "new", "current", or backend-specific workspace id'),
+        tab: z
+          .string()
+          .optional()
+          .describe('Tab placement policy: "reuse_group" (default), "new", "current", or backend-specific tab id'),
+        group: z
+          .string()
+          .optional()
+          .describe("Logical layout group used for tab reuse, such as a batch or role name"),
+        parent_pane_id: z
+          .string()
+          .optional()
+          .describe("Explicit parent pane to split from; overrides scope layout reuse"),
+        split_direction: z
+          .enum(["right", "down"])
+          .optional()
+          .describe("Direction for herdr pane splits"),
+        max_panes_per_tab: z
+          .number()
+          .int()
+          .min(1)
+          .max(8)
+          .optional()
+          .describe("Maximum panes per reused tab before creating another tab"),
+      })
+      .optional()
+      .describe("Optional workspace placement intent for spawner backends"),
+    completion_wait_seconds: z
+      .number()
+      .min(0)
+      .optional()
+      .describe("Seconds to wait for the dispatched task to reach done, failed, or cancelled. Omit or pass 0 to return immediately after handoff/spawn."),
     nudge: z.boolean().optional().default(true).describe("Wake live worker handle"),
     force: z
       .boolean()
@@ -1176,6 +1218,8 @@ registeredTool(
           label: args.label,
           name: args.name,
           wait_seconds: args.wait_seconds,
+          placement: args.placement,
+          completion_wait_seconds: args.completion_wait_seconds,
           nudge: args.nudge,
           force: args.force,
         }),

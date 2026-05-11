@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import * as context from "./context";
 import { db } from "./db";
 import { identityToken } from "./identity";
+import { labelWithIdentity, launcherForIdentity } from "./launcher_identity";
 import * as messages from "./messages";
 import * as registry from "./registry";
 import * as taskStore from "./tasks";
@@ -47,8 +48,11 @@ export interface DispatchOptions {
   label?: string | null;
   name?: string | null;
   wait_seconds?: number;
+  completion_wait_seconds?: number;
+  completion_poll_ms?: number;
   nudge?: boolean;
   force?: boolean;
+  placement?: spawnerBackend.SpawnPlacement | null;
 }
 
 function envTruthy(name: string) {
@@ -121,6 +125,94 @@ function hashIntent(parts: string[]) {
 
 function terminalTaskStatus(status: unknown) {
   return status === "done" || status === "failed" || status === "cancelled";
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function elapsedMs(start: number) {
+  return Date.now() - start;
+}
+
+export async function waitForTaskCompletion(opts: {
+  scope: string;
+  task_id: string;
+  timeout_seconds: number;
+  poll_ms?: number;
+}) {
+  const timeoutMs = Math.max(0, opts.timeout_seconds * 1000);
+  const pollMs = Math.max(1, Math.floor(opts.poll_ms ?? 500));
+  const start = Date.now();
+  const deadline = start + timeoutMs;
+
+  let task = taskStore.get(opts.task_id, opts.scope);
+  if (!task) {
+    return {
+      status: "missing",
+      timeout_seconds: opts.timeout_seconds,
+      waited_ms: elapsedMs(start),
+      task: null,
+    };
+  }
+  if (terminalTaskStatus(task.status)) {
+    return {
+      status: "completed",
+      terminal_status: task.status,
+      timeout_seconds: opts.timeout_seconds,
+      waited_ms: elapsedMs(start),
+      task,
+    };
+  }
+
+  while (Date.now() < deadline) {
+    await sleep(Math.min(pollMs, Math.max(1, deadline - Date.now())));
+    task = taskStore.get(opts.task_id, opts.scope);
+    if (!task) {
+      return {
+        status: "missing",
+        timeout_seconds: opts.timeout_seconds,
+        waited_ms: elapsedMs(start),
+        task: null,
+      };
+    }
+    if (terminalTaskStatus(task.status)) {
+      return {
+        status: "completed",
+        terminal_status: task.status,
+        timeout_seconds: opts.timeout_seconds,
+        waited_ms: elapsedMs(start),
+        task,
+      };
+    }
+  }
+
+  return {
+    status: "timeout",
+    timeout_seconds: opts.timeout_seconds,
+    waited_ms: elapsedMs(start),
+    task,
+  };
+}
+
+async function maybeWaitForCompletion(
+  opts: DispatchOptions,
+  payload: Record<string, unknown> & { task_id: string; task?: unknown },
+) {
+  const timeoutSeconds = opts.completion_wait_seconds ?? 0;
+  if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) return payload;
+
+  const completion = await waitForTaskCompletion({
+    scope: opts.scope,
+    task_id: payload.task_id,
+    timeout_seconds: timeoutSeconds,
+    poll_ms: opts.completion_poll_ms,
+  });
+  return {
+    ...payload,
+    task: completion.task ?? payload.task,
+    completion,
+  };
 }
 
 function spawnLockPath(role: string, intentHash: string) {
@@ -245,14 +337,26 @@ export async function runDispatch(opts: DispatchOptions) {
   const title = opts.title.trim();
   if (!title) throw new Error("dispatch requires a title");
 
+  const requesterInst = instanceById(opts.scope, opts.requester);
+  const requestedIdentity = identityToken(requesterInst);
   const taskType = opts.type ?? "implement";
   const message = opts.message ?? opts.description ?? title;
   const workerRole = (opts.role ?? "implementer").trim() || "implementer";
   const spawner = spawnerBackend.requireSpawner(opts.spawner);
-  const harness = opts.harness?.trim() || defaultHarness(spawner);
+  const requestedHarness = opts.harness?.trim() || defaultHarness(spawner);
+  const harness = launcherForIdentity(requestedHarness, requestedIdentity);
+  const spawnLabel = labelWithIdentity(opts.label, requestedIdentity) || null;
   const idempotencyKey =
     opts.idempotency_key ??
-    `dispatch:${hashIntent([opts.scope, taskType, title, message, workerRole])}`;
+    `dispatch:${hashIntent([
+      opts.scope,
+      requestedIdentity,
+      taskType,
+      title,
+      message,
+      workerRole,
+      harness,
+    ])}`;
   const intentHash = hashIntent([idempotencyKey]);
   const lockPath = spawnLockPath(workerRole, intentHash);
   const cwd = opts.cwd ?? process.cwd();
@@ -275,7 +379,11 @@ export async function runDispatch(opts: DispatchOptions) {
 
   const task = taskStore.get(result.id, opts.scope);
   if (terminalTaskStatus(task?.status)) {
-    return { status: "already_terminal", task_id: result.id, task };
+    return maybeWaitForCompletion(opts, {
+      status: "already_terminal",
+      task_id: result.id,
+      task,
+    });
   }
 
   if (liveWorker) {
@@ -289,27 +397,32 @@ export async function runDispatch(opts: DispatchOptions) {
       nudge: opts.nudge ?? true,
       force: opts.force ?? false,
     });
-    return {
+    return maybeWaitForCompletion(opts, {
       status: "dispatched",
       task_id: result.id,
       task: taskStore.get(result.id, opts.scope),
       recipient: liveWorker.id,
       prompt,
-    };
+    });
   }
 
   if (opts.spawn === false) {
-    return { status: "no_worker", task_id: result.id, task, role: workerRole };
+    return maybeWaitForCompletion(opts, {
+      status: "no_worker",
+      task_id: result.id,
+      task,
+      role: workerRole,
+    });
   }
 
   const existingLock = activeSpawnLock(opts.scope, lockPath);
   if (existingLock) {
-    return {
+    return maybeWaitForCompletion(opts, {
       status: "spawn_in_flight",
       task_id: result.id,
       task,
       lock: existingLock,
-    };
+    });
   }
 
   const startedAt = new Date().toISOString();
@@ -328,12 +441,12 @@ export async function runDispatch(opts: DispatchOptions) {
     { exclusive: true },
   );
   if ("error" in lockResult) {
-    return {
+    return maybeWaitForCompletion(opts, {
       status: "spawn_in_flight",
       task_id: result.id,
       task,
       lock: lockResult.active,
-    };
+    });
   }
 
   const waitSeconds = opts.wait_seconds ?? spawner.defaultWaitSeconds;
@@ -350,20 +463,22 @@ export async function runDispatch(opts: DispatchOptions) {
     cwd,
     role: workerRole,
     harness,
-    label: opts.label,
+    identity: requestedIdentity,
+    label: spawnLabel,
     name: opts.name,
     launch_token: intentHash,
     lock_path: lockPath,
     lock_note: lockNote,
     wait_seconds: waitSeconds,
+    placement: opts.placement,
   });
 
   if (spawn.status === "spawn_failed") {
     context.clearLocks(opts.requester, opts.scope, lockPath);
-    return { ...basePayload, ...spawn };
+    return maybeWaitForCompletion(opts, { ...basePayload, ...spawn });
   }
   if (spawn.status === "spawn_in_flight") {
-    return { ...basePayload, ...spawn };
+    return maybeWaitForCompletion(opts, { ...basePayload, ...spawn });
   }
 
   const spawnedInstance =
@@ -385,11 +500,11 @@ export async function runDispatch(opts: DispatchOptions) {
       })
     : null;
 
-  return {
+  return maybeWaitForCompletion(opts, {
     ...basePayload,
     ...spawn,
     spawned_instance: spawnedInstance || null,
     binding,
     prompt,
-  };
+  });
 }

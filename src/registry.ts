@@ -240,6 +240,59 @@ export function register(
   return row;
 }
 
+export function precreateInstanceLease(
+  directory: string,
+  label: string | undefined,
+  value: string | undefined,
+  fileRoot: string | undefined,
+  leaseUntil: number,
+  requestedId?: string,
+): Instance {
+  prune();
+
+  const dir = norm(directory);
+  const trimmedLabel = label?.trim() || null;
+  const nextScope = scoped(dir, value);
+  const nextFileRoot = norm(fileRoot || dir);
+
+  warnIdentityMismatch(trimmedLabel, "precreateInstanceLease");
+  validateIdentityDirectory(trimmedLabel, dir, nextFileRoot);
+
+  const row: Instance = {
+    id: requestedId ?? randomUUID(),
+    scope: nextScope,
+    directory: dir,
+    root: root(dir),
+    file_root: nextFileRoot,
+    pid: 0,
+    label: trimmedLabel,
+    adopted: false,
+    lease_until: leaseUntil,
+  };
+
+  db.run(
+    "INSERT INTO instances (id, scope, directory, root, file_root, pid, label, adopted, lease_until) VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?)",
+    [row.id, row.scope, row.directory, row.root, row.file_root, row.label, row.lease_until],
+  );
+  emit({
+    scope: row.scope,
+    type: "instance.registered",
+    actor: row.id,
+    subject: row.id,
+    payload: {
+      label: row.label,
+      adopted: false,
+      pid: row.pid,
+      directory: row.directory,
+      root: row.root,
+      file_root: row.file_root,
+      lease_until: row.lease_until,
+    },
+  });
+
+  return row;
+}
+
 export function get(id: string) {
   prune();
   const row = db

@@ -52,6 +52,17 @@ export type WorkspaceHandleSwarmMatch = {
   identity?: WorkspaceIdentity;
 };
 
+export type PublishedWorkspaceSummary = {
+  key: string;
+  backend: string;
+  handle_kind: string;
+  handle: string;
+  workspace_handle: string;
+  pane_id?: string;
+  workspace_id?: string;
+  tab_id?: string;
+};
+
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
 }
@@ -76,12 +87,107 @@ function loadPublishedIdentity(
   scope: string,
   backend: WorkspaceBackend,
   instanceId: string,
+  viewer?: string | null,
 ) {
   for (const key of backend.identityKeys(instanceId)) {
-    const row = kv.get(scope, key);
+    const row = kv.get(scope, key, viewer);
     if (row) return { key, value: row.value };
   }
   return null;
+}
+
+function identityDetails(identity: WorkspaceIdentity) {
+  const details = identity.details;
+  return details && typeof details === "object" && !Array.isArray(details)
+    ? details
+    : {};
+}
+
+function summaryFromIdentity(
+  key: string,
+  backend: WorkspaceBackend,
+  identity: WorkspaceIdentity,
+): PublishedWorkspaceSummary | null {
+  const details = identityDetails(identity);
+  const handle =
+    stringValue(identity.handle) ||
+    stringValue(identity.pane_id) ||
+    stringValue(details.pane_id) ||
+    backend.handlesForIdentity(identity)[0] ||
+    "";
+  if (!handle) return null;
+
+  const paneId =
+    stringValue(identity.pane_id) ||
+    stringValue(details.pane_id) ||
+    (backend.name === "herdr" ? handle : "");
+  const workspaceId = stringValue(identity.workspace_id) || stringValue(details.workspace_id);
+  const tabId = stringValue(identity.tab_id) || stringValue(details.tab_id);
+
+  return {
+    key,
+    backend: backend.name,
+    handle_kind:
+      stringValue(identity.handle_kind) || backend.defaultHandleKind,
+    handle,
+    workspace_handle: handle,
+    ...(paneId ? { pane_id: paneId } : {}),
+    ...(workspaceId ? { workspace_id: workspaceId } : {}),
+    ...(tabId ? { tab_id: tabId } : {}),
+  };
+}
+
+export function publishedWorkspaceSummary(opts: {
+  scope: string;
+  instanceId: string;
+  backend?: string;
+  actor?: string | null;
+}): PublishedWorkspaceSummary | null {
+  for (const backend of backendCandidates(opts.backend)) {
+    const row = loadPublishedIdentity(
+      opts.scope,
+      backend,
+      opts.instanceId,
+      opts.actor,
+    );
+    if (!row) continue;
+    const parsed = parseIdentity(row.value);
+    if (!parsed.identity) continue;
+    const summary = summaryFromIdentity(row.key, backend, parsed.identity);
+    if (summary) return summary;
+  }
+  return null;
+}
+
+export function annotateInstancesWithPublishedHandles<
+  T extends { id: string },
+>(
+  scope: string,
+  instances: T[],
+  actor?: string | null,
+): Array<
+  T & {
+    workspace_backend?: string;
+    workspace_handle?: string;
+    handle_kind?: string;
+    pane_id?: string;
+  }
+> {
+  return instances.map((item) => {
+    const workspace = publishedWorkspaceSummary({
+      scope,
+      instanceId: item.id,
+      actor,
+    });
+    if (!workspace) return item;
+    return {
+      ...item,
+      workspace_backend: workspace.backend,
+      workspace_handle: workspace.workspace_handle,
+      handle_kind: workspace.handle_kind,
+      pane_id: workspace.pane_id,
+    };
+  });
 }
 
 function maybeRepairIdentity(opts: {
@@ -104,7 +210,12 @@ function resolveWithBackend(opts: {
   backend: WorkspaceBackend;
   actor?: string | null;
 }): ResolvedPublishedIdentity {
-  const row = loadPublishedIdentity(opts.scope, opts.backend, opts.instanceId);
+  const row = loadPublishedIdentity(
+    opts.scope,
+    opts.backend,
+    opts.instanceId,
+    opts.actor,
+  );
   if (!row) {
     return { ok: false, reason: "no workspace identity is published for that instance" };
   }
@@ -190,7 +301,12 @@ export function resolvePublishedWorkspaceIdentity(opts: {
   let lastReason = "";
   let firstHandle = "";
   for (const backend of backends) {
-    const row = loadPublishedIdentity(opts.scope, backend, opts.instanceId);
+    const row = loadPublishedIdentity(
+      opts.scope,
+      backend,
+      opts.instanceId,
+      opts.actor,
+    );
     if (!row) continue;
     sawIdentity = true;
 

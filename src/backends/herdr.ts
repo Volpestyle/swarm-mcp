@@ -7,6 +7,7 @@ import {
   type WorkspaceHandleInfo,
   type WorkspaceIdentity,
 } from "../workspace_backend";
+import { herdrEnvWithSocket } from "../herdr_socket";
 
 export const HERDR_BACKEND_NAME = "herdr";
 export const LEGACY_HERDR_IDENTITY_PREFIX = "identity/herdr/";
@@ -36,7 +37,7 @@ function identityValue(identity: WorkspaceIdentity | undefined, key: string) {
 }
 
 function herdrEnv(identity: WorkspaceIdentity | undefined) {
-  const env = { ...process.env };
+  const env = herdrEnvWithSocket(process.env);
   const socketPath = identityValue(identity, "socket_path");
   if (socketPath) env.HERDR_SOCKET_PATH = socketPath;
   return env;

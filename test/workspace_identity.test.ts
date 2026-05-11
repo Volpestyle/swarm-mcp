@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,15 +18,24 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
 
 const { db } = await import("../src/db");
+const context = await import("../src/context");
 const dispatch = await import("../src/dispatch");
 const herdrSpawner = await import("../src/backends/herdr_spawner");
 const kv = await import("../src/kv");
 const registry = await import("../src/registry");
 const spawnerBackend = await import("../src/spawner_backend");
+const taskStore = await import("../src/tasks");
 const workspaceBackend = await import("../src/workspace_backend");
 const workspaceIdentity = await import("../src/workspace_identity");
 
 const originalPersonalRoots = process.env.SWARM_MCP_PERSONAL_ROOTS;
+const originalHerdrBin = process.env.SWARM_HERDR_BIN;
+const originalHerdrParentPane = process.env.SWARM_HERDR_PARENT_PANE;
+const originalHerdrPaneId = process.env.HERDR_PANE_ID;
+const originalHerdrPane = process.env.HERDR_PANE;
+const originalHerdrFakeLog = process.env.HERDR_FAKE_LOG;
+const originalHerdrFakeCommand = process.env.HERDR_FAKE_COMMAND;
+const originalHerdrFakeRunPane = process.env.HERDR_FAKE_RUN_PANE;
 
 type WakeCall = {
   backend: string;
@@ -47,6 +56,11 @@ function uniqueStrings(values: unknown[]) {
         .filter(Boolean),
     ),
   );
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
 }
 
 function syntheticBackend(name: string, wakeCalls: WakeCall[] = []): WorkspaceBackend {
@@ -116,8 +130,14 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (originalPersonalRoots === undefined) delete process.env.SWARM_MCP_PERSONAL_ROOTS;
-  else process.env.SWARM_MCP_PERSONAL_ROOTS = originalPersonalRoots;
+  restoreEnv("SWARM_MCP_PERSONAL_ROOTS", originalPersonalRoots);
+  restoreEnv("SWARM_HERDR_BIN", originalHerdrBin);
+  restoreEnv("SWARM_HERDR_PARENT_PANE", originalHerdrParentPane);
+  restoreEnv("HERDR_PANE_ID", originalHerdrPaneId);
+  restoreEnv("HERDR_PANE", originalHerdrPane);
+  restoreEnv("HERDR_FAKE_LOG", originalHerdrFakeLog);
+  restoreEnv("HERDR_FAKE_COMMAND", originalHerdrFakeCommand);
+  restoreEnv("HERDR_FAKE_RUN_PANE", originalHerdrFakeRunPane);
 });
 
 describe("workspace backend registry", () => {
@@ -224,6 +244,79 @@ describe("workspace backend registry", () => {
     expect(betaWakeCalls[0]?.handle).toBe("beta-canonical");
   });
 
+  test("instance annotations expose published herdr pane metadata without changing identity", () => {
+    workspaceIdentity.registerBackend(syntheticBackend("herdr"));
+    const scope = "scope-instance-pane";
+    const viewer = registry.register("/tmp/viewer", "identity:personal role:planner", scope);
+    const worker = registry.register("/tmp/worker", "identity:personal role:implementer", scope);
+
+    kv.set(
+      worker.scope,
+      workspaceBackend.identityKey("herdr", worker.id),
+      JSON.stringify({
+        schema_version: 1,
+        backend: "herdr",
+        handle_kind: "pane",
+        handle: "pane-17",
+        pane_id: "pane-17",
+      }),
+      worker.id,
+    );
+
+    const annotated = workspaceIdentity.annotateInstancesWithPublishedHandles(
+      viewer.scope,
+      [viewer, worker],
+      viewer.id,
+    );
+
+    expect(annotated.find((item) => item.id === worker.id)).toMatchObject({
+      id: worker.id,
+      workspace_backend: "herdr",
+      workspace_handle: "pane-17",
+      handle_kind: "pane",
+      pane_id: "pane-17",
+    });
+  });
+
+  test("lock conflicts include owner pane metadata when it is published", () => {
+    workspaceIdentity.registerBackend(syntheticBackend("herdr"));
+    const scope = "scope-lock-pane";
+    const owner = registry.register("/tmp/owner", "identity:personal role:implementer", scope);
+    const peer = registry.register("/tmp/peer", "identity:personal role:implementer", scope);
+    const file = "/tmp/owner/src/index.ts";
+
+    kv.set(
+      owner.scope,
+      workspaceBackend.identityKey("herdr", owner.id),
+      JSON.stringify({
+        schema_version: 1,
+        backend: "herdr",
+        handle_kind: "pane",
+        handle: "pane-21",
+        pane_id: "pane-21",
+      }),
+      owner.id,
+    );
+
+    expect(context.lock(owner.id, owner.scope, file, "editing")).toMatchObject({ ok: true });
+    const result = context.lock(peer.id, peer.scope, file, "editing");
+
+    expect(result).toMatchObject({ error: "File is already locked" });
+    if ("error" in result) {
+      expect(result.active).toMatchObject({
+        owner: {
+          label: "identity:personal role:implementer",
+          pane_id: "pane-21",
+          workspace_handle: "pane-21",
+        },
+        workspace: {
+          backend: "herdr",
+          pane_id: "pane-21",
+        },
+      });
+    }
+  });
+
   test("dispatch routes only to compatible identity workers and reserves the task", async () => {
     const scope = "scope-dispatch-identity";
     const gateway = registry.register(
@@ -251,12 +344,88 @@ describe("workspace backend registry", () => {
       status: "dispatched",
       recipient: personalWorker.id,
     });
+    expect(result).not.toHaveProperty("completion");
 
     const taskId = String(result.task_id);
     const task = db
       .query("SELECT status, assignee FROM tasks WHERE id = ?")
       .get(taskId) as { status: string; assignee: string | null };
     expect(task).toEqual({ status: "claimed", assignee: personalWorker.id });
+  });
+
+  test("dispatch can wait for terminal task completion when requested", async () => {
+    const scope = "scope-dispatch-completion";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    const worker = registry.register(
+      "/tmp/personal",
+      "identity:personal role:implementer",
+      scope,
+    );
+    const title = "Wait for terminal result";
+
+    setTimeout(() => {
+      const task = db
+        .query("SELECT id FROM tasks WHERE scope = ? AND title = ?")
+        .get(gateway.scope, title) as { id: string } | null;
+      if (!task) return;
+      taskStore.claim(task.id, gateway.scope, worker.id, { ignoreUnreadMessages: true });
+      taskStore.update(task.id, gateway.scope, worker.id, "done", "{\"ok\":true}");
+    }, 10);
+
+    const result = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title,
+      role: "implementer",
+      spawn: false,
+      nudge: false,
+      completion_wait_seconds: 1,
+      completion_poll_ms: 5,
+    });
+
+    expect(result).toMatchObject({
+      status: "dispatched",
+      recipient: worker.id,
+      task: { status: "done", result: "{\"ok\":true}" },
+      completion: {
+        status: "completed",
+        terminal_status: "done",
+        task: { status: "done", result: "{\"ok\":true}" },
+      },
+    });
+  });
+
+  test("dispatch completion wait times out with the latest task snapshot", async () => {
+    const scope = "scope-dispatch-completion-timeout";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+
+    const result = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Timeout waiting for completion",
+      role: "implementer",
+      spawn: false,
+      nudge: false,
+      completion_wait_seconds: 0.01,
+      completion_poll_ms: 2,
+    });
+
+    expect(result).toMatchObject({
+      status: "no_worker",
+      task: { status: "open" },
+      completion: {
+        status: "timeout",
+        task: { status: "open" },
+      },
+    });
   });
 
   test("dispatch does not cross identity boundary to reuse a live worker", async () => {
@@ -284,6 +453,27 @@ describe("workspace backend registry", () => {
     expect(task).toEqual({ status: "open", assignee: null });
   });
 
+  test("dispatch does not cross identity boundary for generalist fallback", async () => {
+    const scope = "scope-dispatch-generalist-boundary";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    registry.register("/tmp/work-generalist", "identity:work role:generalist", scope);
+
+    const result = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Needs personal generalist",
+      role: "implementer",
+      spawn: false,
+      nudge: false,
+    });
+
+    expect(result).toMatchObject({ status: "no_worker", role: "implementer" });
+  });
+
   test("dispatch does not route identified work to an unlabeled worker", async () => {
     const scope = "scope-dispatch-unlabeled";
     const gateway = registry.register(
@@ -303,6 +493,81 @@ describe("workspace backend registry", () => {
     });
 
     expect(result).toMatchObject({ status: "no_worker", role: "implementer" });
+  });
+
+  test("dispatch maps personal requester launchers and passes identity to spawner", async () => {
+    const scope = "scope-dispatch-personal-launchers";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    const spawnerName = "test-personal-launchers";
+    spawnerBackend.registerSpawner({
+      name: spawnerName,
+      defaultWaitSeconds: 0,
+      defaultHarness() {
+        return "claude";
+      },
+      spawn(input) {
+        return {
+          status: "spawn_in_flight",
+          harness: input.harness,
+          identity: input.identity,
+          label: input.label,
+        };
+      },
+    });
+
+    const cases: Array<[string, string | undefined, string]> = [
+      ["default", undefined, "clowd"],
+      ["claude", "claude", "clowd"],
+      ["codex", "codex", "cdx"],
+      ["opencode", "opencode", "opc"],
+      ["hermes", "hermesw", "hermesp"],
+    ];
+
+    for (const [title, harness, expected] of cases) {
+      const result = await dispatch.runDispatch({
+        scope: gateway.scope,
+        requester: gateway.id,
+        title: `Spawn ${title}`,
+        role: "implementer",
+        spawner: spawnerName,
+        force_spawn: true,
+        harness,
+        nudge: false,
+      });
+
+      expect(result).toMatchObject({
+        status: "spawn_in_flight",
+        harness: expected,
+        identity: "identity:personal",
+        label: "identity:personal",
+      });
+    }
+  });
+
+  test("dispatch rejects spawn labels with a conflicting identity", async () => {
+    const scope = "scope-dispatch-conflicting-spawn-label";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+
+    await expect(
+      dispatch.runDispatch({
+        scope: gateway.scope,
+        requester: gateway.id,
+        title: "Spawn wrong identity",
+        role: "implementer",
+        spawner: "herdr",
+        force_spawn: true,
+        label: "identity:work",
+        nudge: false,
+      }),
+    ).rejects.toThrow(/does not match requester identity:personal/);
   });
 
   test("dispatch binds spawned workers before releasing the spawn mutex", async () => {
@@ -360,6 +625,186 @@ describe("workspace backend registry", () => {
       .query("SELECT COUNT(*) AS count FROM context WHERE scope = ? AND file LIKE '/__swarm/spawn/%'")
       .get(scope) as { count: number };
     expect(locks.count).toBe(0);
+  });
+
+  test("herdr spawner pre-creates a leased instance and publishes pane identity", async () => {
+    const scope = "scope-herdr-precreate";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    const fakeDir = mkdtempSync(join(tmpdir(), "fake-herdr-"));
+    const fakeHerdr = join(fakeDir, "herdr");
+    const commandPath = join(fakeDir, "command.txt");
+    const runPanePath = join(fakeDir, "run-pane.txt");
+    const logPath = join(fakeDir, "calls.log");
+    writeFileSync(
+      fakeHerdr,
+      [
+        "#!/bin/sh",
+        "printf '%s\\n' \"$*\" >> \"$HERDR_FAKE_LOG\"",
+        "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"split\" ]; then",
+        "  printf '%s\\n' '{\"result\":{\"pane\":{\"pane_id\":\"pane-123\",\"workspace_id\":\"workspace-1\",\"tab_id\":\"tab-1\"}}}'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"run\" ]; then",
+        "  printf '%s\\n' \"$3\" > \"$HERDR_FAKE_RUN_PANE\"",
+        "  printf '%s\\n' \"$4\" > \"$HERDR_FAKE_COMMAND\"",
+        "  exit 0",
+        "fi",
+        "exit 1",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(fakeHerdr, 0o755);
+    process.env.SWARM_HERDR_BIN = fakeHerdr;
+    process.env.SWARM_HERDR_PARENT_PANE = "parent-pane";
+    process.env.HERDR_FAKE_LOG = logPath;
+    process.env.HERDR_FAKE_COMMAND = commandPath;
+    process.env.HERDR_FAKE_RUN_PANE = runPanePath;
+
+    const result = await herdrSpawner.herdrSpawnerBackend.spawn({
+      scope: gateway.scope,
+      requester: gateway.id,
+      cwd: "/tmp/herdr-worker",
+      role: "implementer",
+      harness: "cdx",
+      identity: "identity:personal",
+      label: "provider:codex-cli linear:VUH-19",
+      name: null,
+      launch_token: "launch123",
+      lock_path: "/__swarm/spawn/implementer/launch123",
+      lock_note: { task_id: "task-1" },
+      wait_seconds: 0,
+    });
+
+    expect(result.status).toBe("spawn_in_flight");
+    const expectedInstance = String(result.expected_instance);
+    const row = db
+      .query("SELECT label, adopted, lease_until FROM instances WHERE id = ?")
+      .get(expectedInstance) as { label: string; adopted: number; lease_until: number };
+    expect(row).toMatchObject({
+      label: "identity:personal role:implementer provider:cdx launch:launch123 provider:codex-cli linear:VUH-19",
+      adopted: 0,
+    });
+    expect(row.lease_until).toBeGreaterThan(Math.floor(Date.now() / 1000));
+
+    const published = kv.get(gateway.scope, workspaceBackend.identityKey("herdr", expectedInstance), gateway.id);
+    expect(published).not.toBeNull();
+    expect(JSON.parse(published!.value)).toMatchObject({
+      backend: "herdr",
+      handle_kind: "pane",
+      handle: "pane-123",
+      pane_id: "pane-123",
+      workspace_id: "workspace-1",
+      tab_id: "tab-1",
+    });
+    expect(kv.get(gateway.scope, `identity/herdr/${expectedInstance}`, gateway.id)).not.toBeNull();
+
+    const command = readFileSync(commandPath, "utf8");
+    expect(readFileSync(runPanePath, "utf8").trim()).toBe("pane-123");
+    expect(command).toContain(`SWARM_MCP_INSTANCE_ID='${expectedInstance}'`);
+    expect(command).toContain("SWARM_MCP_LABEL='identity:personal role:implementer provider:cdx launch:launch123 provider:codex-cli linear:VUH-19'");
+    expect(command).toContain("HERDR_PANE_ID='pane-123'");
+    expect(command).toContain("HERDR_WORKSPACE_ID='workspace-1'");
+  });
+
+  test("herdr spawner reuses a scope workspace when no parent pane is known", async () => {
+    const scope = "scope-herdr-layout-reuse";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    const fakeDir = mkdtempSync(join(tmpdir(), "fake-herdr-layout-"));
+    const fakeHerdr = join(fakeDir, "herdr");
+    const logPath = join(fakeDir, "calls.log");
+    writeFileSync(
+      fakeHerdr,
+      [
+        "#!/bin/sh",
+        "printf '%s\\n' \"$*\" >> \"$HERDR_FAKE_LOG\"",
+        "if [ \"$1\" = \"workspace\" ] && [ \"$2\" = \"create\" ]; then",
+        "  printf '%s\\n' '{\"result\":{\"workspace\":{\"workspace_id\":\"workspace-1\"},\"tab\":{\"tab_id\":\"tab-1\"},\"root_pane\":{\"pane_id\":\"pane-root\",\"workspace_id\":\"workspace-1\",\"tab_id\":\"tab-1\"}}}'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"split\" ]; then",
+        "  printf '%s\\n' '{\"result\":{\"pane\":{\"pane_id\":\"pane-2\",\"workspace_id\":\"workspace-1\",\"tab_id\":\"tab-1\"}}}'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"run\" ]; then",
+        "  exit 0",
+        "fi",
+        "exit 1",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(fakeHerdr, 0o755);
+    process.env.SWARM_HERDR_BIN = fakeHerdr;
+    delete process.env.SWARM_HERDR_PARENT_PANE;
+    delete process.env.HERDR_PANE_ID;
+    delete process.env.HERDR_PANE;
+    process.env.HERDR_FAKE_LOG = logPath;
+
+    const base = {
+      scope: gateway.scope,
+      requester: gateway.id,
+      cwd: "/tmp/herdr-worker",
+      role: "implementer",
+      harness: "cdx",
+      identity: "identity:personal",
+      label: "batch:vuh",
+      name: null,
+      wait_seconds: 0,
+      placement: { group: "vuh-batch", max_panes_per_tab: 3 },
+    };
+
+    const first = await herdrSpawner.herdrSpawnerBackend.spawn({
+      ...base,
+      launch_token: "launch-layout-1",
+      lock_path: "/__swarm/spawn/implementer/launch-layout-1",
+      lock_note: { task_id: "task-1" },
+    });
+    const second = await herdrSpawner.herdrSpawnerBackend.spawn({
+      ...base,
+      launch_token: "launch-layout-2",
+      lock_path: "/__swarm/spawn/implementer/launch-layout-2",
+      lock_note: { task_id: "task-2" },
+    });
+
+    expect(first).toMatchObject({
+      status: "spawn_in_flight",
+      workspace_handle: {
+        pane_id: "pane-root",
+        workspace_id: "workspace-1",
+        placement: {
+          reason: "created scope workspace",
+          group: "vuh-batch",
+          reused_workspace: false,
+          reused_tab: false,
+        },
+      },
+    });
+    expect(second).toMatchObject({
+      status: "spawn_in_flight",
+      workspace_handle: {
+        pane_id: "pane-2",
+        workspace_id: "workspace-1",
+        placement: {
+          reason: "reused scope workspace/tab",
+          group: "vuh-batch",
+          reused_workspace: true,
+          reused_tab: true,
+        },
+      },
+    });
+
+    const log = readFileSync(logPath, "utf8");
+    expect(log.match(/workspace create/g)?.length).toBe(1);
+    expect(log).toContain("pane split pane-root --direction right");
+    expect(log).toContain("pane run pane-root");
+    expect(log).toContain("pane run pane-2");
   });
 
   test("herdr launch wait ignores unadopted leased placeholders", async () => {
