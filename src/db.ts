@@ -2,8 +2,25 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
-const path =
-  process.env.SWARM_DB_PATH ?? join(homedir(), ".swarm-mcp", "swarm.db");
+const home = homedir();
+const defaultPath = join(home, ".swarm-mcp", "swarm.db");
+const path = process.env.SWARM_DB_PATH ?? defaultPath;
+const pathSource = process.env.SWARM_DB_PATH ? "SWARM_DB_PATH" : "home_default";
+export const dbPath = path;
+
+export function stateBackendFingerprint(scope?: string) {
+  return {
+    backend: "sqlite",
+    db_path: dbPath,
+    db_path_source: pathSource,
+    default_db_path: defaultPath,
+    scope,
+    home,
+    hermes_host_home: process.env.HERMES_HOST_HOME?.trim() || null,
+    hermes_profile_home: process.env.HERMES_PROFILE_HOME?.trim() || null,
+  };
+}
+
 mkdirSync(dirname(path), { recursive: true });
 
 // Runtime-pick the SQLite driver. Bun uses its built-in `bun:sqlite` (fast, no

@@ -5,7 +5,7 @@ import {
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { runCleanup } from "./cleanup";
-import { db } from "./db";
+import { db, stateBackendFingerprint } from "./db";
 import * as context from "./context";
 import * as dispatch from "./dispatch";
 import { crossIdentityReason } from "./identity";
@@ -767,6 +767,7 @@ tryAutoAdopt();
       instance: current,
       peers,
       unread_messages: unread,
+      state_backend: stateBackendFingerprint(current.scope),
       tasks: tasks.snapshot(current.scope, {
         include_terminal,
         terminal_limit,

@@ -17,7 +17,7 @@ process.env.SWARM_DB_PATH = join(
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
 
-const { db } = await import("../src/db");
+const { db, dbPath } = await import("../src/db");
 const context = await import("../src/context");
 const dispatch = await import("../src/dispatch");
 const herdrSpawner = await import("../src/backends/herdr_spawner");
@@ -41,6 +41,7 @@ const originalSwarmIdentity = process.env.SWARM_IDENTITY;
 const originalSwarmHermesIdentity = process.env.SWARM_HERMES_IDENTITY;
 const originalSwarmCcIdentity = process.env.SWARM_CC_IDENTITY;
 const originalSwarmCodexIdentity = process.env.SWARM_CODEX_IDENTITY;
+const originalSwarmDbPath = process.env.SWARM_DB_PATH;
 
 type WakeCall = {
   backend: string;
@@ -156,6 +157,7 @@ afterEach(() => {
   restoreEnv("SWARM_HERMES_IDENTITY", originalSwarmHermesIdentity);
   restoreEnv("SWARM_CC_IDENTITY", originalSwarmCcIdentity);
   restoreEnv("SWARM_CODEX_IDENTITY", originalSwarmCodexIdentity);
+  restoreEnv("SWARM_DB_PATH", originalSwarmDbPath);
 });
 
 describe("workspace backend registry", () => {
@@ -694,6 +696,67 @@ describe("workspace backend registry", () => {
     expect(locks.count).toBe(0);
   });
 
+  test("dispatch fails spawned handoff when worker cannot see the task", async () => {
+    const scope = "scope-dispatch-spawn-health-fail";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    const spawned = registry.register(
+      "/tmp/spawned",
+      "identity:work role:implementer launch:testtoken",
+      scope,
+    );
+    const spawnerName = "test-health-fail";
+    spawnerBackend.registerSpawner({
+      name: spawnerName,
+      defaultWaitSeconds: 0,
+      defaultHarness() {
+        return "test";
+      },
+      spawn() {
+        return {
+          status: "spawned",
+          spawned_instance: spawned.id,
+        };
+      },
+    });
+
+    const result = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Reject invisible spawned task",
+      role: "implementer",
+      spawner: spawnerName,
+      force_spawn: true,
+      nudge: false,
+    });
+
+    expect(result).toMatchObject({
+      status: "spawn_failed",
+      failure: "worker_task_not_visible",
+      dispatch_health: {
+        status: "failed",
+        checks: {
+          gateway_task_exists: true,
+          worker_instance_exists: true,
+          worker_adopted: true,
+          worker_scope_matches: true,
+          worker_task_visible: false,
+        },
+      },
+    });
+    const task = db
+      .query("SELECT status, assignee FROM tasks WHERE id = ?")
+      .get(String(result.task_id)) as { status: string; assignee: string | null };
+    expect(task).toEqual({ status: "open", assignee: null });
+    const locks = db
+      .query("SELECT COUNT(*) AS count FROM context WHERE scope = ? AND file LIKE '/__swarm/spawn/%'")
+      .get(scope) as { count: number };
+    expect(locks.count).toBe(0);
+  });
+
   test("dispatch nudges a spawned worker by default", async () => {
     const scope = "scope-dispatch-spawn-nudge";
     const wakeCalls: WakeCall[] = [];
@@ -866,6 +929,7 @@ describe("workspace backend registry", () => {
     process.env.HERDR_FAKE_LOG = logPath;
     process.env.HERDR_FAKE_COMMAND = commandPath;
     process.env.HERDR_FAKE_RUN_PANE = runPanePath;
+    delete process.env.SWARM_DB_PATH;
 
     const result = await herdrSpawner.herdrSpawnerBackend.spawn({
       scope: gateway.scope,
@@ -912,6 +976,7 @@ describe("workspace backend registry", () => {
     expect(launchScriptPath).toBeTruthy();
     const launchScript = readFileSync(launchScriptPath!, "utf8");
     expect(launchScript).toContain(`SWARM_MCP_INSTANCE_ID='${expectedInstance}'`);
+    expect(launchScript).toContain(`SWARM_DB_PATH='${dbPath}'`);
     expect(launchScript).toContain("SWARM_MCP_LABEL='identity:personal role:implementer provider:cdx launch:launch123 provider:codex-cli linear:VUH-19'");
     expect(launchScript).toContain("HERDR_PANE_ID='pane-123'");
     expect(launchScript).toContain("HERDR_WORKSPACE_ID='workspace-1'");

@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as context from "../context";
+import { dbPath } from "../db";
 import { herdrEnvWithSocket, resolvedHerdrSocketPath } from "../herdr_socket";
 import { identityNameFromToken, identityTokenFromName } from "../launcher_identity";
 import * as kv from "../kv";
@@ -492,6 +493,7 @@ function launchEnv(opts: LaunchCommandOpts) {
     SWARM_MCP_SCOPE: opts.scope,
     SWARM_MCP_FILE_ROOT: opts.cwd,
     SWARM_MCP_DIRECTORY: opts.cwd,
+    SWARM_DB_PATH: dbPath,
     SWARM_MCP_LABEL: opts.label,
     SWARM_AGENT_ROLE: opts.role,
     SWARM_CC_AGENT_ROLE: opts.role,
@@ -521,7 +523,6 @@ function launchEnv(opts: LaunchCommandOpts) {
   }
   for (const key of [
     "HERMES_HOST_HOME",
-    "SWARM_DB_PATH",
     "SWARM_MCP_PERSONAL_ROOTS",
     "SWARM_MCP_WORK_ROOTS",
   ]) {

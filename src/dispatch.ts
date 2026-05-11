@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import * as context from "./context";
-import { db } from "./db";
+import { db, stateBackendFingerprint } from "./db";
 import { identityToken } from "./identity";
 import { labelWithIdentity, launcherForIdentity } from "./launcher_identity";
 import * as messages from "./messages";
@@ -316,6 +316,69 @@ function spawnPromptRecipient(ready: spawnerBackend.SpawnReady | Record<string, 
   return "";
 }
 
+function dispatchHealth(opts: {
+  scope: string;
+  taskId: string;
+  workerId: string;
+  expectAssigned?: boolean;
+}) {
+  const gatewayTask = taskStore.get(opts.taskId, opts.scope);
+  const worker = registry.get(opts.workerId);
+  const workerScopeMatches = worker?.scope === opts.scope;
+  const workerTask = worker && workerScopeMatches
+    ? taskStore.get(opts.taskId, opts.scope, worker)
+    : null;
+  const expectAssigned = opts.expectAssigned ?? true;
+  const checks = {
+    gateway_task_exists: !!gatewayTask,
+    worker_instance_exists: !!worker,
+    worker_adopted: !!worker?.adopted,
+    worker_scope_matches: workerScopeMatches,
+    worker_task_visible: !!workerTask,
+    ...(expectAssigned ? { worker_assigned: workerTask?.assignee === opts.workerId } : {}),
+  };
+  const status = Object.values(checks).every(Boolean) ? "passed" : "failed";
+  return {
+    status,
+    checks,
+    state_backend: stateBackendFingerprint(opts.scope),
+    worker: worker
+      ? {
+          id: worker.id,
+          scope: worker.scope,
+          directory: worker.directory,
+          file_root: worker.file_root,
+          label: worker.label,
+          adopted: worker.adopted,
+        }
+      : null,
+    task: gatewayTask
+      ? {
+          id: gatewayTask.id,
+          scope: gatewayTask.scope,
+          requester: gatewayTask.requester,
+          assignee: gatewayTask.assignee,
+          status: gatewayTask.status,
+        }
+      : null,
+  };
+}
+
+function failedDispatchHealthPayload(
+  basePayload: Record<string, unknown> & { task_id: string; task?: unknown },
+  spawn: spawnerBackend.SpawnResult,
+  health: ReturnType<typeof dispatchHealth>,
+) {
+  return {
+    ...basePayload,
+    ...spawn,
+    status: "spawn_failed",
+    error: "dispatch health check failed: spawned worker cannot see the task",
+    failure: "worker_task_not_visible",
+    dispatch_health: health,
+  };
+}
+
 export function promptPeerResult(opts: {
   scope: string;
   sender: string;
@@ -578,9 +641,46 @@ export async function runDispatch(opts: DispatchOptions) {
     typeof spawn.spawned_instance === "string" ? spawn.spawned_instance : "";
   let binding: Record<string, unknown> | null = null;
   if (spawnedInstance) {
+    const preBindHealth = dispatchHealth({
+      scope: opts.scope,
+      taskId: result.id,
+      workerId: spawnedInstance,
+      expectAssigned: false,
+    });
+    if (preBindHealth.status === "failed") {
+      context.clearLocks(opts.requester, opts.scope, lockPath);
+      return maybeWaitForCompletion(
+        opts,
+        failedDispatchHealthPayload(basePayload, spawn, preBindHealth),
+      );
+    }
     binding = taskStore.reserveForAssignee(result.id, opts.scope, spawnedInstance);
+    if ("error" in binding) {
+      context.clearLocks(opts.requester, opts.scope, lockPath);
+      return maybeWaitForCompletion(opts, {
+        ...basePayload,
+        ...spawn,
+        status: "spawn_failed",
+        error: `dispatch task binding failed: ${binding.error}`,
+        failure: "task_binding_failed",
+        binding,
+      });
+    }
   }
   context.clearLocks(opts.requester, opts.scope, lockPath);
+  const postBindHealth = spawnedInstance
+    ? dispatchHealth({
+        scope: opts.scope,
+        taskId: result.id,
+        workerId: spawnedInstance,
+      })
+    : null;
+  if (postBindHealth?.status === "failed") {
+    return maybeWaitForCompletion(
+      opts,
+      failedDispatchHealthPayload(basePayload, spawn, postBindHealth),
+    );
+  }
   const prompt =
     spawnedInstance && spawnedInstance !== spawnReadyPromptRecipient
       ? promptPeerResult({
@@ -599,6 +699,7 @@ export async function runDispatch(opts: DispatchOptions) {
     ...spawn,
     spawned_instance: spawnedInstance || null,
     binding,
+    ...(postBindHealth ? { dispatch_health: postBindHealth } : {}),
     prompt,
   });
 }
