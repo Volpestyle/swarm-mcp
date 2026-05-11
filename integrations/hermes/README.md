@@ -69,6 +69,29 @@ mcp_servers:
 
 Use the matching work values for a work profile: `AGENT_IDENTITY: work` and `/Users/you/.swarm-mcp-work/swarm.db`.
 
+### Daemon-managed gateways (launchd / systemd)
+
+`mcp_servers.swarm.env` only reaches the MCP server child. The hermes daemon itself runs in whatever environment its service manager booted it under, and launchd in particular strips the operator's shell env. A plain `~/Library/LaunchAgents/ai.hermes.gateway-personal.plist` boots hermes with only `HERMES_HOME`, so the in-process swarm plugin's `_resolved_identity()` falls back to `identity:unknown` — and every worker the gateway dispatches inherits that token through the spawn label chain (raw `codex`/`claude` is launched instead of `cdx`/`clowd`, the launch script exports `AGENT_IDENTITY=unknown`, and downstream session_start hooks register with `identity:unknown`).
+
+Hermes' launchd plist generator (`hermes_cli/gateway.py::generate_launchd_plist`) handles this automatically when the profile is named `personal` or `work` — it emits `AGENT_IDENTITY`, `SWARM_HERMES_IDENTITY`, `SWARM_IDENTITY`, and a profile-scoped `SWARM_DB_PATH` into the plist's `EnvironmentVariables` block. Site-specific envs (e.g. `SWARM_MCP_PERSONAL_ROOTS` pointing at your checkout root, `SWARM_MCP_BIN`, `HERDR_SOCKET_PATH`) are read from `$HERMES_HOME/launchd_extra_env.json` if present:
+
+```json
+{
+  "SWARM_MCP_PERSONAL_ROOTS": "/Users/you/repos:/Users/you/herdr",
+  "SWARM_MCP_BIN": "bun run /Users/you/repos/swarm-mcp/src/cli.ts",
+  "HERDR_SOCKET_PATH": "/Users/you/.config/herdr/sessions/personal/herdr.sock"
+}
+```
+
+The extras file is an input to the generator, so it survives `refresh_launchd_plist_if_needed()` and any `hermes gateway` regeneration. After editing the plist or the extras file, you must reload launchd — `launchctl kickstart -k` does not pick up env changes:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/ai.hermes.gateway-personal.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.hermes.gateway-personal.plist
+```
+
+The matching minimum-set for `systemd` is the same env block under `[Service] Environment=` in the unit file (`hermes_cli/gateway.py::generate_systemd_unit`). The systemd template does not yet emit profile-derived identity envs — set them explicitly there for now.
+
 Work tracker metadata is read from `SWARM_HERMES_WORK_TRACKER`, `SWARM_WORK_TRACKER`, `.swarm-work-tracker`, or Hermes config `swarm.work_tracker`, then published to `config/work_tracker/<identity>` in swarm KV. This is routing metadata only; credentials still live in the launcher/config-root MCP setup.
 
 The express-lane tool is registered under Hermes toolset `plugin_swarm`. Enable that toolset for sessions that should be allowed to nudge peers; sessions without the toolset still get auto-register, the peer-lock check on writes, identity publishing, and `/swarm`.
