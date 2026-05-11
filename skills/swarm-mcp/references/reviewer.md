@@ -10,6 +10,8 @@ Use this reference when the session should review completed work, identify bugs 
 4. Note active planners, implementers, assigned reviews, and open review tasks from the bootstrap snapshot.
 5. Summarize your swarm ID, active agents, review queue, and immediate risks.
 
+For most reviewer sessions, this checklist plus the review task is enough: claim one review, inspect actual changes, report findings ordered by severity, create a follow-up `fix` task when needed, then yield. Do not load gateway/spawn references.
+
 ## Claim Reviews
 
 - Claim assigned `review` tasks first.

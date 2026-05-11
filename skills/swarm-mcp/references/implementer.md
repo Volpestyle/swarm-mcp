@@ -10,6 +10,8 @@ Use this reference when the session should claim tasks, edit code safely, report
 4. Note active planners, reviewers, assigned tasks, and open tasks from the bootstrap snapshot.
 5. Summarize your swarm ID, active agents, and pending work.
 
+For most implementer sessions, this checklist plus the task description is enough: claim one eligible task, edit safely, run relevant checks, publish a structured `update_task` result, then yield. Do not load gateway/spawn references unless the planner explicitly changes your role.
+
 ## Claim Priority
 
 When tasks are available:

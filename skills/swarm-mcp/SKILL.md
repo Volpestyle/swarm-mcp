@@ -89,6 +89,7 @@ Deregister only when you are actually exiting, ending a one-shot session, or oth
 | Implementer workflow | `references/implementer.md` | The session should claim tasks and edit code |
 | Reviewer workflow | `references/reviewer.md` | The session should review completed work or inspect risk |
 | Researcher workflow | `references/researcher.md` | The session should investigate and publish findings |
+| Gateway workflow | `references/gateway.md` | The session has `mode:gateway` and needs to dispatch, spawn, place, or monitor workers |
 | Work tracker linkage | `references/work-trackers.md` | Work should be linked to Linear, Jira, GitHub Issues, or another configured tracker |
 | KV and shared coordination state | `references/coordination.md` | You need to read/write `progress/`, `plan/`, `owner/`, queue, or handoff keys |
 | Specialists, generalists, and team conventions | `references/roles-and-teams.md` | You need to route work by `role:` or `team:` labels |
@@ -123,7 +124,7 @@ Deregister only when you are actually exiting, ending a one-shot session, or oth
 - Update your progress with `kv_set("progress/<your-instance-id>", ...)` while working on tasks so others can check on you without interrupting
 - Messages prefixed with `[auto]` are system notifications (task assignments, completions, stale-agent recovery) — treat them like any other actionable message
 - When you receive a `[signal:complete]` broadcast, the planner is signaling all planned work is done. Finish current work, publish final status, then idle or deregister if you are exiting.
-- In gateway/lead mode, no live worker is a spawn problem, not a native-subagent fallback. For non-trivial human-trackable work, read `bootstrap.work_tracker`; if configured and the matching MCP is available, create/link the tracker item before `dispatch`, include the tracker URL/ID in the swarm task, and update the tracker with the final durable outcome if the worker did not. Use the MCP `dispatch` tool to create/reuse the swarm task, wake a matching live worker, or spawn through the configured Spawner backend (`herdr` in the current stack). If `dispatch` reports no spawner surface, ask the operator. Worker/generalist sessions do not spawn new workers; they request tracked work, message the planner/gateway, or continue locally when safe.
+- In gateway/lead mode, no live worker is a spawn problem, not a native-subagent fallback. Load `references/gateway.md` before dispatching, spawning, setting `placement`, or using `completion_wait_seconds`. Worker/generalist sessions do not spawn new workers; they request tracked work, message the planner/gateway, or continue locally when safe.
 
 ## CLI Fallback
 
@@ -137,15 +138,7 @@ The CLI bridge remains for hooks, operator shells, and rare gateway fallback cas
 
 Do not ask ordinary worker sessions to run `dispatch`, `ui spawn`, or raw workspace-backend pane/node creation. Spawn authority belongs to `mode:gateway` sessions and operator surfaces; non-gateway MCP callers should expect `dispatch` to reject them.
 
-## Spawn Layout Doctrine
-
-Gateway agents own worker layout decisions. Keep spawned agents readable for the operator; do not hide layout decisions in plugin code.
-
-- **Workspace per swarm scope:** default to one workspace per git-root/scope. A second workspace for the same scope should be a deliberate operator-driven choice, not the default spawn path.
-- **Aim for ≤3 panes per tab:** four or more panes usually makes individual agents unreadable. If the matching tab is at cap, prefer a new tab.
-- **Aim for ≤6–8 tabs per workspace:** beyond that, the herdr sidebar starts hiding useful context. Consider a new workspace only when the operator has asked for that separation.
-- **Group by role:** tabs labeled by role group (`implementers`, `reviewers`, `researchers`) are easier to scan than per-ticket sprawl. For one-off bursts, a spawn-batch tab label is also acceptable.
-- **Adjust for the operator's surface:** a 4-pane tab may be fine on a large monitor and terrible from a phone.
+For synchronous CLI wrappers, `swarm-mcp dispatch --wait-for-completion <seconds>` mirrors MCP `completion_wait_seconds`: it still reports the normal dispatch handoff/spawn status, plus a `completion` object when the task reaches `done`, `failed`, or `cancelled`, or a timeout snapshot when it does not.
 
 ## Structured Results Convention
 

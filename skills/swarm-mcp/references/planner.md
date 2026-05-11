@@ -10,6 +10,8 @@ Use this reference when the session should plan work, delegate to implementers, 
 4. Note active implementers, reviewers, researchers, peer planners, open work, blocked/failed tasks, and approval gates from the bootstrap snapshot.
 5. Summarize your swarm ID, active agents, peer planners, open work, and coordination risks.
 
+If your label includes `mode:gateway`, also load `references/gateway.md` before using `dispatch`, spawning workers, setting herdr placement, or waiting synchronously for delegated completion.
+
 ## Ownership
 
 The server maintains `owner/planner` automatically.
@@ -27,7 +29,7 @@ The server maintains `owner/planner` automatically.
 - Use `depends_on` to express ordering. Tasks with unmet dependencies start as `blocked` and auto-open when dependencies complete.
 - Use `idempotency_key` for crash-safe retries.
 - Make trivial, low-risk edits locally when that is clearly faster than delegation.
-- Route medium or large implementation work through `dispatch` so swarm-mcp can wake or spawn a worker via the configured workspace backend.
+- Route medium or large implementation work through `dispatch` so swarm-mcp can wake or spawn a worker via the configured workspace backend. In gateway mode, follow `references/gateway.md` for placement, completion waits, and recovery.
 
 ## Work Tracker Linkage
 

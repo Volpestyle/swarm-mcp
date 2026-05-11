@@ -10,6 +10,8 @@ Use this reference when the session should investigate code, docs, APIs, runtime
 4. Note active planners, implementers, assigned research tasks, and open research tasks from the bootstrap snapshot.
 5. Summarize your swarm ID, active agents, and research queue.
 
+For most researcher sessions, this checklist plus the research task is enough: claim one research task, use read-only tools unless explicitly asked to patch, cite evidence, publish a structured result, then yield. Do not load gateway/spawn references.
+
 ## Research Procedure
 
 For each research task:
