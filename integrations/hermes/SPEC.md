@@ -23,7 +23,7 @@ The plugin is **not** a feature in any of those projects. It glues them.
 │   when to lock, role routing, task patterns
 ├──────────────────────────────────────────────┤
 │  Plugin (integrations/hermes/)               │   behavior
-│   lifecycle hooks, lock bridge, /swarm cmd, peer prompt
+│   lifecycle hooks, peer-lock check, /swarm cmd, peer prompt
 ├──────────────────────────────────────────────┤
 │  MCP server (src/index.ts)                   │   capability
 │   29 tools: register, lock_file, request_task...
@@ -46,7 +46,7 @@ Layers compose by name (`mcp_swarm_*` tool prefix), not by import. The plugin ne
 | swarm-mcp | Coordination protocol | Tasks, locks, messages, kv, identity. Durable, structured, portable. |
 | herdr | Operator surface + transport | Pane lifecycle, visibility, direct pty I/O. Local + remote (via bridge), ephemeral, fast. |
 | hermes-agent | Agent runtime | Conversation, tool dispatch, system prompt. |
-| **This plugin** | Bridge | Auto-register, auto-lock, role-aware behavior, slash command, peer prompt express lane. |
+| **This plugin** | Bridge | Auto-register, peer-lock enforcement, role-aware behavior, slash command, peer prompt express lane. |
 
 These are not redundant. herdr gives transport + observability; swarm-mcp gives semantics + durability. Either alone leaves a gap. The plugin glues a hermes session into both.
 
@@ -102,25 +102,26 @@ swarm-mcp is what makes them coordinate as one system. The plugin's behavior dif
 | `on_session_start` | First turn of a new session | Auto-`register`, cache instance_id |
 | `on_session_end` | After **every** `run_conversation()` turn | No-op (intentionally) |
 | `on_session_finalize` | Real session boundary (`/new`, `/reset`, exit, gateway expiry) | Auto-`deregister` if refcount → 0 |
-| `pre_tool_call` | Before tool dispatch | Auto-`lock_file` if peers + write-class tool |
-| `post_tool_call` | After tool dispatch (success or error) | Release any locks acquired in pre |
+| `pre_tool_call` | Before tool dispatch | Check-only: `get_file_lock` per target path; block when a peer (not this session) holds it. Never acquires. |
+| `post_tool_call` | After tool dispatch (success or error) | No-op back-compat shim (nothing was acquired in pre) |
 
 ### 5.2 Idempotency
 
 - `on_session_start` keyed by `session_id`; re-entrant.
 - `on_session_finalize` decrements a refcount; deregister only when count reaches zero.
-- `pre`/`post` lock pairs keyed by `tool_call_id`; post finds pre's locks even if `args` mutated.
+- `pre_tool_call` is stateless across calls — each invocation re-inspects current lock state, so retries and tool-call-id changes are not a concern.
 
 ### 5.3 Failure semantics
 
 All swarm-mcp interactions are **fail-open** except actual peer lock conflicts:
 - Register fails → session has no swarm presence; agent-initiated `register` still works.
-- Lock dispatch fails (network/server) → tool proceeds without a lock (logged at debug).
-- **Lock conflict detected** → tool is **blocked**: `{"action": "block", "message": "swarm lock blocked write_file for X: File is already locked"}`. The agent gets this as a tool-result error and can ask the user, wait, retry, or escalate.
+- `get_file_lock` dispatch fails (network/server) → tool proceeds without a check (logged at debug).
+- Cached own `instance_id` is missing for the session → tool proceeds without a check; we can't tell own from peer without it.
+- **Peer-held lock detected** → tool is **blocked**: `{"action": "block", "message": "swarm lock blocked write_file for X: held by <8-char-prefix> (<note>)"}`. The agent gets this as a tool-result error and can ask the user, wait, retry, or escalate. Same-instance locks pass through; the agent's own declared critical section doesn't block its own writes.
 
 ### 5.4 Missing-`session_id` guard (v0.2.1)
 
-Some hermes call paths invoke `pre_tool_call` without `session_id`. The plugin falls back to the sole registered instance **only when** `len(_instances) == 1`. Multi-session ambiguity refuses to guess and skips locking. This protects gateway mode where multiple sessions may share one MCP process.
+Some hermes call paths invoke `pre_tool_call` without `session_id`. The plugin falls back to the sole registered instance **only when** `len(_instances) == 1`. Multi-session ambiguity refuses to guess and skips the lock check. This protects gateway mode where multiple sessions may share one MCP process.
 
 ### 5.5 No-double-spawn invariant (gateway fast-dispatch)
 
@@ -208,8 +209,8 @@ The plugin diverges by role (env or config):
 
 | Mode | Reads | Writes |
 |---|---|---|
-| `worker` (default, herdr pane) | Inline | Inline, with lock bridge |
-| `gateway` (Telegram/Discord/etc.) | Inline for trivial edits; dispatched for larger work | Easy edits local, medium/large work via swarm `dispatch` |
+| `worker` (default, herdr pane) | Inline | Inline, with peer-lock check on each write (denies when a peer holds the target) |
+| `gateway` (Telegram/Discord/etc.) | Inline for trivial edits; dispatched for larger work | Easy edits local; medium/large work via swarm `dispatch`. Pre-tool peer-lock check is bypassed in gateway mode (the gateway is expected to coordinate at the task layer, not the file layer) |
 
 ### 7.1 Why gateway delegates non-trivial writes
 
@@ -222,13 +223,13 @@ The plugin diverges by role (env or config):
 
 When a user intent on the gateway resolves to a write:
 
-1. **Inline easy edits.** For trivial, low-risk edits, the gateway may edit locally. The shared hook still uses the swarm lock bridge when peers exist, so real lock conflicts remain blocking.
+1. **Inline easy edits.** For trivial, low-risk edits, the gateway may edit locally. The pre-tool peer-lock check is intentionally skipped in gateway mode; if the operator wants protection against a worker's declared critical section, they should route via `dispatch` so the worker owns the edit.
 2. **Dispatch medium/large work.** Gateway formulates a concrete patch + success criterion, then uses the dispatch primitive (see §9 v0.5) to create/reuse the task, wake or spawn a worker, and monitor the result. When a worker is available this becomes a near-synchronous round-trip — claim → apply → `update_task` → summarize.
 3. **Ask.** If non-trivial work cannot be dispatched because no spawner or worker surface is available, gateway surfaces the impasse to the operator with options to wait, spawn, or explicitly authorize local implementation.
 
 ### 7.4 Reconciliation when gateway worked inline
 
-When gateway inline writes happen while peers exist, the lock bridge provides collision protection. For multi-step local edits, the gateway should still leave a small task/result record or tracker comment so later workers can reconcile intent.
+Gateway-mode inline writes are not protected by the pre-tool peer-lock check, by design — gateways coordinate at the task layer. For multi-step local edits, the gateway should leave a small task/result record or tracker comment so later workers can reconcile intent. If a worker has declared a critical section over a file and the gateway needs to touch it, route the edit through `dispatch` so the worker owns it.
 
 ### 7.5 Gateway default vs routine commands
 
@@ -268,10 +269,14 @@ Subcommands: `status` (default, compact summary), `instances`, `tasks`, `kv`, `m
 - `on_session_finalize` → auto-deregister with refcount
 - `/swarm status` slash command
 
-### v0.2 — Lock bridge ✓
-- `pre_tool_call` / `post_tool_call` for `write_file`, `patch`, `edit_file`, `apply_patch`
-- Auto-`lock_file` when peers exist; release on completion
-- Block on real conflicts; fail-open on coordination errors
+### v0.2 — Peer-lock enforcement ✓
+- `pre_tool_call` for `write_file`, `patch`, `edit_file`, `apply_patch`
+- Check-only peer-lock enforcement via `get_file_lock`; never acquires
+- Block on peer-held locks (same-instance is re-entrant); fail-open on
+  coordination errors and unknown own `instance_id`
+- `post_tool_call` retained as a no-op back-compat shim (the v0.2 design
+  acquired in pre and released in post; the v0.3+ check-only model
+  removes the acquire half, so there is nothing to release)
 
 ### v0.2.1 — Sole-session fallback ✓
 - `pre_tool_call` falls back to single registered instance when `session_id` missing
@@ -299,7 +304,7 @@ Subcommands: `status` (default, compact summary), `instances`, `tasks`, `kv`, `m
 - Optional Hermes helper `swarm_fast_dispatch(intent, patch, expect, timeout_s, fallback)`
   - Wraps the dispatch primitive + `wait_for_activity` + summarize as a single synchronous-feeling call for gateway implementations
   - Returns `{status: "no_worker"}` if nothing claims within timeout; gateway can then ask user, escalate, or fall back to inline
-- In gateway mode, lock bridge is suppressed (gateway doesn't write)
+- In gateway mode, peer-lock checks are suppressed (gateway doesn't write)
 
 ### v0.5.1 — Routine dispatch UX
 - Named slash commands / buttons / saved prompts expand into role-specific task graphs
@@ -350,11 +355,14 @@ Fresh hermes session in a git repo. After first turn, `swarm-mcp instances` show
 **S2: Two-peer coordination**
 Two hermes sessions in shared scope. Both visible in `list_instances`. `broadcast` from one is received by the other via `wait_for_activity` within 5s.
 
-**S3: Lock conflict (the v0.2 contract)**
-Peer A holds a swarm lock on `notes.md`. Peer B tries `write_file` on same path. B's tool returns error containing `swarm lock blocked write_file ... File is already locked`. Target file is **not** modified. After A unlocks, B retries successfully.
+**S3: Peer-held lock blocks write**
+Peer A holds a swarm lock on `notes.md` (`lock_file file=notes.md reason="refactor"`). Peer B tries `write_file` on same path. B's tool returns error containing `swarm lock blocked write_file for notes.md: held by <8-char-prefix> (refactor)`. Target file is **not** modified. After A unlocks, B retries successfully.
+
+**S3b: Self-held lock is re-entrant**
+A session calls `lock_file foo.ts` (declaring a wider critical section) and then does multiple `write_file foo.ts` calls. None should be blocked — the holder is the same instance.
 
 **S4: Solo write does not lock**
-Single session, no peers. `write_file` proceeds without any lock attempt — no lock context entry appears in `swarm-mcp inspect`.
+Single session, no peers. `write_file` proceeds without the pre-tool hook denying. The hook never acquired a lock in the first place, so no lock context entry appears in `swarm-mcp inspect`.
 
 **S5: Peer prompt express lane (v0.3)**
 Two Hermes sessions in herdr panes. Session A calls `swarm_prompt_peer(recipient=<B>, message="check your inbox")`. Verify B has an unread swarm message even if herdr injection fails. When B has published `identity/workspace/herdr/<instance_id>` and its pane is not `working`, verify `herdr pane run` injects the wake prompt and B is told to call `bootstrap` or `poll_messages` rather than receiving the full work contract through terminal text.
@@ -383,7 +391,8 @@ Bridge daemon running, Tailscale connected. iOS app (or curl-equivalent over the
 
 Cover plugin behavior without a live MCP server by stubbing `lifecycle._dispatch`. Required cases:
 - Register response shapes: direct dict; `{result: <json string>}`; `{content: [{text: <json>\n<prompt>}]}`
-- Lock conflict (`error: "File is already locked"`) blocks; non-conflict error fails open
+- Pre-tool check: peer-held lock blocks; self-held lock passes through; no lock passes through
+- `on_post_tool_call` is a no-op (does not dispatch)
 - Missing-`session_id` guard: single-instance fallback fires, multi-instance refuses
 - Refcount: two `on_session_start` for same instance → only one deregister on finalize
 - No-double-spawn:
@@ -402,7 +411,10 @@ Hermes fires `on_session_end` after every `run_conversation()` turn — that's p
 The slash command should work even when swarm MCP tools aren't mounted (server disabled, agent context loaded without them). Shelling to the CLI is independent of the agent's tool surface.
 
 **Why fail-open on coordination errors but block on lock conflicts?**
-Coordination is opt-in. A swarm outage shouldn't block productive tool calls. But a peer-held lock is exactly the case the user wanted protection from — failing through it would defeat the point.
+Coordination is opt-in. A swarm outage shouldn't block productive tool calls. But a peer-declared lock is exactly the case the user wanted protection from — failing through it would defeat the point.
+
+**Why check-only instead of acquire-then-release around every write?**
+Earlier versions held a lock around each individual `write_file`/`patch` call. That window is sub-millisecond and almost never coincides with another agent's tool dispatch, and the `patch` tool's own anchor checks catch logical collisions independently. What actually needs enforcement is a *manual* `lock_file` call — an agent declaring a wider critical section ("I'm refactoring across these 5 files for the next 10 minutes"). The check-only model preserves that enforcement (other peers' writes are denied) without paying for per-call acquire/release ceremony that protected an essentially fictional race.
 
 **Why not unify herdr and swarm-mcp?**
 They solve different problems. herdr is local + ephemeral + transport. swarm-mcp is durable + structured + portable. Unifying loses one or the other. Bridge them at the edges (this plugin, and the planned `SWARM_MCP_INSTANCE_ID` injection).

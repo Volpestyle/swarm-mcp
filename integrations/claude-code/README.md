@@ -21,9 +21,7 @@ For the broader adapter contract, see
 |---|---|
 | Auto-`register` on session start | `SessionStart` hook → `swarm-mcp register`, stores `instance_id` in hook scratch metadata |
 | Auto-`deregister` on session end | `SessionEnd` hook → `swarm-mcp deregister` |
-| Auto-lock write-class file tools when peers exist | `PreToolUse` (matcher: `Write\|Edit\|MultiEdit\|NotebookEdit`) → `swarm-mcp lock` |
-| Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
-| Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
+| Enforce peer-declared locks on write-class tools | `PreToolUse` (matcher: `Write\|Edit\|MultiEdit\|NotebookEdit`) → read-only `swarm-mcp locks --json` inspection; emits `permissionDecision: deny` when a peer (not this session) holds the target file. Never acquires. |
 | Publish and cleanup workspace identity | `SessionStart` / `SessionEnd` hooks → publish/delete current workspace handle when `HERDR_PANE_ID` is present |
 | Publish configured work tracker | `SessionStart` hook reads tracker config and writes `config/work_tracker/<identity>` KV |
 | Gateway conductor mode | `SWARM_CC_ROLE=gateway` registers as `role:planner`; make easy edits locally, use the MCP `dispatch` tool for medium/large task/spawn routing |
@@ -35,7 +33,10 @@ Worker-mode coordination failures are swallowed — coordination is opt-in
 convenience for ordinary sessions, never critical path. Gateway mode can handle
 trivial, low-risk edits locally, but medium or large implementation work should
 create/reuse a swarm task and drive the configured Spawner backend, not native
-subagents. Solo sessions (no peers in scope) skip locking entirely.
+subagents. The pre-tool hook is **check-only**: it inspects existing locks and
+denies on peer-held conflicts, but never acquires on the agent's behalf. Agents
+declare wider critical sections themselves via `lock_file` when they want peers
+to wait (see the `swarm-mcp` skill's "Locking" section).
 
 ### Gateway dispatch
 
@@ -141,8 +142,9 @@ In a fresh project with the swarm MCP server mounted:
 2. Confirm registration: `swarm-mcp instances` from another terminal should
    show your session.
 3. With a second peer registered in the same scope, ask the agent to edit a
-   file the peer has locked (`swarm-mcp lock <file>` from peer terminal). The
-   tool should be denied with `swarm lock blocked Edit for <file>: ...`.
+   file the peer has locked (`swarm-mcp lock <file> --note "..."` from peer
+   terminal). The tool should be denied with `swarm lock blocked Edit for
+   <file>: held by <8-char-prefix> (...)`.
 4. Run `/swarm` inside the session — should print a compact status summary.
 
 If the deny message never appears, the most common causes are:
@@ -151,14 +153,16 @@ If the deny message never appears, the most common causes are:
   should see your session there.
 - `swarm-mcp` CLI is not resolvable from the hook subprocess. Set
   `SWARM_MCP_BIN` to a real command.
-- No peer holds a lock on the file you're editing. Solo sessions skip
-  locking by design.
+- The peer is not actually holding a lock, or held it on a different path
+  than the agent is editing. `swarm-mcp locks` should list it.
+- The hook's session has no cached `instance_id` (registration failed
+  earlier in the session), so it fails open and can't tell own vs peer.
 
 ## Roadmap
 
 ### v0.1 — Lifecycle bridge ✓
 - SessionStart additionalContext priming registration with derived args
-- Lock bridge with deny-on-conflict, fail-open elsewhere
+- Pre-tool peer-lock check with deny-on-conflict, fail-open elsewhere
 - /swarm slash command
 - Best-effort identity KV cleanup on SessionEnd
 
@@ -202,8 +206,8 @@ integrations/claude-code/
 │   ├── _common.py               -- claude-code RuntimeConfig + file_path/notebook_path extractor
 │   ├── session_start.py         -- 12-line stub: core.run_session_start_hook
 │   ├── session_end.py           -- 12-line stub: core.run_session_end_hook
-│   ├── pre_tool_use.py          -- 12-line stub: core.run_pre_tool_use_hook
-│   └── post_tool_use.py         -- 12-line stub: core.run_post_tool_use_hook
+│   ├── pre_tool_use.py          -- check-only peer-lock inspection (denies on peer-held conflict)
+│   └── post_tool_use.py         -- no-op back-compat shim for installs that still wire PostToolUse
 ├── commands/
 │   └── swarm.md                 -- /swarm slash command
 └── skills/

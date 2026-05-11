@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 _instances: Dict[str, str] = {}
 _roles_by_session: Dict[str, str] = {}
 _refcounts: Dict[str, int] = {}
-_locks_by_call: Dict[str, list[str]] = {}
 _lock = threading.Lock()
 _json_decoder = JSONDecoder()
 _WRITE_TOOLS = {"write_file", "patch", "edit_file", "apply_patch"}
@@ -302,12 +301,6 @@ def _extract_payload(payload: dict | None) -> Any:
     return payload
 
 
-def _lock_key(session_id: str, tool_name: str, tool_call_id: str, paths: list[str]) -> str:
-    if tool_call_id:
-        return f"tool-call:{tool_call_id}"
-    return f"{session_id}:{tool_name}:{'|'.join(paths)}"
-
-
 def _dedupe_paths(paths: list[str]) -> list[str]:
     return contract.dedupe_paths(paths)
 
@@ -343,21 +336,6 @@ def _paths_for_tool(tool_name: str, args: dict[str, Any]) -> list[str]:
     return _dedupe_paths(paths)
 
 
-def _has_peers(session_id: str) -> bool:
-    with _lock:
-        instance_id = _instances.get(session_id, "")
-    if not instance_id:
-        return False
-
-    payload = _extract_payload(_dispatch("list_instances", {}))
-    if not isinstance(payload, list):
-        logger.debug("swarm plugin: peer check skipped, unexpected list_instances payload: %r", payload)
-        return False
-
-    peers = [item for item in payload if isinstance(item, dict) and item.get("id") != instance_id]
-    return bool(peers)
-
-
 def _effective_session_id(session_id: str) -> str:
     """Hermes currently omits session_id on some pre-tool hook paths."""
     if session_id:
@@ -368,23 +346,29 @@ def _effective_session_id(session_id: str) -> str:
     return ""
 
 
-def _lock_file(path: str, tool_name: str) -> tuple[bool, str]:
-    payload = _extract_payload(
-        _dispatch("lock_file", {"file": path, "reason": f"hermes auto-lock before {tool_name}"})
-    )
-    if isinstance(payload, dict) and payload.get("error"):
-        message = str(payload.get("error") or "lock failed")
-        if "locked" in message.lower():
-            return False, message
-        logger.debug("swarm plugin: lock skipped for %s: %s", path, message)
-        return True, ""
-    return True, ""
+def _peer_lock_holder(path: str, own_instance_id: str) -> Optional[dict]:
+    """Read-only inspection of the active lock on ``path``.
 
-
-def _unlock_file(path: str) -> None:
-    payload = _extract_payload(_dispatch("unlock_file", {"file": path}))
-    if isinstance(payload, dict) and payload.get("error"):
-        logger.debug("swarm plugin: unlock skipped for %s: %s", path, payload.get("error"))
+    Returns the lock row when a peer (instance_id != own_instance_id) holds
+    it, or ``None`` when no lock is held, the holder is us, or the call
+    fails. ``get_file_lock`` is the MCP-side read-only inspector; we never
+    acquire from here.
+    """
+    payload = _extract_payload(_dispatch("get_file_lock", {"file": path}))
+    if not isinstance(payload, dict):
+        return None
+    active = payload.get("active")
+    if not isinstance(active, dict):
+        return None
+    holder = active.get("owner")
+    holder_id = ""
+    if isinstance(holder, dict):
+        holder_id = str(holder.get("id") or "")
+    if not holder_id:
+        holder_id = str(active.get("instance_id") or "")
+    if not holder_id or holder_id == own_instance_id:
+        return None
+    return active
 
 
 def on_pre_tool_call(
@@ -394,34 +378,49 @@ def on_pre_tool_call(
     tool_call_id: str = "",
     **_: Any,
 ) -> Optional[dict]:
-    """Auto-acquire swarm edit locks for write-like file tools when peers exist."""
+    """Deny write-like tools when a peer holds a swarm lock on a target path.
+
+    The hook never acquires a lock — per-edit serialization isn't the hazard
+    worth catching. What matters is that a peer-declared critical section
+    (``lock_file`` with a note) actually blocks other peers' writes. This
+    hook is what enforces that.
+
+    Same-instance locks pass through: an agent that already declared a wider
+    critical section can keep editing its own reservation.
+    """
     session_id = _effective_session_id(session_id)
     if tool_name not in _WRITE_TOOLS or not session_id:
         return None
     if get_role(session_id) == "gateway":
-        logger.debug("swarm plugin: gateway mode skips auto-lock for %s", tool_name)
+        logger.debug("swarm plugin: gateway mode skips lock check for %s", tool_name)
         return None
 
     paths = _paths_for_tool(tool_name, args or {})
-    if not paths or not _has_peers(session_id):
+    if not paths:
         return None
 
-    acquired: list[str] = []
-    for path in paths:
-        ok, message = _lock_file(path, tool_name)
-        if not ok:
-            for locked_path in reversed(acquired):
-                _unlock_file(locked_path)
-            return {
-                "action": "block",
-                "message": f"swarm lock blocked {tool_name} for {path}: {message}",
-            }
-        acquired.append(path)
+    with _lock:
+        own_instance_id = _instances.get(session_id, "")
+    if not own_instance_id:
+        return None
 
-    if acquired:
-        with _lock:
-            _locks_by_call[_lock_key(session_id, tool_name, tool_call_id, paths)] = acquired
-        logger.debug("swarm plugin: locked %s for %s", ", ".join(acquired), tool_name)
+    for path in paths:
+        conflict = _peer_lock_holder(path, own_instance_id)
+        if conflict is None:
+            continue
+        holder = conflict.get("owner")
+        holder_id = ""
+        if isinstance(holder, dict):
+            holder_id = str(holder.get("id") or "")
+        if not holder_id:
+            holder_id = str(conflict.get("instance_id") or "")
+        holder_short = holder_id[:8] if holder_id else "peer"
+        note = str(conflict.get("content") or "").strip()
+        message = f"held by {holder_short}" + (f" ({note})" if note else "")
+        return {
+            "action": "block",
+            "message": f"swarm lock blocked {tool_name} for {path}: {message}",
+        }
     return None
 
 
@@ -432,20 +431,13 @@ def on_post_tool_call(
     tool_call_id: str = "",
     **_: Any,
 ) -> None:
-    """Release locks acquired by ``on_pre_tool_call`` after success or error."""
-    session_id = _effective_session_id(session_id)
-    if tool_name not in _WRITE_TOOLS or not session_id:
-        return
+    """No-op under check-only enforcement.
 
-    paths = _paths_for_tool(tool_name, args or {})
-    key = _lock_key(session_id, tool_name, tool_call_id, paths)
-    with _lock:
-        locked_paths = _locks_by_call.pop(key, [])
-
-    for path in reversed(locked_paths):
-        _unlock_file(path)
-    if locked_paths:
-        logger.debug("swarm plugin: unlocked %s after %s", ", ".join(locked_paths), tool_name)
+    ``on_pre_tool_call`` never acquired a lock, so there is nothing to
+    release. Kept as a stable entry point so any plugin glue still wired to
+    ``on_post_tool_call`` continues to load cleanly.
+    """
+    return
 
 
 def on_session_start(session_id: str = "", **kwargs: Any) -> None:

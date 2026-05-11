@@ -11,8 +11,8 @@ Wires:
 3. ``/swarm`` slash command — peek at swarm state (instances, tasks, kv,
     recent messages) without spending an agent turn. Shells to the
     ``swarm-mcp`` CLI.
-4. ``pre_tool_call``/``post_tool_call`` — auto-lock write-like file tools when
-   peers are active, then release those locks after the tool completes.
+4. ``pre_tool_call``/``post_tool_call`` — enforce peer-held locks on write-like
+   file tools; post is retained as a no-op compatibility hook.
 5. ``swarm_prompt_peer`` — send a durable swarm message and, when possible,
    wake the target workspace handle as an express lane.
 

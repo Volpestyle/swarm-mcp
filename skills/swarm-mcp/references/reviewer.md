@@ -24,7 +24,7 @@ For each review task:
 1. `claim_task` — moves the review to `in_progress`.
 2. Read the related implementation task result if referenced.
 3. Prefer structured results with `files_changed`, `test_status`, and `summary`.
-4. To see active lock state for a file, call `get_file_lock`. Use `lock_file` only when you need to edit or reserve the file.
+4. To see who is holding a file, call `get_file_lock` (read-only). Reviewers rarely need `lock_file` — reach for it only to reserve a file for an upcoming hand-off, not for ordinary edits (plugin-supported runtimes enforce peer-held locks at write time).
 5. Inspect the actual changes, not only the summary.
 6. Focus on correctness, behavioral regressions, missing tests, security/privacy risks, and concurrency/file-collision issues.
 7. If approved, `update_task` the review to `done` with a concise approval summary.

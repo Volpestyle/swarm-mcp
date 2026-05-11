@@ -14,8 +14,9 @@ export function protocol() {
 Minimum to function:
 
 - \`register\` first, then \`bootstrap\` for the \`{instance, peers, unread_messages, tasks}\` snapshot. Re-run on compaction.
-- Solo scope (empty \`peers\`) → skip per-edit \`lock_file\`. Re-enable when \`instance_changes\` reports peers joining.
-- When peers exist: use \`get_file_lock\` for read-only lock inspection and \`lock_file\` while editing. Default semantics are re-entrant for your own instance; pass \`exclusive=true\` only for one-shot mutexes (spawn coordination, singleton jobs).
+- Solo scope (empty \`peers\`) → no peer can collide, so plugin-supported runtimes have no peer-held locks to enforce and manual locks are unnecessary.
+- Use \`get_file_lock\` for read-only lock inspection. Use \`lock_file\` deliberately for critical sections wider than one write tool call (multi-step Read→Edit, multi-file refactor, planned reservation). Plugin-supported runtimes enforce peer-held locks at write time.
+- Default lock semantics are re-entrant for your own instance; pass \`exclusive=true\` only for one-shot mutexes (spawn coordination, singleton jobs).
 - Lock conflict → prefer to pivot (different file or task). Use \`wait_for_activity\` to block on \`context.lock_released\` only when no other productive work is available; never sleep-poll.
 - \`claim_task\` already moves a task to \`in_progress\`. Call \`update_task\` once at the end with \`done\` / \`failed\` / \`cancelled\` and a structured JSON \`result\` (\`{files_changed, test_status, summary}\`). Normal edit locks release automatically; internal \`/__swarm/\` mutex locks are managed by their owning flow.
 - \`request_task\` (or \`request_task_batch\` with \`$N\` deps) for delegation. Use explicit \`review\` tasks for code review handoff; reserve \`approval_required\` for true approval gates. Use \`priority\` to control execution order.
@@ -38,7 +39,7 @@ Minimum: check \`kv_get("owner/planner")\` and \`kv_get("plan/latest")\` to see 
 
 Load \`references/implementer.md\` from the \`swarm-mcp\` skill for the claim / edit / handoff playbook.
 
-Minimum: claim the highest-priority \`open\` task matching your role; use \`get_file_lock\` for read-only lock inspection and \`lock_file\` while editing (skip if alone in scope); on completion call \`update_task\` once with \`done\` / \`failed\` / \`cancelled\` and a structured \`result\` JSON (\`{files_changed, test_status, summary}\`).`,
+Minimum: claim the highest-priority \`open\` task matching your role; use \`get_file_lock\` for read-only lock inspection and \`lock_file\` only for critical sections wider than one write tool call; on completion call \`update_task\` once with \`done\` / \`failed\` / \`cancelled\` and a structured \`result\` JSON (\`{files_changed, test_status, summary}\`).`,
 
   reviewer: `You are a **reviewer** in this swarm.
 

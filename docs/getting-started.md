@@ -174,7 +174,7 @@ You can also test shared coordination tools:
 - `broadcast` to announce progress to all other sessions
 - `request_task` to hand work to another session
 - `get_file_lock` for read-only lock inspection
-- `lock_file` while editing
+- `lock_file` for deliberate critical sections wider than one write tool call
 
 ## 9. Add operating instructions and start collaborating
 
@@ -189,7 +189,7 @@ The minimum collaboration loop is:
 - Call `register` at session start
 - Call `bootstrap` before starting work and at yield checkpoints
 - Call `get_file_lock` for read-only lock inspection
-- Call `lock_file` while editing (skip if you're alone in scope)
+- Call `lock_file` only for deliberate critical sections wider than one write tool call; plugin-supported runtimes enforce peer-held locks at write time
 - Call `broadcast`, `send_message`, `request_task`, or `update_task` when handing work off
 
 For troubleshooting tips, see the [Troubleshooting](../README.md#troubleshooting) section in the README.

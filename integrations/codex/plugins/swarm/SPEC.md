@@ -20,7 +20,7 @@ tool prefix inside a session, `swarm-mcp` CLI outside it), not by import:
 │   when to lock, role routing, task patterns
 ├──────────────────────────────────────────────┤
 │  Plugin (integrations/codex/plugins/swarm/)  │   behavior
-│   SessionStart register, lock bridge, /swarm
+│   SessionStart register, peer-lock check, /swarm
 ├──────────────────────────────────────────────┤
 │  MCP server (src/index.ts)                   │   capability
 │   29 tools: register, lock_file, request_task...
@@ -47,11 +47,11 @@ the Claude Code and Codex adapters:
 | `scratch_dir_name` | `swarm-cc` | `swarm-codex` |
 | `write_tools` | `{Write, Edit, MultiEdit, NotebookEdit}` | `{apply_patch}` |
 | `extract_paths` | `tool_input.file_path` / `notebook_path` | parse `*** Begin Patch` envelope |
-| `auto_lock_note` | `claude-code auto-lock before write` | `codex auto-lock before apply_patch` |
 
 The four entry scripts (`session_start.py`, `session_end.py`,
-`pre_tool_use.py`, `post_tool_use.py`) are 12-line stubs that just call
-`core.run_*_hook(sys.stdin)`.
+`pre_tool_use.py`, `post_tool_use.py`) are short stubs that call
+`core.run_*_hook(sys.stdin)`. `post_tool_use.py` is a no-op shim under
+the current check-only lock model — see §4.1.
 
 Hermes does not use this shared core because hermes' integration mechanism
 is fundamentally different (in-process plugin API, not stdin-JSON
@@ -106,46 +106,50 @@ What does *not* port cleanly:
 |---|---|---|
 | `SessionStart` (matcher: `startup\|resume`) | New or resumed conversation | Compute label/scope/identity; call `swarm-mcp register`; write per-session scratch metadata including `instance_id`; publish `identity/workspace/herdr/<instance_id>` if `HERDR_PANE_ID` is present; emit `additionalContext` telling the agent it is registered and should follow the swarm role workflow. |
 | `Stop` | Conversation ends | Best-effort `kv del identity/workspace/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
-| `PreToolUse` (matcher: `apply_patch`) | Before each `apply_patch` dispatch | Parse the patch envelope; if peers exist in scope, `swarm-mcp lock` each path. On conflict, emit `permissionDecision: deny`. |
-| `PostToolUse` (matcher: `apply_patch`) | After each `apply_patch` dispatch | `swarm-mcp unlock` each path the matching pre acquired. |
+| `PreToolUse` (matcher: `apply_patch`) | Before each `apply_patch` dispatch | Parse the patch envelope; read-only check via `swarm-mcp locks --scope <s> --json`. If any returned lock row targets one of the patch's files and is held by an `instance_id` other than ours, emit `permissionDecision: deny`. Never acquires a lock. |
+| `PostToolUse` | — | **Not wired in new installs.** A no-op stub remains in the plugin source so already-installed configs that still register `PostToolUse` keep loading; new `hooks.json` omits the entry. |
 
-### 4.2 Identity selector for the lock CLI
+### 4.2 Why check-only (no acquire/release pair)
 
-Hooks identify their session by passing `--as session:<8>` to `swarm-mcp lock`
-/ `unlock`. The CLI resolves `--as` by:
+Earlier drafts had `PreToolUse` acquire a lock and `PostToolUse` release it,
+framed as "concurrent edit protection." That protection was largely
+illusory under codex's tool surface in particular:
 
-1. Full UUID
-2. UUID prefix
-3. Unique substring of the instance label
+- `apply_patch` is itself the atomic unit codex offers for file changes —
+  there is no Read → Edit gap inside a single patch call that another
+  agent could slip into. The OS already serializes the filesystem write.
+- The patch envelope's contextual hunks fail loudly when the source text
+  has shifted, so logical mid-air collisions surface without needing a
+  swarm lock.
+- The acquire/release pair ran on every patch, costing two CLI calls plus
+  scratch state, while only actually protecting against a peer
+  simultaneously calling `apply_patch` on the same file — a race that
+  doesn't happen at human-paced LLM agent dispatch.
 
-The plugin's derived label always contains `session:<8>` (first 8 chars of
-the codex `session_id` with hyphens stripped — codex's session_id is a
-ULID-shaped string but the substring approach is identical). v0.2 also stores
-the returned `instance_id` in scratch metadata; the session substring remains
-a fallback for older or partially initialized sessions.
+What manual `lock_file` (called by the agent for a wider critical section
+across multiple `apply_patch` calls or a long refactor) *does* need is
+enforcement. The check-only hook is what enforces those declarations.
+Same-instance locks pass through so the declaring agent's own subsequent
+patches against its reservation succeed.
 
 ### 4.3 Failure semantics (matches hermes / claude-code)
 
-- **Fail-open by default.** CLI missing, network/db error, identity
-  ambiguous → tool proceeds without a lock.
-- **Block on real conflicts.** When `swarm-mcp lock` fails with output
-  containing `locked` or `lock conflict`, emit
+- **Fail-open by default.** CLI missing, network/db error, unknown own
+  `instance_id` → tool proceeds without a check. Coordination is opt-in.
+- **Block on real conflicts.** When `swarm-mcp locks --json` returns a row
+  for one of the patch's paths whose `instance_id` is not ours, emit
   `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"swarm lock blocked ..."}}`.
-- **Solo sessions skip locking entirely.** `has_peers` checks
-  `swarm-mcp instances` first; if the count of peers (excluding ourselves)
-  is zero, no lock attempt.
+- **Solo sessions are implicit.** With no peer in scope, the `locks` list
+  is empty (or only contains this session's own locks), so the check
+  short-circuits without a separate `has_peers` probe.
 
-### 4.4 Lock tracking across pre/post
+### 4.4 Own-vs-peer identification
 
-Codex does not expose a stable `tool_call_id` to hooks. We key the
-PreToolUse-PostToolUse pair on `(tool_name, |joined_paths)`, where
-`joined_paths` is derived deterministically from the patch envelope. Stored
-under `$TMPDIR/swarm-codex/<session_id>/locks-<key>.json`. Cleared in
-PostToolUse.
-
-If a tool is denied in PreToolUse, PostToolUse should not fire (matching
-Claude Code's behavior); even if codex differs here, the post hook is a
-no-op when no scratch entry exists.
+The hook reads its own `instance_id` from per-session scratch metadata
+(written by `SessionStart` after `swarm-mcp register` succeeds) and treats
+any lock row with a different `instance_id` as a peer conflict. If scratch
+metadata has no `instance_id` (e.g. registration failed earlier in the
+session), the hook fails open.
 
 ## 5. apply_patch envelope parsing
 
@@ -179,11 +183,12 @@ Edge cases handled:
 Edge cases **not** handled in v0.1 (intentional):
 
 - Patches inside `exec_command` shell input (e.g. heredoc'd `git apply`).
-  These are out of scope; the lock bridge only covers the dedicated write
-  tool.
-- Symlinks that resolve outside `cwd`. Lock keys use the resolved absolute
-  path; a path traversal in the patch envelope itself would lock a strange
-  file, but that's already the user's blast radius.
+  These are out of scope; the peer-lock check only covers the dedicated
+  write tool.
+- Symlinks that resolve outside `cwd`. The hook compares the path string
+  from the patch envelope to the `file` column on each lock row; a path
+  traversal in the envelope would simply not match any swarm lock, but
+  that's already the user's blast radius.
 
 ## 6. Identity, scope, labels
 

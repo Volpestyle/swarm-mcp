@@ -17,7 +17,7 @@ Decision flow on session start:
 
 For gateway sessions, `dispatch` is the invisible default path for a single operator intent, not something the operator should usually request by name. User-facing slash commands belong one level up: a routine command expands into multiple role-specific tasks, then uses the same routing/wake/spawn machinery for each part.
 
-Why peers when available: independent processes — possibly different harnesses (Codex, OpenCode, Claude, Hermes) or a different identity profile carrying account-scoped MCP auth your session can't reach. Their tasks are durable across sessions; native subagents typically share your process and die with the parent turn or session. The integration plugin's lock bridge already handles write-collision protection automatically across runtimes.
+Why peers when available: independent processes — possibly different harnesses (Codex, OpenCode, Claude, Hermes) or a different identity profile carrying account-scoped MCP auth your session can't reach. Their tasks are durable across sessions; native subagents typically share your process and die with the parent turn or session. The integration plugin's peer-lock check enforces peer-declared critical sections automatically across runtimes — when one peer manually calls `lock_file` to reserve a wider critical section, other peers' write tools are denied at the hook layer without their agents having to remember to check.
 
 Do not use native subagents as the normal gateway fallback. Gateway mode exists to keep non-trivial worker execution visible as separate workspace/swarm peers. Inline gateway edits are acceptable for easy, low-risk tasks where spinning up a worker would add more overhead than value; medium or large work should route through `dispatch` and the configured workspace/spawner backend.
 
@@ -42,7 +42,7 @@ These come from the swarm-mcp design contract and apply to every runtime.
 - Published workspace identity rows should use `identity/workspace/<backend>/<instance_id>` with a canonical `handle` from the backend. Backend adapters may keep compatibility rows such as `identity/herdr/<instance_id>`, but swarm-facing docs and APIs should use the generic workspace-handle terminology.
 - Coordination is **fail-open** for ordinary worker sessions: if swarm-mcp is unreachable, work locally — don't loop on a failed `register`. Gateway/lead sessions may also handle trivial local edits directly, but should not convert medium or large work into local implementation just because the coordinator or spawner is unavailable. A real peer-held lock conflict is always blocking and must be respected.
 - `wait_for_activity` is a blocking monitor primitive for active responsibility, not idle availability. It does not type into another agent's conversation by itself. Wake-up of an idle peer goes through the durable swarm message first; the workspace-handle nudge is best-effort.
-- Solo session (only one registered instance in scope): the integration plugin skips per-edit locking automatically. Don't ceremoniously add locks when no peer can collide.
+- Per-edit locking is not the agent's job. The integration plugin's pre-tool hook checks for peer-held locks on each write and denies on conflict; it never acquires on the agent's behalf. Solo sessions short-circuit naturally — no peer means no peer-held locks to find. Manual `lock_file` is reserved for declaring critical sections wider than a single write tool call (multi-step Read→Edit, multi-file refactors, planned reservations).
 - Worker mode is the default. Gateway-mode protocol (local edits for easy tasks, `dispatch` for medium/large work, no-double-spawn idempotency) applies only when the runtime is explicitly configured as a gateway — see the integration SPEC for your runtime.
 - Delegation across the identity boundary is forbidden. Don't `request_task` across `identity:work` ↔ `identity:personal`. If a task needs cross-identity resources, surface that to the user — let them relaunch under the right launcher or hand off.
 
@@ -58,9 +58,9 @@ The runtime-specific config file enumerates which MCPs your profile actually loa
 
 | Runtime | Plugin | Status | Capabilities |
 |---|---|---|---|
-| Hermes | [`integrations/hermes/`](../integrations/hermes/) | v0.3 | Auto-register / -deregister, lock bridge, `/swarm`, `swarm_prompt_peer` express lane, herdr identity publish |
-| Claude Code | [`integrations/claude-code/`](../integrations/claude-code/) | v0.2 | Auto-register / -deregister, lock bridge, `/swarm`, herdr identity publish, gateway conductor mode via `SWARM_CC_ROLE=gateway` |
-| Codex CLI | [`integrations/codex/plugins/swarm/`](../integrations/codex/plugins/swarm/) | v0.2 | Auto-register / -deregister, `apply_patch` lock bridge, `/swarm`, herdr identity publish, gateway conductor mode via `SWARM_CODEX_ROLE=gateway` |
+| Hermes | [`integrations/hermes/`](../integrations/hermes/) | v0.3 | Auto-register / -deregister, peer-lock check on write, `/swarm`, `swarm_prompt_peer` express lane, herdr identity publish |
+| Claude Code | [`integrations/claude-code/`](../integrations/claude-code/) | v0.2 | Auto-register / -deregister, peer-lock check on write, `/swarm`, herdr identity publish, gateway conductor mode via `SWARM_CC_ROLE=gateway` |
+| Codex CLI | [`integrations/codex/plugins/swarm/`](../integrations/codex/plugins/swarm/) | v0.2 | Auto-register / -deregister, peer-lock check on `apply_patch`, `/swarm`, herdr identity publish, gateway conductor mode via `SWARM_CODEX_ROLE=gateway` |
 | OpenCode / others | none yet | — | Participate ad-hoc via the swarm-mcp skill + MCP tools |
 
 The Claude Code and Codex plugins share their runtime-agnostic core in [`integrations/_shared/swarm_hook_core.py`](../integrations/_shared/swarm_hook_core.py); each plugin's `_common.py` only carries the runtime-specific bits (write-tool name, path extractor, env-var prefix, label token).

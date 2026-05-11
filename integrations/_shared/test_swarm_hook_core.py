@@ -33,7 +33,6 @@ class HookCoreLifecycleTests(unittest.TestCase):
                 scratch_dir_name=self.scratch_name,
                 write_tools=frozenset({"Write"}),
                 extract_paths=_extract_paths,
-                auto_lock_note="test lock",
             )
         )
 
@@ -249,9 +248,164 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertEqual(calls[2][:3], ["deregister", "--as", "inst-1"])
         self.assertFalse(self.core.session_scratch("abc-123").joinpath("meta.json").exists())
 
-    def test_gateway_mode_allows_inline_writes_and_uses_lock_bridge(self) -> None:
-        os.environ["SWARM_TEST_ROLE"] = "gateway"
-        self.core.write_session_meta("abc-123", {"plugin_role": "gateway", "scope": "/repo"})
+    def _run_pre_tool(
+        self,
+        payload: dict,
+        locks_response: list[dict] | None = None,
+        register_calls: list[list[str]] | None = None,
+    ) -> str:
+        """Invoke run_pre_tool_use_hook with a stubbed `swarm-mcp locks` response."""
+
+        def fake_run(args: list[str], timeout: float = 8.0) -> tuple[int, str, str]:
+            if register_calls is not None:
+                register_calls.append(args)
+            if args and args[0] == "locks":
+                return 0, json.dumps(locks_response or []), ""
+            return 0, "[]", ""
+
+        out = io.StringIO()
+        with mock.patch.object(self.core, "run_swarm", side_effect=fake_run), redirect_stdout(out):
+            self.core.run_pre_tool_use_hook(io.StringIO(json.dumps(payload)))
+        return out.getvalue()
+
+    def test_pre_tool_allows_write_when_no_locks_exist(self) -> None:
+        self.core.write_session_meta(
+            "abc-123", {"instance_id": "inst-self", "scope": "/repo"}
+        )
+
+        calls: list[list[str]] = []
+        output = self._run_pre_tool(
+            {
+                "session_id": "abc-123",
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/repo/file.txt"},
+            },
+            locks_response=[],
+            register_calls=calls,
+        )
+
+        self.assertEqual(output, "")
+        self.assertEqual(calls[0][:1], ["locks"])
+        self.assertIn("--scope", calls[0])
+        self.assertEqual(calls[0][calls[0].index("--scope") + 1], "/repo")
+        # No acquire / release calls — check-only.
+        self.assertFalse(any(args[0] == "lock" for args in calls))
+        self.assertFalse(any(args[0] == "unlock" for args in calls))
+
+    def test_pre_tool_blocks_write_when_peer_holds_target(self) -> None:
+        self.core.write_session_meta(
+            "abc-123", {"instance_id": "inst-self", "scope": "/repo"}
+        )
+
+        output = self._run_pre_tool(
+            {
+                "session_id": "abc-123",
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/repo/file.txt"},
+            },
+            locks_response=[
+                {
+                    "id": "lock-1",
+                    "instance_id": "inst-peer-xyz",
+                    "file": "/repo/file.txt",
+                    "type": "lock",
+                    "content": "refactoring auth flow",
+                    "created_at": 0,
+                }
+            ],
+        )
+
+        decision = json.loads(output)
+        block = decision["hookSpecificOutput"]
+        self.assertEqual(block["hookEventName"], "PreToolUse")
+        self.assertEqual(block["permissionDecision"], "deny")
+        reason = block["permissionDecisionReason"]
+        self.assertIn("swarm lock blocked Write", reason)
+        self.assertIn("/repo/file.txt", reason)
+        self.assertIn("inst-pee", reason)  # 8-char prefix of holder
+        self.assertIn("refactoring auth flow", reason)
+
+    def test_pre_tool_allows_write_when_lock_is_self_held(self) -> None:
+        """Re-entrant: an agent that declared a wider critical section keeps editing."""
+        self.core.write_session_meta(
+            "abc-123", {"instance_id": "inst-self", "scope": "/repo"}
+        )
+
+        output = self._run_pre_tool(
+            {
+                "session_id": "abc-123",
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/repo/file.txt"},
+            },
+            locks_response=[
+                {
+                    "id": "lock-1",
+                    "instance_id": "inst-self",
+                    "file": "/repo/file.txt",
+                    "type": "lock",
+                    "content": "agent-declared critical section",
+                    "created_at": 0,
+                }
+            ],
+        )
+
+        self.assertEqual(output, "")
+
+    def test_pre_tool_allows_write_when_peer_holds_unrelated_file(self) -> None:
+        self.core.write_session_meta(
+            "abc-123", {"instance_id": "inst-self", "scope": "/repo"}
+        )
+
+        output = self._run_pre_tool(
+            {
+                "session_id": "abc-123",
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/repo/file.txt"},
+            },
+            locks_response=[
+                {
+                    "id": "lock-1",
+                    "instance_id": "inst-peer-xyz",
+                    "file": "/repo/other.txt",
+                    "type": "lock",
+                    "content": "different file",
+                    "created_at": 0,
+                }
+            ],
+        )
+
+        self.assertEqual(output, "")
+
+    def test_pre_tool_fails_open_when_own_instance_id_unknown(self) -> None:
+        """Coordination is opt-in. Without an instance_id we can't distinguish own vs peer locks."""
+        self.core.write_session_meta("abc-123", {"scope": "/repo"})
+
+        calls: list[list[str]] = []
+        output = self._run_pre_tool(
+            {
+                "session_id": "abc-123",
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/repo/file.txt"},
+            },
+            locks_response=[
+                {
+                    "id": "lock-1",
+                    "instance_id": "inst-peer-xyz",
+                    "file": "/repo/file.txt",
+                    "type": "lock",
+                    "content": "should not matter — we don't know own id",
+                    "created_at": 0,
+                }
+            ],
+            register_calls=calls,
+        )
+
+        self.assertEqual(output, "")
+        # No locks call should fire when we bail before identity check.
+        self.assertFalse(any(args[0] == "locks" for args in calls))
+
+    def test_post_tool_use_hook_is_a_noop(self) -> None:
+        """Check-only model: nothing was acquired, so post-hook does nothing."""
         calls: list[list[str]] = []
 
         def fake_run(args: list[str], timeout: float = 8.0) -> tuple[int, str, str]:
@@ -259,12 +413,8 @@ class HookCoreLifecycleTests(unittest.TestCase):
             return 0, "{}", ""
 
         out = io.StringIO()
-        with mock.patch.object(self.core, "has_peers", return_value=True), mock.patch.object(
-            self.core,
-            "run_swarm",
-            side_effect=fake_run,
-        ), redirect_stdout(out):
-            self.core.run_pre_tool_use_hook(
+        with mock.patch.object(self.core, "run_swarm", side_effect=fake_run), redirect_stdout(out):
+            rc = self.core.run_post_tool_use_hook(
                 io.StringIO(
                     json.dumps(
                         {
@@ -276,31 +426,9 @@ class HookCoreLifecycleTests(unittest.TestCase):
                 )
             )
 
+        self.assertEqual(rc, 0)
         self.assertEqual(out.getvalue(), "")
-        self.assertEqual(calls[0][:2], ["lock", "/repo/file.txt"])
-
-    def test_gateway_inline_write_skips_locking_when_solo(self) -> None:
-        mirror = Path(tempfile.mkdtemp(prefix="swarm-mirror-")).resolve()
-        self.addCleanup(lambda: shutil.rmtree(mirror, ignore_errors=True))
-        target = mirror / "file.txt"
-        os.environ["SWARM_TEST_ROLE"] = "gateway"
-        self.core.write_session_meta("abc-123", {"plugin_role": "gateway", "scope": str(mirror)})
-
-        out = io.StringIO()
-        with mock.patch.object(self.core, "has_peers", return_value=False), redirect_stdout(out):
-            self.core.run_pre_tool_use_hook(
-                io.StringIO(
-                    json.dumps(
-                        {
-                            "session_id": "abc-123",
-                            "tool_name": "Write",
-                            "tool_input": {"file_path": str(target)},
-                        }
-                    )
-                )
-            )
-
-        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

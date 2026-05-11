@@ -79,6 +79,6 @@ Use focused reads only when you need one part of the surface:
 
 Handle unread messages before claiming new work.
 
-If `bootstrap.peers` is empty, you can skip per-edit `lock_file` calls until peers join. Re-check peers at your next yield checkpoint, or from `instance_changes` if you are already monitoring with `wait_for_activity` for another reason.
+If `bootstrap.peers` is empty, no peer can collide; the integration plugin's peer-lock check has nothing to block on, and you have no reason to take a manual `lock_file` either. Re-check peers at your next yield checkpoint, or from `instance_changes` if you are already monitoring with `wait_for_activity` for another reason.
 
-Use `get_file_lock` when you only need to inspect a file's active lock. When you edit a file, `lock_file` is the coordination call.
+Use `get_file_lock` to inspect whether a peer is holding a file. Reach for `lock_file` only when you need a critical section wider than a single write tool call — multi-step Read→Edit, multi-file refactor, or planned reservation. Plugin-supported runtimes enforce peer-held locks at write time; see `SKILL.md` ("Locking") for the full doctrine.

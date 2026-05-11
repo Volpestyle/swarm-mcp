@@ -26,12 +26,17 @@ For each task:
 
 1. `claim_task` — this transitions the task to `in_progress` for you in one call.
 2. For long tasks only, `kv_set("progress/<your-instance-id>", ...)` with current activity.
-3. Use `get_file_lock` for read-only lock inspection. Before editing a file, call `lock_file`. Skip locking entirely when `list_instances` shows you alone in scope.
-4. Make the smallest correct code changes.
-5. Run relevant tests or checks when feasible.
-6. `unlock_file` only if you finish a file early and want peers to edit it before the task as a whole completes.
-7. `update_task` to `done`, `failed`, or `cancelled` with a useful result. Normal edit locks release automatically; internal `/__swarm/` mutex locks are managed by their owning flow.
-8. Create a `review` task assigned to the planner or reviewer when implementation or fix work needs review.
+3. Edit normally. Per-edit locking is handled by the integration plugin's write-tool hook in plugin-supported runtimes (Hermes, Claude Code, Codex) — you don't need `lock_file` for an ordinary single edit. Use `get_file_lock` for read-only inspection of who holds what.
+4. Call `lock_file` deliberately when you need a critical section wider than one tool call:
+   - Read → multiple Edits where a stale peer write between them would break your `old_string` anchors.
+   - A multi-file refactor you want peers to wait on.
+   - Reserving a file for a planned hand-off.
+   Include a `note` describing scope and expected duration so peers know what they're waiting on.
+5. Make the smallest correct code changes.
+6. Run relevant tests or checks when feasible.
+7. `unlock_file` as soon as a held critical section ends so peers can resume. Terminal `update_task` releases any remaining edit locks automatically; internal `/__swarm/` mutex locks are managed by their owning flow.
+8. `update_task` to `done`, `failed`, or `cancelled` with a useful result.
+9. Create a `review` task assigned to the planner or reviewer when implementation or fix work needs review.
 
 If the task references a work tracker, update it only when the task contract grants that authority and the configured same-identity tracker MCP is available. Otherwise put tracker-ready details in the swarm task result for the planner or gateway.
 
@@ -100,8 +105,9 @@ When you receive a broadcast containing `[signal:complete]`:
 
 ## Must Not
 
-- Edit a file other peers may also touch without calling `lock_file` first.
-- Hold locks longer than needed (terminal `update_task` releases normal edit locks; use `unlock_file` for early per-file release).
+- Call `lock_file` reflexively before every Edit/Write — plugin-supported runtimes already check for peer-held locks at write time, and per-edit ceremony just burns context.
+- Skip `lock_file` when you actually do hold a wider critical section (multi-step Read→Edit, multi-file refactor, planned reservation).
+- Hold locks longer than the critical section they were taken for (terminal `update_task` releases edit locks automatically; use `unlock_file` to release early).
 - Forget to `update_task` when finished.
 - Create planning/decomposition tasks unless the planner asked you to.
 - Claim `blocked` tasks.

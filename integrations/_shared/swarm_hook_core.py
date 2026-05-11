@@ -27,10 +27,9 @@ import shlex
 import shutil
 import subprocess
 import tempfile
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Optional
+from typing import Callable, Optional
 
 try:
     import swarm_adapter_contract as contract
@@ -70,11 +69,10 @@ class RuntimeConfig:
         env_prefix: Used to build ``SWARM_<prefix>_*`` env-var aliases.
         scratch_dir_name: Top-level dir under ``$TMPDIR`` for per-session
             scratch (e.g. ``"swarm-cc"``).
-        write_tools: Set of tool names that should trigger the lock bridge.
+        write_tools: Set of tool names that should trigger the pre-tool lock
+            check.
         extract_paths: Function ``(tool_name, tool_input) -> [absolute_path]``.
             Receives ``tool_input`` exactly as it appears in the hook payload.
-        auto_lock_note: Free-form note attached to ``swarm-mcp lock`` calls so
-            operators can see which adapter acquired a given lock.
     """
 
     runtime_name: str
@@ -82,7 +80,6 @@ class RuntimeConfig:
     scratch_dir_name: str
     write_tools: frozenset[str]
     extract_paths: Callable[[str, object], list[str]]
-    auto_lock_note: str
 
 
 class HookCore:
@@ -91,12 +88,18 @@ class HookCore:
     Public methods come in two flavors:
 
     1. **Building blocks** (``swarm_cmd``, ``run_swarm``, ``derived_label``,
-       ``has_peers``, …) — for hook scripts that need fine-grained control.
+       ``list_locks``, ``find_peer_lock_conflict``, …) — for hook scripts
+       that need fine-grained control.
     2. **Top-level hook entry points** (``run_session_start_hook``,
        ``run_pre_tool_use_hook``, ``run_post_tool_use_hook``,
        ``run_session_end_hook``) — drive the full hook lifecycle from a
        stdin file object. Plugin entry scripts can be three-line stubs that
        just call these.
+
+    The pre-tool hook is check-only: it inspects existing locks and denies
+    when a peer holds the target file. It does not acquire on behalf of the
+    write tool, so ``run_post_tool_use_hook`` is a no-op kept as a stable
+    entry point for plugin configs that still wire ``PostToolUse``.
     """
 
     def __init__(self, config: RuntimeConfig):
@@ -412,69 +415,50 @@ class HookCore:
                     return [item for item in value if isinstance(item, dict)]
         return []
 
-    def has_peers(self, scope: Optional[str], session_id: str) -> bool:
-        args = ["instances", "--json"]
+    def list_locks(self, scope: Optional[str]) -> list[dict]:
+        """Read-only enumeration of every active lock in scope.
+
+        Returns the parsed ``swarm-mcp locks --json`` array, or an empty list
+        on any CLI failure. The CLI's startup ``prune()`` clears stale
+        instances' locks before this returns, so callers see live locks only.
+        """
+        args = ["locks", "--json"]
         if scope:
             args.extend(["--scope", scope])
         rc, out, _ = self.run_swarm(args, timeout=4.0)
         if rc != 0:
-            return False
-
-        peers = self.parse_instances_json(out)
-        if not peers:
-            return False
-
-        short = self.session_short(session_id)
-        own_marker = f"session:{short}" if short else ""
-
-        def looks_like_self(inst: dict) -> bool:
-            if not own_marker:
-                return False
-            label = " ".join(
-                str(inst.get(k) or "") for k in ("label", "labels", "role", "name")
-            )
-            return own_marker in label
-
-        return any(not looks_like_self(inst) for inst in peers)
-
-    def as_selector(self, session_id: str) -> Optional[str]:
-        short = self.session_short(session_id)
-        if not short:
-            return None
-        return f"session:{short}"
-
-    # -- Lock tracking across pre/post --------------------------------------
-
-    def iter_locked_paths(self, session_id: str, key: str) -> Iterable[str]:
-        path = self.session_scratch(session_id) / f"locks-{self.lock_store_key(key)}.json"
-        if not path.exists():
             return []
         try:
-            data = json.loads(path.read_text())
-        except Exception:
+            data = json.loads(out)
+        except json.JSONDecodeError:
             return []
-        if not isinstance(data, list):
-            return []
-        return [p for p in data if isinstance(p, str)]
+        return [row for row in data if isinstance(row, dict)] if isinstance(data, list) else []
 
-    def record_locks(self, session_id: str, key: str, paths: list[str]) -> None:
-        target = self.session_scratch(session_id) / f"locks-{self.lock_store_key(key)}.json"
-        target.write_text(json.dumps(paths))
+    def find_peer_lock_conflict(
+        self,
+        scope: Optional[str],
+        own_instance_id: str,
+        paths: list[str],
+    ) -> Optional[dict]:
+        """Return the first lock row blocking ``paths``, or ``None``.
 
-    def clear_locks(self, session_id: str, key: str) -> None:
-        target = self.session_scratch(session_id) / f"locks-{self.lock_store_key(key)}.json"
-        if target.exists():
-            try:
-                target.unlink()
-            except Exception:
-                pass
-
-    def lock_key(self, tool_name: str, tool_input: object) -> str:
-        paths = "|".join(self.write_paths_for_tool(tool_name, tool_input))
-        return f"{tool_name}:{paths}"
-
-    def lock_store_key(self, key: str) -> str:
-        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+        "Blocking" means: held by an instance other than ``own_instance_id``,
+        on a file in ``paths``. Same-instance locks (the agent declared a
+        wider critical section earlier in the session) are not conflicts —
+        the agent is free to keep editing its own reservation.
+        """
+        if not paths or not own_instance_id:
+            return None
+        target_set = set(paths)
+        for row in self.list_locks(scope):
+            if row.get("type") != "lock":
+                continue
+            if row.get("file") not in target_set:
+                continue
+            holder = row.get("instance_id")
+            if isinstance(holder, str) and holder and holder != own_instance_id:
+                return row
+        return None
 
     # -- High-level hook entry points ---------------------------------------
 
@@ -826,37 +810,19 @@ class HookCore:
         print(json.dumps(out))
         return 0
 
-    def _looks_like_lock_conflict(self, stdout: str, stderr: str) -> bool:
-        blob = f"{stdout}\n{stderr}".lower()
-        return "locked" in blob or "lock conflict" in blob
-
-    def _lock_one(
-        self, path: str, selector: Optional[str], scope: Optional[str]
-    ) -> tuple[bool, str]:
-        args = ["lock", path, "--note", self.config.auto_lock_note]
-        if selector:
-            args.extend(["--as", selector])
-        if scope:
-            args.extend(["--scope", scope])
-        rc, out, err = self.run_swarm(args, timeout=6.0)
-        if rc == 0:
-            return True, ""
-        if self._looks_like_lock_conflict(out, err):
-            return False, (err.strip() or out.strip() or "File is already locked")
-        return True, ""
-
-    def _unlock_paths(
-        self, paths: list[str], selector: Optional[str], scope: Optional[str]
-    ) -> None:
-        for path in reversed(paths):
-            args = ["unlock", path]
-            if selector:
-                args.extend(["--as", selector])
-            if scope:
-                args.extend(["--scope", scope])
-            self.run_swarm(args, timeout=4.0)
-
     def run_pre_tool_use_hook(self, stdin) -> int:
+        """Check-only enforcement: deny when a peer holds a lock on a write target.
+
+        The hook never acquires a lock itself. Per-edit serialization isn't the
+        hazard worth catching (the race window is sub-millisecond and the
+        write tool's own anchor checks defend logical conflicts); what matters
+        is that a peer-declared critical section (``lock_file`` with a note)
+        actually blocks other peers' writes. This hook is what enforces that.
+
+        Same-instance locks are *not* conflicts — if this agent already
+        declared a wider critical section, its own subsequent writes pass
+        through normally.
+        """
         payload = self.read_hook_input(stdin)
         tool_name = str(payload.get("tool_name") or "")
         if tool_name not in self.config.write_tools:
@@ -870,49 +836,35 @@ class HookCore:
         session_id = str(payload.get("session_id") or "")
         meta = self.read_session_meta(session_id)
         scope = meta.get("scope") or self.scope_arg()
-
-        if not self.has_peers(scope, session_id):
+        own_instance_id = str(meta.get("instance_id") or "")
+        if not own_instance_id:
+            # Without a known own-id we can't distinguish own vs peer locks.
+            # Coordination is opt-in; fail open.
             return 0
 
-        selector = self.as_selector(session_id)
-        acquired: list[str] = []
-        for path in paths:
-            ok, message = self._lock_one(path, selector, scope)
-            if not ok:
-                self._unlock_paths(acquired, selector, scope)
-                self.emit_block(
-                    f"swarm lock blocked {tool_name} for {path}: {message}"
-                )
-                return 0
-            acquired.append(path)
+        conflict = self.find_peer_lock_conflict(scope, own_instance_id, paths)
+        if conflict is None:
+            return 0
 
-        if acquired:
-            self.record_locks(
-                session_id, self.lock_key(tool_name, tool_input), acquired
-            )
+        file = str(conflict.get("file") or "")
+        holder = str(conflict.get("instance_id") or "")
+        holder_short = holder[:8] if holder else "peer"
+        note = str(conflict.get("content") or "").strip()
+        reason = (
+            f"swarm lock blocked {tool_name} for {file}: held by {holder_short}"
+            + (f" ({note})" if note else "")
+        )
+        self.emit_block(reason)
         return 0
 
     def run_post_tool_use_hook(self, stdin) -> int:
-        payload = self.read_hook_input(stdin)
-        tool_name = str(payload.get("tool_name") or "")
-        if tool_name not in self.config.write_tools:
-            return 0
+        """No-op under check-only enforcement.
 
-        tool_input = payload.get("tool_input")
-        session_id = str(payload.get("session_id") or "")
-        if not session_id:
-            return 0
-
-        key = self.lock_key(tool_name, tool_input)
-        paths = list(self.iter_locked_paths(session_id, key))
-        if not paths:
-            return 0
-
-        meta = self.read_session_meta(session_id)
-        scope = meta.get("scope") or self.scope_arg()
-        selector = self.as_selector(session_id)
-        self._unlock_paths(paths, selector, scope)
-        self.clear_locks(session_id, key)
+        The pre-tool hook never acquires a lock, so there is nothing to
+        release. Kept as a stable entry point so plugin configs that still
+        wire ``PostToolUse`` to this core continue to load cleanly; new
+        plugin configs should omit the hook entirely.
+        """
         return 0
 
     def _resolve_instance_id(

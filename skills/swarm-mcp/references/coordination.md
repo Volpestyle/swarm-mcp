@@ -9,7 +9,7 @@ Agents see shared state through MCP tools. The skill teaches conventions; MCP pr
 - `register` establishes the session identity and scope.
 - `bootstrap` is the preferred yield-checkpoint read: it returns instance state, peers, unread messages, tasks, and configured work tracker metadata.
 - `list_instances`, `poll_messages`, and `list_tasks` are focused reads when you only need one part of the live coordination surface.
-- `get_file_lock`, `lock_file`, and `unlock_file` coordinate file-level work. `get_file_lock` is read-only; `unlock_file` is only needed for early per-file release (terminal `update_task` releases normal edit locks automatically).
+- `get_file_lock`, `lock_file`, and `unlock_file` coordinate file-level work. `get_file_lock` is read-only inspection. `lock_file` is a deliberate critical-section tool — for multi-step Read→Edit, multi-file refactors, or planned reservations — not per-edit ceremony; plugin-supported runtimes enforce peer-held locks at write time (see `SKILL.md` "Locking"). `unlock_file` releases early; terminal `update_task` releases any remaining edit locks automatically.
 - `kv_list`, `kv_get`, `kv_set`, `kv_append`, and `kv_delete` read/write small shared state.
 - `wait_for_activity` blocks while you are actively responsible for a peer result, dependency, lock, review, or gateway/planner delegation. It wakes on `new_messages`, `task_updates`, `kv_updates`, and `instance_changes`.
 

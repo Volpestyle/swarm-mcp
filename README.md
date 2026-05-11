@@ -98,7 +98,7 @@ Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting 
 - [`docs/testing/herdr-swarm-agent-metadata-review.md`](./docs/testing/herdr-swarm-agent-metadata-review.md) -- retrospective from a two-agent Herdr swarm metadata implementation test
 - [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable coordination skill — main `SKILL.md` plus role references (planner, implementer, reviewer, researcher, generalist, roles-and-teams, bootstrap, coordination, cli)
 - [`.agents/skills`](./.agents/skills) -- repo-internal skills used while developing this repository
-- [`integrations/hermes/`](./integrations/hermes/) and [`integrations/claude-code/`](./integrations/claude-code/) -- runtime plugins (lifecycle, lock bridge, `/swarm` slash command)
+- [`integrations/hermes/`](./integrations/hermes/) and [`integrations/claude-code/`](./integrations/claude-code/) -- runtime plugins (lifecycle, peer-lock enforcement, `/swarm` slash command)
 
 ---
 
@@ -342,7 +342,7 @@ The server exposes MCP prompts. Some hosts surface them directly, while others o
 | Prompt | Purpose |
 | ------ | ------- |
 | `setup` (often shown as `swarm:setup`) | Guides the agent through registration: call `register`, then `bootstrap`, then summarize swarm ID, active sessions, role labels, open tasks, and coordination risks. |
-| `protocol` (often shown as `swarm:protocol`) | Applies the recommended coordination workflow for the session: inspect locks before editing, lock while editing, use messages/tasks for handoff, and inspect `role:` labels when choosing collaborators. |
+| `protocol` (often shown as `swarm:protocol`) | Applies the recommended coordination workflow for the session: inspect lock state, use `lock_file` for deliberate critical sections, use messages/tasks for handoff, and inspect `role:` labels when choosing collaborators. |
 
 ---
 

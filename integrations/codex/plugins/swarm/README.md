@@ -24,9 +24,7 @@ parallels, see [`integrations/hermes/SPEC.md`](../../../hermes/SPEC.md) and
 |---|---|
 | Auto-`register` on session start | `SessionStart` hook → `swarm-mcp register`, stores `instance_id` in hook scratch metadata |
 | Auto-`deregister` on session end | `Stop` hook → `swarm-mcp deregister` |
-| Auto-lock writes when peers exist | `PreToolUse` (matcher: `apply_patch`) → parses the patch envelope, calls `swarm-mcp lock` per path |
-| Release auto-acquired locks after the tool runs | `PostToolUse` → `swarm-mcp unlock` |
-| Block on real lock conflicts | PreToolUse emits `permissionDecision: deny` with the swarm reason |
+| Enforce peer-declared locks on `apply_patch` | `PreToolUse` (matcher: `apply_patch`) → parses the patch envelope, reads `swarm-mcp locks --json`, emits `permissionDecision: deny` when a peer holds any of the patch's files. Never acquires. |
 | Publish and cleanup workspace identity | `SessionStart` / `Stop` hooks → publish/delete current workspace handle when `HERDR_PANE_ID` is present |
 | Publish configured work tracker | `SessionStart` hook reads tracker config and writes `config/work_tracker/<identity>` KV |
 | Gateway conductor mode | `SWARM_CODEX_ROLE=gateway` registers as `role:planner`; make easy edits locally, use the MCP `dispatch` tool for medium/large task/spawn routing |
@@ -36,7 +34,10 @@ Worker-mode coordination failures are swallowed — coordination is opt-in
 convenience for ordinary sessions, never critical path. Gateway mode can handle
 trivial, low-risk edits locally, but medium or large implementation work should
 create/reuse a swarm task and route it through the MCP `dispatch` tool, not
-native subagents. Solo sessions (no peers in scope) skip locking entirely.
+native subagents. The pre-tool hook is **check-only**: it inspects existing
+locks and denies on peer-held conflicts, but never acquires on the agent's
+behalf. Agents declare wider critical sections themselves via `lock_file` when
+they want peers to wait.
 
 ### Codex specifics
 
@@ -44,8 +45,9 @@ Codex's only file-write tool is `apply_patch`, whose tool input is a
 `*** Begin Patch ... *** End Patch` envelope rather than a JSON `file_path`.
 The plugin parses the envelope to recover affected paths from
 `*** Update File:`, `*** Add File:`, `*** Delete File:`, and `*** Move File:`
-directives, then locks each one. `exec_command` and `write_stdin` are not
-locked — shell-mediated writes are out of scope for v0.1.
+directives, then checks each one against the active swarm locks.
+`exec_command` and `write_stdin` are not checked — shell-mediated writes are
+out of scope for v0.1.
 
 ## Install
 
@@ -186,9 +188,9 @@ In a fresh project with the swarm MCP server mounted:
 2. Confirm registration: `swarm-mcp instances` from another terminal should
    show your codex session.
 3. With a second peer registered in the same scope, ask the agent to apply a
-   patch on a file the peer has locked
-   (`swarm-mcp lock <file>` from peer terminal). The `apply_patch` tool
-   should be denied with `swarm lock blocked apply_patch for <file>: ...`.
+   patch on a file the peer has locked (`swarm-mcp lock <file> --note "..."`
+   from peer terminal). The `apply_patch` tool should be denied with
+   `swarm lock blocked apply_patch for <file>: held by <8-char-prefix> (...)`.
 4. Run `/swarm` inside the session — should print a compact status summary.
 
 If the deny message never appears, the most common causes are:
@@ -197,14 +199,16 @@ If the deny message never appears, the most common causes are:
   Check `swarm-mcp instances`.
 - `swarm-mcp` CLI is not resolvable from the hook subprocess. Set
   `SWARM_MCP_BIN` to a real command.
-- No peer holds a lock on the file you're editing. Solo sessions skip
-  locking by design.
+- The peer is not actually holding a lock, or held it on a different path
+  than the agent is editing. `swarm-mcp locks` should list it.
+- The hook's session has no cached `instance_id` (registration failed
+  earlier in the session), so it fails open and can't tell own vs peer.
 
 ## Roadmap
 
 ### v0.1 — Lifecycle bridge ✓
 - SessionStart additionalContext priming registration with derived args
-- Lock bridge with deny-on-conflict, fail-open elsewhere
+- Pre-tool peer-lock check with deny-on-conflict, fail-open elsewhere
 - /swarm slash command
 - Best-effort identity KV cleanup on Stop
 
@@ -242,8 +246,8 @@ integrations/codex/plugins/swarm/
 │   ├── _common.py               -- codex RuntimeConfig + apply_patch path extractor
 │   ├── session_start.py         -- 12-line stub: core.run_session_start_hook
 │   ├── session_end.py           -- 12-line stub: core.run_session_end_hook
-│   ├── pre_tool_use.py          -- 12-line stub: core.run_pre_tool_use_hook
-│   └── post_tool_use.py         -- 12-line stub: core.run_post_tool_use_hook
+│   ├── pre_tool_use.py          -- check-only peer-lock inspection (denies on peer-held conflict)
+│   └── post_tool_use.py         -- no-op back-compat shim for installs that still wire PostToolUse
 └── commands/
     └── swarm.md                 -- /swarm slash command
 ```

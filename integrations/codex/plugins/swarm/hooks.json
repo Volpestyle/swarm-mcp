@@ -31,17 +31,6 @@
           }
         ]
       }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "apply_patch",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 -c 'import os,pathlib,runpy,sys; home=pathlib.Path.home(); roots=([pathlib.Path(os.environ[\"CODEX_HOME\"])] if os.environ.get(\"CODEX_HOME\") else [])+[p for p in home.glob(\".codex*\") if p.is_dir()]; m=[p for r in roots for p in r.glob(\"plugins/cache/swarm-mcp/swarm/*/hooks/post_tool_use.py\") if not any(part.endswith(\".cached\") for part in p.parts)]; m or (sys.stderr.write(\"swarm codex hook script not found\\n\"), sys.exit(2)); runpy.run_path(str(sorted(m)[-1]), run_name=\"__main__\")'"
-          }
-        ]
-      }
     ]
   }
 }

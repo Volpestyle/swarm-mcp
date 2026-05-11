@@ -26,9 +26,24 @@ If the user invoked this skill with a role argument, follow the matching role re
 2. Call `bootstrap` for `{instance, peers, unread_messages, tasks}`.
 3. Handle unread messages before claiming work.
 4. Claim the highest-priority open task that matches your role.
-5. If editing and peers exist, call `lock_file`; skip locks when alone.
+5. Edit normally — plugin-supported runtimes (Hermes, Claude Code, Codex) check write tools against peer-held locks. Call `lock_file` only when you need a wider critical section (see Locking below).
 6. Coordinate through `request_task`, `dispatch` (gateway only), `send_message`, `prompt_peer`, `broadcast`, and KV.
 7. Finish with one `update_task` using terminal status and a structured result.
+
+## Locking
+
+`lock_file` is a deliberate tool for declaring a critical section wider than a single write tool call. It is not ordinary per-edit safety; plugin hooks only enforce existing peer-held locks at write time.
+
+**Reach for `lock_file` when:**
+- You will do a Read → multiple Edits sequence and a stale peer write between them would break your `old_string` anchors.
+- You are refactoring across several files and want peers to wait.
+- You are reserving files (e.g. as a planner) so an assigned implementer can claim them without a race.
+
+**Do not call `lock_file` for an ordinary single Edit/Write.** In plugin-supported runtimes, the `PreToolUse`/equivalent hook already locks around the write tool when peers exist, denies on real conflict, and unlocks after. Solo sessions skip locking entirely.
+
+**Runtimes without a swarm plugin** (e.g. ad-hoc OpenCode sessions) need to call `lock_file` / `unlock_file` themselves. Even then, prefer locking critical sections over per-edit ceremony — the per-edit race window is too narrow to be the real failure mode; the actual hazard is stale-read → edit, which only a wider lock protects.
+
+When you do hold a lock, include a `note` describing the scope and expected duration so peers know what they're waiting on. Release with `unlock_file` as soon as the critical section ends; terminal `update_task` releases any remaining edit locks automatically.
 
 If `bootstrap` returns `work_tracker`, use only that configured tracker for this repo/scope and identity. Do not pick a tracker just because an MCP happens to be loaded; load `references/work-trackers.md` when tracker linkage matters.
 
@@ -84,7 +99,8 @@ Deregister only when you are actually exiting, ending a one-shot session, or oth
 
 - Assume other sessions share your exact working directory unless `scope` and `file_root` make that true
 - Invent role-routing behavior that is not visible from labels, messages, tasks, or instructions
-- Hold file locks longer than needed
+- Hold file locks longer than the critical section they were taken for
+- Call `lock_file` reflexively before every edit — that's the plugin hook's job in plugin-supported runtimes
 - Use `assignee` for a stale or unknown instance
 - Confuse direct messages with task handoff; use `request_task` for structured delegated work
 - Try to claim `blocked` tasks — they will become `open` automatically

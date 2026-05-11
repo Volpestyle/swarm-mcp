@@ -15,7 +15,6 @@ class SwarmRoleConfigTests(unittest.TestCase):
         self._env.start()
         lifecycle._instances.clear()
         lifecycle._refcounts.clear()
-        lifecycle._locks_by_call.clear()
         if hasattr(lifecycle, "_roles_by_session"):
             lifecycle._roles_by_session.clear()
 
@@ -23,7 +22,6 @@ class SwarmRoleConfigTests(unittest.TestCase):
         self._env.stop()
         lifecycle._instances.clear()
         lifecycle._refcounts.clear()
-        lifecycle._locks_by_call.clear()
         if hasattr(lifecycle, "_roles_by_session"):
             lifecycle._roles_by_session.clear()
 
@@ -114,12 +112,10 @@ class SwarmRoleConfigTests(unittest.TestCase):
         self.assertEqual(tracker["mcp"], "linear_work")
         self.assertEqual(tracker["team"], "ENG")
 
-    def test_gateway_role_skips_pre_tool_lock_bridge(self) -> None:
+    def test_gateway_role_skips_pre_tool_lock_check(self) -> None:
         self._start_with_config({"swarm": {"role": "gateway"}})
 
-        with mock.patch.object(lifecycle, "_has_peers", return_value=True) as has_peers, mock.patch.object(
-            lifecycle, "_lock_file", return_value=(True, "")
-        ) as lock_file:
+        with mock.patch.object(lifecycle, "_peer_lock_holder", return_value=None) as peer_check:
             result = lifecycle.on_pre_tool_call(
                 tool_name="write_file",
                 args={"path": "example.txt"},
@@ -128,15 +124,12 @@ class SwarmRoleConfigTests(unittest.TestCase):
             )
 
         self.assertIsNone(result)
-        has_peers.assert_not_called()
-        lock_file.assert_not_called()
+        peer_check.assert_not_called()
 
-    def test_worker_role_keeps_pre_tool_lock_bridge(self) -> None:
+    def test_worker_role_allows_write_when_no_peer_lock(self) -> None:
         self._start_with_config({"swarm": {"role": "worker"}})
 
-        with mock.patch.object(lifecycle, "_has_peers", return_value=True), mock.patch.object(
-            lifecycle, "_lock_file", return_value=(True, "")
-        ) as lock_file:
+        with mock.patch.object(lifecycle, "_peer_lock_holder", return_value=None) as peer_check:
             result = lifecycle.on_pre_tool_call(
                 tool_name="write_file",
                 args={"path": "example.txt"},
@@ -145,7 +138,56 @@ class SwarmRoleConfigTests(unittest.TestCase):
             )
 
         self.assertIsNone(result)
-        lock_file.assert_called_once_with(os.path.abspath("example.txt"), "write_file")
+        peer_check.assert_called_once_with(
+            os.path.abspath("example.txt"), "inst-session-123"
+        )
+
+    def test_worker_role_blocks_write_when_peer_holds_lock(self) -> None:
+        self._start_with_config({"swarm": {"role": "worker"}})
+
+        peer_lock = {
+            "owner": {"id": "inst-peer-xyz"},
+            "content": "mid-refactor",
+        }
+        with mock.patch.object(lifecycle, "_peer_lock_holder", return_value=peer_lock):
+            result = lifecycle.on_pre_tool_call(
+                tool_name="write_file",
+                args={"path": "example.txt"},
+                session_id="session-123",
+                tool_call_id="call-1",
+            )
+
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result["action"], "block")
+        self.assertIn("swarm lock blocked write_file", result["message"])
+        self.assertIn(os.path.abspath("example.txt"), result["message"])
+        self.assertIn("inst-pee", result["message"])
+        self.assertIn("mid-refactor", result["message"])
+
+    def test_worker_role_passes_through_when_session_has_no_instance(self) -> None:
+        with mock.patch.object(lifecycle, "_peer_lock_holder", return_value=None) as peer_check:
+            result = lifecycle.on_pre_tool_call(
+                tool_name="write_file",
+                args={"path": "example.txt"},
+                session_id="session-unknown",
+                tool_call_id="call-1",
+            )
+
+        self.assertIsNone(result)
+        peer_check.assert_not_called()
+
+    def test_post_tool_call_is_a_noop(self) -> None:
+        """Check-only model: nothing was acquired, so post-hook does nothing."""
+        with mock.patch.object(lifecycle, "_dispatch") as dispatch:
+            result = lifecycle.on_post_tool_call(
+                tool_name="write_file",
+                args={"path": "example.txt"},
+                session_id="session-123",
+                tool_call_id="call-1",
+            )
+
+        self.assertIsNone(result)
+        dispatch.assert_not_called()
 
     def test_default_label_matches_shared_adapter_tokens(self) -> None:
         with mock.patch.object(lifecycle, "_load_config", return_value={"swarm": {"role": "gateway"}}):

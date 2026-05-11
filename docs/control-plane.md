@@ -195,7 +195,7 @@ The first stack should prove this end-to-end loop:
 3. Hermes calls the Coordinator to create an idempotent swarm task.
 4. If no worker is available, the gateway follows the Spawner contract: it applies spawn dedupe, then invokes herdr to create a worker pane with injected Coordinator identity.
 5. Worker registers/adopts, claims the task, and reports status.
-6. Worker locks files through the Coordinator before edits.
+6. Worker edits through runtime hooks for ordinary writes and uses Coordinator locks for wider critical sections.
 7. Worker coordinates with peers through Coordinator messages, tasks, locks, KV, and coordinator-first wakeups when needed.
 8. Worker updates linked tracker issues with human-facing evidence, comments, links, or completion details when the assigned contract grants that authority and the configured same-identity MCP is available.
 9. Worker completes the task with structured result and test status.

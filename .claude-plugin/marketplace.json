@@ -7,7 +7,7 @@
     {
       "name": "swarm",
       "source": "./integrations/claude-code",
-      "description": "Auto-register sessions, auto-lock writes, publish herdr identity, and support gateway lead mode from Claude Code sessions against the swarm-mcp coordinator.",
+      "description": "Auto-register sessions, enforce peer-held locks on writes, publish herdr identity, and support gateway lead mode from Claude Code sessions against the swarm-mcp coordinator.",
       "version": "0.3.0",
       "keywords": ["swarm", "swarm-mcp", "coordination", "multi-agent", "herdr"]
     }

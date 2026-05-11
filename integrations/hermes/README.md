@@ -16,7 +16,7 @@ For the full design — architecture, lifecycle contract, role topology (worker 
 |---|---|
 | Auto-`register` on session start | `on_session_start` hook → `mcp_swarm_register` |
 | Auto-`deregister` on session finalization | `on_session_finalize` hook → `mcp_swarm_deregister` |
-| Auto-lock write-like file tools when peers are active | `pre_tool_call` → `mcp_swarm_lock_file`, `post_tool_call` → `mcp_swarm_unlock_file` |
+| Enforce peer-declared locks on write-like file tools | `pre_tool_call` → `mcp_swarm_get_file_lock` per target path; blocks the call when a peer (not this session) holds it. Never acquires. |
 | Publish workspace identity for this swarm instance | `on_session_start` → publish current workspace handle when `HERDR_PANE_ID` is present |
 | Publish configured work tracker | `on_session_start` reads tracker config and writes `config/work_tracker/<identity>` KV |
 | Express-lane peer prompt | `swarm_prompt_peer` tool → `mcp_swarm_send_message`, then best-effort workspace backend wake-up (`herdr pane run` today) |
@@ -71,7 +71,7 @@ Use the matching work values for a work profile: `AGENT_IDENTITY: work` and `/Us
 
 Work tracker metadata is read from `SWARM_HERMES_WORK_TRACKER`, `SWARM_WORK_TRACKER`, `.swarm-work-tracker`, or Hermes config `swarm.work_tracker`, then published to `config/work_tracker/<identity>` in swarm KV. This is routing metadata only; credentials still live in the launcher/config-root MCP setup.
 
-The express-lane tool is registered under Hermes toolset `plugin_swarm`. Enable that toolset for sessions that should be allowed to nudge peers; sessions without the toolset still get auto-register, auto-lock, identity publishing, and `/swarm`.
+The express-lane tool is registered under Hermes toolset `plugin_swarm`. Enable that toolset for sessions that should be allowed to nudge peers; sessions without the toolset still get auto-register, the peer-lock check on writes, identity publishing, and `/swarm`.
 
 The `/swarm` slash command resolves the CLI in this order:
 
@@ -102,7 +102,7 @@ Should print compact instance/task/kv counts. If you see `swarm-mcp CLI not foun
 ## Runtime behavior at a glance
 
 - **Fail-open by default.** Coordination errors (server down, network issue) never block tool calls — the agent just has no swarm presence for that turn.
-- **Block on real lock conflicts.** When a peer holds a lock on a file you're trying to write, the tool call returns `swarm lock blocked write_file ... File is already locked` instead of editing through.
+- **Block on real lock conflicts.** When a peer holds a swarm lock on a file you're trying to write, the tool call returns `swarm lock blocked write_file for <file>: held by <8-char-prefix> (<note>)` instead of editing through. Same-instance locks pass through (re-entrant), so an agent that declared its own wider critical section keeps editing.
 - **`on_session_end` is per-turn, not per-session.** The plugin only deregisters on `on_session_finalize` (`/new`, `/reset`, exit, gateway expiry).
 
 Full hook contract, identity rules, and failure semantics: [SPEC.md §5](SPEC.md#5-lifecycle-contracts).

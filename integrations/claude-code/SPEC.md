@@ -19,7 +19,7 @@ inside a session, `swarm-mcp` CLI outside it), not by import:
 │   when to lock, role routing, task patterns
 ├──────────────────────────────────────────────┤
 │  Plugin (integrations/claude-code/)          │   behavior
-│   SessionStart register, lock bridge, /swarm
+│   SessionStart register, peer-lock check, /swarm
 ├──────────────────────────────────────────────┤
 │  MCP server (src/index.ts)                   │   capability
 │   29 tools: register, lock_file, request_task...
@@ -70,7 +70,7 @@ The result:
 |---|---|
 | Auto-register via `mcp_swarm_register` | `SessionStart` shells to `swarm-mcp register`, stores the returned `instance_id`, and injects context saying registration is complete. |
 | Auto-deregister | `SessionEnd` shells to `swarm-mcp deregister` and cleans up herdr identity KV. |
-| Auto-lock + auto-unlock | Same — shell to `swarm-mcp lock` / `unlock`. |
+| Peer-lock enforcement | Same — inspect active locks and deny writes when a peer holds the target file. |
 | Block on lock conflict | Same — emit `permissionDecision: deny`. |
 | `/swarm` slash command | Markdown command; same shape, slightly different surface. |
 | `swarm_prompt_peer` tool | Implemented adapter-neutrally as the swarm MCP `prompt_peer` tool and `swarm-mcp prompt-peer` CLI. |
@@ -108,45 +108,54 @@ explicitly on `SessionEnd`.
 | `SessionStart` (source=startup or resume) | New or resumed conversation | Compute label/scope/identity; call `swarm-mcp register`; write per-session scratch metadata including `instance_id`; publish `identity/workspace/herdr/<instance_id>` if `HERDR_PANE_ID` is present; emit `additionalContext` telling the agent it is registered and should follow the swarm role workflow. |
 | `SessionStart` (source=clear or compact) | Mid-session reset | Refresh metadata only; do not re-prompt registration. |
 | `SessionEnd` | Conversation ends | Best-effort `kv del identity/workspace/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
-| `PreToolUse` (matcher: `Write\|Edit\|MultiEdit\|NotebookEdit`) | Before each write-class tool dispatch | Gateway mode allows trivial local edits; medium/large implementation work should route through `dispatch`. If peers exist in scope, `swarm-mcp lock` each path. On conflict, emit `permissionDecision: deny`. |
-| `PostToolUse` (same matcher) | After each write-class tool dispatch | `swarm-mcp unlock` each path the matching pre acquired. |
+| `PreToolUse` (matcher: `Write\|Edit\|MultiEdit\|NotebookEdit`) | Before each write-class tool dispatch | Read-only check via `swarm-mcp locks --scope <s> --json`. If any returned lock row targets one of the write tool's files and is held by an `instance_id` other than ours, emit `permissionDecision: deny`. Never acquires a lock. |
+| `PostToolUse` | — | **Not wired in new installs.** A no-op stub remains in the plugin source so already-installed configs that still register `PostToolUse` keep loading; new `hooks.json` omits the entry. |
 
-### 5.2 Identity selector for the lock CLI
+### 5.2 Why check-only (no acquire/release pair)
 
-Hooks identify their session by passing `--as session:<8>` to `swarm-mcp lock`
-/ `unlock`. The CLI resolves `--as` by:
+Earlier drafts of this plugin had `PreToolUse` acquire a lock and
+`PostToolUse` release it, framed as "concurrent edit protection." That
+protection was largely illusory:
 
-1. Full UUID
-2. UUID prefix
-3. Unique substring of the instance label
+- Filesystem writes are already atomic at the OS level; two peers racing to
+  the same byte happens in a sub-millisecond window that almost never
+  coincides with two LLM agents' tool dispatches.
+- The Edit tool's `old_string` anchor check catches logical collisions
+  (peer A's edit displaced peer B's anchor → B's Edit fails). That's
+  runtime-provided safety; the swarm lock didn't add to it.
+- The acquire/release pair didn't cover the actual hazard, which is the
+  Read → Edit gap — the lock was only held around the write tool call, not
+  across the agent's read of the file.
 
-The plugin's derived label always contains `session:<8>` (first 8 hex chars of
-the Claude Code session_id with hyphens stripped), so as long as the agent
-registered with the priming label, the substring match resolves to exactly
-this session's instance. Collisions on the first 8 chars within the same
-scope are vanishingly unlikely; if they happen, the CLI errors as ambiguous
-and the lock fails open (no deny).
+What manual `lock_file` (called by the agent for a wider critical section)
+*does* need is enforcement: a peer that takes a 10-minute lock for a
+refactor expects other peers' writes to be denied while the lock is held.
+The check-only hook is what enforces those declarations. It is intentionally
+the cheaper half of the original bridge — one `swarm-mcp locks` call per
+write tool, no acquire, no release, no `(tool_name, |paths)` scratch
+tracking. Same-instance locks pass through so the declaring agent keeps
+editing its own reservation.
 
 ### 5.3 Failure semantics (matches hermes)
 
-- **Fail-open by default.** CLI missing, network/db error, identity
-  ambiguous → tool proceeds without a lock. Coordination is opt-in.
-- **Block on real conflicts.** When `swarm-mcp lock` fails with output
-  containing `locked` or `lock conflict`, emit
+- **Fail-open by default.** CLI missing, network/db error, unknown own
+  `instance_id` → tool proceeds without a check. Coordination is opt-in.
+- **Block on real conflicts.** When `swarm-mcp locks --json` returns a row
+  for one of the write tool's paths whose `instance_id` is not ours, emit
   `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"swarm lock blocked ..."}}`.
-- **Solo sessions skip locking entirely.** `has_peers` checks
-  `swarm-mcp instances` first; if the count of peers (excluding ourselves)
-  is zero, no lock attempt.
+- **Solo sessions are implicit.** With no peer in scope, the `locks` list
+  is empty (or only contains this session's own locks), so the check
+  short-circuits without a separate `has_peers` probe.
 
-### 5.4 Lock tracking across pre/post
+### 5.4 Own-vs-peer identification
 
-Claude Code does not expose a stable `tool_call_id` to hooks. We key the
-PreToolUse-PostToolUse pair on `(tool_name, |joined_paths)` instead — same
-shape the tool input has either way. Stored under
-`$TMPDIR/swarm-cc/<session_id>/locks-<key>.json`. Cleared in PostToolUse.
-
-If a tool is denied in PreToolUse, PostToolUse never fires (Claude Code skips
-it for denied tools), so there is no lock to release.
+The hook needs to distinguish "I locked this earlier in a wider critical
+section" from "a peer locked this." Each lock row carries the holder's
+`instance_id`. The hook reads its own `instance_id` from per-session
+scratch metadata (written by `SessionStart` after `swarm-mcp register`
+succeeds) and treats any row with a different `instance_id` as a peer
+conflict. If scratch metadata has no `instance_id` (e.g. registration
+failed earlier in the session), the hook fails open.
 
 ## 6. Identity, scope, labels
 
@@ -192,16 +201,26 @@ shows the session before the agent spends a tool call on registration.
 Single session, no peers in scope. Edit any file. `swarm-mcp locks` should
 show no lock entries during or after the edit.
 
-**S3: Lock conflict (the v0.1 contract)**
-Peer A holds a swarm lock on `notes.md` (`swarm-mcp lock notes.md`). Peer B
-(Claude Code) attempts an `Edit` on the same path. The Edit tool should be
-denied with a message containing `swarm lock blocked Edit for ... File is
-already locked`. Target file is **not** modified.
+**S3: Peer-held lock blocks write**
+Peer A holds a swarm lock on `notes.md` (`swarm-mcp lock notes.md --note
+"refactor"`). Peer B (Claude Code) attempts an `Edit` on the same path.
+The Edit tool should be denied with a message containing `swarm lock
+blocked Edit for ... held by <8-char-prefix> (refactor)`. Target file is
+**not** modified. The Edit must remain denied for as long as peer A
+holds the lock; releasing on peer A (`swarm-mcp unlock notes.md`) clears
+the block on peer B's next attempt.
 
-**S4: Concurrent peer write releases**
-Two Claude Code sessions in shared scope, no manual locks. Both edit
-different files. Each lock is acquired pre, released post. After the turns,
-`swarm-mcp locks` shows no residual locks.
+**S4: Concurrent peer writes on different files**
+Two Claude Code sessions in shared scope, no manual locks held. Both
+edit different files. Both writes succeed. The pre-tool check inspects
+`swarm-mcp locks`, finds nothing targeting its file, and does not deny.
+After the turns, `swarm-mcp locks` shows no residual locks (the hook
+never acquired any).
+
+**S4b: Self-held lock is re-entrant**
+A Claude Code session calls `lock_file foo.ts` (declaring a wider
+critical section) and then does multiple `Edit foo.ts` calls. None of
+those Edits should be denied — the holder is the same instance.
 
 **S5: /swarm status**
 `/swarm` inside a registered session prints a compact summary listing
@@ -215,13 +234,20 @@ With `HERDR_PANE_ID` set and the agent having published
 ### 8.2 Mocked unit tests
 
 Current shared-core tests cover autonomous registration, fallback context,
-SessionEnd cleanup/deregister, and gateway write blocking. Additional cases
-that still deserve coverage:
-- Lock conflict detection on stderr substring `locked`
-- `has_peers` returning false on solo (1 instance) scope
-- `as_selector` falling back to `None` for empty session_id
-- PostToolUse skipping when no scratch file exists (denied or non-write tool)
-- Label derivation with and without override / identity token
+SessionEnd cleanup/deregister, and the full check-only matrix for
+`run_pre_tool_use_hook`:
+- No locks exist → write passes, `locks` is the only CLI call.
+- Peer holds the target file → write is denied with holder prefix + note.
+- Same-instance lock on the target file → write passes (re-entrant).
+- Peer holds an unrelated file → write passes.
+- Unknown own `instance_id` → fail-open, no `locks` call.
+- `run_post_tool_use_hook` is a no-op (zero CLI calls, zero stdout).
+
+Coverage gaps still worth filling:
+- Label derivation with and without override / identity token.
+- Path normalization mismatch between hook input and stored lock rows
+  (the hook compares string equality today; symlink / `.`/`..` cases
+  could go either way).
 
 ## 9. Design decisions
 
@@ -231,16 +257,19 @@ MCP tool surface. The hook shells to `swarm-mcp register`, stores the returned
 `instance_id` in scratch metadata, and injects context so the model can start
 with `bootstrap` instead of spending its first action on manual registration.
 
-**Why pass `--as session:<8>` instead of caching the `instance_id`?**
-Older versions used `--as session:<8>` because the hook did not know the
-`instance_id`. v0.2 stores `instance_id` from CLI registration in scratch
-metadata and uses that for lock/unlock. The session substring remains a
-fallback when metadata is missing.
+**Why the hook caches `instance_id` from registration in scratch.**
+The check-only flow needs the agent's own `instance_id` to distinguish
+self-held from peer-held locks. `SessionStart` writes it into
+`$TMPDIR/swarm-cc/<session_id>/meta.json` after `swarm-mcp register`
+returns, and the pre-tool hook reads it from there. Older versions used
+`--as session:<8>` for acquire/release CLI calls; that path is gone with
+the acquire step, but the `session:<8>` token still appears in the
+derived label and is how operators can resolve a session externally.
 
 **Why fail-open on non-conflict errors?**
 Same reason as hermes: a swarm outage shouldn't block productive editing.
-Lock conflicts are the case the user wanted protection from; everything else
-is best-effort.
+Peer-held lock conflicts are the case the user wanted protection from;
+everything else is best-effort.
 
 **Why no `pre_compact` / `subagent_stop` integration?**
 Out of scope for v0.1. The hermes plugin's `subagent_stop` bridge maps a
@@ -253,9 +282,12 @@ id, which the bundled skill doesn't currently do. Tracked as v0.5+.
 These overlap with the hermes SPEC §12 list. Restating only the ones that
 unblock this adapter specifically:
 
-- **Exclusive lock semantics (already on the hermes list).** Not strictly
-  required for this plugin, but if added, makes the hook's deny path more
-  precise without needing the substring `locked` heuristic.
+- **A read-only single-file lock inspector in the CLI.** Today the hook
+  shells to `swarm-mcp locks --scope <s> --json` (lists every lock in
+  scope) and filters client-side. A `swarm-mcp lock-info <file> --json`
+  subcommand would let the hook ask for the one row it actually cares
+  about. Worth doing once a scope grows enough locks that the full list
+  becomes noticeable; not urgent.
 - **First-class in-agent dispatch/spawn orchestration.** Implemented via the
   swarm MCP `dispatch` tool. Keep the CLI bridge for hooks, wrappers, operator
   shells, and fallback sessions where MCP tools are unavailable.
