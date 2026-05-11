@@ -1,6 +1,12 @@
 # Design: `request_task_batch`
 
-Item #6 from the improvement list. This spec defines the API shape, reference semantics, error handling, and transaction behavior for atomic batch task creation.
+> **Status: shipped.** Tool registered in `src/index.ts` (`request_task_batch`),
+> impl in `src/tasks.ts` (`requestBatch`), covered by ~15 cases in
+> `test/swarm.test.ts`. The intended consumer layer — multi-role routines that
+> compose this primitive — is **not yet implemented**; see
+> [`design-routine-dispatch.md`](./design-routine-dispatch.md).
+
+Originally item #6 from the improvement list. This doc captures the API shape, reference semantics, error handling, and transaction behavior of the atomic batch task creation primitive as it shipped.
 
 ## Problem
 

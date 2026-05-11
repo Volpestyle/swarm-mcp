@@ -154,6 +154,8 @@ The hard boundary is the process launched from the right profile:
 
 If work and personal coordination data must also be isolated, use separate `SWARM_DB_PATH` values or separate OS users. A `scope` or `identity:` label alone is not a credential boundary; every same-user process with access to the shared swarm database can read and write coordination state.
 
+For an example of layering process-internal fences (write-safe-root env var, allowlist terminal hook) on top of the launcher boundary — useful when both identities share a single user account and you want accidental cross-identity touches blocked loudly — see [`identity-defense-in-depth.md`](./identity-defense-in-depth.md). That doc walks through a personal Hermes example end-to-end and notes how to adapt to other runtimes.
+
 Hermes needs one extra setup step when it launches `swarm-mcp` as an MCP server: Hermes may scrub the parent process environment before spawning MCP children. Put the identity and DB path directly on the `swarm` MCP server entry as well as in the launcher/profile environment:
 
 ```yaml

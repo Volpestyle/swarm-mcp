@@ -94,8 +94,8 @@ Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting 
 - [`docs/install-skill.md`](./docs/install-skill.md) -- host-specific install paths for the packaged `swarm-mcp` skill
 - [`docs/swarm-server.md`](./docs/swarm-server.md) -- Rust daemon for `swarm-ui`, mobile-style pairing, PTY streaming, and LAN access
 - [`docs/database-contracts.md`](./docs/database-contracts.md) -- `swarm.db` schema ownership and adoption contract
-- [`docs/design-batch-creation.md`](./docs/design-batch-creation.md) -- design spec for `request_task_batch`
-- [`docs/testing/herdr-swarm-agent-metadata-review.md`](./docs/testing/herdr-swarm-agent-metadata-review.md) -- retrospective from a two-agent Herdr swarm metadata implementation test
+- [`docs/design-batch-creation.md`](./docs/design-batch-creation.md) -- shipped-feature reference for `request_task_batch` (atomic multi-task creation with `$N` deps)
+- [`docs/design-routine-dispatch.md`](./docs/design-routine-dispatch.md) -- design for named multi-role workflows that compose `request_task_batch` + `dispatch`; not yet implemented
 - [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable coordination skill — main `SKILL.md` plus role references (planner, implementer, reviewer, researcher, generalist, roles-and-teams, bootstrap, coordination, cli)
 - [`.agents/skills`](./.agents/skills) -- repo-internal skills used while developing this repository
 - [`integrations/hermes/`](./integrations/hermes/) and [`integrations/claude-code/`](./integrations/claude-code/) -- runtime plugins (lifecycle, peer-lock enforcement, `/swarm` slash command)

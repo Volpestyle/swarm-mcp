@@ -241,17 +241,9 @@ Single-intent dispatch is not a product feature the operator should have to invo
 - preserve scope, identity, role, task, and message audit trails
 - give every front end the same backend route instead of hand-coded spawn logic
 
-The user-facing command layer is **routine dispatch**: named shortcuts that expand into a small task graph and route each part to the right role. For example:
+The user-facing command layer above single-intent dispatch is **routine dispatch** — named shortcuts that expand into a small task graph and route each part to the right role. The dispatch primitive remains single-task routing: one intent, one task, one best worker. Routine dispatch composes `request_task_batch`, per-role dispatch/wake/spawn, monitoring, and a final summary.
 
-```text
-/release-check
-  implementer -> run build/tests and fix obvious failures
-  reviewer    -> review the branch for regressions
-  researcher  -> check linked issue/release context
-  gateway     -> collect results and ask for approval
-```
-
-The dispatch primitive remains single-task routing: one intent, one task, one best worker. Routine dispatch composes `request_task_batch`, per-role dispatch/wake/spawn, monitoring, and a final summary. That is the slash-command/button/product surface; the single-intent accelerator is plumbing for the gateway's normal behavior.
+Routine dispatch is **not yet implemented in this plugin** (only the underlying plumbing is). The runtime-agnostic design, worked example, and open questions live in [`docs/design-routine-dispatch.md`](../../docs/design-routine-dispatch.md); the Hermes-specific binding would expose routines as slash commands or named buttons on top of that shared primitive.
 
 ## 8. CLI bridge (`/swarm`)
 
