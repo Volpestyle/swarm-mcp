@@ -23,6 +23,7 @@ const planner = await import("../src/planner");
 const registry = await import("../src/registry");
 const status = await import("../src/status");
 const tasks = await import("../src/tasks");
+const dispatch = await import("../src/dispatch");
 const paths = await import("../src/paths");
 
 const originalAllowUnlabeled = process.env.SWARM_MCP_ALLOW_UNLABELED;
@@ -73,6 +74,16 @@ function restoreEnv(name: string, value: string | undefined) {
   else process.env[name] = value;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function taskIdFromMessage(content: string) {
+  const match = content.match(/\[task:([^\]]+)\]/);
+  if (!match) throw new Error(`message did not include task id: ${content}`);
+  return match[1];
+}
+
 describe("database schema", () => {
   test("bootstrap stamps the shared schema version", () => {
     const row = db.query("PRAGMA user_version").get() as { user_version: number };
@@ -92,6 +103,98 @@ describe("messages", () => {
     expect(messages.poll(c.id, c.scope)).toHaveLength(1);
     expect(messages.poll(d.id, d.scope)).toHaveLength(0);
     expect(messages.poll(b.id, b.scope)).toHaveLength(0);
+  });
+
+  test("completion waits consume matching task messages for the requester", async () => {
+    const scope = "/tmp/scope-a";
+    const gateway = registry.register(
+      "/tmp/planner",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    const worker = registry.register(
+      "/tmp/worker",
+      "identity:personal role:implementer",
+      scope,
+    );
+
+    const workerDone = (async () => {
+      for (;;) {
+        const rows = messages.poll(worker.id, scope);
+        if (rows.length) {
+          const taskId = taskIdFromMessage(rows[0].content);
+          const claim = tasks.claim(taskId, scope, worker.id, {
+            ignoreUnreadMessages: true,
+          });
+          if ("error" in claim) throw new Error(claim.error);
+          messages.send(worker.id, scope, gateway.id, `[task:${taskId}] done`);
+          const done = tasks.completeStructured(taskId, scope, worker.id, {
+            summary: "done",
+          });
+          if ("error" in done) throw new Error(done.error);
+          return;
+        }
+        await sleep(5);
+      }
+    })();
+
+    const payload = await dispatch.runDispatch({
+      scope,
+      requester: gateway.id,
+      title: "Complete a task",
+      type: "research",
+      role: "implementer",
+      completion_wait_seconds: 1,
+      completion_poll_ms: 5,
+    }) as Record<string, any>;
+    await workerDone;
+
+    expect(payload.completion.status).toBe("completed");
+    expect(payload.consumed_completion_messages).toHaveLength(1);
+    expect(messages.peek(gateway.id, scope)).toHaveLength(0);
+  });
+});
+
+describe("cleanup", () => {
+  test("removes internal spawn locks once their dispatch task is terminal", () => {
+    const scope = "/tmp/scope-a";
+    const gateway = registry.register(
+      "/tmp/planner",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    const worker = registry.register(
+      "/tmp/worker",
+      "identity:personal role:researcher",
+      scope,
+    );
+    const requested = tasks.request(gateway.id, scope, "research", "Smoke", {
+      assignee: worker.id,
+    });
+    if ("error" in requested) throw new Error(requested.error);
+    const claimed = tasks.claim(requested.id, scope, worker.id, {
+      ignoreUnreadMessages: true,
+    });
+    if ("error" in claimed) throw new Error(claimed.error);
+
+    const lockPath = "/__swarm/spawn/researcher/test-intent";
+    const locked = context.lock(
+      gateway.id,
+      scope,
+      lockPath,
+      JSON.stringify({ task_id: requested.id }),
+    );
+    if ("error" in locked) throw new Error(locked.error);
+    const done = tasks.completeStructured(requested.id, scope, worker.id, {
+      summary: "done",
+    });
+    if ("error" in done) throw new Error(done.error);
+
+    expect(context.lookup(scope, lockPath)).toHaveLength(1);
+    const result = cleanup.runCleanup({ scope, mode: "manual" });
+
+    expect(result.terminal_spawn_locks_deleted).toBe(1);
+    expect(context.lookup(scope, lockPath)).toHaveLength(0);
   });
 });
 

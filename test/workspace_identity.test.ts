@@ -36,6 +36,11 @@ const originalHerdrPane = process.env.HERDR_PANE;
 const originalHerdrFakeLog = process.env.HERDR_FAKE_LOG;
 const originalHerdrFakeCommand = process.env.HERDR_FAKE_COMMAND;
 const originalHerdrFakeRunPane = process.env.HERDR_FAKE_RUN_PANE;
+const originalAgentIdentity = process.env.AGENT_IDENTITY;
+const originalSwarmIdentity = process.env.SWARM_IDENTITY;
+const originalSwarmHermesIdentity = process.env.SWARM_HERMES_IDENTITY;
+const originalSwarmCcIdentity = process.env.SWARM_CC_IDENTITY;
+const originalSwarmCodexIdentity = process.env.SWARM_CODEX_IDENTITY;
 
 type WakeCall = {
   backend: string;
@@ -146,6 +151,11 @@ afterEach(() => {
   restoreEnv("HERDR_FAKE_LOG", originalHerdrFakeLog);
   restoreEnv("HERDR_FAKE_COMMAND", originalHerdrFakeCommand);
   restoreEnv("HERDR_FAKE_RUN_PANE", originalHerdrFakeRunPane);
+  restoreEnv("AGENT_IDENTITY", originalAgentIdentity);
+  restoreEnv("SWARM_IDENTITY", originalSwarmIdentity);
+  restoreEnv("SWARM_HERMES_IDENTITY", originalSwarmHermesIdentity);
+  restoreEnv("SWARM_CC_IDENTITY", originalSwarmCcIdentity);
+  restoreEnv("SWARM_CODEX_IDENTITY", originalSwarmCodexIdentity);
 });
 
 describe("workspace backend registry", () => {
@@ -407,6 +417,42 @@ describe("workspace backend registry", () => {
     });
   });
 
+  test("dispatch default idempotency survives prompt and harness drift", async () => {
+    const scope = "scope-dispatch-stable-default-idempotency";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+
+    const first = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Implement VUH-20 mobile bridge",
+      message: "Initial handoff with cdx details.",
+      role: "implementer",
+      harness: "codex",
+      spawn: false,
+      nudge: false,
+    });
+    const retry = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Implement VUH-20 mobile bridge",
+      message: "Recovered handoff with clowd details and extra context.",
+      role: "implementer",
+      harness: "claude",
+      spawn: false,
+      nudge: false,
+    });
+
+    expect(retry.task_id).toBe(first.task_id);
+    const tasks = db
+      .query("SELECT COUNT(*) AS count FROM tasks WHERE scope = ?")
+      .get(gateway.scope) as { count: number };
+    expect(tasks.count).toBe(1);
+  });
+
   test("dispatch completion wait times out with the latest task snapshot", async () => {
     const scope = "scope-dispatch-completion-timeout";
     const gateway = registry.register(
@@ -554,6 +600,19 @@ describe("workspace backend registry", () => {
         label: "identity:personal",
       });
     }
+  });
+
+  test("herdr default harness honors Hermes identity env", () => {
+    delete process.env.AGENT_IDENTITY;
+    delete process.env.SWARM_IDENTITY;
+    delete process.env.SWARM_CC_IDENTITY;
+    delete process.env.SWARM_CODEX_IDENTITY;
+
+    process.env.SWARM_HERMES_IDENTITY = "personal";
+    expect(herdrSpawner.herdrSpawnerBackend.defaultHarness()).toBe("clowd");
+
+    process.env.SWARM_HERMES_IDENTITY = "work";
+    expect(herdrSpawner.herdrSpawnerBackend.defaultHarness()).toBe("clawd");
   });
 
   test("dispatch rejects spawn labels with a conflicting identity", async () => {

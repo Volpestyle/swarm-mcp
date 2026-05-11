@@ -28,7 +28,15 @@ Common MCP shapes:
 }
 ```
 
-Use an explicit `idempotency_key` for batches, retries, and user-visible work. The default key is derived from the dispatch intent; changing the title, message, type, role, or harness can create a separate task/spawn instead of observing the same handoff.
+Use an explicit `idempotency_key` for batches, retries, and user-visible work. The default key is derived from the dispatch intent and is stable across prompt/harness drift, but changing the title, type, or role can still create a separate task/spawn instead of observing the same handoff.
+
+For tracker-backed work, make the key semantic and stable across recovery attempts:
+
+- Initial implementation: `linear:<issue-id>:implement`, for example `linear:VUH-20:implement`.
+- Review: `linear:<issue-id>:review:<implementation-task-id>`.
+- Follow-up fix after a failed review: `linear:<issue-id>:fix:<failed-review-task-id>`.
+
+Do not create a new key just because you changed the prompt wording, switched `cdx` to `clowd`, moved panes, or recovered after a gateway restart. New keys are for genuinely new work, not retries.
 
 Force a fresh worker pane even when a matching live worker exists:
 
@@ -142,6 +150,14 @@ For 2-6 related workers:
 Checkpoint in KV so another gateway/planner can recover, for example `kv_set("plan/latest", "<serialized plan with task IDs, owners, expected outputs, and next step>")`.
 
 ## Recovery
+
+Before dispatching replacement work for a tracker ticket:
+
+1. Check `plan/latest` and any ticket-specific plan key, such as `plan/vuh-20-latest`.
+2. List tasks and look for the tracker ID in titles/descriptions/results.
+3. Poll messages for worker completion reports that may have arrived during a gateway restart.
+4. If an existing task is `open`, `claimed`, `in_progress`, or `done`, reuse or summarize it instead of creating a replacement.
+5. Only create a follow-up fix task when a review task is terminal `failed` or the worker result clearly says changes are required.
 
 If dispatch says `spawn_in_flight`:
 

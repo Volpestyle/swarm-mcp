@@ -230,6 +230,7 @@ export function clearLocks(instance: string, scope: string, file: string) {
       payload: { released: result.changes },
     });
   }
+  return result.changes;
 }
 
 /** Release all locks the given instance acquired under the named task_id, regardless of which files. */

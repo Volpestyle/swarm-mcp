@@ -128,7 +128,7 @@ Some hermes call paths invoke `pre_tool_call` without `session_id`. The plugin f
 When the gateway dispatches a worker spawn (e.g. on Telegram retry, after a network blip), it must **not** create duplicate workers. Defense is layered — task-level idempotency catches most cases, spawn-level mutex catches the rest.
 
 **Layer 1 — task idempotency (primary).**
-Every user intent that produces a task gets `idempotency_key` (hash of originating message id + content). `request_task` is server-enforced: the same key returns the existing task rather than creating a duplicate. This handles ~all retry cases at the right layer.
+Every user intent that produces a task gets an `idempotency_key`. For tracker-backed work, the key must be semantic and stable across prompt/harness/layout/restart drift, such as `linear:VUH-20:implement` or `linear:VUH-20:review:<implementation-task-id>`. For untracked one-off work, the gateway may fall back to a hash of stable dispatch fields. `request_task` is server-enforced: the same key returns the existing task rather than creating a duplicate. This handles ~all retry cases at the right layer.
 
 **Layer 2 — spawn mutex (when no task exists yet).**
 Before a task can be created, the gateway may need to spawn a worker that doesn't yet exist. To avoid two concurrent gateway flows both spawning workers for the same intent, the spawn dispatch follows this protocol:

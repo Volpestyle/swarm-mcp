@@ -33,6 +33,7 @@ let lastMsgId = 0;
 let lastTaskUpdate = 0;
 let lastInstancesVersion = "";
 let lastKvUpdate = 0;
+let notificationsClosed = false;
 
 const server = new McpServer({
   name: "swarm",
@@ -292,26 +293,53 @@ function getMaxKvUpdate() {
   return kv.version(instance.scope);
 }
 
+function isBrokenPipeError(error: unknown) {
+  if (!error) return false;
+  const value = error as { code?: unknown; errno?: unknown; message?: unknown };
+  return (
+    value.code === "EPIPE" ||
+    value.errno === -32 ||
+    String(value.message ?? "").includes("EPIPE") ||
+    String(value.message ?? "").includes("broken pipe")
+  );
+}
+
+async function sendResourceUpdate(uri: string) {
+  if (notificationsClosed) return false;
+  try {
+    await server.server.sendResourceUpdated({ uri });
+    return true;
+  } catch (error) {
+    if (isBrokenPipeError(error)) {
+      notificationsClosed = true;
+      if (notifyTimer) clearInterval(notifyTimer);
+      notifyTimer = null;
+      return false;
+    }
+    throw error;
+  }
+}
+
 async function poll() {
-  if (!instance) return;
+  if (!instance || notificationsClosed) return;
 
   try {
     const msgId = getMaxMsgId();
     if (msgId > lastMsgId) {
       lastMsgId = msgId;
-      await server.server.sendResourceUpdated({ uri: "swarm://inbox" });
+      if (!(await sendResourceUpdate("swarm://inbox"))) return;
     }
 
     const taskUpdate = getMaxTaskUpdate();
     if (taskUpdate > lastTaskUpdate) {
       lastTaskUpdate = taskUpdate;
-      await server.server.sendResourceUpdated({ uri: "swarm://tasks" });
+      if (!(await sendResourceUpdate("swarm://tasks"))) return;
     }
 
     const instancesVersion = getInstancesVersion();
     if (instancesVersion !== lastInstancesVersion) {
       lastInstancesVersion = instancesVersion;
-      await server.server.sendResourceUpdated({ uri: "swarm://instances" });
+      if (!(await sendResourceUpdate("swarm://instances"))) return;
     }
   } catch {
     return;
@@ -485,6 +513,7 @@ server.tool(
 
 function startInstanceTimers() {
   if (!instance) return;
+  notificationsClosed = false;
   lastMsgId = getMaxMsgId();
   lastTaskUpdate = getMaxTaskUpdate();
   lastInstancesVersion = getInstancesVersion();
@@ -498,7 +527,7 @@ function startInstanceTimers() {
   }, 10_000);
 
   notifyTimer = setInterval(() => {
-    void poll();
+    void poll().catch(() => undefined);
   }, 5_000);
 }
 

@@ -54,6 +54,7 @@ function stringValue(value: unknown) {
 function identityDefaultHarness() {
   const identity = (
     process.env.AGENT_IDENTITY ??
+    process.env.SWARM_HERMES_IDENTITY ??
     process.env.SWARM_IDENTITY ??
     process.env.SWARM_CC_IDENTITY ??
     process.env.SWARM_CODEX_IDENTITY ??

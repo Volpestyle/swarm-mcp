@@ -127,6 +127,34 @@ function terminalTaskStatus(status: unknown) {
   return status === "done" || status === "failed" || status === "cancelled";
 }
 
+function spawnLockTaskId(lock: SpawnLockRow) {
+  try {
+    const payload = JSON.parse(lock.content) as { task_id?: unknown };
+    return typeof payload.task_id === "string" ? payload.task_id : "";
+  } catch {
+    return "";
+  }
+}
+
+function releaseCompletedSpawnLock(opts: DispatchOptions, payload: Record<string, unknown>) {
+  const lockPath = typeof payload.spawn_lock === "string" ? payload.spawn_lock : "";
+  const completion = payload.completion as { status?: unknown } | undefined;
+  if (!lockPath || completion?.status !== "completed") return 0;
+  return context.clearLocks(opts.requester, opts.scope, lockPath);
+}
+
+async function consumeCompletionMessages(opts: DispatchOptions, payload: Record<string, unknown>) {
+  const completion = payload.completion as { status?: unknown } | undefined;
+  const taskId = typeof payload.task_id === "string" ? payload.task_id : "";
+  if (!taskId || completion?.status !== "completed") return [];
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const rows = messages.consumeTaskMessages(opts.requester, opts.scope, taskId);
+    if (rows.length || attempt === 5) return rows;
+    await sleep(50);
+  }
+  return [];
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -208,10 +236,19 @@ async function maybeWaitForCompletion(
     timeout_seconds: timeoutSeconds,
     poll_ms: opts.completion_poll_ms,
   });
-  return {
+  const next = {
     ...payload,
     task: completion.task ?? payload.task,
     completion,
+  };
+  const consumedMessages = await consumeCompletionMessages(opts, next);
+  const releasedSpawnLocks = releaseCompletedSpawnLock(opts, next);
+  return {
+    ...next,
+    ...(consumedMessages.length
+      ? { consumed_completion_messages: consumedMessages }
+      : {}),
+    ...(releasedSpawnLocks ? { released_spawn_locks: releasedSpawnLocks } : {}),
   };
 }
 
@@ -241,6 +278,13 @@ function activeSpawnLock(scope: string, file: string) {
 
   try {
     const payload = JSON.parse(lock.content) as { ui_command_id?: unknown };
+    const taskId = spawnLockTaskId(lock);
+    const task = taskId ? taskStore.get(taskId, scope) : null;
+    if (terminalTaskStatus(task?.status)) {
+      context.clearLocks(lock.instance_id, scope, file);
+      return null;
+    }
+
     const id = Number(payload.ui_command_id);
     if (Number.isInteger(id)) {
       const row = ui.get(id);
@@ -339,6 +383,22 @@ export function promptPeerResult(opts: {
   return result;
 }
 
+function defaultIdempotencyKey(opts: {
+  scope: string;
+  identity: string;
+  taskType: TaskType;
+  title: string;
+  workerRole: string;
+}) {
+  return `dispatch:${hashIntent([
+    opts.scope,
+    opts.identity,
+    opts.taskType,
+    opts.title,
+    opts.workerRole,
+  ])}`;
+}
+
 export async function runDispatch(opts: DispatchOptions) {
   requireDispatchAuthority(opts.scope, opts.requester);
 
@@ -356,15 +416,13 @@ export async function runDispatch(opts: DispatchOptions) {
   const spawnLabel = labelWithIdentity(opts.label, requestedIdentity) || null;
   const idempotencyKey =
     opts.idempotency_key ??
-    `dispatch:${hashIntent([
-      opts.scope,
-      requestedIdentity,
+    defaultIdempotencyKey({
+      scope: opts.scope,
+      identity: requestedIdentity,
       taskType,
       title,
-      message,
       workerRole,
-      harness,
-    ])}`;
+    });
   const intentHash = hashIntent([idempotencyKey]);
   const lockPath = spawnLockPath(workerRole, intentHash);
   const cwd = opts.cwd ?? process.cwd();

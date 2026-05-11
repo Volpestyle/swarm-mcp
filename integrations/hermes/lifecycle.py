@@ -59,6 +59,11 @@ def _resolved_identity() -> str:
     derived = contract.identity_name(raw)
     if derived:
         return derived
+
+    derived = _identity_from_active_profile()
+    if derived:
+        return derived
+
     if not _warned_missing_identity:
         logger.warning(
             "swarm plugin: hermes session has no AGENT_IDENTITY / SWARM_HERMES_IDENTITY / "
@@ -68,6 +73,25 @@ def _resolved_identity() -> str:
         )
         _warned_missing_identity = True
     return "unknown"
+
+
+def _identity_from_active_profile() -> str:
+    """Infer identity from Hermes profile when launcher env was stripped.
+
+    LaunchAgent-managed gateways can correctly set ``HERMES_HOME`` to a named
+    profile while still invoking the raw ``hermes`` binary. In that shape the
+    hard auth/config boundary is still the profile root, so use the named
+    profile as the swarm identity label instead of degrading to unknown.
+    """
+    try:
+        from hermes_cli.profiles import get_active_profile_name
+
+        profile = contract.identity_name(str(get_active_profile_name() or ""))
+    except Exception:
+        return ""
+    if profile in {"", "default", "custom"}:
+        return ""
+    return profile
 
 
 def _load_config() -> dict[str, Any]:

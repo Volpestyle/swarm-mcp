@@ -98,8 +98,8 @@ Write commands (require identity):
 Identity:
   <who> is a UUID, UUID prefix, or a unique substring of an instance label.
   Identity resolves from --as, then $SWARM_MCP_INSTANCE_ID, then the sole
-  live instance in scope (if exactly one). Scope defaults to the git root of
-  the current directory; pass --scope to override.
+  live instance in scope (if exactly one). Scope defaults to $SWARM_MCP_SCOPE,
+  then the git root of the current directory; pass --scope to override.
 `);
 }
 

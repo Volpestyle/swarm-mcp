@@ -87,6 +87,40 @@ export function poll(recipient: string, scope: string, limit = 50) {
   return rows;
 }
 
+export function consumeTaskMessages(
+  recipient: string,
+  scope: string,
+  taskId: string,
+  limit = 50,
+) {
+  prune();
+
+  const prefix = `[task:${taskId}]%`;
+  const rows = db
+    .query(
+      `SELECT id, sender, content, created_at
+       FROM messages
+       WHERE scope = ? AND recipient = ? AND read = 0 AND content LIKE ?
+       ORDER BY created_at ASC, id ASC
+       LIMIT ?`,
+    )
+    .all(scope, recipient, prefix, limit) as Array<{
+    id: number;
+    sender: string;
+    content: string;
+    created_at: number;
+  }>;
+
+  if (rows.length) {
+    db.run(
+      `UPDATE messages SET read = 1 WHERE id IN (${marks(rows.length)})`,
+      rows.map((row) => row.id),
+    );
+  }
+
+  return rows;
+}
+
 export function peek(recipient: string, scope: string, limit = 50) {
   return db
     .query(

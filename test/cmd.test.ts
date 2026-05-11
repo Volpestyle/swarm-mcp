@@ -52,6 +52,47 @@ function register(dbPath: string, dir: string, scope: string, label: string) {
 }
 
 describe("CLI registration adoption", () => {
+  test("register uses SWARM_MCP_SCOPE when --scope is omitted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-register-env-scope-"));
+    const dbPath = join(dir, "swarm.db");
+    const scope = join(dir, "shared-scope");
+
+    const registered = runCli(
+      dbPath,
+      [
+        "register",
+        dir,
+        "--label",
+        "identity:personal role:researcher",
+        "--json",
+      ],
+      { SWARM_MCP_SCOPE: scope },
+    );
+
+    expect(registered.exitCode).toBe(0);
+    expect(JSON.parse(registered.stdout)).toMatchObject({ scope });
+  });
+
+  test("bootstrap recreates a pruned preassigned instance from env", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-bootstrap-env-instance-"));
+    const dbPath = join(dir, "swarm.db");
+    const id = "11111111-2222-4333-8444-555555555555";
+    const label = "identity:personal role:researcher session:envscope";
+
+    const boot = runCli(dbPath, ["bootstrap", dir, "--json"], {
+      SWARM_MCP_INSTANCE_ID: id,
+      SWARM_MCP_LABEL: label,
+      SWARM_MCP_SCOPE: dir,
+      SWARM_MCP_FILE_ROOT: dir,
+    });
+
+    expect(boot.exitCode).toBe(0);
+    const payload = JSON.parse(boot.stdout) as {
+      instance: { id: string; scope: string; label: string };
+    };
+    expect(payload.instance).toMatchObject({ id, scope: dir, label });
+  });
+
   test("register --adopt-instance-id adopts the lease row and keeps identity rows keyed to it", () => {
     const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-adopt-register-"));
     const dbPath = join(dir, "swarm.db");
@@ -230,6 +271,67 @@ describe("CLI registration adoption", () => {
 });
 
 describe("CLI task notifications", () => {
+  test("worker commands use SWARM_MCP_SCOPE when --scope is omitted", () => {
+    const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-env-scope-"));
+    const dbPath = join(dir, "swarm.db");
+    const planner = register(
+      dbPath,
+      dir,
+      dir,
+      "identity:personal mode:gateway role:planner",
+    );
+    const worker = register(dbPath, dir, dir, "identity:personal role:researcher");
+
+    const requested = runCli(dbPath, [
+      "request-task",
+      "research",
+      "Scoped task",
+      "--scope",
+      dir,
+      "--as",
+      planner.id,
+      "--json",
+    ]);
+    expect(requested.exitCode).toBe(0);
+    const taskId = JSON.parse(requested.stdout).id as string;
+
+    const env = { SWARM_MCP_SCOPE: dir };
+    const claimed = runCli(
+      dbPath,
+      [
+        "claim",
+        taskId,
+        "--as",
+        worker.id,
+        "--force",
+        "--json",
+      ],
+      env,
+    );
+    expect(claimed.exitCode).toBe(0);
+
+    const updated = runCli(
+      dbPath,
+      [
+        "update-task",
+        taskId,
+        "--status",
+        "done",
+        "--note",
+        "completed through env scope",
+        "--as",
+        worker.id,
+        "--json",
+      ],
+      env,
+    );
+    expect(updated.exitCode).toBe(0);
+    expect(JSON.parse(updated.stdout)).toMatchObject({
+      status: "done",
+      task_id: taskId,
+    });
+  });
+
   test("request-task prompts an explicit assignee", () => {
     const dir = mkdtempSync(join(tmpdir(), "swarm-cmd-request-task-prompt-"));
     const dbPath = join(dir, "swarm.db");

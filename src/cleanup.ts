@@ -31,6 +31,7 @@ export type CleanupResult = {
   tasks_reopened: number;
   task_assignees_cleared: number;
   locks_deleted: number;
+  terminal_spawn_locks_deleted: number;
   messages_deleted: number;
   terminal_tasks_deleted: number;
   non_lock_context_rows_deleted: number;
@@ -88,6 +89,7 @@ function emptyResult(
     tasks_reopened: 0,
     task_assignees_cleared: 0,
     locks_deleted: 0,
+    terminal_spawn_locks_deleted: 0,
     messages_deleted: 0,
     terminal_tasks_deleted: 0,
     non_lock_context_rows_deleted: 0,
@@ -513,6 +515,77 @@ function cleanupOrphanLocks(options: CleanupOptions, result: CleanupResult) {
   }
 }
 
+function spawnLockTaskId(row: { content: string; task_id?: string | null }) {
+  if (row.task_id) return row.task_id;
+  try {
+    const payload = JSON.parse(row.content) as { task_id?: unknown };
+    return typeof payload.task_id === "string" ? payload.task_id : "";
+  } catch {
+    return "";
+  }
+}
+
+function terminalTaskStatus(scope: string, taskId: string) {
+  const task = db
+    .query("SELECT status FROM tasks WHERE scope = ? AND id = ?")
+    .get(scope, taskId) as { status: string } | null;
+  return task?.status === "done" || task?.status === "failed" || task?.status === "cancelled";
+}
+
+function cleanupTerminalSpawnLocks(options: CleanupOptions, result: CleanupResult) {
+  const scoped = scopedWhere(options.scope);
+  const rows = db
+    .query(
+      `SELECT id, scope, instance_id, file, content, task_id
+       FROM context
+       WHERE type = 'lock' AND file LIKE '/__swarm/spawn/%'${scoped.clause}`,
+    )
+    .all(...scoped.args) as Array<{
+    id: string;
+    scope: string;
+    instance_id: string;
+    file: string;
+    content: string;
+    task_id: string | null;
+  }>;
+
+  const stale = rows.filter((row) => {
+    const taskId = spawnLockTaskId(row);
+    return taskId ? terminalTaskStatus(row.scope, taskId) : false;
+  });
+  if (!stale.length) return;
+
+  result.locks_deleted += stale.length;
+  result.terminal_spawn_locks_deleted += stale.length;
+  if (options.dryRun) return;
+
+  const byScope = new Map<string, number>();
+  for (const row of stale) {
+    const deleted = db.run("DELETE FROM context WHERE id = ?", [row.id]);
+    if (deleted.changes <= 0) continue;
+    byScope.set(row.scope, (byScope.get(row.scope) ?? 0) + deleted.changes);
+    emit({
+      scope: row.scope,
+      type: "context.lock_released",
+      actor: row.instance_id,
+      subject: row.file,
+      payload: {
+        released: deleted.changes,
+        reason: "dispatch_task_terminal",
+        task_id: spawnLockTaskId(row),
+      },
+    });
+  }
+
+  for (const [scope, count] of byScope) {
+    emitCleanup(scope, "cleanup.terminal_spawn_locks_deleted", {
+      count,
+      mode: options.mode ?? "opportunistic",
+      reason: "dispatch_task_terminal",
+    });
+  }
+}
+
 function cleanupOrphanKv(options: CleanupOptions, result: CleanupResult) {
   const cutoff = (options.nowSecs ?? now()) - CLEANUP_POLICY.orphanKvTtlSecs;
   const scoped = scopedWhere(options.scope);
@@ -582,6 +655,7 @@ export function runCleanup(options: CleanupOptions = {}): CleanupResult {
 
   reclaimOfflineInstances(normalized, result);
   cleanupOrphanLocks(normalized, result);
+  cleanupTerminalSpawnLocks(normalized, result);
   result.messages_deleted += cleanupMessages(normalized);
   result.terminal_tasks_deleted += cleanupTerminalTasks(normalized);
   result.non_lock_context_rows_deleted += cleanupNonLockContextRows(normalized);

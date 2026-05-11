@@ -27,7 +27,7 @@ The server maintains `owner/planner` automatically.
 - Assign work only to active instance IDs from `list_instances`.
 - Use `priority`; higher values are claimed first.
 - Use `depends_on` to express ordering. Tasks with unmet dependencies start as `blocked` and auto-open when dependencies complete.
-- Use `idempotency_key` for crash-safe retries.
+- Use `idempotency_key` for crash-safe retries. For tracker-backed work, prefer stable semantic keys such as `linear:VUH-20:implement`, `linear:VUH-20:review:<task-id>`, or `linear:VUH-20:fix:<failed-review-task-id>`; do not vary the key for prompt wording, harness, pane, or gateway recovery changes.
 - Use `review_of_task_id` on review tasks and `fixes_task_id` on fix tasks when the related task is known.
 - Make trivial, low-risk edits locally when that is clearly faster than delegation.
 - Route medium or large implementation work through `dispatch` so swarm-mcp can wake or spawn a worker via the configured workspace backend. In gateway mode, follow `references/gateway.md` for placement, completion waits, and recovery.
@@ -144,6 +144,8 @@ After initial setup and delegation, monitor only while you still own active coor
 4. On `kv_updates`, check implementer progress, peer planner plans, ownership changes, and `plan/latest`.
 5. On `instance_changes`, assign work to new implementers and reassign orphaned work from stale agents.
 6. If a configured timeout returns no changes, do one `bootstrap` checkpoint and continue waiting only if you still own active monitoring responsibility.
+
+After a gateway restart or re-registration, recover before creating work: poll messages, read `plan/latest`, list current tasks, and treat tracker IDs in existing task titles/results as canonical unless a terminal review/failure proves a new task is needed.
 
 Do not loop just because the swarm exists. If all delegated work is terminal and no peer answer is expected, summarize, publish final state, and idle. If a peer should get a live-interface nudge for planner feedback, use `prompt_peer`; if the peer is busy and the note can wait, use `send_message`.
 

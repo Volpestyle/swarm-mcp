@@ -155,8 +155,33 @@ function parseFlags(argv: string[]): Flags {
   return flags;
 }
 
+function envValue(name: string): string | undefined {
+  return process.env[name]?.trim() || undefined;
+}
+
+function scopeArg(flags: Flags): string | undefined {
+  return flags.scope ?? envValue("SWARM_MCP_SCOPE");
+}
+
+function directoryArg(flags: Flags): string {
+  return (
+    flags.directory ??
+    flags.positional[1] ??
+    envValue("SWARM_MCP_DIRECTORY") ??
+    process.cwd()
+  );
+}
+
+function labelArg(flags: Flags): string | undefined {
+  return flags.label ?? envValue("SWARM_MCP_LABEL");
+}
+
+function fileRootArg(flags: Flags): string | undefined {
+  return flags.fileRoot ?? envValue("SWARM_MCP_FILE_ROOT");
+}
+
 function resolveScope(flags: Flags): string {
-  return scopeFor(process.cwd(), flags.scope);
+  return scopeFor(process.cwd(), scopeArg(flags));
 }
 
 function instancesInScope(scope: string): InstRow[] {
@@ -376,14 +401,14 @@ function cmdInstances(flags: Flags) {
 }
 
 function cmdRegister(flags: Flags) {
-  const directory = flags.directory ?? flags.positional[1] ?? process.cwd();
-  const label = flags.label;
+  const directory = directoryArg(flags);
+  const label = labelArg(flags);
   const instance = registry.register(
     directory,
     label,
-    flags.scope,
-    flags.fileRoot,
-    process.env.SWARM_MCP_INSTANCE_ID?.trim() || undefined,
+    scopeArg(flags),
+    fileRootArg(flags),
+    envValue("SWARM_MCP_INSTANCE_ID"),
     flags.adoptInstanceId?.trim() || undefined,
   );
   let leasedHeartbeat: number | null = null;
@@ -404,23 +429,44 @@ function cmdRegister(flags: Flags) {
 }
 
 function cmdBootstrap(flags: Flags) {
-  const directory = flags.directory ?? flags.positional[1] ?? process.cwd();
+  const directory = directoryArg(flags);
   let current: registry.Instance | null = null;
+  const preassignedId = envValue("SWARM_MCP_INSTANCE_ID");
 
   const adoptId = flags.adoptInstanceId?.trim();
   if (adoptId) {
     current = registry.adoptInstanceId(
       directory,
-      flags.label,
-      flags.scope,
+      labelArg(flags),
+      scopeArg(flags),
       adoptId,
     );
+    if (!current && preassignedId === adoptId) {
+      current = registry.register(
+        directory,
+        labelArg(flags),
+        scopeArg(flags),
+        fileRootArg(flags),
+        preassignedId,
+      );
+    }
     if (!current) {
       throw new Error(`Could not adopt instance ${adoptId}`);
     }
   } else {
     const scope = resolveScope(flags);
-    current = registry.get(resolveIdentity(scope, flags));
+    try {
+      current = registry.get(resolveIdentity(scope, flags));
+    } catch (err) {
+      if (!preassignedId || flags.as) throw err;
+      current = registry.register(
+        directory,
+        labelArg(flags),
+        scopeArg(flags),
+        fileRootArg(flags),
+        preassignedId,
+      );
+    }
   }
 
   if (!current) throw new Error("Not registered. Call register first.");
@@ -1017,7 +1063,7 @@ function cmdInspect(flags: Flags) {
 
 function cmdCleanup(flags: Flags) {
   const result = runCleanup({
-    scope: flags.scope ? resolveScope(flags) : undefined,
+    scope: scopeArg(flags) ? resolveScope(flags) : undefined,
     dryRun: flags.dryRun,
     mode: "manual",
   });
@@ -1029,6 +1075,7 @@ function cmdCleanup(flags: Flags) {
   console.log(`  tasks reopened: ${result.tasks_reopened}`);
   console.log(`  task assignees cleared: ${result.task_assignees_cleared}`);
   console.log(`  locks deleted: ${result.locks_deleted}`);
+  console.log(`  terminal spawn locks deleted: ${result.terminal_spawn_locks_deleted}`);
   console.log(`  messages deleted: ${result.messages_deleted}`);
   console.log(`  terminal tasks deleted: ${result.terminal_tasks_deleted}`);
   console.log(`  legacy context rows deleted: ${result.non_lock_context_rows_deleted}`);
@@ -1040,7 +1087,7 @@ async function cmdUi(flags: Flags) {
   const [sub, ...rest] = flags.positional.slice(1);
   if (!sub || sub === "commands" || sub === "list") {
     const rows = ui.list({
-      scope: flags.scope ? resolveScope(flags) : undefined,
+      scope: scopeArg(flags) ? resolveScope(flags) : undefined,
       status: flags.status,
       limit: flags.limit,
     });
@@ -1076,7 +1123,7 @@ async function cmdUi(flags: Flags) {
         "ui spawn <cwd> [--harness <claude|clawd|clowd|codex|cdx|opencode|opc|hermesw|hermesp>] [--role <role>] [--label <tokens>] [--scope <path>] [--wait <seconds>]",
       );
     }
-    const scope = scopeFor(cwd, flags.scope);
+    const scope = scopeFor(cwd, scopeArg(flags));
     const createdBy = resolveOptionalIdentity(scope, flags);
     if (createdBy) requireSpawnAuthority(scope, createdBy, "ui spawn");
     return enqueueUiCommand(
@@ -1296,15 +1343,23 @@ function checkDatabase(): DoctorCheck {
 function checkScope(flags: Flags): DoctorCheck {
   const cwd = process.cwd();
   const gitRoot = rootFor(cwd);
-  const scope = scopeFor(cwd, flags.scope);
+  const explicitScope = scopeArg(flags);
+  const scope = scopeFor(cwd, explicitScope);
   const usingGit = gitRoot !== cwd ? true : existsSync(join(cwd, ".git"));
+  const source = flags.scope
+    ? "flag"
+    : envValue("SWARM_MCP_SCOPE")
+      ? "env"
+      : usingGit
+        ? "git_root"
+        : "cwd_fallback";
   const details = {
     cwd,
     git_root: usingGit ? gitRoot : null,
     scope,
-    scope_source: flags.scope ? "flag" : usingGit ? "git_root" : "cwd_fallback",
+    scope_source: source,
   };
-  if (!usingGit && !flags.scope) {
+  if (!usingGit && !explicitScope) {
     return {
       name: "scope",
       status: "warn",
@@ -1312,10 +1367,17 @@ function checkScope(flags: Flags): DoctorCheck {
       details,
     };
   }
+  const messageSuffix = flags.scope
+    ? " (from --scope)"
+    : envValue("SWARM_MCP_SCOPE")
+      ? " (from $SWARM_MCP_SCOPE)"
+      : usingGit
+        ? " (git root)"
+        : "";
   return {
     name: "scope",
     status: "ok",
-    message: `scope=${scope}${flags.scope ? " (from --scope)" : usingGit ? " (git root)" : ""}`,
+    message: `scope=${scope}${messageSuffix}`,
     details,
   };
 }

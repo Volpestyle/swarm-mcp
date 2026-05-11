@@ -15,6 +15,7 @@ class SwarmRoleConfigTests(unittest.TestCase):
         self._env.start()
         lifecycle._instances.clear()
         lifecycle._refcounts.clear()
+        lifecycle._warned_missing_identity = False
         if hasattr(lifecycle, "_roles_by_session"):
             lifecycle._roles_by_session.clear()
 
@@ -22,6 +23,7 @@ class SwarmRoleConfigTests(unittest.TestCase):
         self._env.stop()
         lifecycle._instances.clear()
         lifecycle._refcounts.clear()
+        lifecycle._warned_missing_identity = False
         if hasattr(lifecycle, "_roles_by_session"):
             lifecycle._roles_by_session.clear()
 
@@ -72,6 +74,21 @@ class SwarmRoleConfigTests(unittest.TestCase):
             args["label"],
             "identity:personal role:researcher custom:x session:abc123",
         )
+
+    def test_identity_falls_back_to_named_hermes_profile(self) -> None:
+        with mock.patch.object(lifecycle, "_identity_from_active_profile", return_value="personal"):
+            args = lifecycle._register_args("abc-123", {"platform": "telegram"})
+
+        self.assertIn("identity:personal", args["label"])
+        self.assertNotIn("identity:unknown", args["label"])
+
+    def test_default_profile_still_warns_and_uses_unknown_identity(self) -> None:
+        with mock.patch.object(lifecycle, "_identity_from_active_profile", return_value=""):
+            with self.assertLogs(lifecycle.logger.name, level=logging.WARNING) as logs:
+                args = lifecycle._register_args("abc-123", {"platform": "telegram"})
+
+        self.assertIn("identity:unknown", args["label"])
+        self.assertIn("has no AGENT_IDENTITY", "\n".join(logs.output))
 
     def test_session_start_publishes_configured_work_tracker(self) -> None:
         os.environ["SWARM_HERMES_IDENTITY"] = "work"
