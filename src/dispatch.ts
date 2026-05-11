@@ -264,6 +264,14 @@ function dispatchInstruction(taskId: string, title: string, message: string) {
   ].join("\n\n");
 }
 
+function spawnPromptRecipient(ready: spawnerBackend.SpawnReady | Record<string, unknown>) {
+  for (const key of ["spawned_instance", "expected_instance"] as const) {
+    const value = ready[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
 export function promptPeerResult(opts: {
   scope: string;
   sender: string;
@@ -456,6 +464,25 @@ export async function runDispatch(opts: DispatchOptions) {
     spawner: spawner.name,
     spawn_lock: lockPath,
   };
+  let spawnReadyPrompt: Record<string, unknown> | null = null;
+  let spawnReadyPromptRecipient = "";
+
+  const promptSpawnReady = (ready: spawnerBackend.SpawnReady | Record<string, unknown>) => {
+    const recipient = spawnPromptRecipient(ready);
+    if (!recipient || recipient === spawnReadyPromptRecipient) return spawnReadyPrompt;
+    const prompt = promptPeerResult({
+      scope: opts.scope,
+      sender: opts.requester,
+      recipient,
+      message: dispatchInstruction(result.id, title, message),
+      task: result.id,
+      nudge: true,
+      force: true,
+    });
+    spawnReadyPrompt = prompt;
+    spawnReadyPromptRecipient = recipient;
+    return prompt;
+  };
 
   const spawn = await spawner.spawn({
     scope: opts.scope,
@@ -471,6 +498,7 @@ export async function runDispatch(opts: DispatchOptions) {
     lock_note: lockNote,
     wait_seconds: waitSeconds,
     placement: opts.placement,
+    on_ready_to_prompt: promptSpawnReady,
   });
 
   if (spawn.status === "spawn_failed") {
@@ -480,17 +508,7 @@ export async function runDispatch(opts: DispatchOptions) {
   if (spawn.status === "spawn_in_flight") {
     const expectedInstance =
       typeof spawn.expected_instance === "string" ? spawn.expected_instance : "";
-    const kickstart = expectedInstance
-      ? promptPeerResult({
-          scope: opts.scope,
-          sender: opts.requester,
-          recipient: expectedInstance,
-          message: dispatchInstruction(result.id, title, message),
-          task: result.id,
-          nudge: true,
-          force: true,
-        })
-      : null;
+    const kickstart = spawnReadyPrompt ?? (expectedInstance ? promptSpawnReady(spawn) : null);
     return maybeWaitForCompletion(opts, {
       ...basePayload,
       ...spawn,
@@ -505,17 +523,18 @@ export async function runDispatch(opts: DispatchOptions) {
     binding = taskStore.reserveForAssignee(result.id, opts.scope, spawnedInstance);
   }
   context.clearLocks(opts.requester, opts.scope, lockPath);
-  const prompt = spawnedInstance
-    ? promptPeerResult({
-        scope: opts.scope,
-        sender: opts.requester,
-        recipient: spawnedInstance,
-        message: dispatchInstruction(result.id, title, message),
-        task: result.id,
-        nudge: opts.nudge ?? true,
-        force: true,
-      })
-    : null;
+  const prompt =
+    spawnedInstance && spawnedInstance !== spawnReadyPromptRecipient
+      ? promptPeerResult({
+          scope: opts.scope,
+          sender: opts.requester,
+          recipient: spawnedInstance,
+          message: dispatchInstruction(result.id, title, message),
+          task: result.id,
+          nudge: opts.nudge ?? true,
+          force: true,
+        })
+      : spawnReadyPrompt;
 
   return maybeWaitForCompletion(opts, {
     ...basePayload,

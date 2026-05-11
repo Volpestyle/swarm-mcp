@@ -694,6 +694,83 @@ describe("workspace backend registry", () => {
     ]);
   });
 
+  test("dispatch kickstarts a spawn-ready worker before the spawner wait returns", async () => {
+    const scope = "scope-dispatch-spawn-ready-kickstart";
+    const expectedInstance = "expected-spawn-ready-worker";
+    const wakeCalls: WakeCall[] = [];
+    const events: string[] = [];
+    let messagesAfterReady = 0;
+    workspaceIdentity.registerBackend(syntheticBackend("alpha", wakeCalls));
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    const spawnerName = "test-spawn-ready-kickstart";
+    spawnerBackend.registerSpawner({
+      name: spawnerName,
+      defaultWaitSeconds: 30,
+      defaultHarness() {
+        return "test";
+      },
+      async spawn(input) {
+        kv.set(
+          input.scope,
+          workspaceBackend.identityKey("alpha", expectedInstance),
+          JSON.stringify({ backend: "alpha", handle_kind: "unit", handle: "early-handle" }),
+          input.requester,
+        );
+        events.push("ready");
+        input.on_ready_to_prompt?.({
+          expected_instance: expectedInstance,
+          workspace_handle: { backend: "alpha", handle_kind: "unit", handle: "early-handle" },
+        });
+        messagesAfterReady = (
+          db
+            .query("SELECT COUNT(*) AS count FROM messages WHERE scope = ? AND recipient = ?")
+            .get(input.scope, expectedInstance) as { count: number }
+        ).count;
+        events.push("after-ready");
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        events.push("return");
+        return { status: "spawn_in_flight", expected_instance: expectedInstance };
+      },
+    });
+
+    const result = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Kickstart before wait",
+      role: "implementer",
+      spawner: spawnerName,
+      force_spawn: true,
+    });
+
+    expect(events).toEqual(["ready", "after-ready", "return"]);
+    expect(messagesAfterReady).toBe(1);
+    expect(result).toMatchObject({
+      status: "spawn_in_flight",
+      expected_instance: expectedInstance,
+      kickstart_prompt: {
+        message_sent: true,
+        nudged: true,
+        recipient: expectedInstance,
+      },
+    });
+    expect(wakeCalls).toEqual([
+      {
+        backend: "alpha",
+        handle: "early-handle",
+        prompt: expect.stringContaining(`task ${result.task_id}`),
+        force: true,
+      },
+    ]);
+    const finalMessages = db
+      .query("SELECT COUNT(*) AS count FROM messages WHERE scope = ? AND recipient = ?")
+      .get(gateway.scope, expectedInstance) as { count: number };
+    expect(finalMessages.count).toBe(1);
+  });
+
   test("herdr spawner pre-creates a leased instance and publishes pane identity", async () => {
     const scope = "scope-herdr-precreate";
     const gateway = registry.register(

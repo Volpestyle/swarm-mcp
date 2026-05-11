@@ -730,6 +730,12 @@ export const herdrSpawnerBackend: SpawnerBackend = {
       }),
     );
 
+    input.on_ready_to_prompt?.({
+      expected_instance: leased.id,
+      workspace_handle: workspaceHandle,
+      launch_token: input.launch_token,
+    });
+
     const spawned = await waitForLaunchInstanceForTesting({
       scope: leased.scope,
       launchToken: input.launch_token,

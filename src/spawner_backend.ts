@@ -21,6 +21,14 @@ export type SpawnRequest = {
   lock_note: Record<string, unknown>;
   wait_seconds: number;
   placement?: SpawnPlacement | null;
+  on_ready_to_prompt?: (ready: SpawnReady) => void;
+};
+
+export type SpawnReady = {
+  expected_instance?: string | null;
+  spawned_instance?: string | null;
+  workspace_handle?: unknown;
+  launch_token?: string | null;
 };
 
 export type SpawnResult = Record<string, unknown> & {
