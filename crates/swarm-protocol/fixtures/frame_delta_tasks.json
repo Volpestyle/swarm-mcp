@@ -27,7 +27,13 @@
       "depends_on": [
         "task-6"
       ],
-      "parent_task_id": null
+      "parent_task_id": null,
+      "review_of_task_id": "task-6",
+      "fixes_task_id": null,
+      "progress_summary": "Pairing handler implemented; running review checks.",
+      "progress_updated_at": 1745000118,
+      "blocked_reason": null,
+      "expected_next_update_at": 1745000300
     }
   ],
   "removes": [

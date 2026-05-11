@@ -21,6 +21,7 @@ const kv = await import("../src/kv");
 const messages = await import("../src/messages");
 const planner = await import("../src/planner");
 const registry = await import("../src/registry");
+const status = await import("../src/status");
 const tasks = await import("../src/tasks");
 const paths = await import("../src/paths");
 
@@ -520,6 +521,96 @@ describe("tasks", () => {
   });
 });
 
+describe("claim_next_task", () => {
+  test("atomically claims the highest-priority open task", () => {
+    const planner = reg("planner", "scope-a");
+    const worker = reg("worker", "scope-a");
+
+    req(planner.id, planner.scope, "implement", "Low", { priority: 1 });
+    const high = req(planner.id, planner.scope, "fix", "High", { priority: 10 });
+    req(planner.id, planner.scope, "review", "Medium", { priority: 5 });
+
+    const result = tasks.claimNext(worker.scope, worker.id);
+
+    expect(result).toMatchObject({ ok: true, task_id: high.id, prior_status: "open" });
+    expect(tasks.get(high.id, worker.scope)).toMatchObject({
+      status: "in_progress",
+      assignee: worker.id,
+    });
+  });
+
+  test("prefers tasks already assigned to the caller", () => {
+    const planner = reg("planner", "scope-a");
+    const worker = reg("worker", "scope-a");
+
+    const openHigh = req(planner.id, planner.scope, "implement", "Open high", { priority: 50 });
+    const assignedLow = req(planner.id, planner.scope, "review", "Assigned low", {
+      assignee: worker.id,
+      priority: 1,
+    });
+
+    const result = tasks.claimNext(worker.scope, worker.id);
+
+    expect(result).toMatchObject({ ok: true, task_id: assignedLow.id, prior_status: "claimed" });
+    expect(tasks.get(assignedLow.id, worker.scope)).toMatchObject({
+      status: "in_progress",
+      assignee: worker.id,
+    });
+    expect(tasks.get(openHigh.id, worker.scope)).toMatchObject({
+      status: "open",
+      assignee: null,
+    });
+  });
+
+  test("filters by type and file overlap", () => {
+    const planner = reg("planner", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const target = paths.file(worker.directory, "src/target.ts");
+    const other = paths.file(worker.directory, "src/other.ts");
+
+    req(planner.id, planner.scope, "implement", "Wrong type", {
+      files: [target],
+      priority: 20,
+    });
+    req(planner.id, planner.scope, "review", "Wrong file", {
+      files: [other],
+      priority: 15,
+    });
+    const match = req(planner.id, planner.scope, "review", "Matching review", {
+      files: [target],
+      priority: 1,
+    });
+
+    const result = tasks.claimNext(worker.scope, worker.id, {
+      types: ["review"],
+      files: [target],
+    });
+
+    expect(result).toMatchObject({ ok: true, task_id: match.id });
+  });
+
+  test("is blocked by unread messages unless explicitly overridden", () => {
+    const planner = reg("planner", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const task = req(planner.id, planner.scope, "implement", "Build thing");
+
+    messages.send(planner.id, planner.scope, worker.id, "Read me first");
+
+    expect(tasks.claimNext(worker.scope, worker.id)).toMatchObject({
+      error: expect.stringContaining("Unread messages pending (1)"),
+      unread_message_count: 1,
+    });
+    expect(tasks.get(task.id, worker.scope)).toMatchObject({
+      status: "open",
+      assignee: null,
+    });
+
+    expect(
+      tasks.claimNext(worker.scope, worker.id, { ignoreUnreadMessages: true }),
+    ).toMatchObject({ ok: true, task_id: task.id });
+  });
+});
+
 describe("priority", () => {
   test("tasks are listed in priority order (highest first)", () => {
     const a = reg("planner", "scope-a");
@@ -893,6 +984,160 @@ describe("parent_task_id", () => {
       parent_task_id: "nonexistent",
     });
     expect(result).toHaveProperty("error");
+  });
+});
+
+describe("task relationships and handoffs", () => {
+  test("review and fix task relationships are stored and validated", () => {
+    const planner = reg("planner", "scope-a");
+
+    const implementation = req(planner.id, planner.scope, "implement", "Implement feature");
+    const review = req(planner.id, planner.scope, "review", "Review feature", {
+      review_of_task_id: implementation.id,
+    });
+    const fix = req(planner.id, planner.scope, "fix", "Fix review findings", {
+      fixes_task_id: implementation.id,
+    });
+
+    expect(tasks.get(review.id, planner.scope)?.review_of_task_id).toBe(implementation.id);
+    expect(tasks.get(fix.id, planner.scope)?.fixes_task_id).toBe(implementation.id);
+
+    expect(
+      tasks.request(planner.id, planner.scope, "review", "Bad review target", {
+        review_of_task_id: "missing-review-target",
+      }),
+    ).toMatchObject({ error: expect.stringContaining("Review target task missing-review-target not found") });
+    expect(
+      tasks.request(planner.id, planner.scope, "fix", "Bad fix target", {
+        fixes_task_id: "missing-fix-target",
+      }),
+    ).toMatchObject({ error: expect.stringContaining("Fix target task missing-fix-target not found") });
+  });
+
+  test("batch creation resolves $N review and fix relationships", () => {
+    const planner = reg("planner", "scope-a");
+
+    const result = tasks.requestBatch(planner.id, planner.scope, [
+      { type: "implement", title: "Implement feature" },
+      { type: "review", title: "Review feature", review_of_task_id: "$1" },
+      { type: "fix", title: "Fix feature", fixes_task_id: "$1" },
+    ]);
+
+    expect("task_ids" in result).toBe(true);
+    if (!("task_ids" in result)) return;
+
+    expect(tasks.get(result.task_ids[1], planner.scope)?.review_of_task_id).toBe(result.task_ids[0]);
+    expect(tasks.get(result.task_ids[2], planner.scope)?.fixes_task_id).toBe(result.task_ids[0]);
+  });
+
+  test("report_progress stores progress metadata and preserves or clears optional fields", () => {
+    const planner = reg("planner", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const task = req(planner.id, planner.scope, "implement", "Long-running task");
+    const nextUpdate = Math.floor(Date.now() / 1000) + 60;
+
+    expect(tasks.reportProgress(task.id, worker.scope, worker.id, "too early")).toMatchObject({
+      error: "Only the assignee can report progress on this task",
+    });
+
+    expect(tasks.claim(task.id, worker.scope, worker.id)).toEqual({ ok: true });
+    const first = tasks.reportProgress(task.id, worker.scope, worker.id, "half done", {
+      blocked_reason: "waiting on dependency docs",
+      expected_next_update_at: nextUpdate,
+    });
+
+    expect(first).toMatchObject({
+      ok: true,
+      progress_summary: "half done",
+      blocked_reason: "waiting on dependency docs",
+      expected_next_update_at: nextUpdate,
+      progress_updated_at: expect.any(Number),
+    });
+    expect(tasks.get(task.id, worker.scope)).toMatchObject({
+      progress_summary: "half done",
+      blocked_reason: "waiting on dependency docs",
+      expected_next_update_at: nextUpdate,
+      progress_updated_at: expect.any(Number),
+    });
+
+    expect(
+      tasks.reportProgress(task.id, worker.scope, worker.id, "unblocked", {
+        blocked_reason: null,
+      }),
+    ).toMatchObject({
+      ok: true,
+      progress_summary: "unblocked",
+      blocked_reason: null,
+      expected_next_update_at: nextUpdate,
+    });
+  });
+
+  test("complete_task stores structured result, clears progress, and releases task file locks", () => {
+    const planner = reg("planner", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const file = paths.file(worker.directory, "src/feature.ts");
+    const reviewGate = req(planner.id, planner.scope, "review", "Review after implement");
+    const task = req(planner.id, planner.scope, "implement", "Implement feature", {
+      files: [file],
+    });
+
+    tasks.claim(task.id, worker.scope, worker.id);
+    context.lock(worker.id, worker.scope, file, "editing feature");
+    tasks.reportProgress(task.id, worker.scope, worker.id, "almost done", {
+      blocked_reason: "waiting on final test",
+    });
+
+    const result = tasks.completeStructured(task.id, worker.scope, worker.id, {
+      summary: "Implemented feature",
+      files_changed: [file, file],
+      tests: [{ command: "bun test", status: "passed" }],
+      followups: ["Review edge cases"],
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: "done",
+      result: {
+        summary: "Implemented feature",
+        files_changed: [file],
+        tests: [{ command: "bun test", status: "passed" }],
+        followups: ["Review edge cases"],
+      },
+    });
+
+    const completed = tasks.get(task.id, worker.scope);
+    expect(completed).toMatchObject({
+      status: "done",
+      progress_summary: null,
+      progress_updated_at: null,
+      blocked_reason: null,
+      expected_next_update_at: null,
+    });
+    expect(JSON.parse(completed?.result as string)).toEqual({
+      summary: "Implemented feature",
+      files_changed: [file],
+      tests: [{ command: "bun test", status: "passed" }],
+      followups: ["Review edge cases"],
+    });
+    expect(context.lookup(worker.scope, file)).toHaveLength(0);
+
+    expect(tasks.claim(reviewGate.id, planner.scope, planner.id)).toEqual({ ok: true });
+    expect(
+      tasks.completeStructured(reviewGate.id, planner.scope, planner.id, {
+        status: "failed",
+        summary: "Needs changes",
+        tests: [{ status: "skipped", notes: "review only" }],
+      }),
+    ).toMatchObject({
+      ok: true,
+      status: "failed",
+      result: {
+        summary: "Needs changes",
+        files_changed: [],
+        tests: [{ status: "skipped", notes: "review only" }],
+        followups: [],
+      },
+    });
   });
 });
 
@@ -1531,6 +1776,75 @@ describe("batch creation", () => {
     tasks.claim(result.task_ids[2], a.scope, w.id);
     tasks.update(result.task_ids[2], a.scope, w.id, "done", "ok");
     expect(tasks.get(result.task_ids[3], a.scope)?.status).toBe("claimed");
+  });
+});
+
+describe("swarm_status", () => {
+  test("summarizes current coordination state and next action", () => {
+    const plannerInstance = regPlanner("planner-a", "scope-a");
+    const worker = registry.register(
+      join("C:/repo", "worker"),
+      "provider:test role:implementer name:worker",
+      "scope-a",
+    );
+    const file = paths.file(worker.directory, "src/index.ts");
+    const assigned = req(plannerInstance.id, plannerInstance.scope, "implement", "Assigned", {
+      assignee: worker.id,
+      files: [file],
+      priority: 20,
+    });
+    const open = req(plannerInstance.id, plannerInstance.scope, "review", "Open review", {
+      priority: 5,
+    });
+
+    messages.send(plannerInstance.id, plannerInstance.scope, worker.id, "Read before starting");
+
+    const result = status.buildStatus(worker);
+
+    expect(result.instance).toMatchObject({ id: worker.id, role: "implementer" });
+    expect(result.peers.map((peer: any) => peer.id)).toContain(plannerInstance.id);
+    expect(result.planner_owner).toMatchObject({
+      instance_id: plannerInstance.id,
+      is_me: false,
+    });
+    expect(result.unread_messages).toHaveLength(1);
+    expect(result.task_counts.claimed).toBe(1);
+    expect(result.task_counts.open).toBe(1);
+    expect(result.assigned_tasks.map((task: any) => task.id)).toContain(assigned.id);
+    expect(result.claimable_tasks.map((task: any) => task.id)).toEqual([
+      assigned.id,
+      open.id,
+    ]);
+    expect(result.next_action).toMatchObject({ tool: "poll_messages" });
+  });
+
+  test("surfaces file collision and lock compliance warnings", () => {
+    const plannerInstance = reg("planner", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const peer = reg("peer", "scope-a");
+    const file = paths.file(worker.directory, "src/shared.ts");
+
+    const mine = req(plannerInstance.id, plannerInstance.scope, "implement", "Mine", {
+      files: [file],
+    });
+    const theirs = req(plannerInstance.id, plannerInstance.scope, "fix", "Theirs", {
+      files: [file],
+      assignee: peer.id,
+    });
+
+    tasks.claim(mine.id, worker.scope, worker.id);
+    tasks.claim(theirs.id, peer.scope, peer.id);
+    context.lock(peer.id, peer.scope, file, "editing shared file");
+
+    const result = status.buildStatus(worker);
+    const codes = result.warnings.map((warning: any) => warning.code);
+
+    expect(codes).toContain("missing_lock_for_in_progress_task");
+    expect(codes).toContain("file_locked_by_peer");
+    expect(codes).toContain("active_task_file_overlap");
+    expect(result.blocking_locks).toEqual([
+      expect.objectContaining({ file, instance_id: peer.id, task_id: mine.id }),
+    ]);
   });
 });
 

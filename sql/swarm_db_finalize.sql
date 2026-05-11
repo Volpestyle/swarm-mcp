@@ -23,6 +23,12 @@ CREATE INDEX IF NOT EXISTS tasks_scope_assignee_idx
   ON tasks(scope, assignee);
 CREATE INDEX IF NOT EXISTS tasks_scope_changed_at_idx
   ON tasks(scope, changed_at);
+CREATE INDEX IF NOT EXISTS tasks_scope_review_of_task_id_idx
+  ON tasks(scope, review_of_task_id) WHERE review_of_task_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS tasks_scope_fixes_task_id_idx
+  ON tasks(scope, fixes_task_id) WHERE fixes_task_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS tasks_scope_expected_next_update_idx
+  ON tasks(scope, expected_next_update_at) WHERE expected_next_update_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS context_scope_file_idx
   ON context(scope, file);
 CREATE INDEX IF NOT EXISTS context_task_lock_idx

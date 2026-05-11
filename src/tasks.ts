@@ -11,7 +11,7 @@ import {
   type TaskType,
 } from "./generated/protocol";
 import { get as getInstance, prune, type Instance } from "./registry";
-import { stamp } from "./time";
+import { now, stamp } from "./time";
 
 export { TASK_STATUSES, TASK_TYPES, type TaskStatus, type TaskType };
 
@@ -26,6 +26,12 @@ type TaskRow = {
   priority: number;
   idempotency_key: string | null;
   parent_task_id: string | null;
+  review_of_task_id: string | null;
+  fixes_task_id: string | null;
+  progress_summary: string | null;
+  progress_updated_at: number | null;
+  blocked_reason: string | null;
+  expected_next_update_at: number | null;
 };
 
 function taskIdentityOwner(task: { requester?: string | null; assignee?: string | null }) {
@@ -47,7 +53,10 @@ function canSeeTask(viewer: Instance | undefined, task: Record<string, unknown>)
   return owner ? identityMatches(viewer, owner) : false;
 }
 
-type TaskRelationFields = Pick<RequestOpts, "depends_on" | "parent_task_id">;
+type TaskRelationFields = Pick<
+  RequestOpts,
+  "depends_on" | "parent_task_id" | "review_of_task_id" | "fixes_task_id"
+>;
 type TaskCreationFields = {
   id: string;
   scope: string;
@@ -61,6 +70,8 @@ type TaskCreationFields = {
   depends_on: string[] | null;
   idempotency_key: string | null;
   parent_task_id: string | null;
+  review_of_task_id: string | null;
+  fixes_task_id: string | null;
   approval_required: boolean;
 };
 type PreparedTaskInsert = TaskCreationFields & {
@@ -76,7 +87,35 @@ export interface RequestOpts {
   depends_on?: string[];
   idempotency_key?: string;
   parent_task_id?: string;
+  review_of_task_id?: string;
+  fixes_task_id?: string;
   approval_required?: boolean;
+}
+
+export interface StructuredTestResult {
+  command?: string;
+  status: "passed" | "failed" | "skipped" | "unknown";
+  notes?: string;
+}
+
+export interface StructuredCompletionResult {
+  summary: string;
+  files_changed: string[];
+  tests: StructuredTestResult[];
+  followups: string[];
+}
+
+export interface StructuredCompletionOpts {
+  status?: "done" | "failed" | "cancelled";
+  summary: string;
+  files_changed?: string[];
+  tests?: StructuredTestResult[];
+  followups?: string[];
+}
+
+export interface ProgressOpts {
+  blocked_reason?: string | null;
+  expected_next_update_at?: number | null;
 }
 
 export type RequestResult =
@@ -102,6 +141,44 @@ export type SnapshotOpts = {
 
 export interface ClaimOpts {
   ignoreUnreadMessages?: boolean;
+}
+
+export interface ClaimNextOpts extends ClaimOpts {
+  types?: TaskType[];
+  files?: string[];
+}
+
+function marks(size: number) {
+  return Array.from({ length: size }, () => "?").join(",");
+}
+
+function parseTaskFiles(value: unknown) {
+  if (typeof value === "string") return JSON.parse(value) as string[];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function hasFileOverlap(task: Record<string, unknown>, files: string[]) {
+  if (!files.length) return true;
+  const wanted = new Set(files);
+  return parseTaskFiles(task.files).some((file) => wanted.has(file));
+}
+
+function structuredCompletionResult(
+  opts: StructuredCompletionOpts,
+): StructuredCompletionResult {
+  return {
+    summary: opts.summary,
+    files_changed: [...new Set(opts.files_changed ?? [])],
+    tests: opts.tests ?? [],
+    followups: opts.followups ?? [],
+  };
+}
+
+function hasOwn<K extends string>(
+  value: object,
+  key: K,
+): value is Record<K, unknown> {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function row(task: Record<string, unknown>) {
@@ -137,7 +214,7 @@ function unreadMessageGate(scope: string, recipient: string) {
   return {
     error:
       `Unread messages pending (${count.count}). Call bootstrap or poll_messages before claiming new work, ` +
-      `or retry claim_task with ignore_unread_messages=true if you intentionally want to skip them. ` +
+      `or retry claim_task/claim_next_task with ignore_unread_messages=true if you intentionally want to skip them. ` +
       `Latest unread message: #${latest.id} from ${latest.sender}.`,
     unread_message_count: count.count,
     latest_message_id: latest.id,
@@ -314,23 +391,37 @@ function findExistingTask(scope: string, idempotency_key?: string) {
   } | null;
 }
 
+function validateExistingTaskId(scope: string, field: string, id: string) {
+  const task = db
+    .query("SELECT id FROM tasks WHERE id = ? AND scope = ?")
+    .get(id, scope);
+  if (!task) return `${field} task ${id} not found in scope`;
+  return null;
+}
+
 function validateTaskRelations(scope: string, relations: TaskRelationFields) {
   if (relations.depends_on?.length) {
     for (const depId of relations.depends_on) {
-      const dep = db
-        .query("SELECT id FROM tasks WHERE id = ? AND scope = ?")
-        .get(depId, scope);
-      if (!dep) return `Dependency task ${depId} not found in scope`;
+      const error = validateExistingTaskId(scope, "Dependency", depId);
+      if (error) return error;
     }
   }
 
-  if (!relations.parent_task_id) return null;
-  const parent = db
-    .query("SELECT id FROM tasks WHERE id = ? AND scope = ?")
-    .get(relations.parent_task_id, scope);
-  if (!parent) {
-    return `Parent task ${relations.parent_task_id} not found in scope`;
+  if (relations.parent_task_id) {
+    const error = validateExistingTaskId(scope, "Parent", relations.parent_task_id);
+    if (error) return error;
   }
+
+  if (relations.review_of_task_id) {
+    const error = validateExistingTaskId(scope, "Review target", relations.review_of_task_id);
+    if (error) return error;
+  }
+
+  if (relations.fixes_task_id) {
+    const error = validateExistingTaskId(scope, "Fix target", relations.fixes_task_id);
+    if (error) return error;
+  }
+
   return null;
 }
 
@@ -353,8 +444,12 @@ function insertPreparedTask(
   extraPayload: Record<string, unknown> = {},
 ) {
   db.run(
-    `INSERT INTO tasks (id, scope, type, title, description, requester, assignee, files, status, priority, depends_on, idempotency_key, parent_task_id, result, changed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO tasks (
+       id, scope, type, title, description, requester, assignee, files, status,
+       priority, depends_on, idempotency_key, parent_task_id, review_of_task_id,
+       fixes_task_id, result, changed_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       task.id,
       task.scope,
@@ -369,6 +464,8 @@ function insertPreparedTask(
       task.depends_on?.length ? JSON.stringify(task.depends_on) : null,
       task.idempotency_key,
       task.parent_task_id,
+      task.review_of_task_id,
+      task.fixes_task_id,
       task.result,
       stamp(),
     ],
@@ -385,6 +482,8 @@ function insertPreparedTask(
       status: task.status,
       assignee: task.assignee,
       parent_task_id: task.parent_task_id,
+      review_of_task_id: task.review_of_task_id,
+      fixes_task_id: task.fixes_task_id,
       depends_on: task.depends_on,
       files: task.files ?? null,
       priority: task.priority,
@@ -429,6 +528,8 @@ export function request(
     depends_on: opts.depends_on ?? null,
     idempotency_key: opts.idempotency_key ?? null,
     parent_task_id: opts.parent_task_id ?? null,
+    review_of_task_id: opts.review_of_task_id ?? null,
+    fixes_task_id: opts.fixes_task_id ?? null,
     approval_required: opts.approval_required ?? false,
   });
 
@@ -447,7 +548,7 @@ export function claim(
     .get(id, scope) as { status: TaskStatus; requester: string; assignee: string | null } | null;
 
   if (!before) return { error: "Task not found" };
-  const actor = getInstance(assignee);
+  const actor = getInstance(assignee) ?? undefined;
   const owner = taskIdentityOwner(before);
   if (actor && owner && !identityMatches(actor, owner)) {
     return { error: "Task belongs to another identity" };
@@ -497,6 +598,89 @@ export function claim(
   return { error: `Task is already ${task.status}` };
 }
 
+export function claimNext(
+  scope: string,
+  assignee: string,
+  opts: ClaimNextOpts = {},
+) {
+  prune();
+
+  if (!opts.ignoreUnreadMessages) {
+    const gate = unreadMessageGate(scope, assignee);
+    if (gate) return gate;
+  }
+
+  const actor = getInstance(assignee) ?? undefined;
+  const types = [...new Set(opts.types ?? [])];
+  const files = [...new Set(opts.files ?? [])];
+  const where = [
+    "scope = ?",
+    "((status = 'open' AND assignee IS NULL) OR (status = 'claimed' AND assignee = ?))",
+  ];
+  const args: unknown[] = [scope, assignee];
+
+  if (types.length > 0) {
+    where.push(`type IN (${marks(types.length)})`);
+    args.push(...types);
+  }
+
+  const tx = db.transaction(() => {
+    const candidates = db
+      .query(
+        `SELECT * FROM tasks
+         WHERE ${where.join(" AND ")}
+         ORDER BY
+           CASE WHEN status = 'claimed' AND assignee = ? THEN 0 ELSE 1 END,
+           priority DESC,
+           created_at ASC,
+           id ASC
+         LIMIT 200`,
+      )
+      .all(...args, assignee) as Array<Record<string, unknown> & { id: string; status: TaskStatus }>;
+
+    for (const candidate of candidates.map((item) => row(item)) as Array<Record<string, unknown> & { id: string; status: TaskStatus }>) {
+      if (!canSeeTask(actor, candidate)) continue;
+      if (!hasFileOverlap(candidate, files)) continue;
+
+      const result = db.run(
+        `UPDATE tasks
+         SET assignee = ?, status = 'in_progress', updated_at = unixepoch(), changed_at = ?
+         WHERE id = ? AND scope = ?
+           AND (
+             (status = 'open' AND assignee IS NULL)
+             OR (status = 'claimed' AND assignee = ?)
+           )`,
+        [assignee, stamp(), candidate.id, scope, assignee],
+      );
+
+      if (result.changes === 0) continue;
+
+      emit({
+        scope,
+        type: "task.claimed",
+        actor: assignee,
+        subject: candidate.id,
+        payload: { prior_status: candidate.status, status: "in_progress", claim_next: true },
+      });
+
+      const task = db
+        .query("SELECT * FROM tasks WHERE id = ? AND scope = ?")
+        .get(candidate.id, scope) as Record<string, unknown> | null;
+
+      return {
+        ok: true as const,
+        task_id: candidate.id,
+        prior_status: candidate.status,
+        task: task ? row(task) : null,
+      };
+    }
+
+    return { error: "No claimable task found" };
+  });
+
+  return tx();
+}
+
 export function reserveForAssignee(id: string, scope: string, assignee: string) {
   const before = db
     .query("SELECT status, assignee FROM tasks WHERE id = ? AND scope = ?")
@@ -542,7 +726,10 @@ export function update(
   const tx = db.transaction(() => {
     const task = db
       .query(
-        "SELECT id, scope, requester, assignee, status, files, depends_on FROM tasks WHERE id = ? AND scope = ?",
+        `SELECT id, scope, requester, assignee, status, files, depends_on,
+                review_of_task_id, fixes_task_id, progress_summary,
+                progress_updated_at, blocked_reason, expected_next_update_at
+         FROM tasks WHERE id = ? AND scope = ?`,
       )
       .get(id, scope) as TaskRow | null;
 
@@ -578,7 +765,11 @@ export function update(
     }
 
     db.run(
-      "UPDATE tasks SET status = ?, result = ?, updated_at = unixepoch(), changed_at = ? WHERE id = ? AND scope = ?",
+      `UPDATE tasks
+       SET status = ?, result = ?, progress_summary = NULL, progress_updated_at = NULL,
+           blocked_reason = NULL, expected_next_update_at = NULL,
+           updated_at = unixepoch(), changed_at = ?
+       WHERE id = ? AND scope = ?`,
       [status, result ?? null, stamp(), id, scope],
     );
     emit({
@@ -616,6 +807,112 @@ export function update(
     }
 
     return { ok: true as const };
+  });
+  return tx();
+}
+
+export function completeStructured(
+  id: string,
+  scope: string,
+  actor: string,
+  opts: StructuredCompletionOpts,
+) {
+  const structured = structuredCompletionResult(opts);
+  const terminalStatus = opts.status ?? "done";
+  const next = update(id, scope, actor, terminalStatus, JSON.stringify(structured));
+  if ("ok" in next) {
+    return {
+      ...next,
+      status: terminalStatus,
+      result: structured,
+    };
+  }
+  return next;
+}
+
+export function reportProgress(
+  id: string,
+  scope: string,
+  actor: string,
+  summary: string,
+  opts: ProgressOpts = {},
+) {
+  const tx = db.transaction(() => {
+    const task = db
+      .query(
+        `SELECT id, requester, assignee, status
+         FROM tasks
+         WHERE id = ? AND scope = ?`,
+      )
+      .get(id, scope) as Pick<TaskRow, "id" | "requester" | "assignee" | "status"> | null;
+
+    if (!task) return { error: "Task not found" };
+    if (["done", "failed", "cancelled"].includes(task.status)) {
+      return { error: `Task is already ${task.status}` };
+    }
+    if (task.assignee !== actor) {
+      return { error: "Only the assignee can report progress on this task" };
+    }
+    if (task.status !== "in_progress") {
+      return { error: "Task must be in_progress before progress can be reported" };
+    }
+
+    const current = db
+      .query(
+        `SELECT blocked_reason, expected_next_update_at
+         FROM tasks
+         WHERE id = ? AND scope = ?`,
+      )
+      .get(id, scope) as {
+      blocked_reason: string | null;
+      expected_next_update_at: number | null;
+    };
+
+    const hasBlockedReason = hasOwn(opts, "blocked_reason");
+    const hasExpectedNextUpdateAt = hasOwn(opts, "expected_next_update_at");
+    const blockedReason = hasBlockedReason
+      ? opts.blocked_reason ?? null
+      : current.blocked_reason;
+    const expectedNextUpdateAt = hasExpectedNextUpdateAt
+      ? opts.expected_next_update_at ?? null
+      : current.expected_next_update_at;
+    const progressUpdatedAt = now();
+
+    db.run(
+      `UPDATE tasks
+       SET progress_summary = ?, progress_updated_at = ?, blocked_reason = ?,
+           expected_next_update_at = ?, updated_at = unixepoch(), changed_at = ?
+       WHERE id = ? AND scope = ?`,
+      [
+        summary,
+        progressUpdatedAt,
+        blockedReason,
+        expectedNextUpdateAt,
+        stamp(),
+        id,
+        scope,
+      ],
+    );
+    emit({
+      scope,
+      type: "task.progress",
+      actor,
+      subject: id,
+      payload: {
+        summary,
+        blocked_reason: blockedReason,
+        expected_next_update_at: expectedNextUpdateAt,
+        progress_updated_at: progressUpdatedAt,
+      },
+    });
+
+    return {
+      ok: true as const,
+      progress_summary: summary,
+      progress_updated_at: progressUpdatedAt,
+      blocked_reason: blockedReason,
+      expected_next_update_at: expectedNextUpdateAt,
+    };
   });
   return tx();
 }
@@ -719,6 +1016,8 @@ export interface BatchTaskSpec {
   depends_on?: string[]; // mix of $N refs and external task IDs
   idempotency_key?: string;
   parent_task_id?: string; // $N ref or external task ID
+  review_of_task_id?: string; // $N ref or external task ID
+  fixes_task_id?: string; // $N ref or external task ID
   approval_required?: boolean;
 }
 
@@ -810,17 +1109,20 @@ export function requestBatch(
       }
     }
 
-    // Validate $N ref in parent_task_id
-    if (spec.parent_task_id) {
-      const n = isRef(spec.parent_task_id);
-      if (n !== null) {
-        if (n < 1 || n > specs.length) {
-          errors.push({ task_index: i, field: "parent_task_id", message: `${spec.parent_task_id} is out of range` });
-        } else if (n === i + 1) {
-          errors.push({ task_index: i, field: "parent_task_id", message: `${spec.parent_task_id} is a self-reference` });
-        } else if (n > i + 1) {
-          errors.push({ task_index: i, field: "parent_task_id", message: `${spec.parent_task_id} is a forward reference` });
-        }
+    // Validate $N refs in single-task relationship fields
+    for (const field of ["parent_task_id", "review_of_task_id", "fixes_task_id"] as const) {
+      const value = spec[field];
+      if (!value) continue;
+
+      const n = isRef(value);
+      if (n === null) continue;
+
+      if (n < 1 || n > specs.length) {
+        errors.push({ task_index: i, field, message: `${value} is out of range` });
+      } else if (n === i + 1) {
+        errors.push({ task_index: i, field, message: `${value} is a self-reference` });
+      } else if (n > i + 1) {
+        errors.push({ task_index: i, field, message: `${value} is a forward reference` });
       }
     }
 
@@ -833,12 +1135,19 @@ export function requestBatch(
   if (errors.length > 0) return { error: "Validation failed", details: errors };
 
   // Phase 3: Resolve $N refs to actual UUIDs and validate external refs
-  const resolvedSpecs: Array<{ depends_on: string[] | null; parent_task_id: string | null }> = [];
+  const resolvedSpecs: Array<{
+    depends_on: string[] | null;
+    parent_task_id: string | null;
+    review_of_task_id: string | null;
+    fixes_task_id: string | null;
+  }> = [];
 
   for (let i = 0; i < specs.length; i++) {
     const spec = specs[i];
     let resolvedDeps: string[] | null = null;
     let resolvedParent: string | null = null;
+    let resolvedReviewOf: string | null = null;
+    let resolvedFixes: string | null = null;
 
     if (spec.depends_on?.length) {
       resolvedDeps = [];
@@ -861,25 +1170,52 @@ export function requestBatch(
       }
     }
 
-    if (spec.parent_task_id) {
-      const n = isRef(spec.parent_task_id);
+    for (const field of ["parent_task_id", "review_of_task_id", "fixes_task_id"] as const) {
+      const value = spec[field];
+      if (!value) continue;
+
+      const n = isRef(value);
+      let resolvedValue: string;
       if (n !== null) {
-        resolvedParent = resolved[n - 1].id;
+        resolvedValue = resolved[n - 1].id;
       } else {
-        // External parent — validate
+        // External relationship target — validate
         if (resolved[i].isNew) {
           const ext = db
             .query("SELECT id FROM tasks WHERE id = ? AND scope = ?")
-            .get(spec.parent_task_id, scope);
+            .get(value, scope);
           if (!ext) {
-            return { error: "Validation failed", details: [{ task_index: i, field: "parent_task_id", message: `Parent task ${spec.parent_task_id} not found in scope` }] };
+            const label = field === "parent_task_id"
+              ? "Parent"
+              : field === "review_of_task_id"
+                ? "Review target"
+                : "Fix target";
+            return {
+              error: "Validation failed",
+              details: [
+                {
+                  task_index: i,
+                  field,
+                  message: `${label} task ${value} not found in scope`,
+                },
+              ],
+            };
           }
         }
-        resolvedParent = spec.parent_task_id;
+        resolvedValue = value;
       }
+
+      if (field === "parent_task_id") resolvedParent = resolvedValue;
+      if (field === "review_of_task_id") resolvedReviewOf = resolvedValue;
+      if (field === "fixes_task_id") resolvedFixes = resolvedValue;
     }
 
-    resolvedSpecs.push({ depends_on: resolvedDeps, parent_task_id: resolvedParent });
+    resolvedSpecs.push({
+      depends_on: resolvedDeps,
+      parent_task_id: resolvedParent,
+      review_of_task_id: resolvedReviewOf,
+      fixes_task_id: resolvedFixes,
+    });
   }
 
   // Phase 4: Compute statuses and insert in a single transaction
@@ -890,6 +1226,8 @@ export function requestBatch(
       const spec = specs[i];
       const deps = resolvedSpecs[i].depends_on;
       const parentId = resolvedSpecs[i].parent_task_id;
+      const reviewOfTaskId = resolvedSpecs[i].review_of_task_id;
+      const fixesTaskId = resolvedSpecs[i].fixes_task_id;
 
       const prepared = prepareTaskInsert({
         id: resolved[i].id,
@@ -904,6 +1242,8 @@ export function requestBatch(
         depends_on: deps,
         idempotency_key: spec.idempotency_key ?? null,
         parent_task_id: parentId,
+        review_of_task_id: reviewOfTaskId,
+        fixes_task_id: fixesTaskId,
         approval_required: spec.approval_required ?? false,
       });
 

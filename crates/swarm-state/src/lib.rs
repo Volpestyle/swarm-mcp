@@ -388,7 +388,9 @@ fn load_tasks(conn: &Connection) -> Result<Vec<Task>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, scope, type, title, description, requester, assignee, status, files,
-                    result, created_at, updated_at, changed_at, priority, depends_on, parent_task_id
+                    result, created_at, updated_at, changed_at, priority, depends_on,
+                    parent_task_id, review_of_task_id, fixes_task_id, progress_summary,
+                    progress_updated_at, blocked_reason, expected_next_update_at
              FROM tasks
              WHERE status NOT IN ('done', 'failed', 'cancelled') OR changed_at >= ?
              ORDER BY priority DESC, created_at ASC, id ASC",
@@ -417,6 +419,12 @@ fn load_tasks(conn: &Connection) -> Result<Vec<Task>, String> {
             depends_on: parse_json_string_array(row.get(14)?, "depends_on")
                 .map_err(|err| invalid_data_error(14, err))?,
             parent_task_id: row.get(15)?,
+            review_of_task_id: row.get(16)?,
+            fixes_task_id: row.get(17)?,
+            progress_summary: row.get(18)?,
+            progress_updated_at: row.get(19)?,
+            blocked_reason: row.get(20)?,
+            expected_next_update_at: row.get(21)?,
         })
     })
     .map_err(|err| format!("failed to query tasks: {err}"))?

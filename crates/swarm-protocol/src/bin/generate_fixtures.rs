@@ -214,6 +214,12 @@ fn sample_task() -> Task {
         priority: 5,
         depends_on: vec!["task-6".into()],
         parent_task_id: None,
+        review_of_task_id: Some("task-6".into()),
+        fixes_task_id: None,
+        progress_summary: Some("Pairing handler implemented; running review checks.".into()),
+        progress_updated_at: Some(1_745_000_118),
+        blocked_reason: None,
+        expected_next_update_at: Some(1_745_000_300),
     }
 }
 

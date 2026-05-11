@@ -101,6 +101,12 @@ pub struct Task {
     #[serde(default)]
     pub depends_on: Vec<String>,
     pub parent_task_id: Option<String>,
+    pub review_of_task_id: Option<String>,
+    pub fixes_task_id: Option<String>,
+    pub progress_summary: Option<String>,
+    pub progress_updated_at: Option<i64>,
+    pub blocked_reason: Option<String>,
+    pub expected_next_update_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

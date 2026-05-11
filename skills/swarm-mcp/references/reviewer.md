@@ -23,14 +23,14 @@ For most reviewer sessions, this checklist plus the review task is enough: claim
 
 For each review task:
 
-1. `claim_task` — moves the review to `in_progress`.
-2. Read the related implementation task result if referenced.
-3. Prefer structured results with `files_changed`, `test_status`, and `summary`.
+1. Use `claim_next_task` with `types: ["review"]` when you want the server to pick the highest-priority compatible review; use `claim_task` when you already know the review task ID.
+2. Read `review_of_task_id` when present, then inspect the linked implementation or fix task result.
+3. Prefer structured `complete_task` results with `summary`, `files_changed`, `tests`, and `followups`.
 4. To see who is holding a file, call `get_file_lock` (read-only). Reviewers rarely need `lock_file` — reach for it only to reserve a file for an upcoming hand-off, not for ordinary edits (plugin-supported runtimes enforce peer-held locks at write time).
 5. Inspect the actual changes, not only the summary.
 6. Focus on correctness, behavioral regressions, missing tests, security/privacy risks, and concurrency/file-collision issues.
-7. If approved, `update_task` the review to `done` with a concise approval summary.
-8. If changes are needed, `update_task` the review to `failed` and create a follow-up `fix` task with concrete instructions.
+7. If approved, `complete_task` the review with `status: "done"` and a concise approval summary.
+8. If changes are needed, `complete_task` the review with `status: "failed"` and create a follow-up `fix` task with concrete instructions and `fixes_task_id` pointing at the reviewed task when known.
 
 If the review is linked to a work tracker, update it only when the review task grants that authority and the configured same-identity tracker MCP is available. Otherwise include tracker-ready findings in the swarm review result.
 
@@ -56,6 +56,7 @@ Use `send_message` for review context that can wait until the target's next yiel
   "description": "Retry logic can loop indefinitely when the server omits Retry-After. Add a max attempt guard and tests.",
   "files": ["src/api/client.ts", "src/api/client.test.ts"],
   "assignee": "<implementer-instance-id>",
+  "fixes_task_id": "<reviewed-task-id>",
   "priority": 10
 }
 ```

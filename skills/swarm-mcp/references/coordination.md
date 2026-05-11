@@ -80,6 +80,7 @@ When `wait_for_activity` returns `kv_updates`:
 - Use `broadcast` for short updates all active agents need.
 - Use `request_task` for tracked work that needs ownership and a final status.
 - Use KV for compact shared state that agents should poll or resume from.
+- Use `report_progress` for long-running concrete tasks instead of ad hoc task progress KV; `swarm_status`, `get_task`, and `list_tasks` can surface that progress.
 
 If you receive a live wake prompt from another peer, call `bootstrap` or `poll_messages` and act on unread messages. Do not treat the live prompt itself as the full work contract.
 

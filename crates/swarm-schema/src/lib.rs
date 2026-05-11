@@ -27,6 +27,12 @@ const COLUMN_MIGRATIONS: &[(&str, &str)] = &[
     ("tasks", "depends_on TEXT"),
     ("tasks", "idempotency_key TEXT"),
     ("tasks", "parent_task_id TEXT"),
+    ("tasks", "review_of_task_id TEXT"),
+    ("tasks", "fixes_task_id TEXT"),
+    ("tasks", "progress_summary TEXT"),
+    ("tasks", "progress_updated_at INTEGER"),
+    ("tasks", "blocked_reason TEXT"),
+    ("tasks", "expected_next_update_at INTEGER"),
     ("context", "scope TEXT NOT NULL DEFAULT ''"),
     ("context", "task_id TEXT"),
 ];

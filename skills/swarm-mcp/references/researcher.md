@@ -20,7 +20,7 @@ For each research task:
 2. Read the task description and clarify the expected output.
 3. Investigate using read-only tools unless explicitly asked to produce a patch.
 4. Use `kv_set` for structured findings other agents should be able to inspect, such as `research/<topic>` or `findings/<task-id>`.
-5. `update_task` to `done` with a structured summary, evidence, and recommended next actions.
+5. Prefer `complete_task` with a structured summary, evidence in `followups`, and recommended next actions. Use `update_task` as a plain-string fallback.
 
 ## Result Format
 

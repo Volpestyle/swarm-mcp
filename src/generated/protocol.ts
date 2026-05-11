@@ -65,6 +65,12 @@ export interface Task {
   priority: number;
   depends_on: string[];
   parent_task_id: string | null;
+  review_of_task_id: string | null;
+  fixes_task_id: string | null;
+  progress_summary: string | null;
+  progress_updated_at: number | null;
+  blocked_reason: string | null;
+  expected_next_update_at: number | null;
 }
 
 export interface Message {

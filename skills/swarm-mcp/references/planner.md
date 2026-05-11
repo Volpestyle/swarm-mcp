@@ -28,6 +28,7 @@ The server maintains `owner/planner` automatically.
 - Use `priority`; higher values are claimed first.
 - Use `depends_on` to express ordering. Tasks with unmet dependencies start as `blocked` and auto-open when dependencies complete.
 - Use `idempotency_key` for crash-safe retries.
+- Use `review_of_task_id` on review tasks and `fixes_task_id` on fix tasks when the related task is known.
 - Make trivial, low-risk edits locally when that is clearly faster than delegation.
 - Route medium or large implementation work through `dispatch` so swarm-mcp can wake or spawn a worker via the configured workspace backend. In gateway mode, follow `references/gateway.md` for placement, completion waits, and recovery.
 
@@ -139,7 +140,7 @@ After initial setup and delegation, monitor only while you still own active coor
 
 1. Call `wait_for_activity` while delegated work, dependencies, reviews, or peer questions are outstanding.
 2. On `new_messages`, answer questions, unblock agents, and treat `[auto]` messages as actionable system notifications.
-3. On `task_updates`, review completed tasks, handle failures, create fix tasks, and plan the next batch when current work is done.
+3. On `task_updates`, review completed tasks, handle failures, create linked fix tasks, and plan the next batch when current work is done.
 4. On `kv_updates`, check implementer progress, peer planner plans, ownership changes, and `plan/latest`.
 5. On `instance_changes`, assign work to new implementers and reassign orphaned work from stale agents.
 6. If a configured timeout returns no changes, do one `bootstrap` checkpoint and continue waiting only if you still own active monitoring responsibility.

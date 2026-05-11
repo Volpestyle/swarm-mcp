@@ -17,6 +17,7 @@ import * as prompts from "./prompts";
 import * as registry from "./registry";
 import * as spawnerBackend from "./spawner_backend";
 import { registerDefaultSpawners } from "./spawner_defaults";
+import * as status from "./status";
 import * as tasks from "./tasks";
 import * as workspaceIdentity from "./workspace_identity";
 import * as workTracker from "./work_tracker";
@@ -231,6 +232,14 @@ const taskCreateShape = {
     .string()
     .optional()
     .describe("Optional parent task ID for tree-structured work tracking."),
+  review_of_task_id: z
+    .string()
+    .optional()
+    .describe("Optional task ID this review task is reviewing."),
+  fixes_task_id: z
+    .string()
+    .optional()
+    .describe("Optional task ID this fix task addresses."),
   approval_required: z
     .boolean()
     .optional()
@@ -966,6 +975,8 @@ registeredTool(
     depends_on,
     idempotency_key,
     parent_task_id,
+    review_of_task_id,
+    fixes_task_id,
     approval_required,
   }) => {
     const current = instance!;
@@ -996,6 +1007,8 @@ registeredTool(
       depends_on,
       idempotency_key,
       parent_task_id,
+      review_of_task_id,
+      fixes_task_id,
       approval_required,
     });
 
@@ -1030,7 +1043,7 @@ registeredTool(
 
 registeredTool(
   "request_task_batch",
-  "Create multiple tasks atomically in a single transaction. Supports $N references (1-indexed) for dependencies between tasks in the batch. Rolls back entirely on validation failure.",
+  "Create multiple tasks atomically in a single transaction. Supports $N references (1-indexed) for dependencies, parent links, review links, and fix links in the batch. Rolls back entirely on validation failure.",
   {
     tasks: z
       .array(
@@ -1234,7 +1247,7 @@ registeredTool(
 
 registeredTool(
   "claim_task",
-  "Start work on a task: assigns it to you (if open) and transitions to in_progress in one call. Works on open+unassigned tasks and on tasks pre-assigned to you (status=claimed).",
+  "Start work on a task: assigns it to you (if open) and transitions to in_progress in one call. Works on open+unassigned tasks and on tasks pre-assigned to you (status=claimed). Use claim_next_task when you want the server to pick the highest-priority compatible task atomically.",
   {
     task_id: z.string().describe("The task ID to claim"),
     ignore_unread_messages: z
@@ -1255,8 +1268,41 @@ registeredTool(
 );
 
 registeredTool(
+  "claim_next_task",
+  "Atomically claim the highest-priority compatible task. Prefers tasks pre-assigned to you, then open unassigned tasks. Optional filters let specialists claim only matching task types or files.",
+  {
+    types: z
+      .array(taskTypeSchema)
+      .optional()
+      .describe("Optional task types to consider, such as ['implement'] or ['review']"),
+    files: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Optional resolved file paths to match against task files. A task matches when any listed file overlaps.",
+      ),
+    ignore_unread_messages: z
+      .boolean()
+      .optional()
+      .describe(
+        "Set true only when intentionally claiming despite unread messages. Default false blocks claiming until poll_messages is called.",
+      ),
+  },
+  async ({ types, files, ignore_unread_messages }) => {
+    const current = instance!;
+    return respondJson(
+      tasks.claimNext(current.scope, current.id, {
+        types,
+        files: files?.map((item) => resolveFileInput(item)),
+        ignoreUnreadMessages: ignore_unread_messages,
+      }),
+    );
+  },
+);
+
+registeredTool(
   "update_task",
-  "Move a claimed/in_progress task to a terminal status (done, failed, cancelled). claim_task already transitions to in_progress, so this is the single completion call. Auto-releases this instance's locks on the task's files.",
+  "Move a task to a terminal status (done, failed, cancelled). Auto-releases this instance's locks on the task's files. Prefer complete_task when you can provide structured handoff details.",
   {
     task_id: z.string().describe("The task ID"),
     status: z.enum(["done", "failed", "cancelled"]).describe("Terminal status"),
@@ -1273,7 +1319,7 @@ registeredTool(
       result,
     );
 
-    if (!("ok" in next)) return respondJson(next);
+    if (next.ok !== true) return respondJson(next);
 
     const response: Record<string, unknown> = { ...next };
 
@@ -1302,6 +1348,112 @@ registeredTool(
     }
 
     return respondJson(response);
+  },
+);
+
+const structuredTestResultShape = z.object({
+  command: z.string().optional().describe("Command that was run, such as 'bun test'"),
+  status: z
+    .enum(["passed", "failed", "skipped", "unknown"])
+    .describe("Outcome for this verification step"),
+  notes: z.string().optional().describe("Optional details about the result"),
+});
+
+registeredTool(
+  "complete_task",
+  "Complete a claimed task with structured handoff details. Stores the task result as JSON with summary, files_changed, tests, and followups, then auto-releases locks on the task's files.",
+  {
+    task_id: z.string().describe("The task ID"),
+    status: z
+      .enum(["done", "failed", "cancelled"])
+      .optional()
+      .default("done")
+      .describe("Terminal status. Defaults to done."),
+    summary: z.string().describe("Concise summary of what changed or what happened"),
+    files_changed: z
+      .array(z.string())
+      .optional()
+      .describe("Files changed or materially inspected for this task"),
+    tests: z
+      .array(structuredTestResultShape)
+      .optional()
+      .describe("Verification commands or checks and their outcomes"),
+    followups: z
+      .array(z.string())
+      .optional()
+      .describe("Follow-up work, risks, or reviewer notes"),
+  },
+  async ({ task_id, status: terminalStatus, summary, files_changed, tests, followups }) => {
+    const current = instance!;
+    const statusValue = terminalStatus ?? "done";
+    const blockedBefore = statusValue === "done" ? assignedBlockedTasks(current.scope, current) : new Map();
+    const next = tasks.completeStructured(task_id, current.scope, current.id, {
+      status: statusValue,
+      summary,
+      files_changed: files_changed?.map((item) => resolveFileInput(item)),
+      tests,
+      followups,
+    });
+
+    if (next.ok !== true) return respondJson(next);
+
+    const response: Record<string, unknown> = { ...next };
+
+    if (statusValue === "done" || statusValue === "failed") {
+      const task = tasks.get(task_id, current.scope, current);
+      if (task && typeof task.requester === "string" && task.requester !== current.id) {
+        response.prompt = autoPromptPeer({
+          scope: current.scope,
+          sender: current.id,
+          recipient: task.requester,
+          task: task_id,
+          message: `[auto] Task "${task.title}" (${task_id}) is now ${statusValue}. Summary: ${next.result.summary}`,
+        });
+      }
+    }
+
+    if (statusValue === "done") {
+      const unblockedPrompts = notifyAssignedUnblockedTasks({
+        scope: current.scope,
+        sender: current.id,
+        viewer: current,
+        before: blockedBefore,
+      });
+      if (unblockedPrompts.length) response.unblocked_prompts = unblockedPrompts;
+    }
+
+    return respondJson(response);
+  },
+);
+
+registeredTool(
+  "report_progress",
+  "Report first-class progress on an in-progress task so peers can see status without interrupting. Use for multi-minute work; skip for short tasks.",
+  {
+    task_id: z.string().describe("The task ID"),
+    summary: z.string().describe("Short current progress summary"),
+    blocked_reason: z
+      .string()
+      .nullable()
+      .optional()
+      .describe("Why progress is blocked. Pass null to clear an earlier blocked reason."),
+    expected_next_update_at: z
+      .number()
+      .int()
+      .nullable()
+      .optional()
+      .describe("Unix timestamp in seconds for the next expected progress update. Pass null to clear."),
+  },
+  async ({ task_id, summary, blocked_reason, expected_next_update_at }) => {
+    const current = instance!;
+    const progressOpts: tasks.ProgressOpts = {};
+    if (blocked_reason !== undefined) progressOpts.blocked_reason = blocked_reason;
+    if (expected_next_update_at !== undefined) {
+      progressOpts.expected_next_update_at = expected_next_update_at;
+    }
+    return respondJson(
+      tasks.reportProgress(task_id, current.scope, current.id, summary, progressOpts),
+    );
   },
 );
 
@@ -1384,7 +1536,7 @@ registeredTool(
 
 registeredTool(
   "lock_file",
-  "Acquire an edit lock on a file. Returns the new lock id on success or the active lock owner on conflict. Normal edit locks held by this instance are auto-released when their task reaches a terminal state via update_task. Pass task_id to associate the lock with a specific task — terminal release will then pick it up by task_id regardless of whether the file appears in the task's declared files list (use this when editing files outside the original task.files set). Pass exclusive=true to require that no lock exists on the file (including one held by this same instance) — useful for one-shot operations like spawn mutexes where same-instance re-entry is itself a conflict.",
+  "Acquire an edit lock on a file. Returns the new lock id on success or the active lock owner on conflict. Normal edit locks held by this instance are auto-released when their task reaches a terminal state via update_task or complete_task. Pass task_id to associate the lock with a specific task — terminal release will then pick it up by task_id regardless of whether the file appears in the task's declared files list (use this when editing files outside the original task.files set). Pass exclusive=true to require that no lock exists on the file (including one held by this same instance) — useful for one-shot operations like spawn mutexes where same-instance re-entry is itself a conflict.",
   {
     file: z.string().describe("File path to lock"),
     reason: z.string().optional().describe("Why you're locking it"),
@@ -1392,7 +1544,7 @@ registeredTool(
       .string()
       .optional()
       .describe(
-        "Optional task ID to associate this lock with. When the named task reaches a terminal status via update_task, locks tagged with this task_id are released regardless of whether the file is in task.files.",
+        "Optional task ID to associate this lock with. When the named task reaches a terminal status via update_task or complete_task, locks tagged with this task_id are released regardless of whether the file is in task.files.",
       ),
     exclusive: z
       .boolean()
@@ -1417,7 +1569,7 @@ registeredTool(
 
 registeredTool(
   "unlock_file",
-  "Release a file lock early. Locks are auto-released on terminal update_task, so call this only when you finish a file before the task as a whole.",
+  "Release a file lock early. Locks are auto-released on terminal update_task or complete_task, so call this only when you finish a file before the task as a whole.",
   { file: z.string().describe("File path to unlock") },
   async ({ file }) => {
     const current = instance!;
@@ -1497,6 +1649,14 @@ registeredTool(
   async ({ prefix }) => {
     return respondJson(kv.keys(instance!.scope, prefix, instance!.id));
   },
+);
+
+registeredTool(
+  "swarm_status",
+  "Return a compact coordination health summary for this instance: peers, unread messages, assigned and claimable tasks, locks, collision/compliance warnings, planner ownership, and a suggested next action.",
+  {},
+  { readOnlyHint: true },
+  async () => respondJson(status.buildStatus(instance!)),
 );
 
 (server.tool as any)(

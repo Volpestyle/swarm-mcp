@@ -2997,6 +2997,12 @@ mod tests {
                 priority: 1,
                 depends_on: vec![],
                 parent_task_id: None,
+                review_of_task_id: None,
+                fixes_task_id: None,
+                progress_summary: None,
+                progress_updated_at: None,
+                blocked_reason: None,
+                expected_next_update_at: None,
             }],
             messages: vec![swarm_protocol::Message {
                 id: 12,

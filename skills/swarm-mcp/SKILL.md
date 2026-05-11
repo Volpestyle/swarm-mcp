@@ -23,12 +23,12 @@ If the user invoked this skill with a role argument, follow the matching role re
 ## Default Flow
 
 1. Call `register`, unless a hook already did it.
-2. Call `bootstrap` for `{instance, peers, unread_messages, tasks}`.
+2. Call `bootstrap` for `{instance, peers, unread_messages, tasks}`. Use `swarm_status` when you need a compact next-action summary with task/lock warnings.
 3. Handle unread messages before claiming work. If your live interface was woken by a peer prompt, call `bootstrap` or `poll_messages` first; the durable instruction is in swarm messages.
-4. Claim the highest-priority open task that matches your role.
+4. Use `claim_next_task` for the highest-priority compatible task unless you already know a specific `task_id` for `claim_task`.
 5. Edit normally — plugin-supported runtimes (Hermes, Claude Code, Codex) check write tools against peer-held locks. Call `lock_file` only when you need a wider critical section (see Locking below).
 6. Coordinate through `request_task`, `dispatch` (gateway only), `send_message`, `prompt_peer`, `broadcast`, and KV.
-7. Finish with one `update_task` using terminal status and a structured result.
+7. Finish with `complete_task` when you can provide structured handoff details; use terminal `update_task` as a plain-string fallback.
 
 ## Locking
 
@@ -62,7 +62,7 @@ When the role is unclear, do not invent one. Ask one short question or proceed a
 ## Core Rules
 
 - **Priority**: Tasks have an integer `priority` field (higher = more urgent). `list_tasks` returns tasks sorted by priority. Claim the highest-priority open task first.
-- **Unread-message guard**: `claim_task` refuses to claim new open work while you have unread direct messages. Call `poll_messages` and handle corrections before retrying. Override only when intentionally ignoring those messages.
+- **Unread-message guard**: `claim_task` and `claim_next_task` refuse to claim new open work while you have unread direct messages. Call `poll_messages` and handle corrections before retrying. Override only when intentionally ignoring those messages.
 - **Dependencies**: Tasks can have a `depends_on` field (array of task IDs). A task with unmet dependencies starts as `blocked` and auto-transitions to `open` when all deps complete. If a dependency fails, downstream tasks are auto-cancelled.
 - **Approval gates**: Tasks can be set to `approval_required` status. They remain gated until approved (transitions to `open`) or explicitly cancelled. Use this for true approval checkpoints, not routine code review.
 - **Idempotency**: Tasks can have an `idempotency_key` field that prevents duplicate creation on retry.
@@ -121,7 +121,7 @@ Deregister only when you are actually exiting, ending a one-shot session, or oth
 - Fall back to any matching specialist, then to a generalist, when the ideal collaborator is unavailable
 - Use `wait_for_activity` as a blocking monitor while you are responsible for a result, not as idle availability. Peers may wake you with a short prompt to call `poll_messages` or `bootstrap`.
 - If you are acting as a planner, watch `owner/planner` on `kv_updates` so you can resume from `plan/latest` after failover
-- Update your progress with `kv_set("progress/<your-instance-id>", ...)` while working on tasks so others can check on you without interrupting
+- For long-running concrete tasks, use `report_progress` so others can inspect task-local progress without interrupting; include `blocked_reason` and `expected_next_update_at` only when useful
 - Messages prefixed with `[auto]` are system notifications (task assignments, completions, stale-agent recovery) — treat them like any other actionable message
 - When you receive a `[signal:complete]` broadcast, the planner is signaling all planned work is done. Finish current work, publish final status, then idle or deregister if you are exiting.
 - In gateway/lead mode, no live worker is a spawn problem, not a native-subagent fallback. Load `references/gateway.md` before dispatching, spawning, setting `placement`, or using `completion_wait_seconds`. Worker/generalist sessions do not spawn new workers; they request tracked work, message the planner/gateway, or continue locally when safe.
@@ -142,14 +142,17 @@ For synchronous CLI wrappers, `swarm-mcp dispatch --wait-for-completion <seconds
 
 ## Structured Results Convention
 
-When completing a task, prefer a JSON `result`:
+When completing a task, prefer `complete_task`:
 
 ```json
 {
+  "task_id": "<task-id>",
+  "status": "done",
+  "summary": "What was done and why.",
   "files_changed": ["src/foo.ts"],
-  "test_status": "pass",
-  "summary": "What was done and why."
+  "tests": [{ "command": "bun test", "status": "passed" }],
+  "followups": []
 }
 ```
 
-Fall back to a plain string if you cannot produce structured output.
+Fall back to terminal `update_task` with a plain string when structured handoff is not useful.

@@ -143,10 +143,14 @@ Tasks support several features for building autonomous DAG-based workflows:
 
 | Feature | Description |
 |---------|-------------|
-| `priority` | Integer (default 0). Higher = more urgent. `list_tasks` returns tasks sorted by priority descending. Implementers claim the highest-priority open task first. |
+| `priority` | Integer (default 0). Higher = more urgent. `list_tasks` returns tasks sorted by priority descending. Implementers can use `claim_next_task` to atomically claim the highest-priority compatible task. |
 | `depends_on` | Array of task IDs. A task with unmet dependencies starts as `blocked` and auto-transitions to `open` when all deps reach `done`. If any dependency fails, downstream tasks are auto-cancelled. |
 | `idempotency_key` | Unique string. If a task with this key already exists, `request_task` returns the existing task instead of creating a duplicate. Essential for crash-safe plan retries. |
 | `parent_task_id` | Optional parent task ID for tree-structured work tracking. |
+| `review_of_task_id` | Optional task ID that a `review` task is reviewing. Supports `$N` references inside `request_task_batch`. |
+| `fixes_task_id` | Optional task ID that a `fix` task addresses. Supports `$N` references inside `request_task_batch`. |
+| `progress_summary` / `progress_updated_at` | First-class progress fields maintained by `report_progress` so peers can inspect long-running work without interrupting. |
+| `blocked_reason` / `expected_next_update_at` | Optional progress metadata for work that is blocked or needs a follow-up heartbeat by a specific Unix timestamp. |
 | `approval_required` | If true, task starts in `approval_required` status and must be approved via `approve_task` before work begins. Use this for true approval gates, not routine code review. |
 
 Task statuses: `open`, `claimed`, `in_progress`, `done`, `failed`, `cancelled`, `blocked`, `approval_required`.
@@ -191,6 +195,7 @@ Run `swarm-mcp cleanup --dry-run --json` to inspect what the janitor would remov
 | `register`        | Join the swarm. Starts heartbeat + notification poller. See [Registration fields](#registration-fields). |
 | `deregister`      | Leave the swarm gracefully. Releases tasks and locks.                                                                |
 | `bootstrap`       | Yield-checkpoint read for current instance, peers, unread messages, tasks, and configured work tracker metadata. |
+| `swarm_status`    | Compact coordination summary: peers, unread messages, assigned/claimable tasks, locks, warnings, planner ownership, and suggested next action. |
 | `list_instances`  | List all live instances.                                                                                             |
 | `remove_instance` | Forcefully remove another instance. Releases its tasks and locks.                                                    |
 | `whoami`          | Get this instance's swarm ID.                                                                                        |
@@ -210,11 +215,14 @@ Run `swarm-mcp cleanup --dry-run --json` to inspect what the janitor would remov
 
 | Tool                 | Description                                                                                                               |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `request_task`       | Post a task (types: `review`, `implement`, `fix`, `test`, `research`, `other`). Use `review` for routine code review handoff. Supports `priority`, `depends_on`, `idempotency_key`, `parent_task_id`, and `approval_required`. |
-| `request_task_batch` | Create multiple tasks atomically in a single transaction. Supports `$N` references (1-indexed) for intra-batch dependencies. |
+| `request_task`       | Post a task (types: `review`, `implement`, `fix`, `test`, `research`, `other`). Use `review` for routine code review handoff. Supports `priority`, `depends_on`, `idempotency_key`, `parent_task_id`, `review_of_task_id`, `fixes_task_id`, and `approval_required`. |
+| `request_task_batch` | Create multiple tasks atomically in a single transaction. Supports `$N` references (1-indexed) for dependencies, parent links, review links, and fix links. |
 | `dispatch`           | Gateway-only: create/reuse a task, wake a matching live worker, or spawn through the configured spawner backend. Ordinary workers should not call this. Pass `completion_wait_seconds` only when the caller wants to wait for terminal task completion; default dispatch returns immediately after handoff/spawn. |
-| `claim_task`         | Start work on a task: assigns and transitions to `in_progress` in one call. Prevents double-claiming and blocks on unread messages until `poll_messages` (or explicit override). Also accepts tasks pre-assigned to you (status=`claimed`). |
-| `update_task`        | Move a task to a terminal status (`done`, `failed`, `cancelled`). Auto-releases the actor's locks on the task's files. Attach a result when useful. |
+| `claim_task`         | Start work on a specific task: assigns and transitions to `in_progress` in one call. Prevents double-claiming and blocks on unread messages until `poll_messages` (or explicit override). Also accepts tasks pre-assigned to you (status=`claimed`). |
+| `claim_next_task`    | Atomically pick and claim the highest-priority compatible task. Prefers tasks pre-assigned to you, then open unassigned tasks. Optional filters support task `types` and overlapping `files`. |
+| `report_progress`    | Update first-class progress fields on an `in_progress` task, including optional `blocked_reason` and `expected_next_update_at`. Use for multi-minute or blocked work. |
+| `complete_task`      | Complete a claimed task with structured JSON result fields: `summary`, `files_changed`, `tests`, and `followups`. Prefer this over `update_task` when you can provide structured handoff details. |
+| `update_task`        | Move a task to a terminal status (`done`, `failed`, `cancelled`). Auto-releases the actor's locks on the task's files. Use as a plain-string fallback or when structured completion is not useful. |
 | `approve_task`       | Approve a task in `approval_required` status. Transitions to `open`/`claimed` (or `blocked` if deps unmet).               |
 | `get_task`           | Get full details of a task.                                                                                               |
 | `list_tasks`         | Filter tasks by status, assignee, or requester. Sorted by priority (highest first).                                       |
@@ -224,7 +232,7 @@ Run `swarm-mcp cleanup --dry-run --json` to inspect what the janitor would remov
 | Tool             | Description                                                   |
 | ---------------- | ------------------------------------------------------------- |
 | `get_file_lock`  | Read active lock state for a file without acquiring a lock. |
-| `lock_file`      | Acquire a file lock. Re-entrant for the same instance by default; pass `exclusive=true` to conflict on any existing lock (including same-instance) for one-shot mutexes like spawn coordination. Locks auto-release on terminal `update_task`. |
+| `lock_file`      | Acquire a file lock. Re-entrant for the same instance by default; pass `exclusive=true` to conflict on any existing lock (including same-instance) for one-shot mutexes like spawn coordination. Locks auto-release on terminal `update_task` or `complete_task`. |
 | `unlock_file`    | Release a file lock early (before the task as a whole completes). |
 
 ### Key-value store

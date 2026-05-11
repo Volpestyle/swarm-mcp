@@ -38,7 +38,17 @@ CREATE TABLE IF NOT EXISTS tasks (
   result TEXT,
   created_at INTEGER NOT NULL DEFAULT (unixepoch()),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-  changed_at INTEGER NOT NULL DEFAULT 0
+  changed_at INTEGER NOT NULL DEFAULT 0,
+  priority INTEGER NOT NULL DEFAULT 0,
+  depends_on TEXT,
+  idempotency_key TEXT,
+  parent_task_id TEXT,
+  review_of_task_id TEXT,
+  fixes_task_id TEXT,
+  progress_summary TEXT,
+  progress_updated_at INTEGER,
+  blocked_reason TEXT,
+  expected_next_update_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS context (
