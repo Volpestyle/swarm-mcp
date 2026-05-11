@@ -1,8 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import bootstrapAsset from "../sql/swarm_db_bootstrap.sql";
-import finalizeAsset from "../sql/swarm_db_finalize.sql";
 
 const path =
   process.env.SWARM_DB_PATH ?? join(homedir(), ".swarm-mcp", "swarm.db");
@@ -36,13 +34,12 @@ const raw: RawDb = await (async () => {
   return new BetterSqlite3(path) as unknown as RawDb;
 })();
 
-function loadSql(asset: string) {
-  if (asset.includes("\n") || asset.includes("CREATE TABLE")) return asset;
-  return readFileSync(asset, "utf8");
+function loadSql(name: string) {
+  return readFileSync(new URL(`../sql/${name}`, import.meta.url), "utf8");
 }
 
-const bootstrapSql = loadSql(bootstrapAsset);
-const finalizeSql = loadSql(finalizeAsset);
+const bootstrapSql = loadSql("swarm_db_bootstrap.sql");
+const finalizeSql = loadSql("swarm_db_finalize.sql");
 const SWARM_DB_VERSION = (() => {
   const match = bootstrapSql.match(/PRAGMA\s+user_version\s*=\s*(\d+)/i);
   if (!match) throw new Error("swarm DB bootstrap SQL is missing PRAGMA user_version");
