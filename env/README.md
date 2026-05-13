@@ -24,13 +24,15 @@ There is no minimum or maximum. Common shapes:
 ```sh
 mkdir -p ~/.config/swarm-mcp
 
-# Generic template — copy once per profile and edit:
-cp env/profile.env.example ~/.config/swarm-mcp/<profile>.env
+# Single-profile starter (recommended if you don't need a personal/work split):
+cp env/default.env.example ~/.config/swarm-mcp/default.env
 
-# Or start from the concrete examples that come pre-filled with the common
-# personal/work shape:
+# Or use the personal/work split, pre-filled with that classic shape:
 cp env/personal.env.example ~/.config/swarm-mcp/personal.env
 cp env/work.env.example     ~/.config/swarm-mcp/work.env
+
+# Or a fully generic template you copy once per profile name:
+cp env/profile.env.example ~/.config/swarm-mcp/<profile>.env
 ```
 
 Edit each copy for your actual MCP names, tracker teams, repos, and config
