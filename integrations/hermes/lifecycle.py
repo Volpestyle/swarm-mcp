@@ -67,9 +67,10 @@ def _resolved_identity() -> str:
     if not _warned_missing_identity:
         logger.warning(
             "swarm plugin: hermes session has no AGENT_IDENTITY / SWARM_HERMES_IDENTITY / "
-            "SWARM_IDENTITY env set. Falling back to identity:unknown. Launch via "
-            "hermesp (personal) or hermesw (work) to get a real identity token; raw "
-            "hermes bypasses the launcher and leaves the swarm boundary undefined."
+            "SWARM_IDENTITY env set. Falling back to identity:unknown. Launch via the "
+            "identity launcher alias defined for your hermes profile (see "
+            "swarm-mcp/env/README.md) to get a real identity token; bypassing the "
+            "wrapper leaves the swarm boundary undefined."
         )
         _warned_missing_identity = True
     return "unknown"

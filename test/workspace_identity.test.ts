@@ -9,9 +9,26 @@ import type {
   WorkspaceIdentity,
 } from "../src/workspace_backend";
 
-process.env.SWARM_DB_PATH = join(
-  mkdtempSync(join(tmpdir(), "swarm-workspace-identity-")),
-  "swarm.db",
+const __fixtureDir = mkdtempSync(join(tmpdir(), "swarm-workspace-identity-"));
+process.env.SWARM_DB_PATH = join(__fixtureDir, "swarm.db");
+process.env.SWARM_MCP_PROFILE_DIR = __fixtureDir;
+writeFileSync(
+  join(__fixtureDir, "personal.env"),
+  [
+    "SWARM_HARNESS_CLAUDE=clowd",
+    "SWARM_HARNESS_CODEX=cdx",
+    "SWARM_HARNESS_OPENCODE=opc",
+    "SWARM_HARNESS_HERMES=hermesp",
+  ].join("\n"),
+);
+writeFileSync(
+  join(__fixtureDir, "work.env"),
+  [
+    "SWARM_HARNESS_CLAUDE=clawd",
+    "SWARM_HARNESS_CODEX=codex",
+    "SWARM_HARNESS_OPENCODE=opencode",
+    "SWARM_HARNESS_HERMES=hermesw",
+  ].join("\n"),
 );
 
 const here = dirname(fileURLToPath(import.meta.url));

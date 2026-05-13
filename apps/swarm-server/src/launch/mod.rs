@@ -10,18 +10,7 @@ use swarm_protocol::rpc::SpawnPtyRequest;
 use crate::error::ServerError;
 
 const DEFAULT_ROLES: &[&str] = &["planner", "implementer", "reviewer", "researcher"];
-const HARNESSES: &[&str] = &[
-    "shell",
-    "claude",
-    "clawd",
-    "clowd",
-    "codex",
-    "cdx",
-    "opencode",
-    "opc",
-    "hermesw",
-    "hermesp",
-];
+const HARNESS_MAX_LEN: usize = 32;
 const DEFAULT_PATH_SEGMENTS: &[&str] = &[
     "/opt/homebrew/bin",
     "/usr/local/bin",
@@ -260,13 +249,28 @@ fn merged_path() -> String {
 
 fn validate_harness_name(harness: &str) -> Result<&str, ServerError> {
     let trimmed = harness.trim();
-    if HARNESSES.contains(&trimmed) {
-        Ok(trimmed)
-    } else {
-        Err(ServerError::validation(format!(
-            "unsupported harness: {harness}"
-        )))
+    if trimmed.is_empty() {
+        return Err(ServerError::validation("harness must not be empty"));
     }
+    if trimmed.len() > HARNESS_MAX_LEN {
+        return Err(ServerError::validation(format!(
+            "harness name too long (max {HARNESS_MAX_LEN}): {harness}"
+        )));
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err(ServerError::validation(format!(
+            "harness may only contain letters, digits, dashes, dots, and underscores: {harness}"
+        )));
+    }
+    if trimmed.starts_with('-') || trimmed.starts_with('.') {
+        return Err(ServerError::validation(format!(
+            "harness must not start with '-' or '.': {harness}"
+        )));
+    }
+    Ok(trimmed)
 }
 
 fn validate_role(
@@ -397,8 +401,10 @@ mod tests {
     }
 
     #[test]
-    fn personal_identity_launchers_are_accepted() {
-        for harness in ["clowd", "cdx", "opc", "clawd", "hermesw", "hermesp"] {
+    fn user_defined_launcher_aliases_are_accepted() {
+        // Harness names are user-defined per profile; the server just validates
+        // shape (safe identifier, length cap) and passes the name through.
+        for harness in ["clowd", "cdx", "my-custom-launcher", "agent_v2", "scout.1"] {
             let plan = build_launch_plan(&request(harness), &LaunchConfig::load())
                 .unwrap_or_else(|err| panic!("{harness} should be a valid harness: {err:?}"));
             assert_eq!(plan.display_command, harness);
@@ -408,6 +414,17 @@ mod tests {
                 Some(harness)
             );
         }
+    }
+
+    #[test]
+    fn validate_harness_rejects_unsafe_names() {
+        assert!(validate_harness_name("").is_err());
+        assert!(validate_harness_name("has space").is_err());
+        assert!(validate_harness_name("has;semicolon").is_err());
+        assert!(validate_harness_name("-leading-dash").is_err());
+        assert!(validate_harness_name(".leading-dot").is_err());
+        let too_long = "x".repeat(HARNESS_MAX_LEN + 1);
+        assert!(validate_harness_name(&too_long).is_err());
     }
 
     #[test]

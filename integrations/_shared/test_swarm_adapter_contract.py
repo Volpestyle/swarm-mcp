@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -55,32 +56,49 @@ class SwarmAdapterContractTests(unittest.TestCase):
             ],
         )
 
-    def test_personal_herdr_socket_prefers_host_session_socket(self) -> None:
+    def test_resolved_herdr_socket_path_reads_profile_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as profile_dir:
+            for profile, socket in (
+                ("personal", "/run/herdr-personal.sock"),
+                ("work", "/run/herdr-work.sock"),
+            ):
+                with open(os.path.join(profile_dir, f"{profile}.env"), "w") as handle:
+                    handle.write(f"HERDR_SOCKET_PATH={socket}\n")
+
+            with mock.patch.dict(
+                os.environ,
+                {"SWARM_MCP_PROFILE_DIR": profile_dir},
+                clear=True,
+            ):
+                self.assertEqual(
+                    contract.resolved_herdr_socket_path("personal"),
+                    "/run/herdr-personal.sock",
+                )
+                self.assertEqual(
+                    contract.resolved_herdr_socket_path("work"),
+                    "/run/herdr-work.sock",
+                )
+
+    def test_resolved_herdr_socket_path_honors_explicit_env(self) -> None:
         with mock.patch.dict(
             os.environ,
-            {
-                "HERMES_HOST_HOME": "/Users/james.volpe",
-                "HOME": "/sandbox/home",
-            },
+            {"HERDR_SOCKET_PATH": "/custom/herdr.sock"},
             clear=True,
         ):
             self.assertEqual(
                 contract.resolved_herdr_socket_path("personal"),
-                os.path.abspath(
-                    "/Users/james.volpe/.config/herdr/sessions/personal/herdr.sock"
-                ),
+                "/custom/herdr.sock",
             )
 
-    def test_work_identity_gets_separate_host_herdr_socket_default(self) -> None:
-        with mock.patch.dict(
-            os.environ,
-            {"HERMES_HOST_HOME": "/Users/james.volpe", "HOME": "/sandbox/home"},
-            clear=True,
-        ):
-            self.assertEqual(
-                contract.resolved_herdr_socket_path("work"),
-                os.path.abspath("/Users/james.volpe/.config/herdr/sessions/work/herdr.sock"),
-            )
+    def test_resolved_herdr_socket_path_empty_when_no_profile_or_env(self) -> None:
+        with tempfile.TemporaryDirectory() as profile_dir:
+            with mock.patch.dict(
+                os.environ,
+                {"SWARM_MCP_PROFILE_DIR": profile_dir},
+                clear=True,
+            ):
+                self.assertEqual(contract.resolved_herdr_socket_path("missing"), "")
+                self.assertEqual(contract.resolved_herdr_socket_path(""), "")
 
 
 if __name__ == "__main__":

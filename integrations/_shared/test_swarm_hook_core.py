@@ -114,11 +114,16 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertIn('adopt_instance_id="inst-1"', rendered)
         self.assertNotIn("Call the `register` tool", rendered)
 
-    def test_session_start_personal_gateway_defaults_to_shared_herdr_socket(self) -> None:
+    def test_session_start_personal_gateway_loads_herdr_socket_from_profile_env(self) -> None:
+        profile_dir = tempfile.mkdtemp(prefix="swarm-test-profile-")
+        self.addCleanup(shutil.rmtree, profile_dir, ignore_errors=True)
+        expected_socket = "/run/herdr-personal-test.sock"
+        with open(os.path.join(profile_dir, "personal.env"), "w") as handle:
+            handle.write(f"HERDR_SOCKET_PATH={expected_socket}\n")
+
         os.environ["SWARM_TEST_IDENTITY"] = "personal"
         os.environ["SWARM_TEST_ROLE"] = "gateway"
-        os.environ["HERMES_HOST_HOME"] = "/Users/james.volpe"
-        os.environ["HOME"] = "/sandbox/home"
+        os.environ["SWARM_MCP_PROFILE_DIR"] = profile_dir
         os.environ["HERDR_PANE_ID"] = "pane-1"
 
         calls: list[list[str]] = []
@@ -135,10 +140,6 @@ class HookCoreLifecycleTests(unittest.TestCase):
             if args[:2] == ["kv", "set"]:
                 return 0, "", ""
             return 1, "", "unexpected"
-
-        expected_socket = (
-            "/Users/james.volpe/.config/herdr/sessions/personal/herdr.sock"
-        )
         pane_payload = {
             "result": {
                 "pane": {
