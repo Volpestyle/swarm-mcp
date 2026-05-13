@@ -165,13 +165,67 @@ swarm_define_profile() {
   fi
 }
 
-# --- Example profiles (copy and edit) -----------------------------------------
+# --- Auto-discovery -----------------------------------------------------------
 #
-# Two-profile setup — "personal" + "work" is just one common pattern. Profile
-# names are arbitrary; pick whatever boundary you want to enforce (per client,
-# per account, per environment, …) and reuse the same shape.
+# Scan $SWARM_ENV_DIR for *.env files and call swarm_define_profile for each,
+# using the SWARM_HARNESS_* values declared in the file. This makes profile
+# setup a single step: drop ~/.config/swarm-mcp/<name>.env and the matching
+# aliases appear on next shell. Manual swarm_define_profile calls (below or in
+# your own dotfiles) still work and override the auto-defined ones.
 #
-# # Personal profile:
+# Opt out by setting SWARM_MCP_DISABLE_AUTODEFINE=1 before sourcing this file.
+
+swarm_autodefine_profiles() {
+  emulate -L zsh
+  setopt local_options null_glob extended_glob
+
+  [[ -n "${SWARM_MCP_DISABLE_AUTODEFINE:-}" ]] && return 0
+  [[ -d "$SWARM_ENV_DIR" ]] || return 0
+
+  local env_file profile
+  local claude_alias codex_alias opencode_alias hermes_alias
+  local claude_lead_alias codex_lead_alias herdr_alias
+  local -a args
+
+  for env_file in "$SWARM_ENV_DIR"/*.env(.N); do
+    [[ -r "$env_file" ]] || continue
+    profile="${env_file:t:r}"
+
+    # Read SWARM_HARNESS_* from the file in a subshell so per-profile
+    # AGENT_IDENTITY / SWARM_DB_PATH don't leak into the parent shell.
+    eval "$(
+      source "$env_file" 2>/dev/null
+      printf 'claude_alias=%q\n'      "${SWARM_HARNESS_CLAUDE:-}"
+      printf 'codex_alias=%q\n'       "${SWARM_HARNESS_CODEX:-}"
+      printf 'opencode_alias=%q\n'    "${SWARM_HARNESS_OPENCODE:-}"
+      printf 'hermes_alias=%q\n'      "${SWARM_HARNESS_HERMES:-}"
+      printf 'claude_lead_alias=%q\n' "${SWARM_HARNESS_CLAUDE_LEAD:-}"
+      printf 'codex_lead_alias=%q\n'  "${SWARM_HARNESS_CODEX_LEAD:-}"
+      printf 'herdr_alias=%q\n'       "${SWARM_HARNESS_HERDR:-}"
+    )"
+
+    args=()
+    [[ -n "$claude_alias" ]]      && args+=("claude=$claude_alias")
+    [[ -n "$codex_alias" ]]       && args+=("codex=$codex_alias")
+    [[ -n "$opencode_alias" ]]    && args+=("opencode=$opencode_alias")
+    [[ -n "$hermes_alias" ]]      && args+=("hermes=$hermes_alias")
+    [[ -n "$claude_lead_alias" ]] && args+=("claude_lead=$claude_lead_alias")
+    [[ -n "$codex_lead_alias" ]]  && args+=("codex_lead=$codex_lead_alias")
+    [[ -n "$herdr_alias" ]]       && args+=("herdr=$herdr_alias")
+
+    (( ${#args[@]} > 0 )) && swarm_define_profile "$profile" "${args[@]}"
+  done
+}
+
+swarm_autodefine_profiles
+
+# --- Manual override examples (optional) --------------------------------------
+#
+# Profile names and alias names are arbitrary — auto-discovery above will pick
+# them up from your env files. These manual calls are only needed if you want
+# to override the aliases declared in a profile env file, or if you'd rather
+# not rely on auto-discovery at all (set SWARM_MCP_DISABLE_AUTODEFINE=1).
+#
 # swarm_define_profile personal \
 #     claude=clowd \
 #     codex=cdx \
@@ -181,7 +235,6 @@ swarm_define_profile() {
 #     codex_lead=cdxl \
 #     herdr=herdrp
 #
-# # Work profile:
 # swarm_define_profile work \
 #     claude=clawd \
 #     codex=codex \
@@ -190,9 +243,3 @@ swarm_define_profile() {
 #     claude_lead=clawdl \
 #     codex_lead=codexl \
 #     herdr=herdrw
-#
-# # Single-profile setup also works:
-# swarm_define_profile main \
-#     claude=cl \
-#     codex=cx \
-#     herdr=hd

@@ -64,33 +64,40 @@ instead of through these shell launchers.
 
 ## Shell launcher functions
 
-Source `launchers.zsh.example` from your shell config to gain the
-`swarm_define_profile` generator:
+Source `launchers.zsh.example` from your shell config. As of v0.4 it
+auto-discovers profiles from `$SWARM_ENV_DIR/*.env` and materializes the
+launcher functions declared by each file's `SWARM_HARNESS_*` values —
+no manual `swarm_define_profile` call required.
 
 ```sh
 source /absolute/path/to/swarm-mcp/env/launchers.zsh.example
+```
 
-# Define each profile's launcher aliases. The names on the right are arbitrary —
-# they're the shell function names you'll type to start an agent in that
-# profile. They must match what the profile env file declares as
-# SWARM_HARNESS_* so dispatch picks the same names.
+After sourcing, the alias names declared in each profile env file become
+real shell functions. With `personal.env` setting `SWARM_HARNESS_CLAUDE=clowd`,
+the `clowd` function launches Claude Code with `personal.env` sourced and
+`AGENT_IDENTITY=personal` exported. `SWARM_HARNESS_HERDR=herdrp` gives you
+`herdrp` for a visible herdr server pinned to the personal socket. Drop a
+new `<name>.env` and the matching aliases appear on the next shell.
+
+`*_LEAD` aliases set the session as a gateway/planner so it routes
+non-trivial work through the swarm `dispatch` tool instead of doing it
+in-pane. Use the plain alias for workers, the lead alias for gateways.
+
+### Manual overrides (optional)
+
+Auto-discovery covers the common case. If you want to override the aliases
+a profile env file declares — or skip auto-discovery entirely — call
+`swarm_define_profile` yourself after sourcing the example, and it wins:
+
+```sh
 swarm_define_profile personal \
     claude=clowd codex=cdx opencode=opc hermes=hermesp \
     claude_lead=clowdl codex_lead=cdxl herdr=herdrp
-
-swarm_define_profile work \
-    claude=clawd codex=codex opencode=opencode hermes=hermesw \
-    claude_lead=clawdl codex_lead=codexl herdr=herdrw
 ```
 
-After sourcing and defining profiles, the alias names you chose become real
-shell functions. `clowd` launches Claude Code with the personal env file
-sourced and `AGENT_IDENTITY=personal` exported; `herdrp` launches a visible
-herdr server pinned to the personal socket; and so on.
-
-`*_lead` aliases set the session as a gateway/planner so it routes
-non-trivial work through the swarm `dispatch` tool instead of doing it
-in-pane. Use the plain alias for workers, the lead alias for gateways.
+To disable auto-discovery, set `SWARM_MCP_DISABLE_AUTODEFINE=1` before
+sourcing the example file.
 
 ## How dispatch picks a launcher
 
