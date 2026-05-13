@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import {
   identityKey,
   type BackendResult,
+  type ReadHandleResult,
+  type ReadHandleSource,
   type WakeHandleResult,
   type WorkspaceBackend,
   type WorkspaceHandleInfo,
@@ -61,6 +63,15 @@ function processError(
     outputText(proc.stdout).trim() ||
     fallback
   );
+}
+
+function normalizeReadSource(value: ReadHandleSource | undefined): ReadHandleSource {
+  return value ?? "recent";
+}
+
+function normalizeReadLines(value: number | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 80;
+  return Math.min(Math.max(Math.trunc(value), 1), 300);
 }
 
 function runHerdr(
@@ -197,6 +208,41 @@ export const herdrWorkspaceBackend: WorkspaceBackend = {
       };
     }
     return { ok: true, value: {} satisfies WakeHandleResult };
+  },
+
+  readHandle({ handle, identity, source, lines, timeoutMs }) {
+    const readSource = normalizeReadSource(source);
+    const readLines = normalizeReadLines(lines);
+    const proc = runHerdr(
+      [
+        "pane",
+        "read",
+        handle,
+        "--source",
+        readSource,
+        "--lines",
+        String(readLines),
+        "--format",
+        "text",
+      ],
+      identity,
+      timeoutMs,
+    );
+    if (proc.error || proc.status !== 0) {
+      return {
+        ok: false,
+        error: processError(proc, "herdr pane read failed"),
+      };
+    }
+
+    return {
+      ok: true,
+      value: {
+        text: outputText(proc.stdout),
+        source: readSource,
+        lines: readLines,
+      } satisfies ReadHandleResult,
+    };
   },
 
   canonicalizeIdentity({ identity, handleInfo, requestedHandle }) {

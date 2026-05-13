@@ -2,7 +2,7 @@
 
 This doc explains where consumer configuration lives for `swarm-mcp`, workspace backends, spawners, and runtime integrations.
 
-The short version: agents should keep using swarm tools (`dispatch`, `prompt_peer`, tasks, messages). Backend selection belongs to launcher/config, not to normal agent reasoning.
+The short version: agents should keep using swarm tools (`dispatch`, `prompt_peer`, `peek_peer`, tasks, messages). Backend selection belongs to launcher/config, not to normal agent reasoning.
 
 ## Mental Model
 
@@ -177,7 +177,7 @@ identity/workspace/swarm-server/<instance_id>
 Agents should not decide whether the transport is herdr, swarm-ui, or swarm-server.
 
 - Use `dispatch` for gateway spawn/routing.
-- Use `send_message`, `request_task`, and `prompt_peer` for coordination.
+- Use `send_message`, `request_task`, `prompt_peer`, and `peek_peer` for coordination.
 - Target swarm `instance_id`, never raw pane/PTY IDs.
 - Let workspace identity and backend adapters handle transport-specific wakeups.
 

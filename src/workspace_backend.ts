@@ -34,6 +34,15 @@ export type WakeHandleResult = {
   skipped?: string;
 };
 
+export type ReadHandleSource = "visible" | "recent" | "recent-unwrapped";
+
+export type ReadHandleResult = {
+  text: string;
+  source: ReadHandleSource;
+  lines?: number;
+  truncated?: boolean;
+};
+
 export type WorkspaceBackend = {
   name: string;
   defaultHandleKind: string;
@@ -54,6 +63,14 @@ export type WorkspaceBackend = {
     force?: boolean;
     timeoutMs?: number;
   }): BackendResult<WakeHandleResult>;
+  readHandle?(input: {
+    handle: string;
+    identity?: WorkspaceIdentity;
+    handleInfo?: WorkspaceHandleInfo;
+    source?: ReadHandleSource;
+    lines?: number;
+    timeoutMs?: number;
+  }): BackendResult<ReadHandleResult>;
   canonicalizeIdentity(input: {
     identity: WorkspaceIdentity;
     handleInfo: WorkspaceHandleInfo;

@@ -926,6 +926,52 @@ registeredTool(
 );
 
 registeredTool(
+  "peek_peer",
+  "Read recent or visible terminal text from another instance's published workspace handle when supported. This does not send a message or wake the peer.",
+  {
+    recipient: z.string().describe("Target swarm instance id"),
+    source: z
+      .enum(["visible", "recent", "recent-unwrapped"])
+      .optional()
+      .default("recent")
+      .describe("Pane text source to read"),
+    lines: z
+      .number()
+      .int()
+      .positive()
+      .max(300)
+      .optional()
+      .default(80)
+      .describe("Maximum lines to read from recent sources"),
+  },
+  async ({ recipient, source, lines }) => {
+    const current = instance!;
+    const target = registry.get(recipient);
+    if (!target || target.scope !== current.scope) {
+      return respondJson({ error: `Instance ${recipient} is not active in this scope` });
+    }
+    if (target.id === current.id) {
+      return respondJson({ error: "Cannot peek yourself" });
+    }
+
+    const crossId = crossIdentityReason(current, target);
+    if (crossId) {
+      return respondJson({ error: crossId });
+    }
+
+    return respondJson(
+      dispatch.peekPeerResult({
+        scope: current.scope,
+        sender: current.id,
+        recipient: target.id,
+        source,
+        lines,
+      }),
+    );
+  },
+);
+
+registeredTool(
   "resolve_workspace_handle",
   "Resolve a transport-local workspace handle to the matching swarm instance by validating published workspace identity mappings.",
   {

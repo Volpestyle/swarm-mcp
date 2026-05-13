@@ -11,6 +11,7 @@ import * as spawnerBackend from "./spawner_backend";
 import { registerDefaultSpawners } from "./spawner_defaults";
 import * as ui from "./ui";
 import * as workspaceIdentity from "./workspace_identity";
+import type { ReadHandleSource } from "./workspace_backend";
 
 registerDefaultSpawners();
 
@@ -442,6 +443,83 @@ export function promptPeerResult(opts: {
     result.nudge_skipped = wakeResult.value.skipped;
   } else {
     result.nudged = true;
+  }
+  return result;
+}
+
+function addResolvedWorkspaceFields(
+  result: Record<string, unknown>,
+  resolved: Extract<workspaceIdentity.ResolvedPublishedIdentity, { ok: true }>,
+) {
+  const paneId =
+    typeof resolved.identity.pane_id === "string" && resolved.identity.pane_id
+      ? resolved.identity.pane_id
+      : undefined;
+
+  result.workspace_backend = resolved.backend_name;
+  result.workspace_handle = resolved.handle;
+  result.handle_kind = resolved.handle_kind;
+  result.agent_status = resolved.agent_status;
+  if (paneId) result.pane_id = paneId;
+  if (resolved.identity_repaired) result.identity_repaired = true;
+}
+
+export function peekPeerResult(opts: {
+  scope: string;
+  sender: string;
+  recipient: string;
+  source?: ReadHandleSource;
+  lines?: number;
+}) {
+  const source = opts.source ?? "recent";
+  const lines =
+    typeof opts.lines === "number" && Number.isFinite(opts.lines)
+      ? Math.min(Math.max(Math.trunc(opts.lines), 1), 300)
+      : 80;
+  const result: Record<string, unknown> = {
+    sender: opts.sender,
+    recipient: opts.recipient,
+    peeked: false,
+    source,
+    lines,
+  };
+
+  const resolved = workspaceIdentity.resolvePublishedWorkspaceIdentity({
+    scope: opts.scope,
+    instanceId: opts.recipient,
+    actor: opts.sender,
+  });
+  if (!resolved.ok) {
+    if (resolved.handle) result.workspace_handle = resolved.handle;
+    result.peek_skipped = resolved.reason;
+    return result;
+  }
+
+  addResolvedWorkspaceFields(result, resolved);
+  if (!resolved.backend.readHandle) {
+    result.peek_skipped = `workspace backend ${resolved.backend_name} does not support reading handles`;
+    return result;
+  }
+
+  const readResult = resolved.backend.readHandle({
+    handle: resolved.handle,
+    identity: resolved.identity,
+    handleInfo: resolved.handle_info,
+    source,
+    lines,
+    timeoutMs: 5_000,
+  });
+  if (!readResult.ok) {
+    result.peek_error = readResult.error;
+    return result;
+  }
+
+  result.peeked = true;
+  result.text = readResult.value.text;
+  result.source = readResult.value.source;
+  if (readResult.value.lines !== undefined) result.lines = readResult.value.lines;
+  if (readResult.value.truncated !== undefined) {
+    result.truncated = readResult.value.truncated;
   }
   return result;
 }

@@ -206,6 +206,7 @@ Run `swarm-mcp cleanup --dry-run --json` to inspect what the janitor would remov
 | ------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `send_message`      | Send a direct message to a specific instance by ID.                                                            |
 | `prompt_peer`       | Send a durable swarm message, then best-effort wake the target's workspace handle. Busy handles are not interrupted unless forced. |
+| `peek_peer`         | Read recent or visible terminal text from a target's published workspace handle when the backend supports it. |
 | `resolve_workspace_handle` | Map a transport-local workspace handle, such as a herdr pane, back to a swarm instance ID. |
 | `broadcast`         | Message all other instances in the swarm.                                                                      |
 | `poll_messages`     | Read unread messages and mark them as read.                                                            |

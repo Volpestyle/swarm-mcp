@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
+  ReadHandleSource,
   WorkspaceBackend,
   WorkspaceHandleInfo,
   WorkspaceIdentity,
@@ -37,6 +38,7 @@ const repoRoot = resolve(here, "..");
 const { db, dbPath } = await import("../src/db");
 const context = await import("../src/context");
 const dispatch = await import("../src/dispatch");
+const herdrBackend = await import("../src/backends/herdr");
 const herdrSpawner = await import("../src/backends/herdr_spawner");
 const kv = await import("../src/kv");
 const registry = await import("../src/registry");
@@ -67,6 +69,13 @@ type WakeCall = {
   force?: boolean;
 };
 
+type ReadCall = {
+  backend: string;
+  handle: string;
+  source?: ReadHandleSource;
+  lines?: number;
+};
+
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
 }
@@ -91,6 +100,7 @@ function syntheticBackend(
   name: string,
   wakeCalls: WakeCall[] = [],
   agentStatus = "idle",
+  readCalls?: ReadCall[],
 ): WorkspaceBackend {
   const canonical = (handle: string) =>
     handle.endsWith("-alias") ? `${handle.slice(0, -"alias".length)}canonical` : handle;
@@ -129,6 +139,22 @@ function syntheticBackend(
       }
       return { ok: true, value: {} };
     },
+
+    ...(readCalls
+      ? {
+          readHandle({ handle, source, lines }) {
+            readCalls.push({ backend: name, handle, source, lines });
+            return {
+              ok: true as const,
+              value: {
+                text: `${name} pane text`,
+                source: source ?? "recent",
+                lines,
+              },
+            };
+          },
+        }
+      : {}),
 
     canonicalizeIdentity({ identity, handleInfo, requestedHandle }) {
       const aliases = uniqueStrings([
@@ -279,6 +305,93 @@ describe("workspace backend registry", () => {
     expect(betaWakeCalls).toHaveLength(1);
     expect(betaWakeCalls[0]?.backend).toBe("beta");
     expect(betaWakeCalls[0]?.handle).toBe("beta-canonical");
+  });
+
+  test("peek_peer reads recipients through their published workspace backend", () => {
+    const betaReadCalls: ReadCall[] = [];
+    workspaceIdentity.registerBackend(syntheticBackend("alpha"));
+    workspaceIdentity.registerBackend(syntheticBackend("beta", [], "idle", betaReadCalls));
+    const scope = "scope-peek";
+    const sender = registry.register("/tmp/sender", "identity:personal role:planner", scope);
+    const recipient = registry.register(
+      "/tmp/recipient",
+      "identity:personal role:implementer",
+      scope,
+    );
+
+    kv.set(
+      scope,
+      workspaceBackend.identityKey("beta", recipient.id),
+      JSON.stringify({ backend: "beta", handle_kind: "unit", handle: "beta-alias" }),
+      recipient.id,
+    );
+
+    const result = dispatch.peekPeerResult({
+      scope,
+      sender: sender.id,
+      recipient: recipient.id,
+      source: "recent-unwrapped",
+      lines: 42,
+    });
+
+    expect(result).toMatchObject({
+      peeked: true,
+      recipient: recipient.id,
+      workspace_backend: "beta",
+      workspace_handle: "beta-canonical",
+      handle_kind: "unit",
+      source: "recent-unwrapped",
+      lines: 42,
+      text: "beta pane text",
+    });
+    expect(betaReadCalls).toEqual([
+      {
+        backend: "beta",
+        handle: "beta-canonical",
+        source: "recent-unwrapped",
+        lines: 42,
+      },
+    ]);
+  });
+
+  test("herdr backend reads pane text through herdr pane read", () => {
+    const fakeDir = mkdtempSync(join(tmpdir(), "fake-herdr-read-"));
+    const fakeHerdr = join(fakeDir, "herdr");
+    const logPath = join(fakeDir, "calls.log");
+    writeFileSync(
+      fakeHerdr,
+      [
+        "#!/bin/sh",
+        "printf '%s\\n' \"$*\" >> \"$HERDR_FAKE_LOG\"",
+        "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"read\" ]; then",
+        "  printf '%s\\n' 'peer output'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(fakeHerdr, 0o755);
+    process.env.SWARM_HERDR_BIN = fakeHerdr;
+    process.env.HERDR_FAKE_LOG = logPath;
+
+    const result = herdrBackend.herdrWorkspaceBackend.readHandle?.({
+      handle: "pane-7",
+      source: "recent-unwrapped",
+      lines: 12,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        text: "peer output\n",
+        source: "recent-unwrapped",
+        lines: 12,
+      },
+    });
+    expect(readFileSync(logPath, "utf8").trim()).toBe(
+      "pane read pane-7 --source recent-unwrapped --lines 12 --format text",
+    );
   });
 
   test("instance annotations expose published herdr pane metadata without changing identity", () => {
