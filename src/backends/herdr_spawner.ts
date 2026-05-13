@@ -618,6 +618,28 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForPaneIdle(opts: {
+  paneId: string;
+  identity?: string | null;
+  timeoutMs: number;
+}): Promise<string | null> {
+  const deadline = Date.now() + Math.max(0, opts.timeoutMs);
+  do {
+    const proc = runHerdrCommand(["pane", "get", opts.paneId], 3_000, opts.identity);
+    if (!proc.error && proc.status === 0) {
+      try {
+        const payload = JSON.parse(proc.stdout || "{}");
+        const status = payload?.result?.pane?.agent_status;
+        if (status === "idle") return "idle";
+      } catch {
+        // ignore parse errors; retry until deadline
+      }
+    }
+    if (Date.now() >= deadline) return null;
+    await sleep(200);
+  } while (true);
+}
+
 export async function waitForLaunchInstanceForTesting(opts: {
   scope: string;
   launchToken: string;
@@ -724,11 +746,13 @@ export const herdrSpawnerBackend: SpawnerBackend = {
       }),
     );
 
-    input.on_ready_to_prompt?.({
-      expected_instance: leased.id,
-      workspace_handle: workspaceHandle,
-      launch_token: input.launch_token,
-    });
+    const fireKickstart = () => {
+      input.on_ready_to_prompt?.({
+        expected_instance: leased.id,
+        workspace_handle: workspaceHandle,
+        launch_token: input.launch_token,
+      });
+    };
 
     const spawned = await waitForLaunchInstanceForTesting({
       scope: leased.scope,
@@ -737,6 +761,12 @@ export const herdrSpawnerBackend: SpawnerBackend = {
       timeoutSeconds: input.wait_seconds,
     });
     if (!spawned) {
+      // Registration didn't complete in time; fire the kickstart anyway so
+      // the durable swarm message is queued for when the agent eventually
+      // boots. The live pane nudge here is best-effort — if the TUI never
+      // becomes ready the agent will still pick up the message via its
+      // SessionStart bootstrap call.
+      fireKickstart();
       return {
         status: "spawn_in_flight",
         launch_token: input.launch_token,
@@ -744,6 +774,18 @@ export const herdrSpawnerBackend: SpawnerBackend = {
         workspace_handle: workspaceHandle,
       };
     }
+
+    // Wait for the pane's TUI to reach `idle` before firing the live wake
+    // nudge. Without this, the wake text+Enter races the agent's TUI raw-mode
+    // initialization — the Enter gets swallowed and the wake prompt sits
+    // unsubmitted in the input box (claude code), or the text disappears
+    // entirely before the input handler is ready (codex).
+    await waitForPaneIdle({
+      paneId,
+      identity: input.identity,
+      timeoutMs: 5_000,
+    });
+    fireKickstart();
 
     return {
       status: "spawned",
