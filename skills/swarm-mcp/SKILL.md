@@ -39,7 +39,7 @@ If the user invoked this skill with a role argument, follow the matching role re
 - You are refactoring across several files and want peers to wait.
 - You are reserving files (e.g. as a planner) so an assigned implementer can claim them without a race.
 
-**Do not call `lock_file` for an ordinary single Edit/Write.** In plugin-supported runtimes, the `PreToolUse`/equivalent hook already locks around the write tool when peers exist, denies on real conflict, and unlocks after. Solo sessions skip locking entirely.
+**Do not call `lock_file` for an ordinary single Edit/Write.** In plugin-supported runtimes, the `PreToolUse`/equivalent hook checks write tools against existing peer-held locks and denies on real conflict. It does not acquire a lock for you; solo sessions and no-conflict writes proceed normally.
 
 **Runtimes without a swarm plugin** (e.g. ad-hoc OpenCode sessions) need to call `lock_file` / `unlock_file` themselves. Even then, prefer locking critical sections over per-edit ceremony — the per-edit race window is too narrow to be the real failure mode; the actual hazard is stale-read → edit, which only a wider lock protects.
 
