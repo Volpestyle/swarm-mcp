@@ -63,5 +63,6 @@ core = HookCore(
         scratch_dir_name="swarm-cc",
         write_tools=_WRITE_TOOLS,
         extract_paths=_extract_paths,
+        soul_path=Path.home() / ".claude" / "SOUL.md",
     )
 )

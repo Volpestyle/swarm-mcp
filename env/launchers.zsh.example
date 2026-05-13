@@ -95,8 +95,11 @@ _swarm_herdr() (
 #   herdr=<alias>        Alias that launches a visible herdr server
 #   herdr_socket=<path>  Override herdr socket; defaults to
 #                        ${HERMES_HOST_HOME:-$HOME}/.config/herdr/sessions/<profile>/herdr.sock
-#   claude_args=<str>    Extra args appended to every claude/claude_lead launch
+#   claude_args=<str>    Extra args appended to every claude launch
 #                        (split on whitespace; defaults to "--enable-auto-mode")
+#   claude_lead_args=<str>  Extra args for the claude_lead alias only; falls
+#                        back to claude_args when unset. Use this to enable
+#                        gateway-only flags like --remote-control.
 #
 # Aliases you omit simply aren't defined — you can mix profile-specific
 # launchers freely. The function exports SWARM_HARNESS_<UPPER>=<alias> into
@@ -115,6 +118,7 @@ swarm_define_profile() {
   local claude_lead_alias="" codex_lead_alias=""
   local herdr_alias="" herdr_socket=""
   local claude_args="--enable-auto-mode"
+  local claude_lead_args=""
   local kv key value
   for kv in "$@"; do
     key="${kv%%=*}"
@@ -130,6 +134,7 @@ swarm_define_profile() {
       herdr) herdr_alias="$value" ;;
       herdr_socket) herdr_socket="$value" ;;
       claude_args) claude_args="$value" ;;
+      claude_lead_args) claude_lead_args="$value" ;;
       *)
         print -u2 "swarm_define_profile($profile): unknown option '$key'"
         return 64
@@ -139,6 +144,7 @@ swarm_define_profile() {
   if [[ -z "$herdr_socket" ]]; then
     herdr_socket="${HERMES_HOST_HOME:-$HOME}/.config/herdr/sessions/$profile/herdr.sock"
   fi
+  [[ -z "$claude_lead_args" ]] && claude_lead_args="$claude_args"
 
   # Define each requested alias. eval is used to template the function name;
   # bodies stay quoted so $profile/$env_file values are baked in at define time.
@@ -155,7 +161,7 @@ swarm_define_profile() {
     eval "$hermes_alias() { _swarm_run_profile $(printf %q "$profile") $(printf %q "$env_file") command hermes \"\$@\"; }"
   fi
   if [[ -n "$claude_lead_alias" ]]; then
-    eval "$claude_lead_alias() { _swarm_run_lead $(printf %q "$profile") $(printf %q "$env_file") claude command claude ${claude_args} \"\$@\"; }"
+    eval "$claude_lead_alias() { _swarm_run_lead $(printf %q "$profile") $(printf %q "$env_file") claude command claude ${claude_lead_args} \"\$@\"; }"
   fi
   if [[ -n "$codex_lead_alias" ]]; then
     eval "$codex_lead_alias() { _swarm_run_lead $(printf %q "$profile") $(printf %q "$env_file") codex command codex \"\$@\"; }"
@@ -185,6 +191,7 @@ swarm_autodefine_profiles() {
   local env_file profile
   local claude_alias codex_alias opencode_alias hermes_alias
   local claude_lead_alias codex_lead_alias herdr_alias
+  local claude_args_val claude_lead_args_val
   local -a args
 
   for env_file in "$SWARM_ENV_DIR"/*.env(.N); do
@@ -195,23 +202,27 @@ swarm_autodefine_profiles() {
     # AGENT_IDENTITY / SWARM_DB_PATH don't leak into the parent shell.
     eval "$(
       source "$env_file" 2>/dev/null
-      printf 'claude_alias=%q\n'      "${SWARM_HARNESS_CLAUDE:-}"
-      printf 'codex_alias=%q\n'       "${SWARM_HARNESS_CODEX:-}"
-      printf 'opencode_alias=%q\n'    "${SWARM_HARNESS_OPENCODE:-}"
-      printf 'hermes_alias=%q\n'      "${SWARM_HARNESS_HERMES:-}"
-      printf 'claude_lead_alias=%q\n' "${SWARM_HARNESS_CLAUDE_LEAD:-}"
-      printf 'codex_lead_alias=%q\n'  "${SWARM_HARNESS_CODEX_LEAD:-}"
-      printf 'herdr_alias=%q\n'       "${SWARM_HARNESS_HERDR:-}"
+      printf 'claude_alias=%q\n'         "${SWARM_HARNESS_CLAUDE:-}"
+      printf 'codex_alias=%q\n'          "${SWARM_HARNESS_CODEX:-}"
+      printf 'opencode_alias=%q\n'       "${SWARM_HARNESS_OPENCODE:-}"
+      printf 'hermes_alias=%q\n'         "${SWARM_HARNESS_HERMES:-}"
+      printf 'claude_lead_alias=%q\n'    "${SWARM_HARNESS_CLAUDE_LEAD:-}"
+      printf 'codex_lead_alias=%q\n'     "${SWARM_HARNESS_CODEX_LEAD:-}"
+      printf 'herdr_alias=%q\n'          "${SWARM_HARNESS_HERDR:-}"
+      printf 'claude_args_val=%q\n'      "${SWARM_HARNESS_CLAUDE_ARGS:-}"
+      printf 'claude_lead_args_val=%q\n' "${SWARM_HARNESS_CLAUDE_LEAD_ARGS:-}"
     )"
 
     args=()
-    [[ -n "$claude_alias" ]]      && args+=("claude=$claude_alias")
-    [[ -n "$codex_alias" ]]       && args+=("codex=$codex_alias")
-    [[ -n "$opencode_alias" ]]    && args+=("opencode=$opencode_alias")
-    [[ -n "$hermes_alias" ]]      && args+=("hermes=$hermes_alias")
-    [[ -n "$claude_lead_alias" ]] && args+=("claude_lead=$claude_lead_alias")
-    [[ -n "$codex_lead_alias" ]]  && args+=("codex_lead=$codex_lead_alias")
-    [[ -n "$herdr_alias" ]]       && args+=("herdr=$herdr_alias")
+    [[ -n "$claude_alias" ]]         && args+=("claude=$claude_alias")
+    [[ -n "$codex_alias" ]]          && args+=("codex=$codex_alias")
+    [[ -n "$opencode_alias" ]]       && args+=("opencode=$opencode_alias")
+    [[ -n "$hermes_alias" ]]         && args+=("hermes=$hermes_alias")
+    [[ -n "$claude_lead_alias" ]]    && args+=("claude_lead=$claude_lead_alias")
+    [[ -n "$codex_lead_alias" ]]     && args+=("codex_lead=$codex_lead_alias")
+    [[ -n "$herdr_alias" ]]          && args+=("herdr=$herdr_alias")
+    [[ -n "$claude_args_val" ]]      && args+=("claude_args=$claude_args_val")
+    [[ -n "$claude_lead_args_val" ]] && args+=("claude_lead_args=$claude_lead_args_val")
 
     (( ${#args[@]} > 0 )) && swarm_define_profile "$profile" "${args[@]}"
   done

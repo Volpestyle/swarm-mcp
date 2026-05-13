@@ -78,6 +78,11 @@ class RuntimeConfig:
             check.
         extract_paths: Function ``(tool_name, tool_input) -> [absolute_path]``.
             Receives ``tool_input`` exactly as it appears in the hook payload.
+        soul_path: Optional path to a runtime-specific ``SOUL.md`` identity doc.
+            When set and the session is registered as a gateway/lead, the file's
+            contents are appended to the SessionStart ``additionalContext`` so
+            the agent boots with its gateway-mode identity attached. Workers
+            don't see it.
     """
 
     runtime_name: str
@@ -85,6 +90,7 @@ class RuntimeConfig:
     scratch_dir_name: str
     write_tools: frozenset[str]
     extract_paths: Callable[[str, object], list[str]]
+    soul_path: Optional[Path] = None
 
 
 class HookCore:
@@ -740,6 +746,15 @@ class HookCore:
                 "Do not fall back to native subagents. See the `swarm-mcp` skill (planner "
                 "reference) for the full conductor protocol."
             )
+
+            soul_path = self.config.soul_path
+            if soul_path is not None:
+                try:
+                    soul_text = soul_path.read_text().rstrip()
+                except OSError:
+                    soul_text = ""
+                if soul_text:
+                    lines.extend(["", "## identity / SOUL", "", soul_text])
 
         if role_token:
             doctrine_lines = self._role_doctrine_lines(role_token)

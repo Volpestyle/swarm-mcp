@@ -58,5 +58,6 @@ core = HookCore(
         scratch_dir_name="swarm-codex",
         write_tools=frozenset({"apply_patch"}),
         extract_paths=_extract_paths,
+        soul_path=Path.home() / ".codex" / "SOUL.md",
     )
 )
