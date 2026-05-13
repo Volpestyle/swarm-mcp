@@ -1,6 +1,6 @@
 # Agent routing for swarm-mcp coordination
 
-Runtime-agnostic core for any agent (Hermes, Claude Code, Codex, OpenCode, …) joined to a swarm-mcp coordination fabric. Each runtime carries a thin adapter layer in its own config file (Hermes `SOUL.md`, Claude Code `CLAUDE.md`, etc.) naming its native subagent tool and any plugin-shipped tools. This doc covers what is shared.
+Runtime-agnostic core for any agent (Hermes, Claude Code, Codex, OpenCode, …) joined to a swarm-mcp coordination fabric. Each runtime carries a thin adapter layer in a repo-owned runtime prompt (`integrations/*/SOUL.md`) or equivalent host config naming its native subagent tool and any plugin-shipped tools. This doc covers what is shared.
 
 For the integration plugin contract per runtime, see [`../integrations/<runtime>/SPEC.md`](../integrations/). For launcher / config-root / MCP-suffix identity conventions, see [`./identity-boundaries.md`](./identity-boundaries.md). For role doctrine (planner / implementer / reviewer / researcher / generalist flows), load the bundled `swarm-mcp` skill.
 

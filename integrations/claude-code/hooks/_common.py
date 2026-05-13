@@ -13,8 +13,9 @@ import os
 import sys
 from pathlib import Path
 
-# integrations/claude-code/hooks/_common.py -> parents[2] = integrations/
-_INTEGRATIONS_ROOT = Path(__file__).resolve().parents[2]
+# integrations/claude-code/hooks/_common.py
+_PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+_INTEGRATIONS_ROOT = _PLUGIN_ROOT.parents[0]
 sys.path.insert(0, str(_INTEGRATIONS_ROOT / "_shared"))
 
 from swarm_hook_core import HookCore, RuntimeConfig  # noqa: E402
@@ -63,6 +64,6 @@ core = HookCore(
         scratch_dir_name="swarm-cc",
         write_tools=_WRITE_TOOLS,
         extract_paths=_extract_paths,
-        soul_path=Path.home() / ".claude" / "SOUL.md",
+        soul_path=_PLUGIN_ROOT / "SOUL.md",
     )
 )

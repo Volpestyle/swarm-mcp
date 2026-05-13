@@ -40,6 +40,15 @@ The plugin lives in this repo. For local use, symlink it into hermes' user plugi
 ln -sfn /path/to/swarm-mcp/integrations/hermes ~/.hermes/plugins/swarm
 ```
 
+This repo also owns the Hermes gateway identity prompt. Point Hermes' `SOUL.md`
+at the tracked copy so updates flow from this checkout:
+
+```bash
+ln -sfn /path/to/swarm-mcp/integrations/hermes/SOUL.md ~/.hermes/SOUL.md
+# or, for a named profile:
+ln -sfn /path/to/swarm-mcp/integrations/hermes/SOUL.md ~/.hermes/profiles/personal/SOUL.md
+```
+
 Then enable it in `~/.hermes/config.yaml`:
 
 ```yaml

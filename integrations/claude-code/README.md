@@ -25,6 +25,7 @@ For the broader adapter contract, see
 | Publish and cleanup workspace identity | `SessionStart` / `SessionEnd` hooks → publish/delete current workspace handle when `HERDR_PANE_ID` is present |
 | Publish configured work tracker | `SessionStart` hook reads tracker config and writes `config/work_tracker/<identity>` KV |
 | Gateway conductor mode | `SWARM_CC_ROLE=gateway` registers as `role:planner`; make easy edits locally, use the MCP `dispatch` tool for medium/large task/spawn routing |
+| Gateway SOUL priming | `SessionStart` appends this repo's [`SOUL.md`](./SOUL.md) for gateway/lead sessions |
 | Peer prompt express lane | `prompt_peer` MCP tool or `swarm-mcp prompt-peer` CLI sends durable swarm message, then best-effort herdr wake |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 | Bundled role-doctrine skill | `skills/swarm-mcp/` ships with the plugin (relative symlink to the canonical `skills/swarm-mcp/` source); installs alongside hooks so agents pick up the planner/implementer/reviewer/researcher/generalist role doctrine automatically — no separate skill symlink needed |

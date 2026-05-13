@@ -11,8 +11,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# integrations/codex/plugins/swarm/hooks/_common.py -> parents[4] = integrations/
-_INTEGRATIONS_ROOT = Path(__file__).resolve().parents[4]
+# integrations/codex/plugins/swarm/hooks/_common.py
+_PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+_INTEGRATIONS_ROOT = _PLUGIN_ROOT.parents[2]
 sys.path.insert(0, str(_INTEGRATIONS_ROOT / "_shared"))
 
 import swarm_adapter_contract as contract  # noqa: E402
@@ -58,6 +59,6 @@ core = HookCore(
         scratch_dir_name="swarm-codex",
         write_tools=frozenset({"apply_patch"}),
         extract_paths=_extract_paths,
-        soul_path=Path.home() / ".codex" / "SOUL.md",
+        soul_path=_PLUGIN_ROOT / "SOUL.md",
     )
 )

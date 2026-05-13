@@ -352,6 +352,43 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertIn("`dispatch`", rendered)
         self.assertIn("`swarm-mcp` skill", rendered)
 
+    def test_gateway_session_start_appends_configured_soul(self) -> None:
+        soul_dir = tempfile.mkdtemp(prefix="swarm-test-soul-")
+        self.addCleanup(shutil.rmtree, soul_dir, ignore_errors=True)
+        soul_path = Path(soul_dir) / "SOUL.md"
+        soul_path.write_text("runtime identity prompt\n")
+        core = HookCore(
+            RuntimeConfig(
+                runtime_name="test-runtime",
+                env_prefix="TEST",
+                scratch_dir_name=f"swarm-test-{uuid4().hex}",
+                write_tools=frozenset({"Write"}),
+                extract_paths=_extract_paths,
+                soul_path=soul_path,
+            )
+        )
+        self.addCleanup(
+            shutil.rmtree,
+            Path(tempfile.gettempdir()) / core.config.scratch_dir_name,
+            True,
+        )
+        os.environ["SWARM_TEST_ROLE"] = "gateway"
+
+        with mock.patch.object(
+            core,
+            "run_swarm",
+            return_value=(0, json.dumps({"id": "inst-1", "scope": "/repo"}), ""),
+        ):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                core.run_session_start_hook(
+                    io.StringIO(json.dumps({"session_id": "abc-123", "cwd": "/repo"}))
+                )
+
+        rendered = json.loads(out.getvalue())["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("## identity / SOUL", rendered)
+        self.assertIn("runtime identity prompt", rendered)
+
     def test_session_end_deletes_identity_and_deregisters(self) -> None:
         self.core.write_session_meta(
             "abc-123",

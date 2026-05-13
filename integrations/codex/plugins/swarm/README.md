@@ -28,6 +28,7 @@ parallels, see [`integrations/hermes/SPEC.md`](../../../hermes/SPEC.md) and
 | Publish and cleanup workspace identity | `SessionStart` / `Stop` hooks → publish/delete current workspace handle when `HERDR_PANE_ID` is present |
 | Publish configured work tracker | `SessionStart` hook reads tracker config and writes `config/work_tracker/<identity>` KV |
 | Gateway conductor mode | `SWARM_CODEX_ROLE=gateway` registers as `role:planner`; make easy edits locally, use the MCP `dispatch` tool for medium/large task/spawn routing |
+| Gateway SOUL priming | `SessionStart` appends this repo's [`SOUL.md`](./SOUL.md) for gateway/lead sessions |
 | `/swarm` slash command (status / instances / tasks / kv / messages) | Markdown command shelling to the `swarm-mcp` CLI |
 
 Worker-mode coordination failures are swallowed — coordination is opt-in
