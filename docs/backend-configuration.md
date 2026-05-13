@@ -22,7 +22,7 @@ Work tracker selection is separate from workspace/backend selection. Runtime hoo
 |---|---|---|
 | MCP host config | Mounts the `swarm` MCP server in an agent host. | `.mcp.json`, `~/.codex/config.toml`, `~/.claude.json`, opencode config |
 | Runtime integration config | Hooks/plugin behavior for a host. | Hermes plugin, Claude Code hooks, Codex plugin hooks |
-| Launcher/profile config | Account and tool visibility boundary. | `clawd`, `clowd`, `cdx`, `opc`, `hermesw`, `hermesp` |
+| Launcher/profile config | Account and tool visibility boundary. | `swarm_define_profile` aliases from `env/launchers.zsh.example` |
 | Work tracker config | Human-facing tracker selection by repo/scope and identity. | `~/.config/swarm-mcp/<identity>.env`, `SWARM_<runtime>_WORK_TRACKER`, `SWARM_WORK_TRACKER`, `.swarm-work-tracker`, Hermes `swarm.work_tracker` |
 | Coordinator config | Shared DB and swarm scope defaults. | `SWARM_DB_PATH`, `SWARM_MCP_SCOPE`, `SWARM_MCP_FILE_ROOT` |
 | Spawner config | Which backend creates new workers. | `SWARM_SPAWNER`, `SWARM_DISPATCH_SPAWNER`, `dispatch(... spawner)` |
@@ -118,13 +118,14 @@ Herdr dispatch uses:
 | `SWARM_HERDR_BIN` | Optional non-default `herdr` binary path. |
 
 Dispatch chooses the worker launcher from the requester identity, not from the
-current shell alone. Personal dispatches default to `clowd` and normalize
-generic harness requests to personal launchers: `claude` -> `clowd`, `codex` ->
-`cdx`, `opencode` -> `opc`, and `hermes`/`hermesw` -> `hermesp`. Work
-dispatches default to `clawd` and keep the work-side launchers. The herdr
-spawner pre-creates a swarm instance lease with the requester `identity:` token,
-injects `SWARM_MCP_INSTANCE_ID` and `SWARM_MCP_LABEL`, and waits for the worker
-to adopt/register. Dispatch releases the spawn mutex only after the worker is
+current shell alone. It reads `SWARM_HARNESS_CLAUDE` / `_CODEX` / `_OPENCODE` /
+`_HERMES` from the requester's profile env (`~/.config/swarm-mcp/<profile>.env`)
+to resolve the launcher alias for each canonical harness. Generic harness
+requests (`claude`, `codex`, `opencode`, `hermes`) and cross-profile aliases
+both normalize through this mapping. The herdr spawner pre-creates a swarm
+instance lease with the requester `identity:` token, injects
+`SWARM_MCP_INSTANCE_ID` and `SWARM_MCP_LABEL`, and waits for the worker to
+adopt/register. Dispatch releases the spawn mutex only after the worker is
 registered and bound to the task.
 
 Dispatch itself still returns immediately after task handoff/spawn unless the

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import * as context from "../context";
 import { dbPath } from "../db";
 import { herdrEnvWithSocket, resolvedHerdrSocketPath } from "../herdr_socket";
-import { identityNameFromToken, identityTokenFromName } from "../launcher_identity";
+import { identityFromEnv, identityNameFromToken, identityTokenFromName, launcherForIdentity } from "../launcher_identity";
 import * as kv from "../kv";
 import * as registry from "../registry";
 import type { SpawnRequest, SpawnerBackend } from "../spawner_backend";
@@ -53,17 +53,9 @@ function stringValue(value: unknown) {
 }
 
 function identityDefaultHarness() {
-  const identity = (
-    process.env.AGENT_IDENTITY ??
-    process.env.SWARM_HERMES_IDENTITY ??
-    process.env.SWARM_IDENTITY ??
-    process.env.SWARM_CC_IDENTITY ??
-    process.env.SWARM_CODEX_IDENTITY ??
-    ""
-  ).trim().toLowerCase();
-  if (identity === "personal") return "clowd";
-  if (identity === "work") return "clawd";
-  return "claude";
+  const identity = identityFromEnv();
+  if (!identity) return "claude";
+  return launcherForIdentity("claude", identity);
 }
 
 function cleanLabelValue(value: string, fallback: string) {

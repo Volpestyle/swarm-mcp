@@ -42,10 +42,7 @@ function isUnder(path: string, base: string) {
 
 function identityRoots(identity: string) {
   const upper = identity.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
-  const explicit = envList(`SWARM_MCP_${upper}_ROOTS`).map(expandHome);
-  if (explicit.length) return explicit;
-  if (identity === "personal") return [resolve(homedir(), "volpestyle")];
-  return envList("SWARM_MCP_WORK_ROOTS").map(expandHome);
+  return envList(`SWARM_MCP_${upper}_ROOTS`).map(expandHome);
 }
 
 function validateIdentityDirectory(label: string | null, dir: string, fileRoot: string) {

@@ -349,9 +349,6 @@ def work_tracker_key(identity: str) -> str:
     return f"config/work_tracker/{clean}"
 
 
-HERDR_SOCKET_PARTS = (".config", "herdr", "sessions")
-
-
 def _host_home() -> str:
     return (
         os.environ.get("HERMES_HOST_HOME")
@@ -369,30 +366,88 @@ def _expand_home(path: str) -> str:
     return os.path.abspath(os.path.expanduser(clean))
 
 
-def personal_control_root() -> str:
-    configured = os.environ.get("SWARM_MCP_PERSONAL_ROOTS", "").strip()
-    if configured:
-        first_root = next((item.strip() for item in configured.split(os.pathsep) if item.strip()), "")
-        if first_root:
-            return _expand_home(first_root)
-    return os.path.abspath(os.path.join(_host_home(), "volpestyle"))
+def _profile_config_dir() -> str:
+    explicit = os.environ.get("SWARM_MCP_PROFILE_DIR", "").strip()
+    if explicit:
+        return _expand_home(explicit)
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    base = _expand_home(xdg) if xdg else os.path.join(_host_home(), ".config")
+    return os.path.join(base, "swarm-mcp")
 
 
-def preferred_personal_herdr_socket_path() -> str:
-    return os.path.join(_host_home(), *HERDR_SOCKET_PARTS, "personal", "herdr.sock")
+_VALID_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_QUOTED = re.compile(r"""^(['"])(.*)\1$""")
 
 
-def preferred_work_herdr_socket_path() -> str:
-    return os.path.join(_host_home(), *HERDR_SOCKET_PARTS, "work", "herdr.sock")
+def _parse_env_file(content: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+
+    def expand_value(value: str) -> str:
+        def braced_default(match: re.Match[str]) -> str:
+            key, fallback = match.group(1), match.group(2)
+            return os.environ.get(key, out.get(key, "")).strip() or fallback
+
+        def braced(match: re.Match[str]) -> str:
+            key = match.group(1)
+            return os.environ.get(key, out.get(key, "")).strip()
+
+        def bare(match: re.Match[str]) -> str:
+            key = match.group(1)
+            return os.environ.get(key, out.get(key, "")).strip()
+
+        value = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*):-([^}]*)\}", braced_default, value)
+        value = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", braced, value)
+        return re.sub(r"\$([A-Za-z_][A-Za-z0-9_]*)", bare, value)
+
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key.startswith("export "):
+            key = key[len("export "):].strip()
+        if not _VALID_KEY.match(key):
+            continue
+        value = value.strip()
+        match = _QUOTED.match(value)
+        if match:
+            value = match.group(2)
+        value = expand_value(value)
+        out[key] = value
+    return out
+
+
+def load_profile_env(profile: str) -> dict[str, str]:
+    """Load ``<profile>.env`` from the swarm-mcp profile config dir.
+
+    Returns an empty dict when the profile name is empty or the file is
+    missing/unreadable. Mirrors src/profile_env.ts on the TS side.
+    """
+    profile = (profile or "").strip()
+    if not profile:
+        return {}
+    path = os.path.join(_profile_config_dir(), f"{profile}.env")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return _parse_env_file(handle.read())
+    except OSError:
+        return {}
 
 
 def resolved_herdr_socket_path(identity: str = "") -> str:
+    """Return the herdr control socket path for ``identity``.
+
+    Order: explicit ``HERDR_SOCKET_PATH`` env wins, then the matching
+    profile env file's ``HERDR_SOCKET_PATH`` entry. Returns ``""`` when
+    neither is set.
+    """
     explicit = os.environ.get("HERDR_SOCKET_PATH", "").strip()
     if explicit:
         return explicit
     clean_identity = identity_name(identity)
-    if clean_identity == "personal":
-        return preferred_personal_herdr_socket_path()
-    if clean_identity == "work":
-        return preferred_work_herdr_socket_path()
-    return ""
+    if not clean_identity:
+        return ""
+    return load_profile_env(clean_identity).get("HERDR_SOCKET_PATH", "").strip()

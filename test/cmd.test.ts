@@ -9,6 +9,30 @@ const repoRoot = resolve(here, "..");
 const cli = join(repoRoot, "src", "cli.ts");
 const decoder = new TextDecoder();
 
+const profileFixtureDir = mkdtempSync(join(tmpdir(), "swarm-cmd-profile-fixtures-"));
+const personalSocketPath = join(profileFixtureDir, "personal-herdr.sock");
+const workSocketPath = join(profileFixtureDir, "work-herdr.sock");
+writeFileSync(
+  join(profileFixtureDir, "personal.env"),
+  [
+    "SWARM_HARNESS_CLAUDE=clowd",
+    "SWARM_HARNESS_CODEX=cdx",
+    "SWARM_HARNESS_OPENCODE=opc",
+    "SWARM_HARNESS_HERMES=hermesp",
+    `HERDR_SOCKET_PATH=${personalSocketPath}`,
+  ].join("\n"),
+);
+writeFileSync(
+  join(profileFixtureDir, "work.env"),
+  [
+    "SWARM_HARNESS_CLAUDE=clawd",
+    "SWARM_HARNESS_CODEX=codex",
+    "SWARM_HARNESS_OPENCODE=opencode",
+    "SWARM_HARNESS_HERMES=hermesw",
+    `HERDR_SOCKET_PATH=${workSocketPath}`,
+  ].join("\n"),
+);
+
 function makeEnv(dbPath: string, extra: Record<string, string> = {}) {
   const personalRoots = [tmpdir(), "/tmp", process.env.SWARM_MCP_PERSONAL_ROOTS]
     .filter(Boolean)
@@ -18,6 +42,7 @@ function makeEnv(dbPath: string, extra: Record<string, string> = {}) {
     SWARM_DB_PATH: dbPath,
     SWARM_MCP_PERSONAL_ROOTS: personalRoots,
     SWARM_MCP_INSTANCE_ID: "",
+    SWARM_MCP_PROFILE_DIR: profileFixtureDir,
     ...extra,
   };
 }
@@ -704,14 +729,7 @@ describe("CLI dispatch spawn authority", () => {
     });
 
     const log = readFileSync(herdrLog, "utf8");
-    const expectedSocket = join(
-      process.env.HERMES_HOST_HOME || process.env.HOME || homedir(),
-      ".config",
-      "herdr",
-      "sessions",
-      "personal",
-      "herdr.sock",
-    );
+    const expectedSocket = personalSocketPath;
     expect(log).toContain("pane split pane-root --direction right");
     expect(log).toContain("pane run pane-test /bin/sh");
     expect(log).toContain("pane get pane-test");

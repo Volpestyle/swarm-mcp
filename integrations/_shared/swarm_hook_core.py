@@ -52,15 +52,15 @@ def _warn_missing_identity_once(env_prefix: str) -> None:
     import sys
 
     runtime_hint = {
-        "CC": "claude-code (use clawd for work, clowd for personal)",
-        "CODEX": "codex (use codex for work, cdx for personal)",
+        "CC": "claude-code",
+        "CODEX": "codex",
     }.get(env_prefix, f"runtime with env prefix {env_prefix}")
     print(
         f"[swarm-mcp] {runtime_hint}: session has no AGENT_IDENTITY / "
         f"SWARM_{env_prefix}_IDENTITY / SWARM_IDENTITY env set. Falling back to "
-        f"identity:unknown. Launch via the matching identity wrapper to get a "
-        f"real identity token; bypassing the wrapper leaves the swarm boundary "
-        f"undefined.",
+        f"identity:unknown. Launch via the per-profile launcher alias defined in "
+        f"swarm-mcp/env/launchers.zsh.example (or your own copy) so AGENT_IDENTITY "
+        f"is exported; bypassing the wrapper leaves the swarm boundary undefined.",
         file=sys.stderr,
     )
 

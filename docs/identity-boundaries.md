@@ -1,12 +1,24 @@
 # Identity and Auth Boundaries
 
-Work and personal workers must be separated by launcher profile, config root, MCP server names, OAuth/token storage, and swarm labels. The model should not have to remember which account is safe to use; the wrong account's tools should not be loaded in that process.
+Workers from different isolation boundaries must be separated by launcher profile, config root, MCP server names, OAuth/token storage, and swarm labels. The model should not have to remember which account is safe to use; the wrong account's tools should not be loaded in that process.
 
-> **The hard boundary is the launched process and its config root, not a label.** `clawd`/`codex`/`opencode`/`hermesw` (work) and `clowd`/`cdx`/`opc`/`hermesp` (personal) start a worker against a specific config root, which loads only same-identity account-scoped MCPs. Swarm `identity:` labels are routing and audit metadata; they do not authorize anything by themselves. Anything that needs strong account isolation must come from the launcher and config root, not from a label.
+> **The hard boundary is the launched process and its config root, not a label.** Each profile's launcher starts a worker against a specific config root, which loads only same-identity account-scoped MCPs. Swarm `identity:` labels are routing and audit metadata; they do not authorize anything by themselves. Anything that needs strong account isolation must come from the launcher and config root, not from a label.
 
-## Native Identities
+## Profiles
 
-| Identity | Claude launcher | Codex launcher | OpenCode launcher | Hermes launcher | Purpose |
+A swarm-mcp "profile" is a named isolation boundary you pick. Profile names are user-defined — swarm-mcp has no reserved names. The most common pattern is `work` + `personal`, but you can run one profile (`main`), three (`work`, `personal`, `client-x`), or however many independent identities you need. Each profile owns:
+
+- A coordinator DB path (`SWARM_DB_PATH`) — keeps coordination state isolated.
+- A herdr socket (`HERDR_SOCKET_PATH`) — keeps live pane control isolated.
+- Account-scoped MCP config roots (one per runtime) — keeps OAuth/tokens isolated.
+- A set of launcher aliases — your shell function names for that profile's agents (see [`../env/launchers.zsh.example`](../env/launchers.zsh.example) and the `swarm_define_profile` generator).
+- An `identity:<profile>` token used on the wire.
+
+### Example: work + personal
+
+This is the canonical pattern the rest of this doc uses as a concrete example. Substitute any profile names that fit your boundaries.
+
+| Profile | Claude launcher | Codex launcher | OpenCode launcher | Hermes launcher | Purpose |
 |---|---|---|---|---|---|
 | `work` | `clawd` / `claude` | `codex` | `opencode` | `hermesw` | Company repos, work Linear, work Figma, Atlassian, Datadog |
 | `personal` | `clowd` | `cdx` | `opc` | `hermesp` | Personal repos, personal Linear, personal Figma |
@@ -20,11 +32,12 @@ backend and its launcher support may lag the table above. The Hermes plugin
 Hermes session, so most Hermes workers will be adopted rather than spawned
 through `ui spawn`.
 
-Dispatch uses the requester's `identity:` token as the spawn identity. For a
-personal requester, generic harness selections are rewritten to personal
-launchers before the worker is created: `claude`/`clawd` -> `clowd`, `codex` ->
-`cdx`, `opencode` -> `opc`, and `hermes`/`hermesw` -> `hermesp`. The spawned
-instance label also carries `identity:personal`, so future live-worker reuse
+Dispatch uses the requester's `identity:` token as the spawn identity, then
+reads `SWARM_HARNESS_CLAUDE` / `_CODEX` / `_OPENCODE` / `_HERMES` from the
+matching profile env file to resolve the launcher alias. A personal requester
+asking for `claude` gets that profile's `SWARM_HARNESS_CLAUDE` alias (e.g.
+`clowd`); a work requester gets the work alias (e.g. `clawd`). The spawned
+instance label also carries `identity:<profile>` so future live-worker reuse
 stays inside the same boundary.
 
 ## Worker and Lead Aliases
@@ -34,12 +47,18 @@ same identity. The worker launcher selects the account/config root only. The
 lead launcher selects the same account/config root and also enables gateway
 behavior plus a discoverable planner role.
 
-Launcher functions should source identity env files instead of embedding all
-configuration inline. The repo ships templates in [`../env/`](../env/):
+Launcher functions should source per-profile env files instead of embedding all
+configuration inline. The repo ships templates in [`../env/`](../env/) — start
+from `profile.env.example` (generic, one copy per profile) or from
+`personal.env.example` / `work.env.example` (pre-filled examples of the
+classic two-profile pattern):
 
 ```sh
 mkdir -p ~/.config/swarm-mcp
-cp /path/to/swarm-mcp/env/work.env.example ~/.config/swarm-mcp/work.env
+# Generic — one copy per profile you want:
+cp /path/to/swarm-mcp/env/profile.env.example ~/.config/swarm-mcp/<profile>.env
+# Or use the pre-filled examples:
+cp /path/to/swarm-mcp/env/work.env.example     ~/.config/swarm-mcp/work.env
 cp /path/to/swarm-mcp/env/personal.env.example ~/.config/swarm-mcp/personal.env
 ```
 
@@ -76,32 +95,27 @@ gateway. This avoids relying on a sandboxed `$HOME` or the default host profile
 socket at `~/.config/herdr/herdr.sock`, and it keeps personal herdr state
 separate from work.
 
-Personal example:
+Use the `swarm_define_profile` generator in `../env/launchers.zsh.example` to
+declare a profile's launcher aliases in one line per profile:
 
 ```sh
-_swarm_run() (
-  local env_file="$1"
-  shift
-  set -a
-  source "$env_file"
-  set +a
-  "$@"
-)
+source /path/to/swarm-mcp/env/launchers.zsh.example
 
-clowd() { _swarm_run "$HOME/.config/swarm-mcp/personal.env" claude --enable-auto-mode "$@"; }
-cdx() { _swarm_run "$HOME/.config/swarm-mcp/personal.env" command codex "$@"; }
-opc() { _swarm_run "$HOME/.config/swarm-mcp/personal.env" command opencode "$@"; }
-hermesp() { _swarm_run "$HOME/.config/swarm-mcp/personal.env" command hermes "$@"; }
+# Personal profile example:
+swarm_define_profile personal \
+    claude=clowd codex=cdx opencode=opc hermes=hermesp \
+    claude_lead=clowdl codex_lead=cdxl herdr=herdrp
 ```
 
-Lead functions add runtime-specific gateway vars after sourcing the same env
-file. See [`../env/launchers.zsh.example`](../env/launchers.zsh.example) for a
-complete zsh example.
+The generator builds `clowd` / `cdx` / `opc` / `hermesp` / `clowdl` / `cdxl` /
+`herdrp` shell functions that source the matching profile env file before
+exec'ing the underlying binary. Lead functions add runtime-specific gateway
+vars after sourcing.
 
 In this convention:
 
-- `clowd` / `cdx` / `opc` / `hermesp` are personal workers.
-- `clowdl` / `cdxl` are personal leads.
+- Worker aliases (whatever you named them) run a per-profile agent.
+- Lead aliases run the same agent in gateway/planner mode.
 - `SWARM_<runtime>_ROLE=gateway` is the lead/conductor behavior.
 - `SWARM_<runtime>_AGENT_ROLE=planner` is the swarm routing label workers use
   to discover the lead.

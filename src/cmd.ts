@@ -1120,7 +1120,7 @@ async function cmdUi(flags: Flags) {
     const cwd = rest[0];
     if (!cwd) {
       throw new Error(
-        "ui spawn <cwd> [--harness <claude|clawd|clowd|codex|cdx|opencode|opc|hermesw|hermesp>] [--role <role>] [--label <tokens>] [--scope <path>] [--wait <seconds>]",
+        "ui spawn <cwd> [--harness <name>] [--role <role>] [--label <tokens>] [--scope <path>] [--wait <seconds>]",
       );
     }
     const scope = scopeFor(cwd, scopeArg(flags));

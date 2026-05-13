@@ -85,7 +85,7 @@ Swarm UI control:
 |--|--|
 | `swarm-mcp ui list [--scope P] [--status S] [--limit N]` | List queued/running/completed UI commands. |
 | `swarm-mcp ui get <id>` | Inspect one UI command, including result/error. |
-| `swarm-mcp ui spawn <cwd> [--harness H] [--role R] [--label L] [--scope P] [--wait N]` | Ask a running `swarm-ui` app to spawn a new PTY/node. Supported harness values are the work-identity launchers `claude`, `codex`, `opencode`, `hermesw` (and `clawd` for Claude with `--enable-auto-mode`) and the personal-identity launchers `clowd`, `cdx`, `opc`, `hermesp` — pick the launcher that matches the spawned worker's identity per [`identity-boundaries`](../../../docs/identity-boundaries.md). Omit `--harness` for a plain shell. |
+| `swarm-mcp ui spawn <cwd> [--harness H] [--role R] [--label L] [--scope P] [--wait N]` | Ask a running `swarm-ui` app to spawn a new PTY/node. `--harness <name>` accepts the canonical names `claude`/`codex`/`opencode`/`hermes` or any launcher alias your profile defines via `swarm_define_profile` (see [`identity-boundaries`](../../../docs/identity-boundaries.md)). Omit `--harness` for a plain shell. |
 | `swarm-mcp ui prompt --target T <content...> [--no-enter] [--scope P] [--wait N]` | Forward input to a node's PTY. |
 | `swarm-mcp ui move --target T --x X --y Y [--scope P] [--wait N]` | Move a node and persist layout. |
 | `swarm-mcp ui organize [--kind grid] [--scope P] [--wait N]` | Auto-organize the scope's canvas layout. |
@@ -152,12 +152,12 @@ adds a `completion` object with either the terminal task or a timeout snapshot.
 Herdr dispatch uses the current pane from `HERDR_PANE_ID`, `HERDR_PANE`, or
 `SWARM_HERDR_PARENT_PANE`, then creates a split with `herdr pane split` and
 launches the worker with `herdr pane run`. Use `SWARM_WORKER_HARNESS` (or
-`--harness`) to choose the worker launcher; personal identities default to
-`clowd`, work identities default to `clawd`, and unknown identities default to
-`claude`. Dispatch normalizes generic launcher requests through the requester's
-identity before spawning: personal `claude`/`codex`/`opencode`/`hermesw` become
-`clowd`/`cdx`/`opc`/`hermesp`. `SWARM_HERDR_BIN` may point at a non-default
-herdr binary.
+`--harness`) to choose the worker launcher; the default is the requester
+profile's `SWARM_HARNESS_CLAUDE` alias (or `claude` if unset). Dispatch
+normalizes generic launcher requests through the requester's identity before
+spawning: any of `claude`/`codex`/`opencode`/`hermes` (or a cross-profile alias)
+becomes the matching `SWARM_HARNESS_*` alias from the requester's profile env.
+`SWARM_HERDR_BIN` may point at a non-default herdr binary.
 
 Spawn/dispatch authority is intentionally narrow: gateway/lead sessions and
 operator surfaces may use this helper; ordinary worker/generalist sessions

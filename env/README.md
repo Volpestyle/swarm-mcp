@@ -1,65 +1,125 @@
-# Swarm Env Files
+# Swarm Profile Env Files
 
-Use these examples to create consumer-local launcher env files. Env files are the recommended place for identity, config-root, and work-tracker routing metadata. Shell aliases or functions should source these files instead of repeating long inline env assignments.
+A swarm-mcp "profile" is a named isolation boundary you pick (e.g. `personal`,
+`work`, `client-x`, `main`). Each profile gets its own env file declaring the
+identity token it uses on the wire, its coordinator DB, its herdr socket, and
+the launcher aliases that map canonical agents (claude/codex/opencode/hermes)
+to per-profile binaries. Profile names are user-defined — swarm-mcp has no
+reserved "personal"/"work" specialness; those are just the most common pattern.
 
-Copy the examples to a local config directory:
+## Single-profile, two-profile, N-profile
+
+There is no minimum or maximum. Common shapes:
+
+- **Single profile** — one identity, one DB, one set of MCP roots. Pick any
+  name (`main`, `default`, your username, …) and stop.
+- **Two profiles** — `personal` and `work` is the classic split, but the
+  binding is to whatever isolation boundary you want (per account, per client,
+  per environment).
+- **N profiles** — declare one env file per boundary. Each gets its own DB
+  path, herdr socket, MCP config roots, and launcher aliases.
+
+## Setting up a profile
 
 ```sh
 mkdir -p ~/.config/swarm-mcp
-cp env/work.env.example ~/.config/swarm-mcp/work.env
+
+# Generic template — copy once per profile and edit:
+cp env/profile.env.example ~/.config/swarm-mcp/<profile>.env
+
+# Or start from the concrete examples that come pre-filled with the common
+# personal/work shape:
 cp env/personal.env.example ~/.config/swarm-mcp/personal.env
+cp env/work.env.example     ~/.config/swarm-mcp/work.env
 ```
 
-Then edit the copies for your actual MCP names, tracker teams, repos, and config roots. These files must not contain credentials. Tokens and OAuth state belong in the runtime config root or the MCP provider's own auth store.
+Edit each copy for your actual MCP names, tracker teams, repos, and config
+roots. These files must not contain credentials — tokens and OAuth state
+belong in the runtime config root or the MCP provider's own auth store.
 
-The examples also set per-identity coordinator databases:
+Each profile env file declares (at minimum):
 
 ```sh
-# work.env
-export SWARM_DB_PATH="$HOME/.swarm-mcp-work/swarm.db"
+# Identity token used on the wire. Matches the file name (without .env).
+export AGENT_IDENTITY=<profile>
+export SWARM_IDENTITY=<profile>
 
-# personal.env
-export SWARM_DB_PATH="$HOME/.swarm-mcp-personal/swarm.db"
+# Per-profile coordinator DB.
+export SWARM_DB_PATH="$HOME/.swarm-mcp-<profile>/swarm.db"
+
+# Per-profile herdr control socket.
+export HERDR_SOCKET_PATH="${HERMES_HOST_HOME:-$HOME}/.config/herdr/sessions/<profile>/herdr.sock"
+
+# Launcher aliases. Names are your choice; swarm-mcp dispatches to whatever
+# alias you set. These four are the canonical harnesses swarm-mcp knows about.
+export SWARM_HARNESS_CLAUDE=<your-claude-alias>
+export SWARM_HARNESS_CODEX=<your-codex-alias>
+export SWARM_HARNESS_OPENCODE=<your-opencode-alias>
+export SWARM_HARNESS_HERMES=<your-hermes-alias>
 ```
 
-`swarm-mcp` creates the parent directory when it opens the database. Use the same `SWARM_DB_PATH` in any host MCP config that launches `swarm-mcp` directly instead of through these shell launchers.
+`swarm-mcp` creates the DB's parent directory on first open. Use the same
+`SWARM_DB_PATH` in any host MCP config that launches `swarm-mcp` directly
+instead of through these shell launchers.
 
-The env examples also set identity-scoped herdr socket paths:
+## Shell launcher functions
 
-```sh
-# work.env
-HERDR_SOCKET_PATH=${HERMES_HOST_HOME:-$HOME}/.config/herdr/sessions/work/herdr.sock
-
-# personal.env
-HERDR_SOCKET_PATH=${HERMES_HOST_HOME:-$HOME}/.config/herdr/sessions/personal/herdr.sock
-```
-
-Use the matching value when launching the visible desktop herdr server and that
-identity's gateway sessions. This gives sandboxed personal gateways a socket
-they can reach without sharing the host profile socket or the work identity's
-herdr state, while work sessions use their own host-visible socket.
-
-For zsh launcher functions, copy `launchers.zsh.example` into your shell config and adjust paths if needed:
+Source `launchers.zsh.example` from your shell config to gain the
+`swarm_define_profile` generator:
 
 ```sh
 source /absolute/path/to/swarm-mcp/env/launchers.zsh.example
+
+# Define each profile's launcher aliases. The names on the right are arbitrary —
+# they're the shell function names you'll type to start an agent in that
+# profile. They must match what the profile env file declares as
+# SWARM_HARNESS_* so dispatch picks the same names.
+swarm_define_profile personal \
+    claude=clowd codex=cdx opencode=opc hermes=hermesp \
+    claude_lead=clowdl codex_lead=cdxl herdr=herdrp
+
+swarm_define_profile work \
+    claude=clawd codex=codex opencode=opencode hermes=hermesw \
+    claude_lead=clawdl codex_lead=codexl herdr=herdrw
 ```
 
-The personal launcher set is `clowd` for Claude Code, `cdx` for Codex, `opc`
-for OpenCode, and `hermesp` for Hermes. Dispatch uses the same names when a
-personal gateway spawns workers.
+After sourcing and defining profiles, the alias names you chose become real
+shell functions. `clowd` launches Claude Code with the personal env file
+sourced and `AGENT_IDENTITY=personal` exported; `herdrp` launches a visible
+herdr server pinned to the personal socket; and so on.
 
-The visible herdr launcher functions are `herdrw` for the work socket and
-`herdrp` for the personal socket. They run `herdr --session work` and
-`herdr --session personal` with the matching `HERDR_SOCKET_PATH`.
+`*_lead` aliases set the session as a gateway/planner so it routes
+non-trivial work through the swarm `dispatch` tool instead of doing it
+in-pane. Use the plain alias for workers, the lead alias for gateways.
 
-## Published State
+## How dispatch picks a launcher
 
-When Claude Code, Codex, or Hermes swarm hooks start a session, they read these env vars and publish the selected tracker metadata into swarm KV:
+When a worker calls `dispatch`, swarm-mcp resolves the target launcher in
+three steps:
+
+1. Canonicalize the requested harness (`claude` / `codex` / `opencode` /
+   `hermes`). Non-canonical aliases (like `clawd` or `hermesw`) reverse-map
+   to the canonical name by scanning `SWARM_HARNESS_*` in the requester's
+   env and across all profile env files in `$SWARM_MCP_PROFILE_DIR`
+   (defaults to `~/.config/swarm-mcp`).
+2. Load the target identity's profile env (process env first, then
+   `<identity>.env`).
+3. Return `SWARM_HARNESS_<CANONICAL>` from that env — that's the alias the
+   spawned shell will exec.
+
+If a profile doesn't declare an alias for a canonical harness, dispatch
+falls back to the canonical name itself (so `claude` always works as a last
+resort even without a launcher function).
+
+## Published state
+
+When Claude Code, Codex, or Hermes swarm hooks start a session, they read
+the profile env vars and publish the selected work-tracker metadata into
+swarm KV:
 
 ```text
-config/work_tracker/work
-config/work_tracker/personal
+config/work_tracker/<profile>
 ```
 
-The `bootstrap` tool returns the matching row as `work_tracker` for the current registered identity.
+The `bootstrap` tool returns the matching row as `work_tracker` for the
+current registered identity.
