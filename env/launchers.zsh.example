@@ -75,7 +75,7 @@ _swarm_herdr() (
   local session="$2"
   shift 2
   mkdir -p "${socket_path:h}"
-  HERDR_SOCKET_PATH="$socket_path" herdr --session "$session" "$@"
+  HERDR_SOCKET_PATH="$socket_path" command herdr --session "$session" "$@"
 )
 
 # --- Public generator ---------------------------------------------------------
@@ -143,7 +143,7 @@ swarm_define_profile() {
   # Define each requested alias. eval is used to template the function name;
   # bodies stay quoted so $profile/$env_file values are baked in at define time.
   if [[ -n "$claude_alias" ]]; then
-    eval "$claude_alias() { _swarm_run_profile $(printf %q "$profile") $(printf %q "$env_file") claude ${claude_args} \"\$@\"; }"
+    eval "$claude_alias() { _swarm_run_profile $(printf %q "$profile") $(printf %q "$env_file") command claude ${claude_args} \"\$@\"; }"
   fi
   if [[ -n "$codex_alias" ]]; then
     eval "$codex_alias() { _swarm_run_profile $(printf %q "$profile") $(printf %q "$env_file") command codex \"\$@\"; }"
@@ -155,7 +155,7 @@ swarm_define_profile() {
     eval "$hermes_alias() { _swarm_run_profile $(printf %q "$profile") $(printf %q "$env_file") command hermes \"\$@\"; }"
   fi
   if [[ -n "$claude_lead_alias" ]]; then
-    eval "$claude_lead_alias() { _swarm_run_lead $(printf %q "$profile") $(printf %q "$env_file") claude claude ${claude_args} \"\$@\"; }"
+    eval "$claude_lead_alias() { _swarm_run_lead $(printf %q "$profile") $(printf %q "$env_file") claude command claude ${claude_args} \"\$@\"; }"
   fi
   if [[ -n "$codex_lead_alias" ]]; then
     eval "$codex_lead_alias() { _swarm_run_lead $(printf %q "$profile") $(printf %q "$env_file") codex command codex \"\$@\"; }"
