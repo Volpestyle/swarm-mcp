@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   progress_summary TEXT,
   progress_updated_at INTEGER,
   blocked_reason TEXT,
-  expected_next_update_at INTEGER
+  expected_next_update_at INTEGER,
+  tracker_required INTEGER NOT NULL DEFAULT 0,
+  tracker_provider TEXT
 );
 
 CREATE TABLE IF NOT EXISTS context (

@@ -40,7 +40,7 @@ For each task:
 8. Prefer `complete_task` with a useful structured result. Use `update_task` to `done`, `failed`, or `cancelled` as a plain-string fallback.
 9. Create a `review` task assigned to the planner or reviewer when implementation or fix work needs review.
 
-If the task references a work tracker, update it only when the task contract grants that authority and the configured same-identity tracker MCP is available. Otherwise put tracker-ready details in the swarm task result for the planner or gateway.
+If the task references a work tracker, update it only when the task contract grants that authority and the configured same-identity tracker MCP is available. Otherwise put tracker-ready details in the swarm task result for the planner or gateway. For Linear-backed tasks, the structured result must include either `tracker_update` or `tracker_update_skipped` with the exact reason.
 
 ## Structured Results
 
@@ -53,6 +53,11 @@ Prefer `complete_task` when completing work:
   "summary": "Added JWT validation middleware with 401 response for invalid tokens.",
   "files_changed": ["src/auth/middleware.ts", "src/auth/middleware.test.ts"],
   "tests": [{ "command": "bun test src/auth/middleware.test.ts", "status": "passed" }],
+  "tracker_update_skipped": {
+    "provider": "linear",
+    "issue": "VUH-35",
+    "reason": "No Linear MCP in this worker; gateway/planner must update from this handoff."
+  },
   "followups": []
 }
 ```
@@ -62,6 +67,8 @@ Fields:
 - `summary`: what changed and why
 - `files_changed`: files you modified or materially inspected
 - `tests`: verification commands/checks with `status` values `"passed"`, `"failed"`, `"skipped"`, or `"unknown"`
+- `tracker_update`: durable tracker update details when you updated the configured tracker directly
+- `tracker_update_skipped`: exact reason the configured tracker was not updated, plus enough context for a tracker-capable planner/gateway to do it
 - `followups`: follow-up work, risks, or reviewer notes
 
 If structured handoff is not useful, use terminal `update_task` with a plain string result.

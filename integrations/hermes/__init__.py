@@ -13,8 +13,8 @@ Wires:
     ``swarm-mcp`` CLI.
 4. ``pre_tool_call``/``post_tool_call`` — enforce peer-held locks on write-like
    file tools; post is retained as a no-op compatibility hook.
-5. ``swarm_prompt_peer`` — send a durable swarm message and, when possible,
-   wake the target workspace handle as an express lane.
+5. Workspace identity publishing — lets the adapter-neutral MCP
+   ``prompt_peer`` tool wake a Hermes pane when appropriate.
 
 The MCP server itself must be registered under the name ``swarm`` (matches
 ``mcp_swarm_*`` tool prefix). If a different name was used, override via
@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 
-from . import cli, lifecycle, prompt_peer
+from . import cli, lifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +41,5 @@ def register(ctx) -> None:
         handler=cli.handle_slash,
         description="Inspect swarm-mcp state (instances, tasks, kv, messages).",
         args_hint="[status|instances|tasks|kv|messages]",
-    )
-    ctx.register_tool(
-        name="swarm_prompt_peer",
-        toolset="plugin_swarm",
-        schema=prompt_peer.SCHEMA,
-        handler=prompt_peer.prompt_peer,
     )
     logger.info("swarm hermes plugin registered")

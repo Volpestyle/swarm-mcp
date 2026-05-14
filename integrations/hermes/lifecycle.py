@@ -516,9 +516,9 @@ def on_session_start(session_id: str = "", **kwargs: Any) -> None:
             _instances[session_id] = instance_id
             _roles_by_session[session_id] = role
             _refcounts[instance_id] = _refcounts.get(instance_id, 0) + 1
-        from . import prompt_peer
+        from . import workspace_identity
 
-        prompt_peer.publish_current_identity(instance_id)
+        workspace_identity.publish_current_identity(instance_id)
         _report_herdr_agent(instance_id, "idle", "swarm session registered")
         _publish_work_tracker_config(instance_id, _work_tracker_config(kwargs))
         logger.info("swarm plugin: registered as %s", instance_id)
@@ -543,10 +543,10 @@ def on_session_finalize(session_id: str = "", **_: Any) -> None:
     if not instance_id:
         return
 
-    from . import prompt_peer
+    from . import workspace_identity
 
     _release_herdr_agent(instance_id)
-    prompt_peer.delete_current_identity(instance_id)
+    workspace_identity.delete_current_identity(instance_id)
     result = _dispatch("deregister", {})
     if result and result.get("error"):
         logger.debug("swarm plugin: deregister skipped for %s: %s", instance_id, result["error"])

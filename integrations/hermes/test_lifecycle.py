@@ -34,7 +34,7 @@ class SwarmRoleConfigTests(unittest.TestCase):
 
         with mock.patch.object(lifecycle, "_load_config", return_value=config), mock.patch.object(
             lifecycle, "_dispatch", side_effect=fake_dispatch
-        ), mock.patch("integrations.hermes.prompt_peer.publish_current_identity"):
+        ), mock.patch("integrations.hermes.workspace_identity.publish_current_identity"):
             lifecycle.on_session_start(session_id=session_id, platform="telegram")
 
     def test_missing_swarm_role_defaults_to_worker(self) -> None:
@@ -117,7 +117,7 @@ class SwarmRoleConfigTests(unittest.TestCase):
 
         with mock.patch.object(lifecycle, "_load_config", return_value=config), mock.patch.object(
             lifecycle, "_dispatch", side_effect=fake_dispatch
-        ), mock.patch("integrations.hermes.prompt_peer.publish_current_identity"):
+        ), mock.patch("integrations.hermes.workspace_identity.publish_current_identity"):
             lifecycle.on_session_start(session_id="session-123", platform="telegram")
 
         self.assertEqual(calls[0][0], "register")
@@ -140,7 +140,7 @@ class SwarmRoleConfigTests(unittest.TestCase):
         with (
             mock.patch.object(lifecycle, "_load_config", return_value={"swarm": {"role": "worker"}}),
             mock.patch.object(lifecycle, "_dispatch", side_effect=fake_dispatch),
-            mock.patch("integrations.hermes.prompt_peer.publish_current_identity"),
+            mock.patch("integrations.hermes.workspace_identity.publish_current_identity"),
             mock.patch.object(
                 lifecycle.herdr_agent_report,
                 "report_agent",
@@ -167,7 +167,7 @@ class SwarmRoleConfigTests(unittest.TestCase):
         with (
             mock.patch.object(lifecycle, "_load_config", return_value={"swarm": {"role": "worker"}}),
             mock.patch.object(lifecycle, "_dispatch", side_effect=fake_dispatch),
-            mock.patch("integrations.hermes.prompt_peer.publish_current_identity"),
+            mock.patch("integrations.hermes.workspace_identity.publish_current_identity"),
             mock.patch.object(
                 lifecycle.herdr_agent_report,
                 "report_agent",
@@ -186,7 +186,7 @@ class SwarmRoleConfigTests(unittest.TestCase):
         lifecycle._refcounts["inst-session-123"] = 1
 
         with (
-            mock.patch("integrations.hermes.prompt_peer.delete_current_identity"),
+            mock.patch("integrations.hermes.workspace_identity.delete_current_identity"),
             mock.patch.object(lifecycle, "_dispatch", return_value={"ok": True}),
             mock.patch.object(
                 lifecycle.herdr_agent_report,

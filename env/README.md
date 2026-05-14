@@ -39,6 +39,12 @@ Edit each copy for your actual MCP names, tracker teams, repos, and config
 roots. These files must not contain credentials — tokens and OAuth state
 belong in the runtime config root or the MCP provider's own auth store.
 
+For the single-profile `default.env` starter, `HERMES_HOME` points at
+`~/.hermes`, because Hermes' root home is where most single-profile installs
+keep `config.yaml`, plugins, and MCP servers. Use `~/.hermes/profiles/<name>`
+only for named Hermes profiles that actually have their own config/plugin/MCP
+state.
+
 Each profile env file declares (at minimum):
 
 ```sh

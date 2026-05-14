@@ -19,7 +19,7 @@ Minimum to function:
 - Default lock semantics are re-entrant for your own instance; pass \`exclusive=true\` only for one-shot mutexes (spawn coordination, singleton jobs).
 - Lock conflict → prefer to pivot (different file or task). Use \`wait_for_activity\` to block on \`context.lock_released\` only when no other productive work is available; never sleep-poll.
 - \`claim_next_task\` atomically claims the highest-priority compatible task when you do not already know the task ID. \`claim_task\` moves a known task to \`in_progress\`.
-- Prefer \`complete_task\` at the end with structured \`summary\`, \`files_changed\`, \`tests\`, and \`followups\`. Use \`update_task\` as a plain-string fallback. Normal edit locks release automatically; internal \`/__swarm/\` mutex locks are managed by their owning flow.
+- Prefer \`complete_task\` at the end with structured \`summary\`, \`files_changed\`, \`tests\`, optional tracker fields, and \`followups\`. Use \`update_task\` as a plain-string fallback. Normal edit locks release automatically; internal \`/__swarm/\` mutex locks are managed by their owning flow.
 - \`request_task\` (or \`request_task_batch\` with \`$N\` refs) for delegation. Use \`review_of_task_id\` on review tasks and \`fixes_task_id\` on fix tasks. Use explicit \`review\` tasks for code review handoff; reserve \`approval_required\` for true approval gates. Use \`priority\` to control execution order.
 - Use \`broadcast\` for short swarm-wide status updates, \`send_message\` for durable targeted notes to busy peers, \`request_task\` for actionable follow-up, \`prompt_peer\` when a specific peer should notice soon, and \`peek_peer\` when a read-only look at a peer's workspace output is enough. \`prompt_peer\` records the swarm message first and only best-effort wakes the workspace handle; use \`force=true\` only for urgent or corrective interruptions.
 - Do yield checkpoints with \`bootstrap\` or \`poll_messages\` before claiming more work, after \`update_task\`, after peer handoff, and before your final response.
@@ -40,7 +40,7 @@ Minimum: check \`kv_get("owner/planner")\` and \`kv_get("plan/latest")\` to see 
 
 Load \`references/implementer.md\` from the \`swarm-mcp\` skill for the claim / edit / handoff playbook.
 
-Minimum: use \`claim_next_task\` for the highest-priority compatible task unless you already know a task ID; use \`get_file_lock\` for read-only lock inspection and \`lock_file\` only for critical sections wider than one write tool call; on completion prefer \`complete_task\` with \`summary\`, \`files_changed\`, \`tests\`, and \`followups\`.`,
+Minimum: use \`claim_next_task\` for the highest-priority compatible task unless you already know a task ID; use \`get_file_lock\` for read-only lock inspection and \`lock_file\` only for critical sections wider than one write tool call; on completion prefer \`complete_task\` with \`summary\`, \`files_changed\`, \`tests\`, optional tracker fields, and \`followups\`.`,
 
   reviewer: `You are a **reviewer** in this swarm.
 

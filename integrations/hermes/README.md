@@ -19,20 +19,30 @@ For the full design — architecture, lifecycle contract, role topology (worker 
 | Enforce peer-declared locks on write-like file tools | `pre_tool_call` → `mcp_swarm_get_file_lock` per target path; blocks the call when a peer (not this session) holds it. Never acquires. |
 | Publish workspace identity and pane status for this swarm instance | `on_session_start` → publish current workspace handle when `HERDR_PANE_ID` is present; with `HERDR_SOCKET_PATH`, report `pane.report_agent state=idle` and release it on finalize |
 | Publish configured work tracker | `on_session_start` reads tracker config and writes `config/work_tracker/<identity>` KV |
-| Express-lane peer prompt | `swarm_prompt_peer` tool → `mcp_swarm_send_message`, then best-effort workspace backend wake-up (`herdr pane run` today) |
 | `/swarm` slash command (status/instances/tasks/kv/messages) | shells to `swarm-mcp` CLI, no agent turn |
 
 Failures are logged and swallowed — coordination is opt-in convenience, never critical path.
 
-`swarm_prompt_peer` does not replace `wait_for_activity` for agents that are actively monitoring delegated work. It writes the durable swarm message first, then nudges the target workspace handle only if that instance has published a workspace identity and the handle is not actively working. If the backend is unavailable, the message remains in swarm for the worker's next yield checkpoint.
+Use the adapter-neutral MCP `prompt_peer` tool for express-lane peer prompts. It writes the durable swarm message first, then nudges the target workspace handle only if that instance has published a workspace identity and the handle is not actively working. If the backend is unavailable, the message remains in swarm for the worker's next yield checkpoint.
 
-The tool is safe for ordinary workers, not just planners or gateways: implementers, reviewers, researchers, and generalists may use it to wake a peer for legitimate handoff or coordination. The guardrail is that they target a swarm instance id and leave the actual instruction in swarm; raw backend commands such as `herdr pane run` remain operator/spawner-level capabilities.
+`prompt_peer` does not replace `wait_for_activity` for agents that are actively monitoring delegated work. It is safe for ordinary workers, not just planners or gateways: implementers, reviewers, researchers, and generalists may use it to wake a peer for legitimate handoff or coordination. The guardrail is that they target a swarm instance id and leave the actual instruction in swarm; raw backend commands such as `herdr pane run` remain operator/spawner-level capabilities.
 
 ## Roadmap
 
 See [SPEC.md §9](SPEC.md#9-roadmap) for the canonical roadmap.
 
 ## Install
+
+Hermes' native MCP client is required for the full `mcp_swarm_*` tool set
+(`bootstrap`, `dispatch`, `claim_next_task`, `wait_for_activity`, etc.). If
+Hermes was installed without MCP extras, install them in the same Python
+environment that runs `hermes`:
+
+```bash
+python -m pip install 'hermes-agent[mcp]'
+# or, for a source checkout / existing Hermes venv:
+/path/to/hermes-agent/venv/bin/python -m pip install 'mcp>=1.2.0,<2'
+```
 
 The plugin lives in this repo. For local use, symlink it into hermes' user plugin dir:
 
@@ -103,8 +113,6 @@ The matching minimum-set for `systemd` is the same env block under `[Service] En
 
 Work tracker metadata is read from `SWARM_HERMES_WORK_TRACKER`, `SWARM_WORK_TRACKER`, `.swarm-work-tracker`, or Hermes config `swarm.work_tracker`, then published to `config/work_tracker/<identity>` in swarm KV. This is routing metadata only; credentials still live in the launcher/config-root MCP setup.
 
-The express-lane tool is registered under Hermes toolset `plugin_swarm`. Enable that toolset for sessions that should be allowed to nudge peers; sessions without the toolset still get auto-register, the peer-lock check on writes, identity publishing, and `/swarm`.
-
 The `/swarm` slash command resolves the CLI in this order:
 
 1. `SWARM_MCP_BIN` as a real command, e.g. `bun run /path/to/swarm-mcp/src/cli.ts`
@@ -120,8 +128,20 @@ export SWARM_MCP_BIN='bun run /path/to/swarm-mcp/src/cli.ts'
 ## Verify
 
 ```bash
-hermes plugins list           # should show 'swarm' as loaded
+hermes plugins list           # should show 'swarm' as enabled
+hermes mcp list               # should show 'swarm' as enabled
+hermes mcp test swarm         # should connect and list swarm tools
 ```
+
+`hermes mcp test swarm` should discover the native tools, including
+`bootstrap`, `dispatch`, `list_tasks`, and `wait_for_activity`. If a session can
+only see `/swarm` or the `swarm-mcp` CLI, then the Hermes
+plugin loaded but the native MCP server did not mount. Check that:
+
+- `HERMES_HOME` points at the Hermes home containing `config.yaml`,
+  `plugins/swarm`, and `mcp_servers.swarm`.
+- The Python environment that runs `hermes` has the `mcp` package installed.
+- The configured `SWARM_DB_PATH` is writable by the Hermes process.
 
 Inside a hermes session:
 

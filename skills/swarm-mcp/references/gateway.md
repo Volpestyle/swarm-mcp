@@ -10,8 +10,9 @@ Ordinary workers should not spawn agents. They claim tasks, message the planner/
 2. For trivial, low-risk work, edit locally when that is clearly faster than spawning.
 3. For medium or large work, create/link the configured same-identity tracker item when applicable, then call MCP `dispatch` with an explicit `idempotency_key` for retryable handoffs.
 4. Use `placement` when spawning multiple workers so they land in a readable herdr layout.
-5. Monitor with durable task state, not pane reads.
-6. Summarize task IDs, worker identities, completion state, and where workers landed.
+5. For tracker-backed work, set or preserve `tracker_required` on the swarm task and require the worker's structured result to include `tracker_update` or `tracker_update_skipped`.
+6. Monitor with durable task state, not pane reads.
+7. Summarize task IDs, worker identities, completion state, and where workers landed.
 
 ## Dispatch Modes
 
@@ -37,6 +38,21 @@ For tracker-backed work, make the key semantic and stable across recovery attemp
 - Follow-up fix after a failed review: `linear:<issue-id>:fix:<failed-review-task-id>`.
 
 Do not create a new key just because you changed the prompt wording, switched `cdx` to `clowd`, moved panes, or recovered after a gateway restart. New keys are for genuinely new work, not retries.
+
+For tracker-backed work, include the tracker contract in the dispatch message:
+
+```md
+This task is linked to Linear issue VUH-35.
+
+On completion:
+- include `tracker_update` if you updated Linear directly
+- include `tracker_update_skipped` with the exact reason if you could not
+- do not mark this swarm task complete without one of those fields
+```
+
+When creating tracker-backed tasks directly, set `tracker_required: true` and `tracker_provider` to the configured provider. `dispatch` marks promoted tracker-backed tasks automatically when promotion metadata is available.
+
+If a worker completes implementation with `tracker_update_skipped`, treat the implementation as done but tracker finalization as still pending. Update the tracker from the handoff yourself or dispatch a small same-identity tracker-update task to a peer with the configured tracker MCP.
 
 Force a fresh worker pane even when a matching live worker exists:
 

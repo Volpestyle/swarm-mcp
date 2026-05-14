@@ -150,7 +150,7 @@ This layered defense protects against the "Telegram message retry creates two wo
 
 ### 5.6 Peer prompt express lane
 
-`wait_for_activity` is the reliable blocking monitor while an agent owns active coordination responsibility. It is not a cold-start mechanism, idle availability loop, or a way to type into another agent's conversation by itself. The plugin provides `swarm_prompt_peer` as the express lane for already-running workers that have published a workspace identity:
+`wait_for_activity` is the reliable blocking monitor while an agent owns active coordination responsibility. It is not a cold-start mechanism, idle availability loop, or a way to type into another agent's conversation by itself. The adapter-neutral MCP `prompt_peer` tool is the express lane for already-running workers that have published a workspace identity:
 
 1. Write the instruction through `mcp_swarm_send_message` first. This is the durable source of truth.
 2. Resolve the target's workspace transport handle from swarm KV at `identity/workspace/herdr/<instance_id>`.
@@ -276,11 +276,11 @@ Subcommands: `status` (default, compact summary), `instances`, `tasks`, `kv`, `m
 - `pre_tool_call` falls back to single registered instance when `session_id` missing
 - Multi-session ambiguity refuses to guess
 
-### v0.3 — Workspace identity + peer prompt express lane ✓
+### v0.3 — Workspace identity + adapter-neutral peer prompt support ✓
 - Publish `identity/workspace/herdr/<instance_id>` on session start when herdr env is present
 - Delete the identity key on session finalization
-- Register `swarm_prompt_peer` as a plugin tool
-- Always send the durable swarm message first; use `herdr pane run` only as a best-effort wake-up
+- Use MCP `prompt_peer` for peer prompts; Hermes only publishes the workspace identity it needs
+- Always send the durable swarm message first; use `herdr pane run` only as a best-effort wake-up from the MCP server backend
 
 ### v0.4 — Background poller / gateway notifications
 - Long-lived monitor for active gateway/planner responsibilities using `wait_for_activity`
@@ -358,7 +358,7 @@ A session calls `lock_file foo.ts` (declaring a wider critical section) and then
 Single session, no peers. `write_file` proceeds without the pre-tool hook denying. The hook never acquired a lock in the first place, so no lock context entry appears in `swarm-mcp inspect`.
 
 **S5: Peer prompt express lane (v0.3)**
-Two Hermes sessions in herdr panes. Session A calls `swarm_prompt_peer(recipient=<B>, message="check your inbox")`. Verify B has an unread swarm message even if herdr injection fails. When B has published `identity/workspace/herdr/<instance_id>` and its pane is not `working`, verify `herdr pane run` injects the wake prompt and B is told to call `bootstrap` or `poll_messages` rather than receiving the full work contract through terminal text.
+Two Hermes sessions in herdr panes. Session A calls MCP `prompt_peer(recipient=<B>, message="check your inbox")`. Verify B has an unread swarm message even if herdr injection fails. When B has published `identity/workspace/herdr/<instance_id>` and its pane is not `working`, verify `herdr pane run` injects the wake prompt and B is told to call `bootstrap` or `poll_messages` rather than receiving the full work contract through terminal text.
 
 **S6: Gateway fast-dispatch (v0.5+)**
 Gateway hermes + one worker peer. User on Telegram: "fix typo X in file Y." Gateway formulates patch, calls `swarm_fast_dispatch`. Worker claims, applies, marks task done. Gateway summarizes back to Telegram within timeout. File is modified; gateway never held a lock.

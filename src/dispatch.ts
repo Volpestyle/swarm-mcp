@@ -648,6 +648,11 @@ export async function runDispatch(opts: DispatchOptions) {
         spawnLabel,
         override: promotionOverride,
       });
+  if (promotion?.decision.promote) {
+    taskStore.requireTrackerDisposition(result.id, opts.scope, {
+      provider: promotion.decision.provider,
+    });
+  }
   const promotionFields = promotion ? { promotion } : {};
 
   const task = taskStore.get(result.id, opts.scope);

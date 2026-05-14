@@ -55,7 +55,7 @@ The hermes plugin has the advantage of hermes-agent's plugin API, which
 exposes:
 
 - Direct dispatch of MCP tools from inside a hook (`registry.dispatch`)
-- Tool registration (`ctx.register_tool(...)` for `swarm_prompt_peer`)
+- Plugin-local tool registration (`ctx.register_tool(...)`)
 - Session lifecycle hooks with separable per-turn vs per-session boundaries
   (`on_session_end` vs `on_session_finalize`)
 
@@ -73,7 +73,7 @@ The result:
 | Peer-lock enforcement | Same — inspect active locks and deny writes when a peer holds the target file. |
 | Block on lock conflict | Same — emit `permissionDecision: deny`. |
 | `/swarm` slash command | Markdown command; same shape, slightly different surface. |
-| `swarm_prompt_peer` tool | Implemented adapter-neutrally as the swarm MCP `prompt_peer` tool and `swarm-mcp prompt-peer` CLI. |
+| Peer prompt express lane | Implemented adapter-neutrally as the swarm MCP `prompt_peer` tool and `swarm-mcp prompt-peer` CLI. |
 | Workspace identity publish on session start | `SessionStart` publishes `identity/workspace/herdr/<instance_id>` directly after CLI registration. |
 
 ## 4. CLI surface for full autonomy
@@ -175,12 +175,12 @@ The five-identifier invariants from hermes SPEC §6.5 carry over without
 modification: tasks/messages/locks target `instance_id`; UI/control surfaces
 target transport handles; user-facing text uses labels.
 
-## 7. Why no plugin-local `swarm_prompt_peer` tool here
+## 7. Why no plugin-local peer prompt tool here
 
-The hermes plugin registers `swarm_prompt_peer` because it can — hermes
-exposes `ctx.register_tool` to plugins. Claude Code does not allow plugins to
-inject ad-hoc tools into a hosted session; the only way to add tools is to
-ship an MCP server in the plugin.
+The hermes plugin used to register a plugin-local peer prompt tool, but that
+path is now retired. Claude Code also does not allow plugins to inject ad-hoc
+tools into a hosted session; the only way to add tools is to ship an MCP server
+in the plugin.
 
 The architectural answer is the adapter-neutral `prompt_peer` tool in the
 swarm-mcp server plus the `swarm-mcp prompt-peer` CLI. Claude Code receives

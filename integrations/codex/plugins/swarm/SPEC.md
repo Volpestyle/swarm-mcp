@@ -208,7 +208,7 @@ Five-identifier invariants from hermes SPEC §6.5 carry over: tasks/messages/
 locks target `instance_id`; UI/control surfaces target transport handles;
 user-facing text uses labels.
 
-## 7. Why no plugin-local `swarm_prompt_peer` tool here
+## 7. Why no plugin-local peer prompt tool here
 
 Same answer as the Claude Code plugin: the right home for `prompt_peer` is
 the swarm-mcp server itself plus the `swarm-mcp prompt-peer` CLI. Adding it

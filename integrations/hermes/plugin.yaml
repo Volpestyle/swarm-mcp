@@ -1,6 +1,6 @@
 name: swarm
 version: 0.3.0
-description: "Auto-register hermes sessions with swarm-mcp, surface peer state, bridge file-write locking, and provide an express-lane peer prompt through herdr when available."
+description: "Auto-register hermes sessions with swarm-mcp, surface peer state, bridge file-write locking, and publish workspace identity for adapter-neutral peer wakeups."
 author: "@volpestyle"
 hooks:
   - on_session_start

@@ -18,6 +18,8 @@ export { TASK_STATUSES, TASK_TYPES, type TaskStatus, type TaskType };
 type TaskRow = {
   id: string;
   scope: string;
+  title?: string | null;
+  description?: string | null;
   requester: string;
   assignee: string | null;
   status: TaskStatus;
@@ -32,6 +34,8 @@ type TaskRow = {
   progress_updated_at: number | null;
   blocked_reason: string | null;
   expected_next_update_at: number | null;
+  tracker_required?: number | null;
+  tracker_provider?: string | null;
 };
 
 function taskIdentityOwner(task: { requester?: string | null; assignee?: string | null }) {
@@ -73,6 +77,8 @@ type TaskCreationFields = {
   review_of_task_id: string | null;
   fixes_task_id: string | null;
   approval_required: boolean;
+  tracker_required: boolean;
+  tracker_provider: string | null;
 };
 type PreparedTaskInsert = TaskCreationFields & {
   status: TaskStatus;
@@ -90,6 +96,8 @@ export interface RequestOpts {
   review_of_task_id?: string;
   fixes_task_id?: string;
   approval_required?: boolean;
+  tracker_required?: boolean;
+  tracker_provider?: string;
 }
 
 export interface StructuredTestResult {
@@ -102,6 +110,8 @@ export interface StructuredCompletionResult {
   summary: string;
   files_changed: string[];
   tests: StructuredTestResult[];
+  tracker_update?: unknown;
+  tracker_update_skipped?: unknown;
   followups: string[];
 }
 
@@ -110,6 +120,8 @@ export interface StructuredCompletionOpts {
   summary: string;
   files_changed?: string[];
   tests?: StructuredTestResult[];
+  tracker_update?: unknown;
+  tracker_update_skipped?: unknown;
   followups?: string[];
 }
 
@@ -170,8 +182,27 @@ function structuredCompletionResult(
     summary: opts.summary,
     files_changed: [...new Set(opts.files_changed ?? [])],
     tests: opts.tests ?? [],
+    ...(opts.tracker_update ? { tracker_update: opts.tracker_update } : {}),
+    ...(opts.tracker_update_skipped ? { tracker_update_skipped: opts.tracker_update_skipped } : {}),
     followups: opts.followups ?? [],
   };
+}
+
+function hasTrackerDisposition(opts: StructuredCompletionOpts) {
+  return opts.tracker_update !== undefined || opts.tracker_update_skipped !== undefined;
+}
+
+function isLinearBackedTask(task: {
+  title?: string | null;
+  description?: string | null;
+  idempotency_key?: string | null;
+}) {
+  const haystack = [task.idempotency_key, task.title, task.description]
+    .filter((item): item is string => typeof item === "string")
+    .join("\n");
+  return /\blinear:[A-Z][A-Z0-9]*-\d+\b/i.test(haystack) ||
+    /linear\.app\/[^\s]+\/issue\/[A-Z][A-Z0-9]*-\d+\b/i.test(haystack) ||
+    /\b[A-Z][A-Z0-9]*-\d+\b/.test(haystack);
 }
 
 function hasOwn<K extends string>(
@@ -447,9 +478,9 @@ function insertPreparedTask(
     `INSERT INTO tasks (
        id, scope, type, title, description, requester, assignee, files, status,
        priority, depends_on, idempotency_key, parent_task_id, review_of_task_id,
-       fixes_task_id, result, changed_at
+       fixes_task_id, result, changed_at, tracker_required, tracker_provider
      )
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       task.id,
       task.scope,
@@ -468,6 +499,8 @@ function insertPreparedTask(
       task.fixes_task_id,
       task.result,
       stamp(),
+      task.tracker_required ? 1 : 0,
+      task.tracker_provider,
     ],
   );
   emit({
@@ -488,6 +521,8 @@ function insertPreparedTask(
       files: task.files ?? null,
       priority: task.priority,
       result: task.result,
+      tracker_required: task.tracker_required,
+      tracker_provider: task.tracker_provider,
       ...extraPayload,
     },
   });
@@ -531,6 +566,14 @@ export function request(
     review_of_task_id: opts.review_of_task_id ?? null,
     fixes_task_id: opts.fixes_task_id ?? null,
     approval_required: opts.approval_required ?? false,
+    tracker_required:
+      opts.tracker_required ??
+      isLinearBackedTask({
+        title,
+        description: opts.description ?? null,
+        idempotency_key: opts.idempotency_key ?? null,
+      }),
+    tracker_provider: opts.tracker_provider ?? null,
   });
 
   insertPreparedTask(prepared);
@@ -817,6 +860,26 @@ export function completeStructured(
   actor: string,
   opts: StructuredCompletionOpts,
 ) {
+  const task = db
+    .query(
+      "SELECT title, description, idempotency_key, tracker_required, tracker_provider FROM tasks WHERE id = ? AND scope = ?",
+    )
+    .get(id, scope) as
+    | {
+        title: string | null;
+        description: string | null;
+        idempotency_key: string | null;
+        tracker_required: number | null;
+        tracker_provider: string | null;
+      }
+    | null;
+  if (!task) return { error: "Task not found" };
+  if ((task.tracker_required || isLinearBackedTask(task)) && !hasTrackerDisposition(opts)) {
+    return {
+      error:
+        "Tracker-backed tasks require tracker_update or tracker_update_skipped in complete_task",
+    };
+  }
   const structured = structuredCompletionResult(opts);
   const terminalStatus = opts.status ?? "done";
   const next = update(id, scope, actor, terminalStatus, JSON.stringify(structured));
@@ -828,6 +891,22 @@ export function completeStructured(
     };
   }
   return next;
+}
+
+export function requireTrackerDisposition(
+  id: string,
+  scope: string,
+  opts: { provider?: string | null } = {},
+) {
+  const result = db.run(
+    `UPDATE tasks
+     SET tracker_required = 1, tracker_provider = COALESCE(?, tracker_provider),
+         updated_at = unixepoch(), changed_at = ?
+     WHERE id = ? AND scope = ?`,
+    [opts.provider ?? null, stamp(), id, scope],
+  );
+  if (result.changes === 0) return { error: "Task not found" };
+  return { ok: true as const };
 }
 
 export function reportProgress(
@@ -1019,6 +1098,8 @@ export interface BatchTaskSpec {
   review_of_task_id?: string; // $N ref or external task ID
   fixes_task_id?: string; // $N ref or external task ID
   approval_required?: boolean;
+  tracker_required?: boolean;
+  tracker_provider?: string;
 }
 
 export interface BatchTaskResult {
@@ -1245,6 +1326,14 @@ export function requestBatch(
         review_of_task_id: reviewOfTaskId,
         fixes_task_id: fixesTaskId,
         approval_required: spec.approval_required ?? false,
+        tracker_required:
+          spec.tracker_required ??
+          isLinearBackedTask({
+            title: spec.title,
+            description: spec.description ?? null,
+            idempotency_key: spec.idempotency_key ?? null,
+          }),
+        tracker_provider: spec.tracker_provider ?? null,
       });
 
       resolved[i].status = prepared.status;

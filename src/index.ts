@@ -248,6 +248,17 @@ const taskCreateShape = {
     .describe(
       "If true, task starts in approval_required status and must be approved before work begins.",
     ),
+  tracker_required: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe(
+      "If true, complete_task must include tracker_update or tracker_update_skipped.",
+    ),
+  tracker_provider: z
+    .string()
+    .optional()
+    .describe("Optional configured tracker provider name, such as linear, jira, or github_issues."),
 } satisfies ToolShape;
 
 function resolveFileInput(file: string) {
@@ -1054,6 +1065,8 @@ registeredTool(
     review_of_task_id,
     fixes_task_id,
     approval_required,
+    tracker_required,
+    tracker_provider,
   }) => {
     const current = instance!;
 
@@ -1086,6 +1099,8 @@ registeredTool(
       review_of_task_id,
       fixes_task_id,
       approval_required,
+      tracker_required,
+      tracker_provider,
     });
 
     if ("error" in result) {
@@ -1451,7 +1466,7 @@ const structuredTestResultShape = z.object({
 
 registeredTool(
   "complete_task",
-  "Complete a claimed task with structured handoff details. Stores the task result as JSON with summary, files_changed, tests, and followups, then auto-releases locks on the task's files.",
+  "Complete a claimed task with structured handoff details. Stores the task result as JSON with summary, files_changed, tests, tracker_update/tracker_update_skipped, and followups, then auto-releases locks on the task's files.",
   {
     task_id: z.string().describe("The task ID"),
     status: z
@@ -1468,12 +1483,29 @@ registeredTool(
       .array(structuredTestResultShape)
       .optional()
       .describe("Verification commands or checks and their outcomes"),
+    tracker_update: z
+      .union([z.record(z.unknown()), z.string()])
+      .optional()
+      .describe("Durable work-tracker update details when you updated the configured tracker directly"),
+    tracker_update_skipped: z
+      .union([z.record(z.unknown()), z.string()])
+      .optional()
+      .describe("Exact reason the configured tracker was not updated, plus enough context for a tracker-capable planner/gateway to do it"),
     followups: z
       .array(z.string())
       .optional()
       .describe("Follow-up work, risks, or reviewer notes"),
   },
-  async ({ task_id, status: terminalStatus, summary, files_changed, tests, followups }) => {
+  async ({
+    task_id,
+    status: terminalStatus,
+    summary,
+    files_changed,
+    tests,
+    tracker_update,
+    tracker_update_skipped,
+    followups,
+  }) => {
     const current = instance!;
     const statusValue = terminalStatus ?? "done";
     const blockedBefore = statusValue === "done" ? assignedBlockedTasks(current.scope, current) : new Map();
@@ -1482,6 +1514,8 @@ registeredTool(
       summary,
       files_changed: files_changed?.map((item) => resolveFileInput(item)),
       tests,
+      tracker_update,
+      tracker_update_skipped,
       followups,
     });
 

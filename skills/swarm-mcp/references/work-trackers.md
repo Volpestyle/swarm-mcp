@@ -94,7 +94,9 @@ For non-trivial human-trackable work:
 4. Create swarm task(s) for execution; include the tracker URL or ID in task descriptions or plan KV.
 5. Use swarm for assignment, dependencies, locks, messages, review tasks, and structured results.
 6. Update the tracker only at durable milestones or when the task contract grants tracker-update authority.
-7. If the tracker MCP is unavailable, keep coordination in swarm and include `tracker_update_skipped` in the final result.
+7. For tracker-backed work, mark the swarm task with `tracker_required` when creating/dispatching it. Promotion-aware dispatch paths may set this automatically.
+8. Require `complete_task` results for tracker-backed work to include either `tracker_update` or `tracker_update_skipped`.
+9. If the tracker MCP is unavailable, keep coordination in swarm, include `tracker_update_skipped` in the final result, and notify the planner/gateway so a tracker-capable peer can finish the update.
 
 ## Missing Or Ambiguous Config
 

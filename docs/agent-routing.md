@@ -11,7 +11,7 @@ For non-trivial coding work, prefer a swarm peer over your runtime's native suba
 Decision flow on session start:
 
 1. Call the swarm `bootstrap` MCP tool early, before deciding how to execute. Use focused reads such as `list_instances` and `list_tasks` only when you need a narrower refresh.
-2. **Matching peer present** (compatible `scope`, useful `role:<implementer|reviewer|researcher>`, matching `identity:<work|personal>`) → delegate via `request_task` with a concrete patch + success criterion. To wake an idle peer through its published workspace handle, send the durable swarm message via `send_message` first; the handle nudge (the plugin tool `swarm_prompt_peer` if your runtime exposes it, else a backend-specific command such as `herdr pane run` if you have that capability) is best-effort and never carries the work contract itself.
+2. **Matching peer present** (compatible `scope`, useful `role:<implementer|reviewer|researcher>`, matching `identity:<work|personal>`) → delegate via `request_task` with a concrete patch + success criterion. To wake an idle peer through its published workspace handle, use the swarm MCP `prompt_peer` tool. It sends the durable swarm message first; the handle nudge is best-effort and never carries the work contract itself.
 3. **Gateway/lead mode and no matching peer** (`mode:gateway`) → for trivial, low-risk edits, work locally. For medium or large implementation work, use the swarm MCP `dispatch` tool. It creates or reuses a swarm task, wakes an exact-role or generalist live worker when one exists, or spawns through the configured Spawner backend (`herdr` for the current golden path). If no spawner surface is available for non-trivial work, ask the operator to start a worker instead of silently using native subagents. The CLI `dispatch` bridge is only for hooks, wrappers, operator shells, or sessions where MCP tools are unavailable.
 4. **Worker/generalist mode and no matching peer** → fall back to your runtime's native subagent mechanism, or do the work yourself when that is faster and safe.
 
@@ -58,7 +58,7 @@ The runtime-specific config file enumerates which MCPs your profile actually loa
 
 | Runtime | Plugin | Status | Capabilities |
 |---|---|---|---|
-| Hermes | [`integrations/hermes/`](../integrations/hermes/) | v0.3 | Auto-register / -deregister, peer-lock check on write, `/swarm`, `swarm_prompt_peer` express lane, herdr identity publish |
+| Hermes | [`integrations/hermes/`](../integrations/hermes/) | v0.3 | Auto-register / -deregister, peer-lock check on write, `/swarm`, herdr identity publish for MCP `prompt_peer` |
 | Claude Code | [`integrations/claude-code/`](../integrations/claude-code/) | v0.2 | Auto-register / -deregister, peer-lock check on write, `/swarm`, herdr identity publish, gateway conductor mode via `SWARM_CC_ROLE=gateway` |
 | Codex CLI | [`integrations/codex/plugins/swarm/`](../integrations/codex/plugins/swarm/) | v0.2 | Auto-register / -deregister, peer-lock check on `apply_patch`, `/swarm`, herdr identity publish, gateway conductor mode via `SWARM_CODEX_ROLE=gateway` |
 | OpenCode / others | none yet | — | Participate ad-hoc via the swarm-mcp skill + MCP tools |

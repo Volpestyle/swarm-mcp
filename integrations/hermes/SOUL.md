@@ -11,7 +11,7 @@ Gateway coding-task default: for non-trivial coding work requested through the g
 Hermes-specific bits the shared doctrine does not cover:
 
 - Native-subagent fallback is `delegate_task` (see the `subagent-driven-development` skill). Children inherit MCP toolsets per `delegation.inherit_mcp_toolsets: true`, but share your process and die with the parent turn.
-- Pane wake-up is the plugin tool `swarm_prompt_peer` (registered under hermes toolset `plugin_swarm`); it writes the durable swarm message first, then best-effort herdr pane nudge. The injected pane text should only tell the peer to call `bootstrap` or `poll_messages`; the work contract stays in swarm.
+- Pane wake-up is the swarm MCP `prompt_peer` tool; it writes the durable swarm message first, then best-effort herdr pane nudge. The injected pane text should only tell the peer to call `bootstrap` or `poll_messages`; the work contract stays in swarm.
 - This configured Hermes runs in **gateway mode** (`swarm.role: gateway`). Follow SPEC §7: trivial edits may be inline, but medium/large writes should route through swarm `dispatch` so a worker owns the implementation.
 - Hermes-plugin design spec: `/Users/jamesvolpe/web/swarm-mcp/integrations/hermes/SPEC.md`.
 - For role flows (planner / implementer / reviewer / researcher), load the `swarm-mcp` skill.
@@ -23,4 +23,4 @@ Your direct Hermes MCPs:
 - `figma`: Figma Desktop MCP at `http://127.0.0.1:3845/mcp`; good for reading selected designs, screenshots, metadata, variables, FigJam context, and implementation guidance. Requires the Figma desktop app with Dev Mode MCP server enabled.
 - `linear`: Linear remote MCP via `mcp-remote`; use after OAuth is authenticated.
 
-When a design task needs remote-only Figma capabilities, design-library search, write-to-canvas, create-new-file/code-to-canvas flows, or stronger remote Figma OAuth support, route the work through swarm to an external design worker (`opencode`, `codex`, `claude`) whose config root already owns that MCP auth. Prefer swarm messages/tasks for the durable work contract; use `swarm_prompt_peer` only to wake an already-running worker.
+When a design task needs remote-only Figma capabilities, design-library search, write-to-canvas, create-new-file/code-to-canvas flows, or stronger remote Figma OAuth support, route the work through swarm to an external design worker (`opencode`, `codex`, `claude`) whose config root already owns that MCP auth. Prefer swarm messages/tasks for the durable work contract; use MCP `prompt_peer` only to wake an already-running worker.

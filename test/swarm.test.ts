@@ -1280,7 +1280,7 @@ describe("task relationships and handoffs", () => {
       }),
     ).toEqual({
       error:
-        "Linear-backed tasks require tracker_update or tracker_update_skipped in complete_task",
+        "Tracker-backed tasks require tracker_update or tracker_update_skipped in complete_task",
     });
 
     expect(
@@ -1293,6 +1293,46 @@ describe("task relationships and handoffs", () => {
       result: {
         summary: "Implemented bridge",
         tracker_update_skipped: "No Linear MCP in this worker; planner must update Linear.",
+      },
+    });
+  });
+
+  test("complete_task requires tracker disposition when task metadata requires it", () => {
+    const planner = reg("planner", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const task = req(planner.id, planner.scope, "implement", "Implement promoted work", {
+      tracker_required: true,
+      tracker_provider: "github_issues",
+    });
+
+    tasks.claim(task.id, worker.scope, worker.id);
+
+    expect(
+      tasks.completeStructured(task.id, worker.scope, worker.id, {
+        summary: "Implemented promoted work",
+      }),
+    ).toEqual({
+      error:
+        "Tracker-backed tasks require tracker_update or tracker_update_skipped in complete_task",
+    });
+
+    expect(
+      tasks.completeStructured(task.id, worker.scope, worker.id, {
+        summary: "Implemented promoted work",
+        tracker_update: {
+          provider: "github_issues",
+          issue: "42",
+          action: "commented",
+        },
+      }),
+    ).toMatchObject({
+      ok: true,
+      result: {
+        tracker_update: {
+          provider: "github_issues",
+          issue: "42",
+          action: "commented",
+        },
       },
     });
   });
