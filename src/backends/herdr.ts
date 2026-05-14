@@ -200,11 +200,30 @@ export const herdrWorkspaceBackend: WorkspaceBackend = {
       };
     }
 
-    const proc = runHerdr(["pane", "run", handle, prompt], identity, timeoutMs);
-    if (proc.error || proc.status !== 0) {
+    // `herdr pane run` types the text into the pane but does not submit it for
+    // interactive TUI agents (e.g. claude-code) — the prompt sits unsubmitted in
+    // the input box and the worker idles forever. Send the text explicitly and
+    // then deliver an Enter keystroke so both shell panes and TUI agents submit.
+    const sendTextProc = runHerdr(
+      ["pane", "send-text", handle, prompt],
+      identity,
+      timeoutMs,
+    );
+    if (sendTextProc.error || sendTextProc.status !== 0) {
       return {
         ok: false,
-        error: processError(proc, "herdr pane run failed"),
+        error: processError(sendTextProc, "herdr pane send-text failed"),
+      };
+    }
+    const enterProc = runHerdr(
+      ["pane", "send-keys", handle, "enter"],
+      identity,
+      timeoutMs,
+    );
+    if (enterProc.error || enterProc.status !== 0) {
+      return {
+        ok: false,
+        error: processError(enterProc, "herdr pane send-keys enter failed"),
       };
     }
     return { ok: true, value: {} satisfies WakeHandleResult };
