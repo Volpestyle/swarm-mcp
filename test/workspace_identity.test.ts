@@ -61,6 +61,10 @@ const originalSwarmHermesIdentity = process.env.SWARM_HERMES_IDENTITY;
 const originalSwarmCcIdentity = process.env.SWARM_CC_IDENTITY;
 const originalSwarmCodexIdentity = process.env.SWARM_CODEX_IDENTITY;
 const originalSwarmDbPath = process.env.SWARM_DB_PATH;
+const originalSwarmHarnessClaude = process.env.SWARM_HARNESS_CLAUDE;
+const originalSwarmHarnessCodex = process.env.SWARM_HARNESS_CODEX;
+const originalSwarmHarnessOpencode = process.env.SWARM_HARNESS_OPENCODE;
+const originalSwarmHarnessHermes = process.env.SWARM_HARNESS_HERMES;
 
 type WakeCall = {
   backend: string;
@@ -201,6 +205,10 @@ afterEach(() => {
   restoreEnv("SWARM_CC_IDENTITY", originalSwarmCcIdentity);
   restoreEnv("SWARM_CODEX_IDENTITY", originalSwarmCodexIdentity);
   restoreEnv("SWARM_DB_PATH", originalSwarmDbPath);
+  restoreEnv("SWARM_HARNESS_CLAUDE", originalSwarmHarnessClaude);
+  restoreEnv("SWARM_HARNESS_CODEX", originalSwarmHarnessCodex);
+  restoreEnv("SWARM_HARNESS_OPENCODE", originalSwarmHarnessOpencode);
+  restoreEnv("SWARM_HARNESS_HERMES", originalSwarmHarnessHermes);
 });
 
 describe("workspace backend registry", () => {
@@ -739,6 +747,10 @@ describe("workspace backend registry", () => {
     delete process.env.SWARM_IDENTITY;
     delete process.env.SWARM_CC_IDENTITY;
     delete process.env.SWARM_CODEX_IDENTITY;
+    delete process.env.SWARM_HARNESS_CLAUDE;
+    delete process.env.SWARM_HARNESS_CODEX;
+    delete process.env.SWARM_HARNESS_OPENCODE;
+    delete process.env.SWARM_HARNESS_HERMES;
 
     process.env.SWARM_HERMES_IDENTITY = "personal";
     expect(herdrSpawner.herdrSpawnerBackend.defaultHarness()).toBe("clowd");
@@ -1207,6 +1219,110 @@ describe("workspace backend registry", () => {
     expect(log).toContain("pane split pane-root --direction right");
     expect(log).toContain("pane run pane-root");
     expect(log).toContain("pane run pane-2");
+  });
+
+  test("herdr spawner applies generic grid layout when the tab reaches target pane count", async () => {
+    const scope = "scope-herdr-grid-layout";
+    const gateway = registry.register(
+      "/tmp/gateway",
+      "identity:personal mode:gateway role:planner",
+      scope,
+    );
+    const fakeDir = mkdtempSync(join(tmpdir(), "fake-herdr-grid-"));
+    const fakeHerdr = join(fakeDir, "herdr");
+    const logPath = join(fakeDir, "calls.log");
+    writeFileSync(
+      fakeHerdr,
+      [
+        "#!/bin/sh",
+        "printf '%s\\n' \"$*\" >> \"$HERDR_FAKE_LOG\"",
+        "if [ \"$1\" = \"workspace\" ] && [ \"$2\" = \"create\" ]; then",
+        "  printf '%s\\n' '{\"result\":{\"workspace\":{\"workspace_id\":\"workspace-1\"},\"tab\":{\"tab_id\":\"tab-1\"},\"root_pane\":{\"pane_id\":\"pane-root\",\"workspace_id\":\"workspace-1\",\"tab_id\":\"tab-1\"}}}'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"split\" ]; then",
+        "  printf '%s\\n' '{\"result\":{\"pane\":{\"pane_id\":\"pane-2\",\"workspace_id\":\"workspace-1\",\"tab_id\":\"tab-1\"}}}'",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"tab\" ] && [ \"$2\" = \"grid\" ]; then",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"run\" ]; then",
+        "  exit 0",
+        "fi",
+        "exit 1",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(fakeHerdr, 0o755);
+    process.env.SWARM_HERDR_BIN = fakeHerdr;
+    delete process.env.SWARM_HERDR_PARENT_PANE;
+    delete process.env.HERDR_PANE_ID;
+    delete process.env.HERDR_PANE;
+    process.env.HERDR_FAKE_LOG = logPath;
+
+    const base = {
+      scope: gateway.scope,
+      requester: gateway.id,
+      cwd: "/tmp/herdr-worker",
+      role: "implementer",
+      harness: "cdx",
+      identity: "identity:personal",
+      label: "batch:grid",
+      name: null,
+      wait_seconds: 0,
+      placement: {
+        group: "grid-batch",
+        layout: { kind: "grid", rows: 1, cols: 2 } as const,
+      },
+    };
+
+    const first = await herdrSpawner.herdrSpawnerBackend.spawn({
+      ...base,
+      launch_token: "launch-grid-1",
+      lock_path: "/__swarm/spawn/implementer/launch-grid-1",
+      lock_note: { task_id: "task-1" },
+    });
+    const second = await herdrSpawner.herdrSpawnerBackend.spawn({
+      ...base,
+      launch_token: "launch-grid-2",
+      lock_path: "/__swarm/spawn/implementer/launch-grid-2",
+      lock_note: { task_id: "task-2" },
+    });
+
+    expect(first).toMatchObject({
+      workspace_handle: {
+        placement: {
+          max_panes_per_tab: 2,
+          layout: {
+            kind: "grid",
+            status: "deferred",
+            pane_count: 1,
+            target_panes: 2,
+            rows: 1,
+            cols: 2,
+          },
+        },
+      },
+    });
+    expect(second).toMatchObject({
+      workspace_handle: {
+        placement: {
+          max_panes_per_tab: 2,
+          layout: {
+            kind: "grid",
+            status: "applied",
+            pane_count: 2,
+            target_panes: 2,
+            rows: 1,
+            cols: 2,
+          },
+        },
+      },
+    });
+
+    const log = readFileSync(logPath, "utf8");
+    expect(log).toContain("tab grid tab-1 --rows 1 --cols 2");
   });
 
   test("herdr launch wait ignores unadopted leased placeholders", async () => {

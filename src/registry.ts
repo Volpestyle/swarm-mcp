@@ -4,7 +4,13 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { releaseInstanceState, runCleanup, type CleanupMode } from "./cleanup";
 import { db } from "./db";
 import { emit } from "./events";
-import { identityName, identityToken, identityMatches, processIdentity } from "./identity";
+import {
+  identityMatches,
+  identityName,
+  identityToken,
+  processIdentity,
+} from "./identity";
+import { profileScopedEnvName } from "./launcher_identity";
 import { norm, root, scope as scoped } from "./paths";
 import * as planner from "./planner";
 import { now } from "./time";
@@ -41,8 +47,8 @@ function isUnder(path: string, base: string) {
 }
 
 function identityRoots(identity: string) {
-  const upper = identity.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
-  return envList(`SWARM_MCP_${upper}_ROOTS`).map(expandHome);
+  const envName = profileScopedEnvName(identity, "ROOTS");
+  return envName ? envList(envName).map(expandHome) : [];
 }
 
 function validateIdentityDirectory(label: string | null, dir: string, fileRoot: string) {
@@ -51,8 +57,9 @@ function validateIdentityDirectory(label: string | null, dir: string, fileRoot: 
   const roots = identityRoots(identity);
   if (!roots.length) return;
   if (roots.some((base) => isUnder(dir, base) && isUnder(fileRoot, base))) return;
+  const rootsEnvName = profileScopedEnvName(identity, "ROOTS") || `SWARM_MCP_<PROFILE>_ROOTS`;
   throw new Error(
-    `Registration blocked: identity:${identity} directory must be under one of ${roots.join(", ")}. Set SWARM_MCP_${identity.toUpperCase().replace(/[^A-Z0-9_]/g, "_")}_ROOTS to override.`,
+    `Registration blocked: identity:${identity} directory must be under one of ${roots.join(", ")}. Set ${rootsEnvName} to override.`,
   );
 }
 

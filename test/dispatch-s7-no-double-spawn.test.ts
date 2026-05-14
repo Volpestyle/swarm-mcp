@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SpawnerBackend, SpawnResult } from "../src/spawner_backend";
 
 process.env.SWARM_DB_PATH = join(
   mkdtempSync(join(tmpdir(), "swarm-mcp-s7-")),
@@ -78,11 +79,11 @@ function makeBlockingSpawner(name: string) {
   let spawnCount = 0;
   const spawnedWorkerIds: string[] = [];
 
-  const backend: spawnerBackend.SpawnerBackend = {
+  const backend: SpawnerBackend = {
     name,
     defaultHarness: () => "cdx",
     defaultWaitSeconds: 2,
-    async spawn(input): Promise<spawnerBackend.SpawnResult> {
+    async spawn(input): Promise<SpawnResult> {
       spawnCount += 1;
       // Hold the spawn open so a concurrent runDispatch races against the
       // already-acquired spawn lock instead of finding a live worker.

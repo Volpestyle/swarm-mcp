@@ -25,6 +25,19 @@ export function identityTokenFromName(identity: string | null | undefined): stri
   return name ? `${IDENTITY_PREFIX}${name}` : "";
 }
 
+export function profileEnvSuffix(identity: string | null | undefined): string {
+  const name = identityNameFromToken(identity);
+  return name ? name.toUpperCase().replace(/[^A-Z0-9_]/g, "_") : "";
+}
+
+export function profileScopedEnvName(
+  identity: string | null | undefined,
+  suffix: string,
+): string {
+  const profile = profileEnvSuffix(identity);
+  return profile ? `SWARM_MCP_${profile}_${suffix}` : "";
+}
+
 export function identityFromEnv(env: Env = process.env): string {
   return identityNameFromToken(
     stringValue(env.AGENT_IDENTITY) ||

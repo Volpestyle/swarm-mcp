@@ -197,6 +197,17 @@ function registeredTool<Shape extends ToolShape>(
 
 const taskTypeSchema = z.enum(tasks.TASK_TYPES);
 const taskStatusSchema = z.enum(tasks.TASK_STATUSES);
+const placementLayoutSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("grid"),
+    rows: z.number().int().min(1).max(4),
+    cols: z.number().int().min(1).max(4),
+    balance: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal("balance"),
+  }),
+]);
 const taskCreateShape = {
   type: taskTypeSchema.describe("Type of task"),
   title: z.string().describe("Short title for the task"),
@@ -1312,6 +1323,9 @@ registeredTool(
           .max(8)
           .optional()
           .describe("Maximum panes per reused tab before creating another tab"),
+        layout: placementLayoutSchema
+          .optional()
+          .describe('Backend-agnostic visual layout intent, such as {"kind":"grid","rows":2,"cols":3} or {"kind":"balance"}'),
       })
       .optional()
       .describe("Optional workspace placement intent for spawner backends"),

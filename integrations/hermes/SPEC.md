@@ -181,7 +181,7 @@ Workers that are not Hermes-hosted can participate by publishing the same KV sha
 
 ### 5.7 Spawn layout policy
 
-Spawn layout is doctrine, not plugin behavior. The gateway agent decides per spawn whether to reuse a pane group, split a pane, create a tab, or create a workspace, using the `Spawn Layout Doctrine` section in `skills/swarm-mcp/SKILL.md` as its source of truth. Plugin code must keep saying only "spawn via herdr" at the behavior layer: it should not implement a deterministic layout helper, enforce soft pane/tab caps, or hide the layout decision from the agent.
+Spawn layout is control-plane intent, not durable coordination identity. The gateway agent decides per spawn whether workers should share a group, use a grid, balance a tab, split a pane, create a tab, or create a workspace. It expresses that as `dispatch.placement`, and the selected workspace backend translates it to concrete surface commands. Herdr is allowed to implement the translation with pane/tab APIs, but plugin code must not make task ownership, locks, messages, or retries depend on herdr pane IDs.
 
 ## 6. Identity, scope, labels
 

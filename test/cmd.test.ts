@@ -12,6 +12,7 @@ const decoder = new TextDecoder();
 const profileFixtureDir = mkdtempSync(join(tmpdir(), "swarm-cmd-profile-fixtures-"));
 const personalSocketPath = join(profileFixtureDir, "personal-herdr.sock");
 const workSocketPath = join(profileFixtureDir, "work-herdr.sock");
+const clientXSocketPath = join(profileFixtureDir, "client-x-herdr.sock");
 writeFileSync(
   join(profileFixtureDir, "personal.env"),
   [
@@ -32,13 +33,32 @@ writeFileSync(
     `HERDR_SOCKET_PATH=${workSocketPath}`,
   ].join("\n"),
 );
+writeFileSync(
+  join(profileFixtureDir, "client-x.env"),
+  [
+    "SWARM_HARNESS_CLAUDE=cxclowd",
+    "SWARM_HARNESS_CODEX=cxcodex",
+    "SWARM_HARNESS_OPENCODE=cxopencode",
+    "SWARM_HARNESS_HERMES=cxhermes",
+    `HERDR_SOCKET_PATH=${clientXSocketPath}`,
+  ].join("\n"),
+);
+
+const ambientHarnessEnvKeys = [
+  "SWARM_HARNESS_CLAUDE",
+  "SWARM_HARNESS_CODEX",
+  "SWARM_HARNESS_OPENCODE",
+  "SWARM_HARNESS_HERMES",
+] as const;
 
 function makeEnv(dbPath: string, extra: Record<string, string> = {}) {
   const personalRoots = [tmpdir(), "/tmp", process.env.SWARM_MCP_PERSONAL_ROOTS]
     .filter(Boolean)
     .join(":");
+  const env = { ...process.env };
+  for (const key of ambientHarnessEnvKeys) delete env[key];
   return {
-    ...process.env,
+    ...env,
     SWARM_DB_PATH: dbPath,
     SWARM_MCP_PERSONAL_ROOTS: personalRoots,
     SWARM_MCP_INSTANCE_ID: "",
@@ -666,6 +686,12 @@ describe("CLI dispatch spawn authority", () => {
         "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"run\" ]; then",
         "  exit 0",
         "fi",
+        "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"send-text\" ]; then",
+        "  exit 0",
+        "fi",
+        "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"send-keys\" ]; then",
+        "  exit 0",
+        "fi",
         "exit 1",
         "",
       ].join("\n"),
@@ -675,9 +701,9 @@ describe("CLI dispatch spawn authority", () => {
       dbPath,
       dir,
       dir,
-      "identity:personal mode:gateway role:planner",
+      "identity:client-x mode:gateway role:planner",
     );
-    const personalRoot = resolve(repoRoot, "..");
+    const profileRoot = resolve(repoRoot, "..");
 
     const result = runCli(
       dbPath,
@@ -693,12 +719,12 @@ describe("CLI dispatch spawn authority", () => {
         "--json",
       ],
       {
-        AGENT_IDENTITY: "personal",
+        AGENT_IDENTITY: "client-x",
         HERDR_SOCKET_PATH: "",
         HERDR_LOG: herdrLog,
         HERDR_PANE_ID: "pane-root",
         SWARM_HERDR_BIN: fakeHerdr,
-        SWARM_MCP_PERSONAL_ROOTS: personalRoot,
+        SWARM_MCP_CLIENT_X_ROOTS: profileRoot,
       },
     );
 
@@ -729,7 +755,7 @@ describe("CLI dispatch spawn authority", () => {
     });
 
     const log = readFileSync(herdrLog, "utf8");
-    const expectedSocket = personalSocketPath;
+    const expectedSocket = clientXSocketPath;
     expect(log).toContain("pane split pane-root --direction right");
     expect(log).toContain("pane run pane-test /bin/sh");
     expect(log).toContain("pane get pane-test");
@@ -747,12 +773,13 @@ describe("CLI dispatch spawn authority", () => {
     expect(launchScript).toContain("SWARM_MCP_SCOPE=");
     expect(launchScript).toContain("SWARM_MCP_LABEL=");
     expect(launchScript).toContain(`SWARM_DB_PATH='${dbPath}'`);
-    expect(launchScript).toContain(`SWARM_MCP_PERSONAL_ROOTS='${personalRoot}'`);
-    expect(launchScript).toContain("AGENT_IDENTITY='personal'");
+    expect(launchScript).toContain(`SWARM_MCP_CLIENT_X_ROOTS='${profileRoot}'`);
+    expect(launchScript).not.toContain("SWARM_MCP_PERSONAL_ROOTS=");
+    expect(launchScript).toContain("AGENT_IDENTITY='client-x'");
     expect(launchScript).toContain("SWARM_CC_LABEL=");
-    expect(launchScript).toContain("identity:personal");
+    expect(launchScript).toContain("identity:client-x");
     expect(launchScript).toContain(`launch:${payload.launch_token}`);
-    expect(launchScript).toContain("exec clowd");
+    expect(launchScript).toContain("exec cxclowd");
   });
 
   test("dispatch rejects unknown spawner before creating work", () => {
@@ -803,6 +830,12 @@ describe("CLI workspace identity bridge", () => {
         "  esac",
         "fi",
         "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"run\" ]; then",
+        "  if [ \"$3\" = \"pane-canonical\" ]; then exit 0; fi",
+        "fi",
+        "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"send-text\" ]; then",
+        "  if [ \"$3\" = \"pane-canonical\" ]; then exit 0; fi",
+        "fi",
+        "if [ \"$1\" = \"pane\" ] && [ \"$2\" = \"send-keys\" ]; then",
         "  if [ \"$3\" = \"pane-canonical\" ]; then exit 0; fi",
         "fi",
         "exit 1",
@@ -886,7 +919,8 @@ describe("CLI workspace identity bridge", () => {
 
     const log = readFileSync(herdrLog, "utf8");
     expect(log).toContain("pane get pane-alias");
-    expect(log).toContain("pane run pane-canonical");
+    expect(log).toContain("pane send-text pane-canonical");
+    expect(log).toContain("pane send-keys pane-canonical enter");
   });
 
   test("resolve-workspace-handle maps a backend handle back to a swarm instance", () => {

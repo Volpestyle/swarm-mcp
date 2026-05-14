@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { launcherForIdentity } from "../src/launcher_identity";
+import {
+  launcherForIdentity,
+  profileEnvSuffix,
+  profileScopedEnvName,
+} from "../src/launcher_identity";
 
 describe("launcher identity profile resolution", () => {
   test("target profile aliases win when the caller env belongs to another profile", () => {
@@ -17,5 +21,18 @@ describe("launcher identity profile resolution", () => {
         SWARM_MCP_PROFILE_DIR: profileDir,
       }),
     ).toBe("clawd");
+  });
+
+  test("free-form profile names normalize for env and launcher lookup", () => {
+    const profileDir = mkdtempSync(join(tmpdir(), "swarm-launcher-freeform-"));
+    writeFileSync(join(profileDir, "client-x.env"), "SWARM_HARNESS_CLAUDE=cxcl\n");
+
+    expect(profileEnvSuffix("identity:client-x")).toBe("CLIENT_X");
+    expect(profileScopedEnvName("client-x", "ROOTS")).toBe("SWARM_MCP_CLIENT_X_ROOTS");
+    expect(
+      launcherForIdentity("claude", "identity:client-x", {
+        SWARM_MCP_PROFILE_DIR: profileDir,
+      }),
+    ).toBe("cxcl");
   });
 });

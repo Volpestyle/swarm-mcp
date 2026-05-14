@@ -1,3 +1,14 @@
+export type SpawnLayoutIntent =
+  | {
+      kind: "grid";
+      rows: number;
+      cols: number;
+      balance?: boolean | null;
+    }
+  | {
+      kind: "balance";
+    };
+
 export type SpawnPlacement = {
   workspace?: string | null;
   tab?: string | null;
@@ -5,6 +16,7 @@ export type SpawnPlacement = {
   parent_pane_id?: string | null;
   split_direction?: string | null;
   max_panes_per_tab?: number | null;
+  layout?: SpawnLayoutIntent | null;
 };
 
 export type SpawnRequest = {

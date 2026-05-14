@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SpawnerBackend, SpawnResult } from "../src/spawner_backend";
 
 process.env.SWARM_DB_PATH = join(
   mkdtempSync(join(tmpdir(), "swarm-mcp-dispatch-")),
@@ -70,11 +71,11 @@ describe("dispatch task visibility", () => {
     //  - synchronously adopts the leased row as if the codex worker came up
     //  - returns spawned_instance = leased.id
     let workerId: string | null = null;
-    const fakeSpawner: spawnerBackend.SpawnerBackend = {
+    const fakeSpawner: SpawnerBackend = {
       name: "fake-test",
       defaultHarness: () => "cdx",
       defaultWaitSeconds: 2,
-      async spawn(input): Promise<spawnerBackend.SpawnResult> {
+      async spawn(input): Promise<SpawnResult> {
         const leaseUntil =
           Math.floor(Date.now() / 1000) + Math.max(60, input.wait_seconds + 30);
         const leased = registry.precreateInstanceLease(
@@ -159,11 +160,11 @@ describe("dispatch task visibility", () => {
 
     let leasedId: string | null = null;
     let workerId: string | null = null;
-    const fakeSpawner: spawnerBackend.SpawnerBackend = {
+    const fakeSpawner: SpawnerBackend = {
       name: "fake-late",
       defaultHarness: () => "cdx",
       defaultWaitSeconds: 1,
-      async spawn(input): Promise<spawnerBackend.SpawnResult> {
+      async spawn(input): Promise<SpawnResult> {
         // Precreate a leased instance with a lease that's already expired in
         // the past. This simulates the worker coming up after the lease has
         // lapsed (slow auth, slow MCP boot, etc.). The next prune() should

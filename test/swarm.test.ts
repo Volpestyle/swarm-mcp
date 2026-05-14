@@ -34,6 +34,7 @@ const workTracker = await import("../src/work_tracker");
 
 const originalAllowUnlabeled = process.env.SWARM_MCP_ALLOW_UNLABELED;
 const originalPersonalRoots = process.env.SWARM_MCP_PERSONAL_ROOTS;
+const originalDefaultRoots = process.env.SWARM_MCP_DEFAULT_ROOTS;
 
 function req(
   requester: string,
@@ -50,6 +51,7 @@ function req(
 beforeEach(() => {
   process.env.SWARM_MCP_ALLOW_UNLABELED = "1";
   process.env.SWARM_MCP_PERSONAL_ROOTS = "/tmp";
+  process.env.SWARM_MCP_DEFAULT_ROOTS = ["/tmp", process.cwd()].join(":");
   db.exec("DELETE FROM context");
   db.exec("DELETE FROM tasks");
   db.exec("DELETE FROM messages");
@@ -61,6 +63,7 @@ beforeEach(() => {
 afterEach(() => {
   restoreEnv("SWARM_MCP_ALLOW_UNLABELED", originalAllowUnlabeled);
   restoreEnv("SWARM_MCP_PERSONAL_ROOTS", originalPersonalRoots);
+  restoreEnv("SWARM_MCP_DEFAULT_ROOTS", originalDefaultRoots);
 });
 
 function reg(name: string, scope: string) {

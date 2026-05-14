@@ -6,10 +6,16 @@ import { join } from "node:path";
 import * as context from "../context";
 import { dbPath } from "../db";
 import { herdrEnvWithSocket, resolvedHerdrSocketPath } from "../herdr_socket";
-import { identityFromEnv, identityNameFromToken, identityTokenFromName, launcherForIdentity } from "../launcher_identity";
+import {
+  identityFromEnv,
+  identityNameFromToken,
+  identityTokenFromName,
+  launcherForIdentity,
+  profileScopedEnvName,
+} from "../launcher_identity";
 import * as kv from "../kv";
 import * as registry from "../registry";
-import type { SpawnRequest, SpawnerBackend } from "../spawner_backend";
+import type { SpawnLayoutIntent, SpawnRequest, SpawnerBackend } from "../spawner_backend";
 import { identityKey } from "../workspace_backend";
 
 type InstanceRef = {
@@ -34,6 +40,18 @@ type HerdrLayout = {
   tabs: Record<string, LayoutTab[]>;
 };
 
+type LayoutApplication = {
+  kind: SpawnLayoutIntent["kind"];
+  status: "applied" | "deferred" | "skipped" | "failed";
+  tab_id?: string;
+  pane_count?: number;
+  target_panes?: number;
+  rows?: number;
+  cols?: number;
+  reason?: string;
+  error?: string;
+};
+
 type PanePlacement = {
   paneId: string;
   paneInfo: Record<string, unknown>;
@@ -42,6 +60,7 @@ type PanePlacement = {
   maxPanesPerTab?: number;
   reusedWorkspace?: boolean;
   reusedTab?: boolean;
+  layout?: LayoutApplication | null;
 };
 
 function isAdopted(inst: InstanceRef) {
@@ -50,6 +69,12 @@ function isAdopted(inst: InstanceRef) {
 
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+function positiveInt(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const int = Math.floor(value);
+  return int > 0 ? int : null;
 }
 
 function identityDefaultHarness() {
@@ -184,6 +209,13 @@ function tabIdFromPane(pane: Record<string, unknown> | null) {
   return stringValue(pane?.tab_id);
 }
 
+function paneCountFromTabGet(stdout: string) {
+  const result = resultObject(stdout);
+  const tab = objectValue(result.tab) ?? result;
+  const count = Number(tab.pane_count);
+  return Number.isFinite(count) && count > 0 ? Math.floor(count) : null;
+}
+
 function parentPane() {
   return (
     process.env.SWARM_HERDR_PARENT_PANE?.trim() ||
@@ -226,13 +258,145 @@ function layoutGroup(input: SpawnRequest) {
 
 function maxPanesPerTab(input: SpawnRequest) {
   const requested = input.placement?.max_panes_per_tab;
+  const layoutTarget = layoutTargetPanes(input.placement?.layout);
   const configured = Number(process.env.SWARM_HERDR_MAX_PANES_PER_TAB);
   const value = Number.isFinite(requested)
     ? Number(requested)
-    : Number.isFinite(configured)
-      ? configured
-      : 3;
+    : layoutTarget
+      ? layoutTarget
+      : Number.isFinite(configured)
+        ? configured
+        : 3;
   return Math.min(8, Math.max(1, Math.floor(value)));
+}
+
+function layoutTargetPanes(intent: SpawnLayoutIntent | null | undefined) {
+  if (intent?.kind !== "grid") return null;
+  const rows = positiveInt(intent.rows);
+  const cols = positiveInt(intent.cols);
+  if (!rows || !cols) return null;
+  return rows * cols;
+}
+
+function currentTabPaneCount(input: SpawnRequest, tabId: string) {
+  const proc = runHerdrCommand(["tab", "get", tabId], 5_000, input.identity);
+  if (proc.error || proc.status !== 0) return null;
+  return paneCountFromTabGet(proc.stdout);
+}
+
+function applyLayoutIntent(
+  input: SpawnRequest,
+  tabId: string,
+  knownPaneCount?: number,
+): LayoutApplication | null {
+  const intent = input.placement?.layout;
+  if (!intent) return null;
+
+  if (!tabId) {
+    return {
+      kind: intent.kind,
+      status: "skipped",
+      reason: "tab id unavailable from workspace backend",
+    };
+  }
+
+  if (intent.kind === "balance") {
+    const proc = runHerdrCommand(["tab", "balance", tabId], 5_000, input.identity);
+    if (proc.error || proc.status !== 0) {
+      return {
+        kind: "balance",
+        status: "failed",
+        tab_id: tabId,
+        error: `herdr tab balance failed: ${processError(proc)}`,
+      };
+    }
+    return { kind: "balance", status: "applied", tab_id: tabId };
+  }
+
+  const rows = positiveInt(intent.rows);
+  const cols = positiveInt(intent.cols);
+  if (!rows || !cols) {
+    return {
+      kind: "grid",
+      status: "failed",
+      tab_id: tabId,
+      reason: "grid layout requires positive integer rows and cols",
+    };
+  }
+
+  const targetPanes = rows * cols;
+  const paneCount = knownPaneCount ?? currentTabPaneCount(input, tabId);
+  if (!paneCount) {
+    return {
+      kind: "grid",
+      status: "skipped",
+      tab_id: tabId,
+      rows,
+      cols,
+      target_panes: targetPanes,
+      reason: "could not determine tab pane count without creating panes",
+    };
+  }
+  if (paneCount < targetPanes) {
+    return {
+      kind: "grid",
+      status: "deferred",
+      tab_id: tabId,
+      pane_count: paneCount,
+      target_panes: targetPanes,
+      rows,
+      cols,
+      reason: `waiting for ${targetPanes - paneCount} more pane(s) before exact grid`,
+    };
+  }
+  if (paneCount > targetPanes) {
+    return {
+      kind: "grid",
+      status: "skipped",
+      tab_id: tabId,
+      pane_count: paneCount,
+      target_panes: targetPanes,
+      rows,
+      cols,
+      reason: "exact grid would require closing extra panes",
+    };
+  }
+
+  const proc = runHerdrCommand(
+    ["tab", "grid", tabId, "--rows", String(rows), "--cols", String(cols)],
+    10_000,
+    input.identity,
+  );
+  if (proc.error || proc.status !== 0) {
+    return {
+      kind: "grid",
+      status: "failed",
+      tab_id: tabId,
+      pane_count: paneCount,
+      target_panes: targetPanes,
+      rows,
+      cols,
+      error: `herdr tab grid failed: ${processError(proc)}`,
+    };
+  }
+  return {
+    kind: "grid",
+    status: "applied",
+    tab_id: tabId,
+    pane_count: paneCount,
+    target_panes: targetPanes,
+    rows,
+    cols,
+  };
+}
+
+function withLayoutIntent(
+  input: SpawnRequest,
+  placement: PanePlacement,
+  knownPaneCount?: number,
+): PanePlacement {
+  const layout = applyLayoutIntent(input, tabIdFromPane(placement.paneInfo), knownPaneCount);
+  return layout ? { ...placement, layout } : placement;
 }
 
 function layoutKey(input: SpawnRequest) {
@@ -368,11 +532,13 @@ function createTabPane(
 async function placePane(input: SpawnRequest): Promise<PanePlacement | { error: string; stdout?: string }> {
   const explicitParent = placementParentPane(input);
   if (explicitParent) {
-    return splitPane(input, explicitParent, "split explicit parent pane");
+    const split = splitPane(input, explicitParent, "split explicit parent pane");
+    return "error" in split ? split : withLayoutIntent(input, split);
   }
 
   if (stringValue(input.placement?.workspace) === "new") {
-    return createWorkspacePane(input, "created new workspace by placement request");
+    const created = createWorkspacePane(input, "created new workspace by placement request");
+    return "error" in created ? created : withLayoutIntent(input, created, 1);
   }
 
   const lockPath = await acquireLayoutLock(input);
@@ -402,13 +568,13 @@ async function placePane(input: SpawnRequest): Promise<PanePlacement | { error: 
         if (!("error" in split)) {
           reusable.pane_count += 1;
           writeLayout(input, layout);
-          return {
+          return withLayoutIntent(input, {
             ...split,
             group,
             maxPanesPerTab: max,
             reusedWorkspace: true,
             reusedTab: true,
-          };
+          }, reusable.pane_count);
         }
       }
 
@@ -421,13 +587,13 @@ async function placePane(input: SpawnRequest): Promise<PanePlacement | { error: 
         };
         layout.tabs[group] = [...tabs, nextTab];
         writeLayout(input, layout);
-        return {
+        return withLayoutIntent(input, {
           ...tab,
           group,
           maxPanesPerTab: max,
           reusedWorkspace: true,
           reusedTab: false,
-        };
+        }, 1);
       }
     }
 
@@ -454,13 +620,13 @@ async function placePane(input: SpawnRequest): Promise<PanePlacement | { error: 
       };
       writeLayout(input, next);
     }
-    return {
+    return withLayoutIntent(input, {
       ...created,
       group,
       maxPanesPerTab: max,
       reusedWorkspace: false,
       reusedTab: false,
-    };
+    }, 1);
   } finally {
     if (lockPath) context.clearLocks(input.requester, input.scope, lockPath);
   }
@@ -513,11 +679,11 @@ function launchEnv(opts: LaunchCommandOpts) {
   if (socketPath) {
     env.HERDR_SOCKET_PATH = socketPath;
   }
-  for (const key of [
-    "HERMES_HOST_HOME",
-    "SWARM_MCP_PERSONAL_ROOTS",
-    "SWARM_MCP_WORK_ROOTS",
-  ]) {
+  const profileEnvKeys = [
+    profileScopedEnvName(identity, "ROOTS"),
+    profileScopedEnvName(identity, "HERDR_SOCKET_ROOT"),
+  ].filter(Boolean);
+  for (const key of ["HERMES_HOST_HOME", ...profileEnvKeys]) {
     const value = process.env[key]?.trim();
     if (value) env[key] = value;
   }
@@ -584,6 +750,7 @@ function workspaceIdentityPayload(
             reason: placement.reason,
             ...(placement.group ? { group: placement.group } : {}),
             ...(placement.maxPanesPerTab ? { max_panes_per_tab: placement.maxPanesPerTab } : {}),
+            ...(placement.layout ? { layout: placement.layout } : {}),
             reused_workspace: placement.reusedWorkspace ?? false,
             reused_tab: placement.reusedTab ?? false,
           },

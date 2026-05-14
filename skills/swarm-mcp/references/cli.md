@@ -159,6 +159,8 @@ spawning: any of `claude`/`codex`/`opencode`/`hermes` (or a cross-profile alias)
 becomes the matching `SWARM_HARNESS_*` alias from the requester's profile env.
 `SWARM_HERDR_BIN` may point at a non-default herdr binary.
 
+MCP `dispatch` accepts `placement.layout` for backend-agnostic visual intent, such as `{ "kind": "grid", "rows": 2, "cols": 3 }` or `{ "kind": "balance" }`. The herdr backend translates that to tab layout commands after spawn; it defers exact grids until the grouped tab has exactly the requested number of panes.
+
 Spawn/dispatch authority is intentionally narrow: gateway/lead sessions and
 operator surfaces may use this helper; ordinary worker/generalist sessions
 should create or claim tasks, message the planner/gateway, or continue locally

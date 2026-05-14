@@ -9,7 +9,7 @@ Ordinary workers should not spawn agents. They claim tasks, message the planner/
 1. `bootstrap` and handle unread messages first.
 2. For trivial, low-risk work, edit locally when that is clearly faster than spawning.
 3. For medium or large work, create/link the configured same-identity tracker item when applicable, then call MCP `dispatch` with an explicit `idempotency_key` for retryable handoffs.
-4. Use `placement` when spawning multiple workers so they land in a readable herdr layout.
+4. Use `placement` when spawning multiple workers so they land in a readable workspace layout.
 5. For tracker-backed work, set or preserve `tracker_required` on the swarm task and require the worker's structured result to include `tracker_update` or `tracker_update_skipped`.
 6. Monitor with durable task state, not pane reads.
 7. Summarize task IDs, worker identities, completion state, and where workers landed.
@@ -108,17 +108,17 @@ Interpretation:
 
 Do not use long completion waits for batches. For batch work, dispatch tasks, checkpoint the plan, then monitor with `wait_for_activity` while you still own active coordination responsibility.
 
-## Herdr Placement
+## Workspace Placement And Layout
 
-When spawning through herdr, keep workers grouped and readable.
+When spawning workers, keep them grouped and readable through backend-agnostic `placement` intent. Herdr is the first workspace backend, but gateway instructions should ask for layout concepts rather than raw herdr commands.
 
-`placement` is used only when dispatch actually spawns a pane. If dispatch reuses a live worker, placement does not move that worker. For batch layouts where fresh panes are intentional, use `force_spawn: true` with `placement`.
+`placement` is used only when dispatch actually spawns a workspace handle. If dispatch reuses a live worker, placement does not move that worker. For batch layouts where fresh panes are intentional, use `force_spawn: true` with `placement`.
 
 Default policy:
 
 - Same `identity + scope + cwd` reuses one workspace.
 - Same `placement.group` reuses a tab until the pane cap is reached.
-- Default cap is 3 panes per tab unless the operator prefers denser layout.
+- Default cap is 3 panes per tab unless `placement.layout` implies a larger exact grid.
 - Different repos/cwds should usually get separate workspaces.
 
 Use `placement` for batches:
@@ -137,6 +137,47 @@ Use `placement` for batches:
 }
 ```
 
+Use generic layout intent when the operator cares about the visible arrangement. The herdr backend translates this into `tab grid` or `tab balance` today; future workspace backends should translate the same intent to their own surface.
+
+Exact 2x3 worker grid:
+
+```json
+{
+  "title": "Implement workspace cards",
+  "message": "Build the assigned card surface and report test status.",
+  "role": "implementer",
+  "force_spawn": true,
+  "placement": {
+    "group": "swarm-ios-r2",
+    "layout": { "kind": "grid", "rows": 2, "cols": 3 }
+  }
+}
+```
+
+Equal halves or thirds are one-row grids:
+
+```json
+{
+  "placement": {
+    "group": "review-pair",
+    "layout": { "kind": "grid", "rows": 1, "cols": 2 }
+  }
+}
+```
+
+Balance the current backend tree without requesting an exact cell count:
+
+```json
+{
+  "placement": {
+    "group": "research",
+    "layout": { "kind": "balance" }
+  }
+}
+```
+
+The herdr backend defers exact grid application until the grouped tab has exactly `rows * cols` panes. It will not create filler panes or close extra panes for a dispatch layout request; use direct operator/backend tools only when intentionally rearranging an existing tab.
+
 Use an explicit parent only when the operator or visible context points to a specific pane:
 
 ```json
@@ -150,14 +191,14 @@ Use an explicit parent only when the operator or visible context points to a spe
 }
 ```
 
-Never treat herdr pane IDs as durable coordination identity. Use returned pane/workspace metadata only for operator summaries and best-effort wakeups; tasks, messages, locks, and results target swarm `instance_id`.
+Never treat workspace handles such as herdr pane IDs as durable coordination identity. Use returned workspace metadata only for operator summaries and best-effort wakeups; tasks, messages, locks, and results target swarm `instance_id`.
 
 ## Batch Pattern
 
 For 2-6 related workers:
 
 1. Choose a short `placement.group`, such as `vuh-batch` or `api-validation`.
-2. Dispatch each task with the same `placement.group` and `max_panes_per_tab`.
+2. Dispatch each task with the same `placement.group` and, when useful, the same `placement.layout`.
 3. Use dependencies for ordered work instead of asking workers to wait in chat.
 4. Save a plan checkpoint with task IDs and expected outputs.
 5. Use `wait_for_activity` only while you still own active monitoring.

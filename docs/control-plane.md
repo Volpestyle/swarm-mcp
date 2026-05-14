@@ -117,6 +117,7 @@ Owns visible execution surfaces and low-level process control.
 Required capabilities:
 
 - Create/list/focus/close workspaces and panes/sessions.
+- Apply backend-agnostic layout intents such as grouped grids, balanced trees, and other visual arrangements without making durable coordination depend on transport-local handles.
 - Spawn worker processes with injected Coordinator identity env.
 - Read output snapshots and send input.
 - Subscribe to lifecycle and status events.
@@ -134,6 +135,7 @@ Required capabilities:
 
 - Select an agent runtime and role.
 - Create an execution surface in the requested scope.
+- Place workers according to generic layout intent, such as `grid` or `balance`, while translating that intent through the selected WorkspaceControl backend.
 - Inject `SWARM_MCP_INSTANCE_ID` or the equivalent coordinator identity.
 - Detect adoption/registration.
 - Deduplicate retries using task idempotency plus spawn mutexes.
@@ -194,14 +196,15 @@ The first stack should prove this end-to-end loop:
 2. Hermes creates or links an issue in the configured same-identity work tracker when the work should be human-trackable.
 3. Hermes calls the Coordinator to create an idempotent swarm task.
 4. If no worker is available, the gateway follows the Spawner contract: it applies spawn dedupe, then invokes herdr to create a worker pane with injected Coordinator identity.
-5. Worker registers/adopts, claims the task, and reports status.
-6. Worker edits through runtime hooks for ordinary writes and uses Coordinator locks for wider critical sections.
-7. Worker coordinates with peers through Coordinator messages, tasks, locks, KV, and coordinator-first wakeups when needed.
-8. Worker updates linked tracker issues with human-facing evidence, comments, links, or completion details when the assigned contract grants that authority and the configured same-identity MCP is available.
-9. Worker completes the task with structured result and test status.
-10. Reviewer worker or gateway validates the result when needed.
-11. Hermes summarizes back to the operator.
-12. The configured work tracker is updated with the durable human-facing outcome if no worker already published the right tracker update.
+5. The WorkspaceControl backend applies any requested placement/layout intent, such as a grouped 2x3 grid, without changing the durable task contract.
+6. Worker registers/adopts, claims the task, and reports status.
+7. Worker edits through runtime hooks for ordinary writes and uses Coordinator locks for wider critical sections.
+8. Worker coordinates with peers through Coordinator messages, tasks, locks, KV, and coordinator-first wakeups when needed.
+9. Worker updates linked tracker issues with human-facing evidence, comments, links, or completion details when the assigned contract grants that authority and the configured same-identity MCP is available.
+10. Worker completes the task with structured result and test status.
+11. Reviewer worker or gateway validates the result when needed.
+12. Hermes summarizes back to the operator.
+13. The configured work tracker is updated with the durable human-facing outcome if no worker already published the right tracker update.
 
 This is the first integration target. New abstractions should be justified by making this loop more reliable, not by theoretical swapability.
 
@@ -212,6 +215,7 @@ This is the first integration target. New abstractions should be justified by ma
 - Keep high-churn runtime state out of work trackers.
 - Keep transport-local handles out of durable task/lock/message state.
 - Give workers the capabilities they need, but route them through the right source of truth: swarm for live coordination, the configured same-identity tracker for human-facing work records, herdr for transport.
+- Express visual workspace needs as generic placement/layout intent in the Spawner/WorkspaceControl contract; let the backend translate to `herdr tab grid` or an equivalent surface command.
 - Treat `swarm-mcp` as the reference Coordinator, not as an assumption every adapter must hard-code.
 - Prefer explicit adapter contracts over hidden cross-imports; terminal/process control belongs in workspace or spawner backends, not in the coordination primitives.
 - Do not invent a generic framework layer until the concrete implementation creates pressure for it.
