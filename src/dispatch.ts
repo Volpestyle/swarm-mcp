@@ -11,6 +11,7 @@ import * as spawnerBackend from "./spawner_backend";
 import { registerDefaultSpawners } from "./spawner_defaults";
 import * as ui from "./ui";
 import * as workspaceIdentity from "./workspace_identity";
+import * as workTracker from "./work_tracker";
 import type { ReadHandleSource } from "./workspace_backend";
 
 registerDefaultSpawners();
@@ -54,6 +55,13 @@ export interface DispatchOptions {
   nudge?: boolean;
   force?: boolean;
   placement?: spawnerBackend.SpawnPlacement | null;
+  /**
+   * Per-dispatch promotion override (VUH-36). Highest precedence layer in the
+   * promotion policy: `true` forces promote, `false` suppresses, identifier
+   * forces a link decision. See docs/linear-promotion-policy.md §4.
+   */
+  promote?: boolean;
+  promote_identifier?: string;
 }
 
 function envTruthy(name: string) {
@@ -540,6 +548,40 @@ function defaultIdempotencyKey(opts: {
   ])}`;
 }
 
+function evaluatePromotionForDispatch(opts: {
+  scope: string;
+  requester: string;
+  taskId: string;
+  taskType: TaskType;
+  title: string;
+  description: string;
+  files: string[] | null;
+  idempotencyKey: string;
+  parentTaskId: string | null;
+  spawnLabel: string | null;
+  override?: workTracker.DispatchPromotionOverride;
+}) {
+  const requesterInst = instanceById(opts.scope, opts.requester);
+  const tracker = workTracker.configuredWorkTracker(opts.scope, requesterInst?.label ?? null);
+  const taskLabel = opts.spawnLabel ?? requesterInst?.label ?? null;
+  return workTracker.evaluateAndAutoLink({
+    scope: opts.scope,
+    task: {
+      task_id: opts.taskId,
+      type: opts.taskType,
+      title: opts.title,
+      description: opts.description ?? null,
+      idempotency_key: opts.idempotencyKey,
+      parent_task_id: opts.parentTaskId,
+      label: taskLabel,
+      files: opts.files,
+    },
+    tracker,
+    override: opts.override,
+    actor: opts.requester,
+  });
+}
+
 export async function runDispatch(opts: DispatchOptions) {
   requireDispatchAuthority(opts.scope, opts.requester);
 
@@ -584,12 +626,37 @@ export async function runDispatch(opts: DispatchOptions) {
   });
   if ("error" in result) throw new Error(result.error);
 
+  const promotionOverride: workTracker.DispatchPromotionOverride | undefined =
+    opts.promote === undefined && !opts.promote_identifier
+      ? undefined
+      : {
+          ...(opts.promote === undefined ? {} : { promote: opts.promote }),
+          ...(opts.promote_identifier ? { identifier: opts.promote_identifier } : {}),
+        };
+  const promotion = result.existing
+    ? null
+    : evaluatePromotionForDispatch({
+        scope: opts.scope,
+        requester: opts.requester,
+        taskId: result.id,
+        taskType,
+        title,
+        description: opts.description ?? message,
+        files: opts.files?.length ? opts.files : null,
+        idempotencyKey,
+        parentTaskId: opts.parent_task_id ?? null,
+        spawnLabel,
+        override: promotionOverride,
+      });
+  const promotionFields = promotion ? { promotion } : {};
+
   const task = taskStore.get(result.id, opts.scope);
   if (terminalTaskStatus(task?.status)) {
     return maybeWaitForCompletion(opts, {
       status: "already_terminal",
       task_id: result.id,
       task,
+      ...promotionFields,
     });
   }
 
@@ -610,6 +677,7 @@ export async function runDispatch(opts: DispatchOptions) {
       task: taskStore.get(result.id, opts.scope),
       recipient: liveWorker.id,
       prompt,
+      ...promotionFields,
     });
   }
 
@@ -619,6 +687,7 @@ export async function runDispatch(opts: DispatchOptions) {
       task_id: result.id,
       task,
       role: workerRole,
+      ...promotionFields,
     });
   }
 
@@ -629,6 +698,7 @@ export async function runDispatch(opts: DispatchOptions) {
       task_id: result.id,
       task,
       lock: existingLock,
+      ...promotionFields,
     });
   }
 
@@ -662,6 +732,7 @@ export async function runDispatch(opts: DispatchOptions) {
     task,
     spawner: spawner.name,
     spawn_lock: lockPath,
+    ...promotionFields,
   };
   let spawnReadyPrompt: Record<string, unknown> | null = null;
   let spawnReadyPromptRecipient = "";

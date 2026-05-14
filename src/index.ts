@@ -1280,6 +1280,18 @@ registeredTool(
       .optional()
       .default(false)
       .describe("Wake even when target workspace handle is busy"),
+    promote: z
+      .boolean()
+      .optional()
+      .describe(
+        "VUH-36 per-dispatch promotion override. true=force-promote to the configured work tracker, false=suppress. Omit to let the policy in docs/linear-promotion-policy.md decide.",
+      ),
+    promote_identifier: z
+      .string()
+      .optional()
+      .describe(
+        "Explicit tracker identifier (e.g. VUH-31) the operator wants to link to. Forces a `link` promotion decision.",
+      ),
   },
   async (args) => {
     const current = instance!;
@@ -1311,6 +1323,8 @@ registeredTool(
           completion_wait_seconds: args.completion_wait_seconds,
           nudge: args.nudge,
           force: args.force,
+          promote: args.promote,
+          promote_identifier: args.promote_identifier,
         }),
       );
     } catch (err) {

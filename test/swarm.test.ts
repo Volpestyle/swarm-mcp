@@ -8,6 +8,11 @@ import type {
   TaskType,
   TaskStatus,
 } from "../src/tasks";
+import type {
+  PromotionDecision,
+  TaskPromotionInput,
+  TrackerBinding,
+} from "../src/work_tracker";
 
 process.env.SWARM_DB_PATH = join(
   mkdtempSync(join(tmpdir(), "swarm-mcp-")),
@@ -25,6 +30,7 @@ const status = await import("../src/status");
 const tasks = await import("../src/tasks");
 const dispatch = await import("../src/dispatch");
 const paths = await import("../src/paths");
+const workTracker = await import("../src/work_tracker");
 
 const originalAllowUnlabeled = process.env.SWARM_MCP_ALLOW_UNLABELED;
 const originalPersonalRoots = process.env.SWARM_MCP_PERSONAL_ROOTS;
@@ -1194,6 +1200,11 @@ describe("task relationships and handoffs", () => {
       summary: "Implemented feature",
       files_changed: [file, file],
       tests: [{ command: "bun test", status: "passed" }],
+      tracker_update_skipped: {
+        provider: "linear",
+        issue: "VUH-35",
+        reason: "No Linear MCP in this worker",
+      },
       followups: ["Review edge cases"],
     });
 
@@ -1204,6 +1215,11 @@ describe("task relationships and handoffs", () => {
         summary: "Implemented feature",
         files_changed: [file],
         tests: [{ command: "bun test", status: "passed" }],
+        tracker_update_skipped: {
+          provider: "linear",
+          issue: "VUH-35",
+          reason: "No Linear MCP in this worker",
+        },
         followups: ["Review edge cases"],
       },
     });
@@ -1220,6 +1236,11 @@ describe("task relationships and handoffs", () => {
       summary: "Implemented feature",
       files_changed: [file],
       tests: [{ command: "bun test", status: "passed" }],
+      tracker_update_skipped: {
+        provider: "linear",
+        issue: "VUH-35",
+        reason: "No Linear MCP in this worker",
+      },
       followups: ["Review edge cases"],
     });
     expect(context.lookup(worker.scope, file)).toHaveLength(0);
@@ -1239,6 +1260,39 @@ describe("task relationships and handoffs", () => {
         files_changed: [],
         tests: [{ status: "skipped", notes: "review only" }],
         followups: [],
+      },
+    });
+  });
+
+  test("complete_task requires tracker disposition for Linear-backed tasks", () => {
+    const planner = reg("planner", "scope-a");
+    const worker = reg("worker", "scope-a");
+    const task = req(planner.id, planner.scope, "implement", "VUH-99: Implement bridge", {
+      description: "Ticket URL: https://linear.app/vuhlp/issue/VUH-99/implement-bridge",
+      idempotency_key: "linear:VUH-99:implement",
+    });
+
+    tasks.claim(task.id, worker.scope, worker.id);
+
+    expect(
+      tasks.completeStructured(task.id, worker.scope, worker.id, {
+        summary: "Implemented bridge",
+      }),
+    ).toEqual({
+      error:
+        "Linear-backed tasks require tracker_update or tracker_update_skipped in complete_task",
+    });
+
+    expect(
+      tasks.completeStructured(task.id, worker.scope, worker.id, {
+        summary: "Implemented bridge",
+        tracker_update_skipped: "No Linear MCP in this worker; planner must update Linear.",
+      }),
+    ).toMatchObject({
+      ok: true,
+      result: {
+        summary: "Implemented bridge",
+        tracker_update_skipped: "No Linear MCP in this worker; planner must update Linear.",
       },
     });
   });
@@ -2171,5 +2225,304 @@ describe("planner ownership", () => {
     expect(planner.getOwner(second.scope)).toMatchObject({
       instance_id: second.id,
     });
+  });
+});
+
+describe("linear promotion bridge (VUH-36)", () => {
+  function regGateway(scope: string, label: string) {
+    return registry.register(join("C:/repo", "gateway"), label, scope);
+  }
+
+  function publishTracker(
+    scope: string,
+    identity: string,
+    overrides: Record<string, unknown> = {},
+  ) {
+    kv.set(
+      scope,
+      `config/work_tracker/${identity}`,
+      JSON.stringify({
+        schema_version: 1,
+        identity,
+        provider: "linear",
+        mcp: "linear",
+        ...overrides,
+      }),
+    );
+  }
+
+  function taskInput(
+    overrides: Partial<TaskPromotionInput> = {},
+  ): TaskPromotionInput {
+    return {
+      task_id: "task-1",
+      type: "implement",
+      title: "Wire the new promotion bridge into dispatch handoff",
+      description:
+        "Multi-line description that is comfortably above the trivial-edit threshold so the medium-or-larger heuristic does not bail out for the default test case.",
+      idempotency_key: "dispatch:abcd1234",
+      parent_task_id: null,
+      label: "identity:default role:implementer",
+      files: ["src/work_tracker.ts"],
+      ...overrides,
+    };
+  }
+
+  test("evaluatePromotion creates when policy fires and tracker is configured", () => {
+    const scope = "scope-promotion-create";
+    publishTracker(scope, "default");
+    const tracker = workTracker.configuredWorkTracker(scope, "identity:default");
+
+    const result = workTracker.evaluateAndAutoLink({
+      scope,
+      task: taskInput(),
+      tracker,
+    });
+
+    expect(result.decision).toMatchObject({
+      promote: true,
+      mode: "create",
+      identity: "default",
+      provider: "linear",
+      existing_binding: null,
+    });
+    // No auto-write for the create path — the gateway has to call Linear MCP
+    // first and write the binding when it knows the issuer identifier.
+    expect(workTracker.getBinding(scope, "linear", "default", "task-1")).toBeNull();
+  });
+
+  test("evaluatePromotion skips when no tracker is configured", () => {
+    const scope = "scope-promotion-skip";
+    const tracker = workTracker.configuredWorkTracker(scope, "identity:default");
+
+    const result = workTracker.evaluateAndAutoLink({
+      scope,
+      task: taskInput(),
+      tracker,
+    });
+
+    expect(result.decision).toMatchObject({
+      promote: false,
+      reason: "no_tracker_configured",
+      identity: "default",
+    });
+    expect(workTracker.getBinding(scope, "linear", "default", "task-1")).toBeNull();
+  });
+
+  test("evaluatePromotion skips when label has no identity token", () => {
+    const scope = "scope-promotion-noidentity";
+    publishTracker(scope, "default");
+    const tracker = workTracker.configuredWorkTracker(scope, "");
+
+    const result = workTracker.evaluateAndAutoLink({
+      scope,
+      task: taskInput({ label: "role:implementer" }),
+      tracker,
+    });
+
+    expect(result.decision).toMatchObject({
+      promote: false,
+      reason: "missing_identity_label",
+    });
+  });
+
+  test("type=test and trivial inline edits are not promoted", () => {
+    const scope = "scope-promotion-trivial";
+    publishTracker(scope, "default");
+    const tracker = workTracker.configuredWorkTracker(scope, "identity:default");
+
+    const testKindDecision = workTracker.evaluateAndAutoLink({
+      scope,
+      task: taskInput({ task_id: "task-test", type: "test" }),
+      tracker,
+    }).decision;
+    expect(testKindDecision).toMatchObject({
+      promote: false,
+      reason: "type_not_promotable",
+    });
+
+    const trivialDecision = workTracker.evaluateAndAutoLink({
+      scope,
+      task: taskInput({
+        task_id: "task-trivial",
+        title: "Tiny tweak",
+        description: "one-liner",
+        files: ["src/x.ts"],
+      }),
+      tracker,
+    }).decision;
+    expect(trivialDecision).toMatchObject({
+      promote: false,
+      reason: "trivial_inline_edit",
+    });
+  });
+
+  test("explicit linear:VUH-XX in idempotency key writes the binding row immediately", () => {
+    const scope = "scope-promotion-link";
+    publishTracker(scope, "default");
+    const tracker = workTracker.configuredWorkTracker(scope, "identity:default");
+
+    const result = workTracker.evaluateAndAutoLink({
+      scope,
+      task: taskInput({
+        task_id: "task-link",
+        idempotency_key: "linear:VUH-20:implement",
+      }),
+      tracker,
+    });
+
+    expect(result.decision).toMatchObject({
+      promote: true,
+      mode: "link",
+      identifier: "VUH-20",
+      reason: "explicit_identifier",
+    });
+    expect(result.binding_written).toMatchObject({ identifier: "VUH-20" });
+    expect(
+      workTracker.getBinding(scope, "linear", "default", "task-link"),
+    ).toMatchObject({ identifier: "VUH-20" });
+  });
+
+  test("per-dispatch promote=false suppresses promotion even when policy would fire", () => {
+    const scope = "scope-promotion-suppressed";
+    publishTracker(scope, "default");
+    const tracker = workTracker.configuredWorkTracker(scope, "identity:default");
+
+    const result = workTracker.evaluateAndAutoLink({
+      scope,
+      task: taskInput(),
+      tracker,
+      override: { promote: false },
+    });
+
+    expect(result.decision).toMatchObject({
+      promote: false,
+      reason: "operator_suppressed",
+    });
+  });
+
+  test("identity mismatch between task label and configured tracker is refused", () => {
+    const scope = "scope-promotion-mismatch";
+    // tracker config explicitly belongs to a different identity ("work"),
+    // but the task is labeled identity:personal — the bridge must refuse.
+    kv.set(
+      scope,
+      "config/work_tracker/personal",
+      JSON.stringify({ identity: "work", provider: "linear", mcp: "linear_work" }),
+    );
+    const tracker = workTracker.configuredWorkTracker(scope, "identity:personal");
+
+    const result = workTracker.evaluateAndAutoLink({
+      scope,
+      task: taskInput({ label: "identity:personal role:implementer" }),
+      tracker,
+    });
+
+    expect(result.decision).toMatchObject({
+      promote: false,
+      reason: "identity_mismatch",
+    });
+  });
+
+  test("a worker missing the Linear MCP records tracker_update_skipped on complete_task", () => {
+    const scope = "/tmp/scope-promotion-worker";
+    const worker = registry.register(
+      "/tmp/scope-promotion-worker",
+      "identity:default role:implementer",
+      scope,
+    );
+    const task = req(worker.id, worker.scope, "implement", "Land VUH-36 bridge", {
+      description:
+        "Bridge implementation per docs/linear-promotion-policy.md — non-trivial.",
+    });
+    tasks.claim(task.id, worker.scope, worker.id);
+
+    const completed = tasks.completeStructured(task.id, worker.scope, worker.id, {
+      summary: "Bridge implementation landed",
+      tracker_update_skipped: {
+        provider: "linear",
+        reason: "no Linear MCP in claude harness",
+        next: "planner should dispatch hermes to update Linear",
+      },
+    });
+
+    expect(completed).toMatchObject({
+      ok: true,
+      status: "done",
+      result: {
+        summary: "Bridge implementation landed",
+        tracker_update_skipped: {
+          provider: "linear",
+          reason: "no Linear MCP in claude harness",
+        },
+      },
+    });
+  });
+
+  test("dispatch attaches promotion decision to its response", async () => {
+    const scope = "/tmp/scope-promotion-dispatch";
+    const gateway = regGateway(
+      scope,
+      "identity:default mode:gateway role:planner",
+    );
+    publishTracker(gateway.scope, "default");
+
+    const result = await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Promote me — a sufficiently lengthy implementation title to clear the medium-or-larger heuristic",
+      type: "implement",
+      role: "implementer",
+      message:
+        "Implementation contract: write the new tracker bridge and wire the Linear MCP call. Multiple files. Non-trivial.",
+      spawn: false,
+    });
+
+    expect((result as Record<string, unknown>).promotion).toBeDefined();
+    const promo = (result as Record<string, unknown>).promotion as {
+      decision: PromotionDecision;
+    };
+    expect(promo.decision).toMatchObject({
+      promote: true,
+      mode: "create",
+      identity: "default",
+      provider: "linear",
+    });
+  });
+
+  test("dispatch with explicit promote_identifier emits a link decision and writes binding", async () => {
+    const scope = "/tmp/scope-promotion-dispatch-link";
+    const gateway = regGateway(
+      scope,
+      "identity:default mode:gateway role:planner",
+    );
+    publishTracker(gateway.scope, "default");
+
+    const result = (await dispatch.runDispatch({
+      scope: gateway.scope,
+      requester: gateway.id,
+      title: "Continue work tracked elsewhere",
+      type: "implement",
+      role: "implementer",
+      message: "Link to VUH-36 explicitly.",
+      promote_identifier: "VUH-36",
+      spawn: false,
+    })) as Record<string, unknown>;
+
+    const promotion = result.promotion as {
+      decision: PromotionDecision;
+      binding_written?: TrackerBinding;
+    };
+    expect(promotion.decision).toMatchObject({
+      promote: true,
+      mode: "link",
+      identifier: "VUH-36",
+    });
+    expect(promotion.binding_written).toMatchObject({ identifier: "VUH-36" });
+
+    const taskId = result.task_id as string;
+    expect(
+      workTracker.getBinding(gateway.scope, "linear", "default", taskId),
+    ).toMatchObject({ identifier: "VUH-36" });
   });
 });
