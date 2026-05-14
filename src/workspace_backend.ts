@@ -15,6 +15,7 @@ export type WorkspaceHandleInfo = Record<string, unknown> & {
   handle_kind?: string;
   handle: string;
   handle_aliases?: string[];
+  agent?: string;
   agent_status?: string;
   swarm_instance_id?: string;
   details?: Record<string, unknown>;
@@ -76,6 +77,14 @@ export type WorkspaceBackend = {
     handleInfo: WorkspaceHandleInfo;
     requestedHandle: string;
   }): WorkspaceIdentity;
+  /**
+   * Best-effort lookup of the workspace handle (e.g. herdr pane id) that the
+   * current process is running inside. Returns null when the backend cannot
+   * determine it (typical for synthetic test backends). Used to refuse peek
+   * operations that would silently read the caller's own scrollback through a
+   * stale peer entry.
+   */
+  currentLocalHandle?(): string | null;
 };
 
 const backends = new Map<string, WorkspaceBackend>();

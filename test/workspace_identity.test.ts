@@ -1293,6 +1293,268 @@ describe("workspace backend registry", () => {
     expect(kv.get(inst.scope, key)).toBeNull();
   });
 
+  test("peek_peer refuses when target resolves to the caller's own published pane", () => {
+    const readCalls: ReadCall[] = [];
+    workspaceIdentity.registerBackend(syntheticBackend("alpha", [], "idle", readCalls));
+    const scope = "scope-peek-self-published";
+    const sender = registry.register("/tmp/sender-self", "identity:personal role:planner", scope);
+    const recipient = registry.register(
+      "/tmp/recipient-self",
+      "identity:personal role:implementer",
+      scope,
+    );
+
+    // Both identities point at the same handle (stale zombie peer case).
+    const sharedIdentity = JSON.stringify({
+      backend: "alpha",
+      handle_kind: "unit",
+      handle: "shared-canonical",
+    });
+    kv.set(scope, workspaceBackend.identityKey("alpha", sender.id), sharedIdentity, sender.id);
+    kv.set(
+      scope,
+      workspaceBackend.identityKey("alpha", recipient.id),
+      sharedIdentity,
+      recipient.id,
+    );
+
+    const result = dispatch.peekPeerResult({
+      scope,
+      sender: sender.id,
+      recipient: recipient.id,
+    });
+
+    expect(result).toMatchObject({
+      peeked: false,
+      recipient: recipient.id,
+      workspace_handle: "shared-canonical",
+    });
+    expect(typeof (result as Record<string, unknown>).peek_skipped).toBe("string");
+    expect((result as Record<string, unknown>).peek_skipped as string).toContain(
+      "your own pane",
+    );
+    expect(readCalls).toEqual([]);
+  });
+
+  test("peek_peer refuses when backend.currentLocalHandle equals target pane", () => {
+    const readCalls: ReadCall[] = [];
+    const base = syntheticBackend("alpha", [], "idle", readCalls);
+    workspaceIdentity.registerBackend({
+      ...base,
+      currentLocalHandle: () => "alpha-canonical",
+    });
+    const scope = "scope-peek-self-env";
+    const sender = registry.register("/tmp/sender-env", "identity:personal role:planner", scope);
+    const recipient = registry.register(
+      "/tmp/recipient-env",
+      "identity:personal role:implementer",
+      scope,
+    );
+
+    // Recipient's identity points at the same canonical pane the caller is
+    // actually running in (per the backend), but the caller has no published
+    // identity of its own.
+    kv.set(
+      scope,
+      workspaceBackend.identityKey("alpha", recipient.id),
+      JSON.stringify({ backend: "alpha", handle_kind: "unit", handle: "alpha-alias" }),
+      recipient.id,
+    );
+
+    const result = dispatch.peekPeerResult({
+      scope,
+      sender: sender.id,
+      recipient: recipient.id,
+    });
+
+    expect((result as Record<string, unknown>).peeked).toBe(false);
+    expect((result as Record<string, unknown>).peek_skipped as string).toContain(
+      "your own pane",
+    );
+    expect(readCalls).toEqual([]);
+  });
+
+  test("resolvePublishedWorkspaceIdentity refuses recycled pane occupied by a different agent", () => {
+    const base = syntheticBackend("alpha");
+    workspaceIdentity.registerBackend({
+      ...base,
+      getHandle({ handle, handleKind }) {
+        return {
+          ok: true,
+          value: {
+            backend: "alpha",
+            handle_kind: handleKind || "unit",
+            handle,
+            agent: "claude",
+            agent_status: "idle",
+          } as WorkspaceHandleInfo,
+        };
+      },
+    });
+    const scope = "scope-pane-recycled";
+    const inst = registry.register(
+      "/tmp/codex-pane",
+      "identity:personal origin:codex role:implementer",
+      scope,
+    );
+
+    kv.set(
+      scope,
+      workspaceBackend.identityKey("alpha", inst.id),
+      JSON.stringify({ backend: "alpha", handle_kind: "unit", handle: "pane-7" }),
+      inst.id,
+    );
+
+    const resolved = workspaceIdentity.resolvePublishedWorkspaceIdentity({
+      scope,
+      instanceId: inst.id,
+      backend: "alpha",
+      actor: inst.id,
+    });
+
+    expect(resolved.ok).toBe(false);
+    expect((resolved as { ok: false; reason: string }).reason).toContain("pane recycled");
+    expect((resolved as { ok: false; reason: string }).reason).toContain("claude");
+    expect((resolved as { ok: false; reason: string }).reason).toContain("codex");
+  });
+
+  test("resolvePublishedWorkspaceIdentity surfaces live agent name on success", () => {
+    const base = syntheticBackend("alpha");
+    workspaceIdentity.registerBackend({
+      ...base,
+      getHandle({ handle, handleKind }) {
+        return {
+          ok: true,
+          value: {
+            backend: "alpha",
+            handle_kind: handleKind || "unit",
+            handle,
+            agent: "claude-code",
+            agent_status: "idle",
+          } as WorkspaceHandleInfo,
+        };
+      },
+    });
+    const scope = "scope-pane-live-agent";
+    const inst = registry.register(
+      "/tmp/claude-pane",
+      "identity:personal origin:claude-code role:implementer",
+      scope,
+    );
+
+    kv.set(
+      scope,
+      workspaceBackend.identityKey("alpha", inst.id),
+      JSON.stringify({ backend: "alpha", handle_kind: "unit", handle: "pane-9" }),
+      inst.id,
+    );
+
+    const resolved = workspaceIdentity.resolvePublishedWorkspaceIdentity({
+      scope,
+      instanceId: inst.id,
+      backend: "alpha",
+      actor: inst.id,
+    });
+
+    expect(resolved.ok).toBe(true);
+    expect((resolved as { ok: true; agent: string }).agent).toBe("claude");
+  });
+
+  test("ensureLocalWorkspaceIdentity republishes when KV pane differs from current local handle", () => {
+    const base = syntheticBackend("alpha");
+    workspaceIdentity.registerBackend({
+      ...base,
+      currentLocalHandle: () => "pane-fresh",
+    });
+    const scope = "scope-ensure-republish";
+    const inst = registry.register(
+      "/tmp/ensure-republish",
+      "identity:personal role:implementer",
+      scope,
+    );
+
+    kv.set(
+      scope,
+      workspaceBackend.identityKey("alpha", inst.id),
+      JSON.stringify({ backend: "alpha", handle_kind: "unit", handle: "pane-stale" }),
+      inst.id,
+    );
+
+    const result = workspaceIdentity.ensureLocalWorkspaceIdentity({
+      scope,
+      instanceId: inst.id,
+      actor: inst.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "republished",
+      backend: "alpha",
+      handle: "pane-fresh",
+      previous_handle: "pane-stale",
+    });
+
+    const row = kv.get(scope, workspaceBackend.identityKey("alpha", inst.id));
+    expect(row).not.toBeNull();
+    const value = JSON.parse(row!.value) as { handle: string };
+    expect(value.handle).toBe("pane-fresh");
+  });
+
+  test("ensureLocalWorkspaceIdentity is a no-op when KV already matches current local handle", () => {
+    const base = syntheticBackend("alpha");
+    workspaceIdentity.registerBackend({
+      ...base,
+      currentLocalHandle: () => "pane-current",
+    });
+    const scope = "scope-ensure-fresh";
+    const inst = registry.register(
+      "/tmp/ensure-fresh",
+      "identity:personal role:implementer",
+      scope,
+    );
+
+    kv.set(
+      scope,
+      workspaceBackend.identityKey("alpha", inst.id),
+      JSON.stringify({
+        backend: "alpha",
+        handle_kind: "unit",
+        handle: "pane-current",
+        handle_aliases: ["pane-current"],
+      }),
+      inst.id,
+    );
+
+    const result = workspaceIdentity.ensureLocalWorkspaceIdentity({
+      scope,
+      instanceId: inst.id,
+      actor: inst.id,
+    });
+
+    expect(result).toMatchObject({
+      status: "already_fresh",
+      backend: "alpha",
+      handle: "pane-current",
+    });
+  });
+
+  test("ensureLocalWorkspaceIdentity reports no_local_handle when backend can't determine it", () => {
+    workspaceIdentity.registerBackend(syntheticBackend("alpha"));
+    const scope = "scope-ensure-noop";
+    const inst = registry.register(
+      "/tmp/ensure-noop",
+      "identity:personal role:implementer",
+      scope,
+    );
+
+    const result = workspaceIdentity.ensureLocalWorkspaceIdentity({
+      scope,
+      instanceId: inst.id,
+      actor: inst.id,
+    });
+
+    expect(result).toEqual({ status: "no_local_handle" });
+  });
+
   test("orphan identity rows older than orphanKvTtl are swept by cleanupOrphanKv", async () => {
     const cleanup = await import("../src/cleanup");
     workspaceIdentity.registerBackend(syntheticBackend("alpha"));

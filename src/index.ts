@@ -508,17 +508,18 @@ server.tool(
     // SWARM_MCP_INSTANCE_ID. `registry.register` will adopt the existing row
     // and flip `adopted=1` instead of creating a duplicate.
     const preassignedId = process.env.SWARM_MCP_INSTANCE_ID?.trim() || undefined;
-    instance = registry.register(
-      directory,
-      label,
-      scope,
-      file_root,
-      preassignedId,
-      adoptId,
+    bindInstance(
+      registry.register(
+        directory,
+        label,
+        scope,
+        file_root,
+        preassignedId,
+        adoptId,
+      ),
     );
-    startInstanceTimers();
 
-    return { content: registerContent(instance) };
+    return { content: registerContent(instance!) };
   },
 );
 
@@ -545,7 +546,37 @@ function startInstanceTimers() {
 function bindInstance(next: registry.Instance) {
   instance = next;
   startInstanceTimers();
+  refreshLocalWorkspaceIdentity(instance);
   return instance;
+}
+
+/**
+ * Best-effort repair of this session's published workspace identity. If the
+ * backend can name the pane this process is actually running in (e.g. herdr
+ * exposes HERDR_PANE_ID) and the KV-published identity points at a different
+ * or non-existent handle, re-publish so peers don't peek/prompt a recycled
+ * pane.
+ */
+function refreshLocalWorkspaceIdentity(inst: registry.Instance) {
+  try {
+    const result = workspaceIdentity.ensureLocalWorkspaceIdentity({
+      scope: inst.scope,
+      instanceId: inst.id,
+      actor: inst.id,
+    });
+    if (result.status === "republished") {
+      console.error(
+        `[swarm-mcp] republished workspace identity for ${inst.id} on ${result.backend} as ${result.handle}` +
+          (result.previous_handle ? ` (was ${result.previous_handle})` : ""),
+      );
+    } else if (result.status === "probe_failed") {
+      console.error(
+        `[swarm-mcp] could not validate local handle ${result.handle} on ${result.backend}: ${result.reason}`,
+      );
+    }
+  } catch (err) {
+    console.error("[swarm-mcp] ensureLocalWorkspaceIdentity failed:", err);
+  }
 }
 
 function tryAdoptExplicitRegistration(

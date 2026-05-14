@@ -264,6 +264,14 @@ export const herdrWorkspaceBackend: WorkspaceBackend = {
     };
   },
 
+  currentLocalHandle() {
+    return (
+      stringValue(process.env.HERDR_PANE_ID) ||
+      stringValue(process.env.HERDR_PANE) ||
+      null
+    );
+  },
+
   canonicalizeIdentity({ identity, handleInfo, requestedHandle }) {
     const handle = canonicalHandle(handleInfo, requestedHandle);
     const aliases = uniqueStrings([

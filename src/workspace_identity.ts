@@ -32,6 +32,8 @@ export type ResolvedPublishedIdentity =
       handle_kind: string;
       handle: string;
       agent_status: string;
+      /** Live agent name reported by the backend (canonicalized: claude/codex/opencode/...). Empty when the backend can't report it. */
+      agent: string;
       identity_repaired: boolean;
     }
   | {
@@ -65,6 +67,29 @@ export type PublishedWorkspaceSummary = {
 
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
+/**
+ * Map a free-form agent identifier (from herdr's pane.agent field, or a swarm
+ * label like `origin:claude-code`) to a canonical bucket so we can compare them
+ * across surfaces. Unknown shapes fall through unchanged.
+ */
+function canonicalAgentName(value: string | null | undefined): string {
+  const lower = stringValue(value).toLowerCase();
+  if (!lower) return "";
+  if (lower.startsWith("claude")) return "claude";
+  if (lower.startsWith("codex")) return "codex";
+  if (lower.startsWith("opencode")) return "opencode";
+  if (lower.startsWith("hermes")) return "hermes";
+  return lower;
+}
+
+function expectedAgentForInstance(instanceId: string): string {
+  const inst = registry.get(instanceId);
+  const label = stringValue(inst?.label);
+  if (!label) return "";
+  const match = label.match(/\borigin:(\S+)/);
+  return match ? canonicalAgentName(match[1]) : "";
 }
 
 function parseIdentity(raw: string): { identity?: WorkspaceIdentity; reason?: string } {
@@ -249,6 +274,18 @@ function resolveWithBackend(opts: {
       continue;
     }
 
+    // Zombie-pane guard: if the live backend reports a different agent
+    // type than the registered instance expects, the pane was recycled
+    // (e.g. a closed codex's pane reassigned to a fresh claude). Refuse
+    // to resolve so prompt_peer/peek_peer don't quietly target the new
+    // occupant — that's how callers ended up reading their own scrollback.
+    const liveAgent = canonicalAgentName(stringValue(handleInfo.agent));
+    const expectedAgent = expectedAgentForInstance(opts.instanceId);
+    if (liveAgent && expectedAgent && liveAgent !== expectedAgent) {
+      lastReason = `workspace handle ${candidate} is now occupied by ${liveAgent}, but ${opts.instanceId} was registered as ${expectedAgent} (pane recycled)`;
+      continue;
+    }
+
     const identity = opts.backend.canonicalizeIdentity({
       identity: parsed.identity,
       handleInfo,
@@ -275,6 +312,7 @@ function resolveWithBackend(opts: {
         opts.backend.defaultHandleKind,
       handle,
       agent_status: stringValue(handleInfo.agent_status) || "unknown",
+      agent: liveAgent,
       identity_repaired: repaired,
     };
   }
@@ -337,6 +375,87 @@ function identityMatchesHandle(
   handles: Set<string>,
 ) {
   return backend.handlesForIdentity(identity).some((handle) => handles.has(handle));
+}
+
+export type EnsureLocalIdentityResult =
+  | { status: "no_local_handle" }
+  | { status: "already_fresh"; backend: string; handle: string }
+  | { status: "republished"; backend: string; handle: string; previous_handle?: string }
+  | { status: "probe_failed"; backend: string; handle: string; reason: string };
+
+/**
+ * Self-repair: when a session boots, the workspace identity published in KV
+ * may be stale (the original pane was closed and its id recycled into someone
+ * else, or no identity was published at all). Use the backend's view of which
+ * handle this process is actually running in (e.g. HERDR_PANE_ID for herdr)
+ * as the source of truth and (re)publish accordingly.
+ *
+ * No-op for backends that don't implement currentLocalHandle (synthetic test
+ * backends).
+ */
+export function ensureLocalWorkspaceIdentity(opts: {
+  scope: string;
+  instanceId: string;
+  actor?: string | null;
+}): EnsureLocalIdentityResult {
+  for (const backend of registeredBackends()) {
+    const localHandle = stringValue(backend.currentLocalHandle?.());
+    if (!localHandle) continue;
+
+    const existingRow = loadPublishedIdentity(
+      opts.scope,
+      backend,
+      opts.instanceId,
+      opts.actor,
+    );
+    let existingIdentity: WorkspaceIdentity | undefined;
+    let existingHandle = "";
+    if (existingRow) {
+      const parsed = parseIdentity(existingRow.value);
+      if (parsed.identity) {
+        existingIdentity = parsed.identity;
+        const handles = backend.handlesForIdentity(parsed.identity);
+        if (handles.includes(localHandle)) {
+          return { status: "already_fresh", backend: backend.name, handle: localHandle };
+        }
+        existingHandle = stringValue(parsed.identity.handle) || handles[0] || "";
+      }
+    }
+
+    const probe = backend.getHandle({
+      handle: localHandle,
+      identity: existingIdentity ?? { backend: backend.name },
+    });
+    if (!probe.ok) {
+      return {
+        status: "probe_failed",
+        backend: backend.name,
+        handle: localHandle,
+        reason: probe.error,
+      };
+    }
+
+    const canonical = backend.canonicalizeIdentity({
+      identity: existingIdentity ?? { backend: backend.name },
+      handleInfo: probe.value,
+      requestedHandle: localHandle,
+    });
+    const payload = JSON.stringify(canonical);
+    const actor = opts.actor ?? opts.instanceId;
+    for (const key of backend.identityKeys(opts.instanceId)) {
+      kv.set(opts.scope, key, payload, actor);
+    }
+    return {
+      status: "republished",
+      backend: backend.name,
+      handle: localHandle,
+      ...(existingHandle && existingHandle !== localHandle
+        ? { previous_handle: existingHandle }
+        : {}),
+    };
+  }
+
+  return { status: "no_local_handle" };
 }
 
 function identityKeyRows(scope: string, backend: WorkspaceBackend, viewer?: string | null) {

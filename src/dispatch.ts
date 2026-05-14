@@ -468,8 +468,44 @@ function addResolvedWorkspaceFields(
   result.workspace_handle = resolved.handle;
   result.handle_kind = resolved.handle_kind;
   result.agent_status = resolved.agent_status;
+  if (resolved.agent) result.agent = resolved.agent;
   if (paneId) result.pane_id = paneId;
   if (resolved.identity_repaired) result.identity_repaired = true;
+}
+
+/**
+ * Returns true when the resolved target handle is the same pane the calling
+ * swarm-mcp process is running inside. Guards against silently peeking your
+ * own scrollback through a stale peer entry whose pane was recycled into the
+ * caller's session.
+ */
+function callerOccupiesResolvedPane(opts: {
+  scope: string;
+  callerId: string;
+  resolved: Extract<workspaceIdentity.ResolvedPublishedIdentity, { ok: true }>;
+}): boolean {
+  // 1. Compare against the caller's own published workspace identity.
+  const callerPublished = workspaceIdentity.publishedWorkspaceSummary({
+    scope: opts.scope,
+    instanceId: opts.callerId,
+    backend: opts.resolved.backend_name,
+    actor: opts.callerId,
+  });
+  if (
+    callerPublished &&
+    callerPublished.backend === opts.resolved.backend_name &&
+    callerPublished.handle === opts.resolved.handle
+  ) {
+    return true;
+  }
+
+  // 2. Fall back to the backend's view of "which handle is this process
+  //    running in right now?" — the caller's own published identity is
+  //    sometimes stale (the exact case that motivated this guard).
+  const local = opts.resolved.backend.currentLocalHandle?.();
+  if (local && local === opts.resolved.handle) return true;
+
+  return false;
 }
 
 export function peekPeerResult(opts: {
@@ -504,6 +540,19 @@ export function peekPeerResult(opts: {
   }
 
   addResolvedWorkspaceFields(result, resolved);
+
+  if (
+    callerOccupiesResolvedPane({
+      scope: opts.scope,
+      callerId: opts.sender,
+      resolved,
+    })
+  ) {
+    result.peek_skipped =
+      "target workspace handle currently resolves to your own pane (stale peer entry pointing at a recycled pane); refusing to read your own scrollback";
+    return result;
+  }
+
   if (!resolved.backend.readHandle) {
     result.peek_skipped = `workspace backend ${resolved.backend_name} does not support reading handles`;
     return result;
