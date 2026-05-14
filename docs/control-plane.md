@@ -32,7 +32,7 @@ The first concrete stack is:
 
 This stack is the golden path, not the boundary of the system.
 
-Auth and account separation are part of the control plane. Work and personal stacks use separate launcher profiles, config roots, and account-scoped MCP names as the tool visibility boundary; swarm identity labels provide routing and audit metadata. See [`identity-boundaries.md`](./identity-boundaries.md).
+Auth and account separation are part of the control plane. Each stack uses a free-form launcher profile, config root, and account-scoped MCP names as the tool visibility boundary; swarm identity labels provide routing and audit metadata. See [`identity-boundaries.md`](./identity-boundaries.md).
 
 Consumer backend selection spans host MCP config, launcher profiles, spawner env, and workspace identity publication. See [`backend-configuration.md`](./backend-configuration.md) for the current herdr/swarm-ui setup and the intended future swarm-server switch shape.
 

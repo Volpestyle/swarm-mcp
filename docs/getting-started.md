@@ -10,7 +10,7 @@ It assumes:
 - Your coding agent host supports custom stdio MCP servers.
 - You want a simple local setup using the default shared database at `~/.swarm-mcp/swarm.db`.
 
-This guide uses the default local backend setup. For consumer backend/profile configuration, see [`backend-configuration.md`](./backend-configuration.md). For work/personal account separation, see [`identity-boundaries.md`](./identity-boundaries.md).
+This guide uses the default local backend setup. For consumer backend/profile configuration and account separation, see [`backend-configuration.md`](./backend-configuration.md) and [`identity-boundaries.md`](./identity-boundaries.md).
 
 ## 1. Install Bun
 
@@ -128,7 +128,7 @@ Use:
 
 - `directory`: the project directory you are working in
 - `scope`: usually omit it. By default the server uses the repo's git root, or `directory` when no git root exists. Use a different `scope` only when you want a completely separate swarm.
-- `label`: optional, but if you use one prefer machine-readable tokens like `identity:work provider:codex-cli role:implementer`
+- `label`: optional, but if you use one prefer machine-readable tokens like `identity:client-x provider:codex-cli role:implementer`
 
 Do not use `scope` to split frontend/backend inside one repo. Keep one shared scope and use `label` tokens like `team:frontend` and `team:backend` if you want soft grouping inside the same swarm.
 

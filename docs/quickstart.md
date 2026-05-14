@@ -122,7 +122,7 @@ That's it. You have two Claude Code sessions coordinating through the shared swa
 
 ## Next steps
 
-- [`identity-boundaries.md`](./identity-boundaries.md) — separating work vs personal accounts on the same machine.
+- [`identity-boundaries.md`](./identity-boundaries.md) — separating profile/account stacks on the same machine.
 - `/swarm-mcp planner`, `/swarm-mcp implementer`, `/swarm-mcp reviewer`, `/swarm-mcp researcher` — role-specialized doctrine from the bundled skill.
 - [`swarm-server.md`](./swarm-server.md) — the Rust daemon behind `swarm-ui`, mobile pairing, and PTY streaming.
 - [`getting-started.md`](./getting-started.md) — local-clone development setup and per-host MCP config (Codex, OpenCode, custom Claude Code paths).

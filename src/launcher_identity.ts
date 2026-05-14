@@ -74,9 +74,9 @@ export function canonicalizeHarness(harness: string, env: Env = process.env): Ca
   }
   const fromCurrent = aliasLookup(env, lower);
   if (fromCurrent) return fromCurrent;
-  // Cross-profile normalization: a personal worker getting a work-aliased
-  // request (or vice versa) still needs to map the alias to its canonical
-  // harness so the caller's identity-specific launcher can be picked.
+  // Cross-profile normalization: a worker getting another profile's alias
+  // still needs to map it to its canonical harness so the caller's
+  // identity-specific launcher can be picked.
   for (const profile of listProfileNames(env)) {
     const fromProfile = aliasLookup(loadProfileEnv(profile, env), lower);
     if (fromProfile) return fromProfile;

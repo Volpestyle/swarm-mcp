@@ -13,7 +13,7 @@ There is no minimum or maximum. Common shapes:
 
 - **Single profile** — one identity, one DB, one set of MCP roots. Pick any
   name (`main`, `default`, your username, …) and stop.
-- **Two profiles** — `personal` and `work` is the classic split, but the
+- **Two profiles** — `personal` and `work` are a common split, but the
   binding is to whatever isolation boundary you want (per account, per client,
   per environment).
 - **N profiles** — declare one env file per boundary. Each gets its own DB
@@ -24,10 +24,10 @@ There is no minimum or maximum. Common shapes:
 ```sh
 mkdir -p ~/.config/swarm-mcp
 
-# Single-profile starter (recommended if you don't need a personal/work split):
+# Single-profile starter (recommended if you don't need multiple profiles):
 cp env/default.env.example ~/.config/swarm-mcp/default.env
 
-# Or use the personal/work split, pre-filled with that classic shape:
+# Or use the pre-filled personal/work example split:
 cp env/personal.env.example ~/.config/swarm-mcp/personal.env
 cp env/work.env.example     ~/.config/swarm-mcp/work.env
 

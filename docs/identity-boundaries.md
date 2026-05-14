@@ -6,7 +6,7 @@ Workers from different isolation boundaries must be separated by launcher profil
 
 ## Profiles
 
-A swarm-mcp "profile" is a named isolation boundary you pick. Profile names are user-defined — swarm-mcp has no reserved names. The most common pattern is `work` + `personal`, but you can run one profile (`main`), three (`work`, `personal`, `client-x`), or however many independent identities you need. Each profile owns:
+A swarm-mcp "profile" is the canonical isolation boundary. Profile names are user-defined slugs — swarm-mcp has no reserved names. You can run one profile (`main`), two (`work`, `personal`), three (`work`, `personal`, `client-x`), or however many independent identities you need. Each profile owns:
 
 - A coordinator DB path (`SWARM_DB_PATH`) — keeps coordination state isolated.
 - A herdr socket (`HERDR_SOCKET_PATH`) — keeps live pane control isolated.
@@ -16,7 +16,7 @@ A swarm-mcp "profile" is a named isolation boundary you pick. Profile names are 
 
 ### Example: work + personal
 
-This is the canonical pattern the rest of this doc uses as a concrete example. Substitute any profile names that fit your boundaries.
+This is one concrete example, not a special built-in split. Substitute any profile names that fit your boundaries.
 
 | Profile | Claude launcher | Codex launcher | OpenCode launcher | Hermes launcher | Purpose |
 |---|---|---|---|---|---|
@@ -34,11 +34,11 @@ through `ui spawn`.
 
 Dispatch uses the requester's `identity:` token as the spawn identity, then
 reads `SWARM_HARNESS_CLAUDE` / `_CODEX` / `_OPENCODE` / `_HERMES` from the
-matching profile env file to resolve the launcher alias. A personal requester
-asking for `claude` gets that profile's `SWARM_HARNESS_CLAUDE` alias (e.g.
-`clowd`); a work requester gets the work alias (e.g. `clawd`). The spawned
-instance label also carries `identity:<profile>` so future live-worker reuse
-stays inside the same boundary.
+matching profile env file to resolve the launcher alias. A requester labeled
+`identity:client-x` asking for `claude` gets `client-x.env`'s
+`SWARM_HARNESS_CLAUDE` alias. The spawned instance label also carries
+`identity:<profile>` so future live-worker reuse stays inside the same
+boundary.
 
 ## Worker and Lead Aliases
 
@@ -50,8 +50,8 @@ behavior plus a discoverable planner role.
 Launcher functions should source per-profile env files instead of embedding all
 configuration inline. The repo ships templates in [`../env/`](../env/) — start
 from `profile.env.example` (generic, one copy per profile) or from
-`personal.env.example` / `work.env.example` (pre-filled examples of the
-classic two-profile pattern):
+`personal.env.example` / `work.env.example` (pre-filled examples of a common
+two-profile pattern):
 
 ```sh
 mkdir -p ~/.config/swarm-mcp
@@ -92,8 +92,8 @@ export HERDR_SOCKET_PATH=/Users/james.volpe/.config/herdr/sessions/personal/herd
 
 Use the matching path for the visible desktop herdr server and that identity's
 gateway. This avoids relying on a sandboxed `$HOME` or the default host profile
-socket at `~/.config/herdr/herdr.sock`, and it keeps personal herdr state
-separate from work.
+socket at `~/.config/herdr/herdr.sock`, and it keeps each profile's herdr state
+separate.
 
 Use the `swarm_define_profile` generator in `../env/launchers.zsh.example` to
 declare a profile's launcher aliases in one line per profile:
@@ -131,7 +131,7 @@ variables directly.
 
 ## Config Roots
 
-| Runtime | Work config root | Personal config root |
+| Runtime | Example profile A root | Example profile B root |
 |---|---|---|
 | Claude Code | default `~/.claude.json` / `~/.claude` | `CLAUDE_CONFIG_DIR=~/.claude-personal` |
 | Codex | `~/.codex` | `CODEX_HOME=~/.codex-personal` |
@@ -144,7 +144,7 @@ Each root owns its own MCP auth state and should be able to run without reading 
 
 Use identity-suffixed MCP server names. Avoid ambiguous globals like `figma`, `linear`, or `linear-server` once both identities exist.
 
-The suffix is for config clarity, operator visibility, and cross-process routing. It is not authorization by itself. A launched identity should only load same-identity account-scoped MCP servers; do not put both `*_work` and `*_personal` account tools in one worker process just because their names are explicit.
+The suffix is for config clarity, operator visibility, and cross-process routing. It is not authorization by itself. A launched identity should only load same-identity account-scoped MCP servers; do not put multiple profiles' account tools in one worker process just because their names are explicit.
 
 Work examples:
 
@@ -169,15 +169,15 @@ If a provider only exists on one side, still use the suffix when it carries acco
 Workers should receive an identity label in their swarm registration, for example:
 
 ```text
-identity:work provider:codex role:implementer
-identity:personal provider:opencode role:researcher
+identity:client-x provider:codex role:implementer
+identity:main provider:opencode role:researcher
 ```
 
 Runtime rules:
 
 - Use only MCP tools matching your `identity:` label.
-- If `identity:work`, never call `*_personal` tools.
-- If `identity:personal`, never call `*_work` tools.
+- If `identity:client-x`, use only `*_client_x` account-scoped tools.
+- If `identity:main`, use only `*_main` account-scoped tools.
 - If a task references the other identity's resource, stop and ask for a relaunch or handoff under the correct profile.
 - Do not copy tokens between config roots.
 - Prefer OAuth-managed remote MCP auth over raw bearer tokens in JSON config.
@@ -186,11 +186,10 @@ Runtime rules:
 
 The hard boundary is the process launched from the right profile:
 
-- `work` launchers read work config roots and load only work account MCPs.
-- `personal` launchers read personal config roots and load only personal account MCPs.
-- Identity labels such as `identity:work` and `identity:personal` help planners, gateways, and reviewers route and audit work, but `swarm-mcp` does not enforce account authorization from labels.
+- Each profile's launchers read that profile's config roots and load only that profile's account MCPs.
+- Identity labels such as `identity:client-x` and `identity:main` help planners, gateways, and reviewers route and audit work, but `swarm-mcp` does not enforce account authorization from labels.
 
-If work and personal coordination data must also be isolated, use separate `SWARM_DB_PATH` values or separate OS users. A `scope` or `identity:` label alone is not a credential boundary; every same-user process with access to the shared swarm database can read and write coordination state.
+If profile coordination data must also be isolated, use separate `SWARM_DB_PATH` values or separate OS users. A `scope` or `identity:` label alone is not a credential boundary; every same-user process with access to the shared swarm database can read and write coordination state.
 
 For an example of layering process-internal fences (write-safe-root env var, allowlist terminal hook) on top of the launcher boundary — useful when both identities share a single user account and you want accidental cross-identity touches blocked loudly — see [`identity-defense-in-depth.md`](./identity-defense-in-depth.md). That doc walks through a personal Hermes example end-to-end and notes how to adapt to other runtimes.
 
@@ -209,7 +208,7 @@ mcp_servers:
       SWARM_DB_PATH: /Users/you/.swarm-mcp-personal/swarm.db
 ```
 
-Use `AGENT_IDENTITY: work` and `~/.swarm-mcp-work/swarm.db` for the work profile. Launchd-managed Hermes gateways should also set `AGENT_IDENTITY`, `SWARM_HERMES_IDENTITY`, `HERMES_HOME`, and the same `SWARM_DB_PATH` in the LaunchAgent `EnvironmentVariables` block.
+Use the matching profile name and DB path for any other profile. Launchd-managed Hermes gateways should also set `AGENT_IDENTITY`, `SWARM_HERMES_IDENTITY`, `HERMES_HOME`, and the same `SWARM_DB_PATH` in the LaunchAgent `EnvironmentVariables` block.
 
 ## Stack Routing
 
@@ -227,7 +226,7 @@ Dispatch flow:
 3. Read the hook-published `config/work_tracker/<identity>` KV row or `bootstrap.work_tracker`.
 4. Create or link the tracker item only if the configured same-identity MCP is available.
 5. Do not substitute a different loaded tracker MCP when the configured tracker is missing or ambiguous.
-6. Create the swarm task with an `identity:<work|personal>` label in task context or assignee label matching.
+6. Create the swarm task with an `identity:<profile>` label in task context or assignee label matching.
 7. Spawn a worker through the matching launcher (`codex` vs `cdx`, `opencode` vs `opc`, `claude`/`clawd` vs `clowd`, `hermesw` vs `hermesp`).
 8. Worker uses only same-identity MCPs.
 

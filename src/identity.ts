@@ -1,8 +1,8 @@
 /**
  * Identity boundary helpers shared by registry, dispatch, and write-path
- * handlers. The control-plane contract treats `identity:work` /
- * `identity:personal` (or any explicit identity token) as a hard delegation
- * boundary: tasks, messages, and prompts that cross identities are forbidden.
+ * handlers. The control-plane contract treats each `identity:<profile>` token
+ * as a hard delegation boundary: tasks, messages, and prompts that cross
+ * identities are forbidden.
  *
  * These helpers are intentionally label-based. The launched process root (its
  * config dir, MCP auth, and AGENT_IDENTITY env) is the underlying source of

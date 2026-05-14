@@ -23,7 +23,7 @@ For a worker fenced to a single root (call it `<SAFE_ROOT>`, e.g.
 `~/personal-repos`):
 
 1. **Coordination layer.** Already covered in `identity-boundaries.md`. Swarm
-   `identity:<work|personal>` label plus separate `SWARM_DB_PATH` if you want
+   `identity:<profile>` label plus separate `SWARM_DB_PATH` if you want
    coordination data isolated too. Prevents cross-identity `request_task`,
    message routing, and lock collisions.
 
@@ -94,7 +94,7 @@ configured root automatically; if the env var is unset the hook fails open
 # Heuristic, not a hard sandbox: string-scans the command and won't defeat
 # deliberate obfuscation (base64 decode, env indirection, alias chains). Pair
 # with HERMES_WRITE_SAFE_ROOT at the file-tool layer and the swarm
-# identity:<work|personal> label for defense in depth.
+# identity:<profile> label for defense in depth.
 set -u
 
 SAFE_ROOT="${HERMES_WRITE_SAFE_ROOT:-}"
