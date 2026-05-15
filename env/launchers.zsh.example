@@ -79,6 +79,14 @@ _swarm_run_lead() (
       export SWARM_CODEX_ROLE=gateway
       export SWARM_CODEX_AGENT_ROLE=planner
       ;;
+    opencode)
+      export SWARM_OPENCODE_ROLE=gateway
+      export SWARM_OPENCODE_AGENT_ROLE=planner
+      ;;
+    hermes)
+      export SWARM_HERMES_ROLE=gateway
+      export SWARM_HERMES_AGENT_ROLE=planner
+      ;;
   esac
   "$@"
 )
@@ -104,8 +112,10 @@ _swarm_herdr() (
 #   codex=<alias>        Worker alias for the codex binary
 #   opencode=<alias>     Worker alias for the opencode binary
 #   hermes=<alias>       Worker alias for the hermes binary
-#   claude_lead=<alias>  Lead/gateway alias for claude (adds gateway env)
-#   codex_lead=<alias>   Lead/gateway alias for codex (adds gateway env)
+#   claude_lead=<alias>   Lead/gateway alias for claude (adds gateway env)
+#   codex_lead=<alias>    Lead/gateway alias for codex (adds gateway env)
+#   opencode_lead=<alias> Lead/gateway alias for opencode (adds gateway env)
+#   hermes_lead=<alias>   Lead/gateway alias for hermes (adds gateway env)
 #   herdr=<alias>        Alias that launches a visible herdr server
 #   herdr_socket=<path>  Override herdr socket; defaults to
 #                        ${HERMES_HOST_HOME:-$HOME}/.config/herdr/sessions/<profile>/herdr.sock
@@ -130,6 +140,7 @@ swarm_define_profile() {
   local env_file="$SWARM_ENV_DIR/$profile.env"
   local claude_alias="" codex_alias="" opencode_alias="" hermes_alias=""
   local claude_lead_alias="" codex_lead_alias=""
+  local opencode_lead_alias="" hermes_lead_alias=""
   local herdr_alias="" herdr_socket=""
   local claude_args="--enable-auto-mode"
   local claude_lead_args=""
@@ -145,6 +156,8 @@ swarm_define_profile() {
       hermes) hermes_alias="$value" ;;
       claude_lead) claude_lead_alias="$value" ;;
       codex_lead) codex_lead_alias="$value" ;;
+      opencode_lead) opencode_lead_alias="$value" ;;
+      hermes_lead) hermes_lead_alias="$value" ;;
       herdr) herdr_alias="$value" ;;
       herdr_socket) herdr_socket="$value" ;;
       claude_args) claude_args="$value" ;;
@@ -180,6 +193,12 @@ swarm_define_profile() {
   if [[ -n "$codex_lead_alias" ]]; then
     eval "$codex_lead_alias() { _swarm_run_lead $(printf %q "$profile") $(printf %q "$env_file") codex command codex \"\$@\"; }"
   fi
+  if [[ -n "$opencode_lead_alias" ]]; then
+    eval "$opencode_lead_alias() { _swarm_run_lead $(printf %q "$profile") $(printf %q "$env_file") opencode command opencode \"\$@\"; }"
+  fi
+  if [[ -n "$hermes_lead_alias" ]]; then
+    eval "$hermes_lead_alias() { _swarm_run_lead $(printf %q "$profile") $(printf %q "$env_file") hermes command hermes \"\$@\"; }"
+  fi
   if [[ -n "$herdr_alias" ]]; then
     eval "$herdr_alias() { _swarm_herdr $(printf %q "$herdr_socket") $(printf %q "$profile") \"\$@\"; }"
   fi
@@ -204,7 +223,8 @@ swarm_autodefine_profiles() {
 
   local env_file profile
   local claude_alias codex_alias opencode_alias hermes_alias
-  local claude_lead_alias codex_lead_alias herdr_alias
+  local claude_lead_alias codex_lead_alias opencode_lead_alias hermes_lead_alias
+  local herdr_alias
   local claude_args_val claude_lead_args_val
   local -a args
 
@@ -222,6 +242,8 @@ swarm_autodefine_profiles() {
       printf 'hermes_alias=%q\n'         "${SWARM_HARNESS_HERMES:-}"
       printf 'claude_lead_alias=%q\n'    "${SWARM_HARNESS_CLAUDE_LEAD:-}"
       printf 'codex_lead_alias=%q\n'     "${SWARM_HARNESS_CODEX_LEAD:-}"
+      printf 'opencode_lead_alias=%q\n'  "${SWARM_HARNESS_OPENCODE_LEAD:-}"
+      printf 'hermes_lead_alias=%q\n'    "${SWARM_HARNESS_HERMES_LEAD:-}"
       printf 'herdr_alias=%q\n'          "${SWARM_HARNESS_HERDR:-}"
       printf 'claude_args_val=%q\n'      "${SWARM_HARNESS_CLAUDE_ARGS:-}"
       printf 'claude_lead_args_val=%q\n' "${SWARM_HARNESS_CLAUDE_LEAD_ARGS:-}"
@@ -234,6 +256,8 @@ swarm_autodefine_profiles() {
     [[ -n "$hermes_alias" ]]         && args+=("hermes=$hermes_alias")
     [[ -n "$claude_lead_alias" ]]    && args+=("claude_lead=$claude_lead_alias")
     [[ -n "$codex_lead_alias" ]]     && args+=("codex_lead=$codex_lead_alias")
+    [[ -n "$opencode_lead_alias" ]]  && args+=("opencode_lead=$opencode_lead_alias")
+    [[ -n "$hermes_lead_alias" ]]    && args+=("hermes_lead=$hermes_lead_alias")
     [[ -n "$herdr_alias" ]]          && args+=("herdr=$herdr_alias")
     [[ -n "$claude_args_val" ]]      && args+=("claude_args=$claude_args_val")
     [[ -n "$claude_lead_args_val" ]] && args+=("claude_lead_args=$claude_lead_args_val")
@@ -255,16 +279,20 @@ swarm_autodefine_profiles
 #     claude=clowd \
 #     codex=cdx \
 #     opencode=opc \
-#     hermes=hermesp \
-#     claude_lead=clowdl \
-#     codex_lead=cdxl \
+#     hermes=hermesp-worker \
+#     claude_lead=clowdg \
+#     codex_lead=cdxg \
+#     opencode_lead=opcg \
+#     hermes_lead=hermesp \
 #     herdr=herdrp
 #
 # swarm_define_profile work \
 #     claude=clawd \
 #     codex=codex \
 #     opencode=opencode \
-#     hermes=hermesw \
-#     claude_lead=clawdl \
-#     codex_lead=codexl \
+#     hermes=hermesw-worker \
+#     claude_lead=clawdg \
+#     codex_lead=codexg \
+#     opencode_lead=opencodeg \
+#     hermes_lead=hermesw \
 #     herdr=herdrw

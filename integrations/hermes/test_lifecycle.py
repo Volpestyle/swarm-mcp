@@ -60,6 +60,23 @@ class SwarmRoleConfigTests(unittest.TestCase):
         self.assertEqual(lifecycle.get_role("session-123"), "worker")
         self.assertIn("invalid swarm.role", "\n".join(logs.output))
 
+    def test_env_role_overrides_config_role(self) -> None:
+        # Gateway launcher aliases export SWARM_HERMES_ROLE=gateway; it must
+        # take precedence over swarm.role in the hermes config file so the
+        # shell launcher is the single source of truth for plugin role.
+        os.environ["SWARM_HERMES_ROLE"] = "gateway"
+        self._start_with_config({"swarm": {"role": "worker"}})
+
+        self.assertEqual(lifecycle.get_role("session-123"), "gateway")
+
+    def test_env_role_invalid_warns_and_defaults_to_worker(self) -> None:
+        os.environ["SWARM_HERMES_ROLE"] = "planner"
+        with self.assertLogs(lifecycle.logger.name, level=logging.WARNING) as logs:
+            self._start_with_config({"swarm": {"role": "gateway"}})
+
+        self.assertEqual(lifecycle.get_role("session-123"), "worker")
+        self.assertIn("invalid SWARM_HERMES_ROLE", "\n".join(logs.output))
+
     def test_role_labels_remain_orthogonal_to_plugin_role(self) -> None:
         os.environ["SWARM_HERMES_LABEL"] = "identity:personal role:planner custom:x"
 

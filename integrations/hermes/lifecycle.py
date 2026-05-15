@@ -117,7 +117,24 @@ def _load_config() -> dict[str, Any]:
 
 
 def _configured_role() -> str:
-    """Return configured plugin role, defaulting invalid/missing values to worker."""
+    """Return configured plugin role, defaulting invalid/missing values to worker.
+
+    Precedence: ``SWARM_HERMES_ROLE`` env (set by gateway launcher aliases)
+    wins over ``swarm.role`` in the hermes config file, so the shell launcher
+    can flip a session into gateway mode without editing config. Falls back
+    to worker on invalid/missing values from either source.
+    """
+    env_role = (os.environ.get("SWARM_HERMES_ROLE") or "").strip()
+    if env_role:
+        normalized = env_role.lower()
+        if normalized in _VALID_PLUGIN_ROLES:
+            return normalized
+        logger.warning(
+            "swarm plugin: invalid SWARM_HERMES_ROLE %r; defaulting to worker",
+            env_role,
+        )
+        return "worker"
+
     config = _load_config()
     swarm = config.get("swarm")
     if not isinstance(swarm, dict) or "role" not in swarm:
