@@ -92,6 +92,30 @@ new `<name>.env` and the matching aliases appear on the next shell.
 non-trivial work through the swarm `dispatch` tool instead of doing it
 in-pane. Use the plain alias for workers, the lead alias for gateways.
 
+### Three ways to launch each agent, per profile
+
+For any profile, every canonical agent (claude/codex/opencode/hermes) has
+three launch shapes. Pick whichever matches what you want that session to
+do:
+
+| Launch shape | How | What it does |
+|---|---|---|
+| **Worker**  | profile worker alias (`SWARM_HARNESS_CLAUDE`, e.g. `clowd`) | Registers as `identity:<profile>` worker. Sees its identity's peers, can be dispatched work, enforces file locks. |
+| **Gateway** | profile lead alias (`SWARM_HARNESS_CLAUDE_LEAD`, e.g. `clowdl`) | Same registration as worker but marked `mode:gateway role:planner`. Routes medium/large work through `dispatch`, owns Linear tracker updates. |
+| **Raw / vanilla** | the canonical binary directly (`claude`, `codex`, …) | **Does not register at all.** Skips swarm hooks, no DB footprint, no peer visibility. The right choice when you want an uncoordinated solo session. |
+
+The vanilla case is the absence of a launcher — you don't define an alias
+for it. If a session has no `AGENT_IDENTITY` / `SWARM_<RUNTIME>_IDENTITY` /
+`SWARM_IDENTITY` env exported, the SessionStart hook detects there's no
+identity to register under and exits early with a one-line stderr note.
+This is intentional: an unlabeled instance would be discoverable from any
+identity and defeat the cross-identity boundary, so we don't register one
+at all rather than minting a synthetic `identity:unknown`.
+
+The escape hatch is `SWARM_MCP_ALLOW_UNLABELED=1` — set it from a trusted
+shell to restore the old behavior of registering without an identity. Use
+this only when you know what you're doing.
+
 ### Manual overrides (optional)
 
 Auto-discovery covers the common case. If you want to override the aliases

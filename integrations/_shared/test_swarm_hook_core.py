@@ -24,8 +24,15 @@ def _extract_paths(tool_name: str, tool_input: object) -> list[str]:
 
 class HookCoreLifecycleTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.env = mock.patch.dict(os.environ, {}, clear=True)
+        # Default to a launched-via-launcher session so the identity gate in
+        # run_session_start_hook passes; no-identity tests clear this explicitly.
+        self.env = mock.patch.dict(
+            os.environ, {"AGENT_IDENTITY": "test"}, clear=True
+        )
         self.env.start()
+        # Reset the per-prefix warn-once latch so tests can re-trigger it.
+        from integrations._shared import swarm_hook_core as _shc
+        _shc._WARNED_SKIP_REGISTRATION.clear()
         self.scratch_name = f"swarm-test-{uuid4().hex}"
         self.core = HookCore(
             RuntimeConfig(
@@ -305,6 +312,50 @@ class HookCoreLifecycleTests(unittest.TestCase):
         self.assertIn("session:abc123", meta["label"])
         rendered = json.loads(output)["hookSpecificOutput"]["additionalContext"]
         self.assertIn('adopt_instance_id="inst-override"', rendered)
+
+    def test_session_start_skips_register_when_no_identity_signal(self) -> None:
+        # Raw binaries (no AGENT_IDENTITY) must not auto-register; they would
+        # otherwise land as identity:unknown ghost peers.
+        os.environ.pop("AGENT_IDENTITY", None)
+        calls: list[list[str]] = []
+
+        def fake_run(args: list[str], timeout: float = 8.0) -> tuple[int, str, str]:
+            calls.append(args)
+            return 0, "", ""
+
+        with mock.patch.object(self.core, "run_swarm", side_effect=fake_run):
+            output = self.run_hook(
+                {"session_id": "abc-123", "cwd": "/repo", "source": "startup"}
+            )
+
+        self.assertEqual(calls, [])
+        self.assertEqual(output, "")
+        meta = self.core.read_session_meta("abc-123")
+        self.assertNotIn("instance_id", meta)
+
+    def test_session_start_allow_unlabeled_opt_back_in(self) -> None:
+        # SWARM_MCP_ALLOW_UNLABELED=1 restores legacy unlabeled registration.
+        os.environ.pop("AGENT_IDENTITY", None)
+        os.environ["SWARM_MCP_ALLOW_UNLABELED"] = "1"
+        calls: list[list[str]] = []
+
+        def fake_run(args: list[str], timeout: float = 8.0) -> tuple[int, str, str]:
+            calls.append(args)
+            if args[0] == "register":
+                return (
+                    0,
+                    json.dumps({"id": "inst-raw", "scope": "/repo", "file_root": "/repo"}),
+                    "",
+                )
+            return 0, "", ""
+
+        with mock.patch.object(self.core, "run_swarm", side_effect=fake_run):
+            self.run_hook(
+                {"session_id": "abc-123", "cwd": "/repo", "source": "startup"}
+            )
+
+        self.assertEqual(calls[0][0], "register")
+        self.assertNotIn("identity:", calls[0][3])
 
     def test_session_start_falls_back_to_manual_context_when_register_fails(self) -> None:
         with mock.patch.object(

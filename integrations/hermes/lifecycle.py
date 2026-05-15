@@ -39,17 +39,19 @@ _warned_missing_identity = False
 
 
 def _resolved_identity() -> str:
-    """Return the identity for label/registration, falling back to ``unknown``.
+    """Return the identity for label/registration, or ``""`` when unset.
 
-    Hermes sessions launched without an identity wrapper (raw ``hermes`` instead
-    of ``hermesp``/``hermesw``) miss ``AGENT_IDENTITY`` and would otherwise
-    register without any ``identity:`` token. Cross-identity boundary checks
-    fail-open on missing identities, so an unlabeled instance is discoverable
-    from any identity — defeating the boundary. We substitute ``unknown`` so the
-    label always carries a distinct, non-work/non-personal identity token, then
-    warn the operator once so they can fix the launcher.
+    Hermes sessions launched via a profile wrapper (``hermesp``/``hermesw``)
+    export ``AGENT_IDENTITY`` / ``SWARM_HERMES_IDENTITY`` / ``SWARM_IDENTITY``.
+    Raw ``hermes`` invocations leave those unset; ``on_session_start`` uses
+    ``has_identity_signal`` to skip auto-registration in that case rather
+    than registering an unlabeled instance that would defeat the
+    cross-identity boundary.
+
+    LaunchAgent-managed gateways may correctly route through a named Hermes
+    profile while still invoking the raw binary; in that shape the active
+    profile name is the real identity, so we honor it before giving up.
     """
-    global _warned_missing_identity
     raw = (
         os.environ.get("SWARM_HERMES_IDENTITY")
         or os.environ.get("AGENT_IDENTITY")
@@ -60,20 +62,27 @@ def _resolved_identity() -> str:
     if derived:
         return derived
 
-    derived = _identity_from_active_profile()
-    if derived:
-        return derived
+    return _identity_from_active_profile()
 
-    if not _warned_missing_identity:
-        logger.warning(
-            "swarm plugin: hermes session has no AGENT_IDENTITY / SWARM_HERMES_IDENTITY / "
-            "SWARM_IDENTITY env set. Falling back to identity:unknown. Launch via the "
-            "identity launcher alias defined for your hermes profile (see "
-            "swarm-mcp/env/README.md) to get a real identity token; bypassing the "
-            "wrapper leaves the swarm boundary undefined."
-        )
-        _warned_missing_identity = True
-    return "unknown"
+
+def has_identity_signal() -> bool:
+    """True when this hermes session has an identity to register under."""
+    return bool(_resolved_identity())
+
+
+def _warn_skip_registration_once() -> None:
+    global _warned_missing_identity
+    if _warned_missing_identity:
+        return
+    _warned_missing_identity = True
+    logger.warning(
+        "swarm plugin: hermes session has no AGENT_IDENTITY / SWARM_HERMES_IDENTITY / "
+        "SWARM_IDENTITY env set; swarm registration skipped. Raw binaries don't "
+        "join the swarm — launch via the identity launcher alias defined for "
+        "your hermes profile (see swarm-mcp/env/README.md) to coordinate. Set "
+        "SWARM_MCP_ALLOW_UNLABELED=1 to opt back in to unlabeled registration "
+        "from a trusted shell."
+    )
 
 
 def _identity_from_active_profile() -> str:
@@ -501,6 +510,12 @@ def on_session_start(session_id: str = "", **kwargs: Any) -> None:
         if session_id in _instances:
             logger.debug("swarm plugin: already registered for session %s", session_id)
             return
+
+    if not has_identity_signal() and not contract.truthy(
+        os.environ.get("SWARM_MCP_ALLOW_UNLABELED")
+    ):
+        _warn_skip_registration_once()
+        return
 
     role = _configured_role()
     register_args = _register_args(session_id, kwargs)

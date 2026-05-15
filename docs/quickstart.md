@@ -65,7 +65,24 @@ Add the plugin to `~/.claude.json`:
 
 ## 4. Open two Claude Code sessions in the same repo
 
-Open two terminal windows, both `cd`'d into `/path/to/your-project`, and start Claude Code in each. The plugin's `SessionStart` hook registers each session automatically. Inside either session, ask it to call `register` if anything looks off.
+Open two terminal windows, both `cd`'d into `/path/to/your-project`. Before
+starting Claude Code, export an identity in each so the plugin's
+`SessionStart` hook knows which `identity:` label to register under:
+
+```sh
+export AGENT_IDENTITY=work   # any slug — must match across the two sessions
+```
+
+Then start Claude Code in each window. The plugin's `SessionStart` hook
+registers each session automatically. Inside either session, ask it to
+call `register` if anything looks off.
+
+> Sessions launched without `AGENT_IDENTITY` (or `SWARM_IDENTITY`, or a
+> per-runtime equivalent) are intentionally **not** registered — raw
+> binaries stay out of the swarm so an unlabeled instance can't defeat
+> the cross-identity boundary. For multi-identity setups, define profile
+> launchers per [`../env/README.md`](../env/README.md) and use those
+> aliases instead of exporting `AGENT_IDENTITY` by hand.
 
 Expected `register` response (paraphrased):
 

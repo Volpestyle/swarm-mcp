@@ -11,7 +11,13 @@ from integrations.hermes import cli, lifecycle
 
 class SwarmRoleConfigTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._env = mock.patch.dict(os.environ, {}, clear=True)
+        # Most tests in this file simulate a session launched via an identity
+        # wrapper (hermesp/hermesw); set AGENT_IDENTITY here so on_session_start
+        # passes the identity gate by default. Tests that exercise the
+        # no-identity skip path clear or override this explicitly.
+        self._env = mock.patch.dict(
+            os.environ, {"AGENT_IDENTITY": "test"}, clear=True
+        )
         self._env.start()
         lifecycle._instances.clear()
         lifecycle._refcounts.clear()
@@ -76,19 +82,56 @@ class SwarmRoleConfigTests(unittest.TestCase):
         )
 
     def test_identity_falls_back_to_named_hermes_profile(self) -> None:
+        # Active-profile fallback only kicks in when no identity env is set.
+        os.environ.pop("AGENT_IDENTITY", None)
         with mock.patch.object(lifecycle, "_identity_from_active_profile", return_value="personal"):
             args = lifecycle._register_args("abc-123", {"platform": "telegram"})
 
         self.assertIn("identity:personal", args["label"])
         self.assertNotIn("identity:unknown", args["label"])
 
-    def test_default_profile_still_warns_and_uses_unknown_identity(self) -> None:
-        with mock.patch.object(lifecycle, "_identity_from_active_profile", return_value=""):
-            with self.assertLogs(lifecycle.logger.name, level=logging.WARNING) as logs:
-                args = lifecycle._register_args("abc-123", {"platform": "telegram"})
+    def test_session_start_skips_register_when_no_identity_signal(self) -> None:
+        # Raw `hermes` invocations leave AGENT_IDENTITY unset and should not
+        # register at all — no ghost peer with identity:unknown.
+        os.environ.pop("AGENT_IDENTITY", None)
+        calls: list[tuple[str, dict]] = []
 
-        self.assertIn("identity:unknown", args["label"])
-        self.assertIn("has no AGENT_IDENTITY", "\n".join(logs.output))
+        def fake_dispatch(tool_suffix: str, args: dict) -> dict:
+            calls.append((tool_suffix, args))
+            return {}
+
+        with mock.patch.object(
+            lifecycle, "_identity_from_active_profile", return_value=""
+        ), mock.patch.object(lifecycle, "_dispatch", side_effect=fake_dispatch):
+            with self.assertLogs(lifecycle.logger.name, level=logging.WARNING) as logs:
+                lifecycle.on_session_start(session_id="abc-123", platform="telegram")
+
+        self.assertEqual(calls, [])
+        self.assertNotIn("abc-123", lifecycle._instances)
+        self.assertIn("registration skipped", "\n".join(logs.output))
+
+    def test_session_start_allow_unlabeled_opt_back_in(self) -> None:
+        # SWARM_MCP_ALLOW_UNLABELED=1 restores legacy unlabeled registration.
+        os.environ.pop("AGENT_IDENTITY", None)
+        os.environ["SWARM_MCP_ALLOW_UNLABELED"] = "1"
+
+        calls: list[tuple[str, dict]] = []
+
+        def fake_dispatch(tool_suffix: str, args: dict) -> dict:
+            calls.append((tool_suffix, args))
+            if tool_suffix == "register":
+                return {"id": "inst-unlabeled"}
+            return {}
+
+        with mock.patch.object(
+            lifecycle, "_identity_from_active_profile", return_value=""
+        ), mock.patch.object(lifecycle, "_dispatch", side_effect=fake_dispatch), mock.patch(
+            "integrations.hermes.workspace_identity.publish_current_identity"
+        ):
+            lifecycle.on_session_start(session_id="abc-123", platform="telegram")
+
+        self.assertEqual(calls[0][0], "register")
+        self.assertNotIn("identity:", calls[0][1]["label"])
 
     def test_session_start_publishes_configured_work_tracker(self) -> None:
         os.environ["SWARM_HERMES_IDENTITY"] = "work"

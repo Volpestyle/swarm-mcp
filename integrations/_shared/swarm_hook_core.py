@@ -42,13 +42,13 @@ except ModuleNotFoundError:  # pragma: no cover - package import path for tests
     from . import herdr_agent_report
 
 
-_WARNED_MISSING_IDENTITY: set[str] = set()
+_WARNED_SKIP_REGISTRATION: set[str] = set()
 
 
-def _warn_missing_identity_once(env_prefix: str) -> None:
-    if env_prefix in _WARNED_MISSING_IDENTITY:
+def _warn_skip_registration_once(env_prefix: str) -> None:
+    if env_prefix in _WARNED_SKIP_REGISTRATION:
         return
-    _WARNED_MISSING_IDENTITY.add(env_prefix)
+    _WARNED_SKIP_REGISTRATION.add(env_prefix)
     import sys
 
     runtime_hint = {
@@ -57,10 +57,12 @@ def _warn_missing_identity_once(env_prefix: str) -> None:
     }.get(env_prefix, f"runtime with env prefix {env_prefix}")
     print(
         f"[swarm-mcp] {runtime_hint}: session has no AGENT_IDENTITY / "
-        f"SWARM_{env_prefix}_IDENTITY / SWARM_IDENTITY env set. Falling back to "
-        f"identity:unknown. Launch via the per-profile launcher alias defined in "
-        f"swarm-mcp/env/launchers.zsh.example (or your own copy) so AGENT_IDENTITY "
-        f"is exported; bypassing the wrapper leaves the swarm boundary undefined.",
+        f"SWARM_{env_prefix}_IDENTITY / SWARM_IDENTITY env set; swarm "
+        f"registration skipped. Raw binaries don't join the swarm — launch "
+        f"via a per-profile worker/gateway alias from "
+        f"swarm-mcp/env/launchers.zsh.example (or your own copy) to "
+        f"coordinate. Set SWARM_MCP_ALLOW_UNLABELED=1 to opt back in to "
+        f"unlabeled registration from a trusted shell.",
         file=sys.stderr,
     )
 
@@ -230,23 +232,27 @@ class HookCore:
         ).strip()
 
     def resolved_identity_name(self) -> str:
-        """Identity name with fallback to ``unknown``.
+        """Identity name from env, or empty string when none is configured.
 
-        Sessions launched without a matching identity wrapper (raw ``claude`` /
-        ``codex`` / ``hermes`` instead of ``clawd``/``clowd`` / ``codex``/``cdx``
-        / ``hermesw``/``hermesp``) miss the launcher's ``AGENT_IDENTITY``
-        export and would otherwise register without any ``identity:`` token.
-        Cross-identity boundary checks fail-open on missing identities, so an
-        unlabeled instance is discoverable from any identity — defeating the
-        boundary. We substitute ``unknown`` so the label always carries a
-        distinct, non-work/non-personal identity token, then warn the operator
-        once per prefix so they can fix the launcher.
+        Returns the cleaned identity name (e.g. ``work``) when the launcher
+        exported ``AGENT_IDENTITY`` / ``SWARM_<prefix>_IDENTITY`` /
+        ``SWARM_IDENTITY``. Returns ``""`` when no identity signal is present;
+        callers that mint labels accept the empty string and just omit the
+        ``identity:`` token, and ``run_session_start_hook`` uses
+        ``has_identity_signal()`` to skip registration entirely in that case
+        rather than registering an unlabeled instance that would defeat the
+        cross-identity boundary.
         """
-        derived = contract.identity_name(self._raw_identity())
-        if derived:
-            return derived
-        _warn_missing_identity_once(self.config.env_prefix)
-        return "unknown"
+        return contract.identity_name(self._raw_identity())
+
+    def has_identity_signal(self) -> bool:
+        """True when the launcher exported an identity env we can register under.
+
+        Used by ``run_session_start_hook`` to gate the auto-register call.
+        Raw binaries (``claude``/``codex``/``hermes`` without the per-profile
+        launcher alias) miss all of these and stay out of the swarm.
+        """
+        return bool(self.resolved_identity_name())
 
     def identity_token(self) -> str:
         return contract.identity_token(self.resolved_identity_name())
@@ -806,6 +812,16 @@ class HookCore:
         self.write_session_meta(session_id, meta)
 
         if source not in {"startup", "resume"} or not session_id:
+            return 0
+
+        # Gate auto-registration on an explicit identity signal so raw
+        # binaries (no profile launcher) stay out of the swarm. The
+        # SWARM_MCP_ALLOW_UNLABELED escape hatch keeps the old behavior
+        # available from trusted shells.
+        if not self.has_identity_signal() and not contract.truthy(
+            os.environ.get("SWARM_MCP_ALLOW_UNLABELED")
+        ):
+            _warn_skip_registration_once(self.config.env_prefix)
             return 0
 
         registration_error = ""

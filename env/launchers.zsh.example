@@ -6,6 +6,20 @@
 # hermes) to launcher aliases of your choice, and points swarm-mcp at the
 # matching env file under $SWARM_ENV_DIR.
 #
+# Launch shapes per profile (see env/README.md "Three ways to launch each
+# agent" for the long form):
+#
+#   worker  — profile worker alias (e.g. clowd). Sources the profile env,
+#             exports AGENT_IDENTITY/SWARM_IDENTITY/SWARM_DB_PATH, then execs
+#             the canonical binary. Registers in the swarm as identity:<profile>.
+#   gateway — profile lead alias (e.g. clowdl). Same as worker plus
+#             SWARM_<RUNTIME>_ROLE=gateway / SWARM_<RUNTIME>_AGENT_ROLE=planner
+#             so the session routes non-trivial work through `dispatch`.
+#   vanilla — the unwrapped binary (e.g. plain `claude`). No alias to define.
+#             SessionStart hooks see no AGENT_IDENTITY and intentionally skip
+#             registration; the session leaves no DB footprint and stays
+#             invisible to swarm peers. Use this for uncoordinated solo work.
+#
 # Quick start:
 #   1. mkdir -p ~/.config/swarm-mcp
 #   2. Copy env/profile.env.example -> ~/.config/swarm-mcp/<profile>.env

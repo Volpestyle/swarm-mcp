@@ -40,7 +40,28 @@ matching profile env file to resolve the launcher alias. A requester labeled
 `identity:<profile>` so future live-worker reuse stays inside the same
 boundary.
 
-## Worker and Lead Aliases
+## Worker, Lead, and Vanilla Launches
+
+Each profile supports three launch shapes for every canonical agent:
+
+| Shape | How you invoke it | What happens at SessionStart |
+|---|---|---|
+| **Worker** | profile worker alias (`clowd`, `cdx`, …) | Sources profile env, exports `AGENT_IDENTITY`. Registers as `identity:<profile>` worker. |
+| **Gateway** | profile lead alias (`clowdl`, `cdxl`, …) | Same as worker plus `SWARM_<RUNTIME>_ROLE=gateway` and a planner agent role. Registers as `identity:<profile> mode:gateway role:planner`. |
+| **Vanilla** | the unwrapped binary (`claude`, `codex`, …) | No identity env exported → SessionStart hook **skips registration**, prints a one-line stderr note, exits. The session leaves no DB footprint and is invisible to swarm peers. |
+
+Vanilla is the absence of a launcher — you do not define an alias for it.
+The hook detects the absence of `AGENT_IDENTITY` /
+`SWARM_<RUNTIME>_IDENTITY` / `SWARM_IDENTITY` and intentionally does not
+register. An unlabeled instance would be discoverable from any identity and
+defeat the cross-identity boundary; rather than mint a synthetic
+`identity:unknown`, the hook simply stays out of the swarm.
+
+The escape hatch is `SWARM_MCP_ALLOW_UNLABELED=1` — set it from a trusted
+shell to register an unlabeled session. Use only when you know what you
+are doing; the boundary degrades to fail-open for that session.
+
+### Worker and Lead Aliases
 
 For interactive local use, keep paired worker/lead launcher functions for the
 same identity. The worker launcher selects the account/config root only. The
