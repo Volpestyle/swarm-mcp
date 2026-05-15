@@ -101,7 +101,7 @@ do:
 | Launch shape | How | What it does |
 |---|---|---|
 | **Worker**  | profile worker alias (`SWARM_HARNESS_CLAUDE`, e.g. `clowd`) | Registers as `identity:<profile>` worker. Sees its identity's peers, can be dispatched work, enforces file locks. |
-| **Gateway** | profile lead alias (`SWARM_HARNESS_CLAUDE_LEAD`, e.g. `clowdl`) | Same registration as worker but marked `mode:gateway role:planner`. Routes medium/large work through `dispatch`, owns Linear tracker updates. |
+| **Gateway** | profile lead alias (`SWARM_HARNESS_CLAUDE_LEAD`, e.g. `clowdg`) | Same registration as worker but marked `mode:gateway role:planner`. Routes medium/large work through `dispatch`, owns Linear tracker updates. |
 | **Raw / vanilla** | the canonical binary directly (`claude`, `codex`, …) | **Does not register at all.** Skips swarm hooks, no DB footprint, no peer visibility. The right choice when you want an uncoordinated solo session. |
 
 The vanilla case is the absence of a launcher — you don't define an alias
@@ -124,8 +124,9 @@ a profile env file declares — or skip auto-discovery entirely — call
 
 ```sh
 swarm_define_profile personal \
-    claude=clowd codex=cdx opencode=opc hermes=hermesp \
-    claude_lead=clowdl codex_lead=cdxl herdr=herdrp
+    claude=clowd codex=cdx opencode=opc hermes=hermesp-worker \
+    claude_lead=clowdg codex_lead=cdxg opencode_lead=opcg hermes_lead=hermesp \
+    herdr=herdrp
 ```
 
 To disable auto-discovery, set `SWARM_MCP_DISABLE_AUTODEFINE=1` before

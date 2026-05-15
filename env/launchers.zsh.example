@@ -12,7 +12,7 @@
 #   worker  — profile worker alias (e.g. clowd). Sources the profile env,
 #             exports AGENT_IDENTITY/SWARM_IDENTITY/SWARM_DB_PATH, then execs
 #             the canonical binary. Registers in the swarm as identity:<profile>.
-#   gateway — profile lead alias (e.g. clowdl). Same as worker plus
+#   gateway — profile lead alias (e.g. clowdg). Same as worker plus
 #             SWARM_<RUNTIME>_ROLE=gateway / SWARM_<RUNTIME>_AGENT_ROLE=planner
 #             so the session routes non-trivial work through `dispatch`.
 #   vanilla — the unwrapped binary (e.g. plain `claude`). No alias to define.

@@ -47,7 +47,7 @@ Each profile supports three launch shapes for every canonical agent:
 | Shape | How you invoke it | What happens at SessionStart |
 |---|---|---|
 | **Worker** | profile worker alias (`clowd`, `cdx`, …) | Sources profile env, exports `AGENT_IDENTITY`. Registers as `identity:<profile>` worker. |
-| **Gateway** | profile lead alias (`clowdl`, `cdxl`, …) | Same as worker plus `SWARM_<RUNTIME>_ROLE=gateway` and a planner agent role. Registers as `identity:<profile> mode:gateway role:planner`. |
+| **Gateway** | profile lead alias (`clowdg`, `cdxg`, `opcg`, `hermes`, …) | Same as worker plus `SWARM_<RUNTIME>_ROLE=gateway` and a planner agent role. Registers as `identity:<profile> mode:gateway role:planner`. |
 | **Vanilla** | the unwrapped binary (`claude`, `codex`, …) | No identity env exported → SessionStart hook **skips registration**, prints a one-line stderr note, exits. The session leaves no DB footprint and is invisible to swarm peers. |
 
 Vanilla is the absence of a launcher — you do not define an alias for it.
@@ -122,16 +122,22 @@ declare a profile's launcher aliases in one line per profile:
 ```sh
 source /path/to/swarm-mcp/env/launchers.zsh.example
 
-# Personal profile example:
+# Personal profile example. Workers shadow nothing so the raw binary
+# remains available as the vanilla (no-register) launch shape. Hermes
+# follows the "short name is the gateway" convention.
 swarm_define_profile personal \
-    claude=clowd codex=cdx opencode=opc hermes=hermesp \
-    claude_lead=clowdl codex_lead=cdxl herdr=herdrp
+    claude=clowd codex=cdx opencode=opc hermes=hermesp-worker \
+    claude_lead=clowdg codex_lead=cdxg opencode_lead=opcg hermes_lead=hermesp \
+    herdr=herdrp
 ```
 
-The generator builds `clowd` / `cdx` / `opc` / `hermesp` / `clowdl` / `cdxl` /
-`herdrp` shell functions that source the matching profile env file before
-exec'ing the underlying binary. Lead functions add runtime-specific gateway
-vars after sourcing.
+The generator builds `clowd` / `cdx` / `opc` / `hermesp-worker` (workers)
+and `clowdg` / `cdxg` / `opcg` / `hermesp` (gateways), plus `herdrp` for
+the visible herdr server. Worker functions source the profile env file and
+exec the binary. Lead functions do the same plus set
+`SWARM_<RUNTIME>_ROLE=gateway` and `SWARM_<RUNTIME>_AGENT_ROLE=planner`,
+so the session registers as `mode:gateway role:planner` under the same
+identity.
 
 In this convention:
 
