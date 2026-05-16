@@ -1197,6 +1197,195 @@ async function cmdUi(flags: Flags) {
 }
 
 // ---------------------------------------------------------------------------
+// Roles
+// ---------------------------------------------------------------------------
+
+type RoleAlias = {
+  name: string;
+  summary: string;
+  invoke: string[];
+};
+
+const PLUGIN_MODES: RoleAlias[] = [
+  {
+    name: "worker",
+    summary:
+      "Default. Claims tasks, edits files, reports results. Does not spawn peers.",
+    invoke: [
+      "SWARM_HERMES_ROLE=worker   (Hermes launcher)",
+      "SWARM_CC_AGENT_ROLE=worker (Claude Code launcher)",
+      "echo worker > .swarm-role  (per-repo override)",
+    ],
+  },
+  {
+    name: "gateway",
+    summary:
+      "Lead/conductor session. May spawn peers via dispatch, delegate tasks, monitor results. Usually paired with role:planner.",
+    invoke: [
+      "SWARM_HERMES_ROLE=gateway   (Hermes gateway alias)",
+      "SWARM_CC_AGENT_ROLE=gateway (Claude Code launcher)",
+      "echo gateway > .swarm-role  (per-repo override)",
+    ],
+  },
+];
+
+const ROUTING_ROLES: RoleAlias[] = [
+  {
+    name: "planner",
+    summary:
+      "Decomposes work into task DAGs, delegates via request_task / dispatch, monitors completion. Reference: skills/swarm-mcp/references/planner.md.",
+    invoke: [
+      "/swarm-mcp planner                 (Claude Code slash command)",
+      'swarm-mcp register --label "role:planner"',
+      "swarm-mcp dispatch --role planner ...",
+    ],
+  },
+  {
+    name: "implementer",
+    summary:
+      "Claims highest-priority open task, edits files, reports structured results. Reference: skills/swarm-mcp/references/implementer.md.",
+    invoke: [
+      "/swarm-mcp implementer",
+      'swarm-mcp register --label "role:implementer"',
+      "swarm-mcp dispatch --role implementer ...",
+    ],
+  },
+  {
+    name: "reviewer",
+    summary:
+      "Inspects risks and correctness, requests fixes or follow-up tasks. Reference: skills/swarm-mcp/references/reviewer.md.",
+    invoke: [
+      "/swarm-mcp reviewer",
+      'swarm-mcp register --label "role:reviewer"',
+      "swarm-mcp dispatch --role reviewer ...",
+    ],
+  },
+  {
+    name: "researcher",
+    summary:
+      "Investigates code/docs/APIs, summarizes findings for planners/implementers. Reference: skills/swarm-mcp/references/researcher.md.",
+    invoke: [
+      "/swarm-mcp researcher",
+      'swarm-mcp register --label "role:researcher"',
+      "swarm-mcp dispatch --role researcher ...",
+    ],
+  },
+  {
+    name: "generalist",
+    summary:
+      "No role: token in the label. Handles mixed work via the core workflow. Reference: skills/swarm-mcp/references/generalist.md.",
+    invoke: [
+      "/swarm-mcp generalist",
+      "swarm-mcp register   (omit role: token)",
+    ],
+  },
+];
+
+function readSwarmRoleFile(startDir: string, stopAt: string | null): string | null {
+  let dir = resolve(startDir);
+  const ceiling = stopAt ? resolve(stopAt) : null;
+  while (true) {
+    const marker = join(dir, ".swarm-role");
+    if (existsSync(marker)) {
+      try {
+        const raw = readFileSync(marker, "utf8").trim();
+        if (raw) return raw;
+      } catch {
+        /* unreadable marker; ignore */
+      }
+    }
+    if (ceiling && dir === ceiling) return null;
+    const parent = dirname(dir);
+    if (!parent || parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function currentRoleFromLabel(label: string | null): string | null {
+  if (!label) return null;
+  for (const token of label.split(/\s+/).map((t) => t.trim()).filter(Boolean)) {
+    if (token.startsWith("role:")) return token.slice("role:".length) || null;
+  }
+  return null;
+}
+
+function currentModeFromLabel(label: string | null): string | null {
+  if (!label) return null;
+  for (const token of label.split(/\s+/).map((t) => t.trim()).filter(Boolean)) {
+    if (token.startsWith("mode:")) return token.slice("mode:".length) || null;
+  }
+  return null;
+}
+
+function cmdRoles(flags: Flags) {
+  const scope = resolveScope(flags);
+  const cwd = process.cwd();
+  const swarmRoleFile = readSwarmRoleFile(cwd, scope);
+
+  const envSnapshot = {
+    SWARM_CC_AGENT_ROLE: process.env.SWARM_CC_AGENT_ROLE ?? null,
+    SWARM_HERMES_ROLE: process.env.SWARM_HERMES_ROLE ?? null,
+    SWARM_CODEX_AGENT_ROLE: process.env.SWARM_CODEX_AGENT_ROLE ?? null,
+    SWARM_OPENCODE_AGENT_ROLE: process.env.SWARM_OPENCODE_AGENT_ROLE ?? null,
+  };
+
+  const identity = resolveOptionalIdentity(scope, flags);
+  const instance = identity ? registry.get(identity) : null;
+  const current = {
+    instance_id: instance?.id ?? null,
+    label: instance?.label ?? null,
+    routing_role: currentRoleFromLabel(instance?.label ?? null),
+    mode: currentModeFromLabel(instance?.label ?? null),
+    env: envSnapshot,
+    swarm_role_file: swarmRoleFile,
+    cwd,
+    scope,
+  };
+
+  if (flags.json) {
+    return printJson({
+      plugin_modes: PLUGIN_MODES,
+      routing_roles: ROUTING_ROLES,
+      current,
+    });
+  }
+
+  const printGroup = (title: string, aliases: RoleAlias[]) => {
+    console.log(title);
+    for (const alias of aliases) {
+      console.log(`  ${alias.name}`);
+      console.log(`    ${alias.summary}`);
+      for (const line of alias.invoke) {
+        console.log(`      $ ${line}`);
+      }
+    }
+    console.log("");
+  };
+
+  console.log("swarm-mcp roles — agent aliases and how to invoke them\n");
+  printGroup(
+    "Plugin modes (gateway vs worker — controls peer-spawn authority):",
+    PLUGIN_MODES,
+  );
+  printGroup(
+    "Routing roles (label `role:` token — picked up by claim_next_task & dispatch):",
+    ROUTING_ROLES,
+  );
+
+  console.log("Current session resolution:");
+  console.log(`  scope            ${scope}`);
+  console.log(`  cwd              ${cwd}`);
+  console.log(`  registered as    ${current.instance_id ?? "(no live instance for this identity)"}`);
+  console.log(`  label            ${current.label ?? "-"}`);
+  console.log(`  routing role     ${current.routing_role ?? "(generalist — no role: token)"}`);
+  console.log(`  mode             ${current.mode ?? "(none — defaults to worker)"}`);
+  console.log(`  .swarm-role file ${swarmRoleFile ?? "(not found)"}`);
+  for (const [k, v] of Object.entries(envSnapshot)) {
+    console.log(`  ${k.padEnd(16)} ${v ?? "(unset)"}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Doctor
 // ---------------------------------------------------------------------------
 
@@ -1641,6 +1830,7 @@ const HANDLERS: Record<Subcommand, (flags: Flags) => void | Promise<void>> = {
   inspect: cmdInspect,
   cleanup: cmdCleanup,
   doctor: cmdDoctor,
+  roles: cmdRoles,
   ui: cmdUi,
 };
 export { SUBCOMMANDS };

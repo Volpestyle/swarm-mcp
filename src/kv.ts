@@ -1,7 +1,6 @@
 import { db } from "./db";
 import { emit } from "./events";
 import { identityToken } from "./identity";
-import * as registry from "./registry";
 import { stamp } from "./time";
 
 function touch(scope: string) {
@@ -19,8 +18,13 @@ function touch(scope: string) {
 
 function actorIdentity(actor?: string | null) {
   if (!actor) return null;
-  const inst = registry.get(actor);
-  return inst ? identityToken(inst) || null : null;
+  // Direct row lookup instead of registry.get() so kv.ts does not import registry,
+  // which would create a registry → cleanup → planner → kv → registry init cycle
+  // that deadlocks under esbuild's async __esm bundle format.
+  const row = db
+    .query("SELECT label FROM instances WHERE id = ?")
+    .get(actor) as { label: string | null } | null;
+  return row ? identityToken(row) || null : null;
 }
 
 function readable(owner: string | null, viewer?: string | null) {
