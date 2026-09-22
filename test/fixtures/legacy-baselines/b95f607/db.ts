@@ -1,7 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { assertLegacyDatabase } from "./legacy-database-guard";
 
 const home = homedir();
 const defaultPath = join(home, ".swarm-mcp", "swarm.db");
@@ -22,7 +21,6 @@ export function stateBackendFingerprint(scope?: string) {
   };
 }
 
-await assertLegacyDatabase(resolve(path));
 mkdirSync(dirname(path), { recursive: true });
 
 // Runtime-pick the SQLite driver. Bun uses its built-in `bun:sqlite` (fast, no
