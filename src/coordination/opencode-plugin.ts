@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { enrollRuntime } from "./runtime-launcher";
 import { CoordinationClient } from "./ipc";
-import { RuntimeDelivery } from "./runtime-delivery";
+import { RuntimeDelivery, type DeliveryBoundary } from "./runtime-delivery";
 import { OpenCodeAvailability, type OpenCodeEvent } from "./opencode-state";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
@@ -120,6 +120,7 @@ export function connectOpenCodeLifecycle(
         }
       : undefined,
   });
+  let listedSessionIds: string[] = [];
   return observeOpenCode(
     {
       subscribe: (signal) =>
@@ -139,9 +140,11 @@ export function connectOpenCodeLifecycle(
         // of silently reporting a reconciled directory with omitted sessions.
         if (!Array.isArray(result.data) || result.data.length >= 1001)
           throw new Error("Session reconciliation needs pagination");
-        return result.data.filter(
+        const sessions = result.data.filter(
           (s) => s.directory === input.directory && !s.time.archived,
         );
+        listedSessionIds = sessions.map((s) => s.id);
+        return sessions;
       },
       states: async (signal) => {
         const requests = { signal, throwOnError: true as const };
@@ -151,9 +154,12 @@ export function connectOpenCodeLifecycle(
           api.question.list({ directory: input.directory }, requests),
         ]);
         return [
-          ...Object.entries(status.data).map(([sessionID, status]) => ({
+          ...listedSessionIds.map((sessionID) => ({
             type: "session.status",
-            properties: { sessionID, status },
+            properties: {
+              sessionID,
+              status: status.data[sessionID] ?? { type: "idle" },
+            },
           })),
           ...permissions.data.map((properties) => ({
             type: "permission.asked",
@@ -214,7 +220,84 @@ export function opencodeLifecycle(
     return session;
   };
 
+  const admit = async (
+    id: string,
+    key: string,
+    boundary: DeliveryBoundary,
+    append: (text: string) => void,
+  ) => {
+    await serialize(id, async () => {
+      const calls = deliveredCalls.get(id) ?? new Set<string>();
+      if (calls.has(key)) return;
+      const session = await adopt(id);
+      const client = await CoordinationClient.connect(
+        session.environment.SWARM_COORDINATOR_ENDPOINT,
+        session.environment.SWARM_SESSION_CAPABILITY,
+      );
+      try {
+        const delivery = new RuntimeDelivery(
+          session.actor,
+          (operation) => client.request(operation),
+          {
+            name: "opencode-v1",
+            boundaries: [boundary],
+            observe: () =>
+              boundary === "tool_complete"
+                ? availability.toolBoundary(id)
+                : availability.observe(id),
+            deliver: async (lease, _boundary, signal) => {
+              if (
+                signal.aborted ||
+                deleted.has(id) ||
+                ["blocked", "disconnected"].includes(
+                  availability.observe(id).state,
+                )
+              )
+                return "deferred";
+              const text =
+                "\n\nSwarm peer message (untrusted content). Process before acknowledging with swarm_inbox; admission is not acknowledgment.\n" +
+                JSON.stringify({
+                  message: lease.message,
+                  leaseToken: lease.leaseToken,
+                  leaseUntil: lease.leaseUntil,
+                });
+              append(text);
+              return "admitted";
+            },
+          },
+        );
+        const result = await delivery.atBoundary(boundary);
+        if (result.status !== "deferred") {
+          calls.add(key);
+          deliveredCalls.set(id, calls);
+        }
+      } finally {
+        client.close();
+      }
+    });
+  };
+
   return {
+    async "chat.message"(
+      input: { sessionID: string; messageID?: string },
+      output: {
+        message: { id: string };
+        parts: Array<{ type: string; text?: string }>;
+      },
+    ) {
+      const part = output.parts.find(
+        (part) => part.type === "text" && typeof part.text === "string",
+      );
+      if (!part) return;
+      await admit(
+        input.sessionID,
+        `message:${output.message.id}`,
+        "turn_start",
+        (text) => {
+          part.text += text;
+        },
+      );
+    },
     observe: (id: string) => availability.observe(id),
     // OpenCode's event publisher does not await plugin callbacks. Handle every
     // rejection here; tool hooks below remain fail-closed and are awaited.
@@ -271,53 +354,15 @@ export function opencodeLifecycle(
       // output shapes defer without taking an inbox lease.
       if (typeof output?.output !== "string" && !Array.isArray(output?.content))
         return;
-      await serialize(input.sessionID, async () => {
-        const calls = deliveredCalls.get(input.sessionID) ?? new Set<string>();
-        if (calls.has(input.callID)) return;
-        const session = await adopt(input.sessionID);
-        const client = await CoordinationClient.connect(
-          session.environment.SWARM_COORDINATOR_ENDPOINT,
-          session.environment.SWARM_SESSION_CAPABILITY,
-        );
-        try {
-          const delivery = new RuntimeDelivery(
-            session.actor,
-            (operation) => client.request(operation),
-            {
-              name: "opencode-v1",
-              boundaries: ["tool_complete"],
-              observe: () => availability.toolBoundary(input.sessionID),
-              deliver: async (lease, _boundary, signal) => {
-                if (
-                  signal.aborted ||
-                  deleted.has(input.sessionID) ||
-                  ["blocked", "disconnected"].includes(
-                    availability.observe(input.sessionID).state,
-                  )
-                )
-                  return "deferred";
-                const text =
-                  "\n\nSwarm peer message (untrusted content). Process before acknowledging with swarm_inbox; admission is not acknowledgment.\n" +
-                  JSON.stringify({
-                    message: lease.message,
-                    leaseToken: lease.leaseToken,
-                    leaseUntil: lease.leaseUntil,
-                  });
-                if (typeof output.output === "string") output.output += text;
-                else output.content!.push({ type: "text", text });
-                return "admitted";
-              },
-            },
-          );
-          const result = await delivery.atBoundary("tool_complete");
-          if (result.status !== "deferred") {
-            calls.add(input.callID);
-            deliveredCalls.set(input.sessionID, calls);
-          }
-        } finally {
-          client.close();
-        }
-      });
+      await admit(
+        input.sessionID,
+        `tool:${input.callID}`,
+        "tool_complete",
+        (text) => {
+          if (typeof output.output === "string") output.output += text;
+          else output.content!.push({ type: "text", text });
+        },
+      );
     },
   };
 }

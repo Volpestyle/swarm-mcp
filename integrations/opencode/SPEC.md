@@ -146,9 +146,19 @@ policy. HTTP 204 means request admission, not persistence or processing.
 additional native model request, and a new helper reusing the retained message.
 The peer delivery stays pending. Lost-response tests cover both a host that
 persisted the prompt and one that did not, with exactly one POST in either case.
-This wake helper is not yet connected to the coordinator event observer or
-turn-start payload delivery. End-to-end autonomous idle delivery therefore
-remains open, as do message-context deduplication and the second host.
+This wake helper is not yet connected to the coordinator event observer.
+End-to-end autonomous idle delivery therefore remains open, as do
+message-context deduplication and the second host.
+
+`opencode-turn-start.json` verifies `chat.message` delivery on the idle wake:
+the first subsequent model request contains the peer envelope without choosing
+a tool first. The callback appends to an existing text part, preserving the
+host-assigned message/part IDs. It uses the same leased-admission implementation
+as post-tool delivery and never acknowledges automatically. Busy turns defer
+and repeated callbacks for the same native message are suppressed in-process.
+Snapshot status maps absent entries to idle only for sessions enumerated from
+the same host directory, matching the installed host's status API semantics.
+The capture verifies the new delivery is leased and a repeated wake defers.
 
 ## Actual host evidence
 

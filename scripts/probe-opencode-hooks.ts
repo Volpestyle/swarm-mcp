@@ -574,8 +574,7 @@ try {
     const replay = await new OpenCodeWake(wakeOptions).notify(
       next.value.messageId,
     );
-    assert.equal(replay.status, "accepted");
-    assert.equal(replay.messageId, wakeA.messageId);
+    assert.equal(replay.status, "deferred");
     const retained = await api.session.message(
       { sessionID: session.id, messageID: wakeA.messageId! },
       { throwOnError: true },
@@ -587,16 +586,28 @@ try {
     })) as { deliveries: Array<{ state: string }> };
     assert.equal(
       pendingWake.deliveries[0].state,
-      "pending",
-      "Wake is not consumption or acknowledgment",
+      "leased",
+      "Turn-start admission must retain the lease until explicit acknowledgment",
+    );
+    const wakePayloadReachedModel = modelRequests.some((request) =>
+      request.messages.some(
+        (message) =>
+          message.role === "user" &&
+          JSON.stringify(message.content).includes("wake-only-fixture"),
+      ),
+    );
+    assert.ok(
+      wakePayloadReachedModel,
+      "Idle wake must carry payload at turn start",
     );
     deliveryEvidence = {
       wake: {
         busyDeferred: true,
         coalescedRequests: 2,
         modelRequests: 1,
-        replayedMessageId: replay.messageId,
+        wakeMessageId: wakeA.messageId,
         inboxState: pendingWake.deliveries[0].state,
+        payloadReachedModelAtTurnStart: wakePayloadReachedModel,
       },
       promptQueuedWhileBusy: true,
       modelWaitedForShell:
@@ -714,6 +725,11 @@ try {
       },
       (_key, value) => {
         if (typeof value !== "string") return value;
+        if (_key === "leaseToken") return "<lease-token>";
+        value = value.replace(
+          /"leaseToken":"[^"]+"/g,
+          '\"leaseToken\":\"<lease-token>\"',
+        );
         for (const token of leaseTokens)
           value = value.replaceAll(token, "<lease-token>");
         return value;

@@ -112,6 +112,33 @@ test("OpenCode post-tool admission preserves explicit ack and suppresses repeate
     expect(
       JSON.parse(mcp.content[1].text.split("\n").at(-1)!).message.body,
     ).toBe("two");
+    await client.request({
+      op: "command",
+      command: {
+        id: "three",
+        type: "message.send",
+        payload: { recipient: actor, kind: "question", body: "three" },
+      },
+    });
+    const chat = {
+      message: { id: "msg_fixture" },
+      parts: [{ type: "text", text: "wake" }],
+    };
+    await hooks["chat.message"]({ sessionID: "recipient" }, chat);
+    expect(chat.parts[0].text).toBe("wake");
+    await hooks.event({
+      event: {
+        type: "session.status",
+        properties: { sessionID: "recipient", status: { type: "idle" } },
+      },
+    });
+    await hooks["chat.message"]({ sessionID: "recipient" }, chat);
+    expect(
+      JSON.parse(chat.parts[0].text.split("\n").at(-1)!).message.body,
+    ).toBe("three");
+    const admitted = chat.parts[0].text;
+    await hooks["chat.message"]({ sessionID: "recipient" }, chat);
+    expect(chat.parts[0].text).toBe(admitted);
   } finally {
     recipient?.close();
     client.close();
