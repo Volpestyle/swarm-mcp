@@ -2,7 +2,8 @@
 
 VUH-1339 includes OpenCode. Target the installed **1.4.3** V1 plugin API; V2
 support is not claimed. Archived VUH-56/57 supply requirements, not dependencies.
-The lifecycle adapter is implemented; tool-boundary delivery verification remains open.
+Lifecycle, post-tool delivery/acknowledgment, and autonomous idle delivery have
+installed-host evidence below. Durable context deduplication and recovery gaps remain open.
 
 `src/coordination/opencode-plugin.ts` supplies V1 event and shell-environment
 hooks to a trusted plugin wrapper. Creation/update events enroll once per native
@@ -35,10 +36,24 @@ keeps its actor and advances to generation 2; SQLite shows generation 1
 superseded and generation 2 closed after deletion. A second native session
 enrolls once and closes. This proves lifecycle restart, not message admission.
 
-The V1 list endpoint has no cursor. Snapshots at the 1,001-row detection limit
-fail explicitly rather than silently reconcile a truncated history. Larger
-histories still need a supported recovery path. Bounded recovery from stream
-failure is verified below.
+Reconciliation uses the same-version HTTP SDK's experimental session listing,
+which supplies `x-next-cursor`. The host cursor is an exclusive updated-time
+timestamp. The adapter overlaps the boundary millisecond and deduplicates IDs;
+following the cursor literally could omit sessions sharing that timestamp.
+Pages start at 100 rows and expand only when a timestamp group prevents progress,
+up to 12,800. Invalid scope/order/cursors and saturated groups fail explicitly;
+the ten-second snapshot deadline still applies. Host updates during enumeration
+are reconciled through the already-subscribed event stream.
+
+`coordination-opencode-snapshot.test.ts` drives the real SDK through a local HTTP
+fixture with 1,500 sessions, including 400 sharing one timestamp. It verifies
+complete enumeration, deduplication, and bounded failure on a non-progressing
+cursor. `opencode-pagination.json` reruns installed-host lifecycle, restart,
+delivery and acknowledgment with the new endpoint. That host capture has a small
+history; it does not establish large-history enrollment within the deadline.
+Endpoint semantics are pinned to the host's
+[experimental route](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/server/routes/experimental.ts)
+and [session query](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/session/index.ts).
 
 `opencode-shell.json` additionally exercises the actual session shell endpoint.
 Its child process uses the injected capability to bootstrap from the coordinator;

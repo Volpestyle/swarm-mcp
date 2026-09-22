@@ -1,4 +1,5 @@
 import { observeInbox } from "./inbox-observer";
+import { listOpenCodeSessions } from "./opencode-snapshot";
 import { OpenCodeWake } from "./opencode-wake";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -141,17 +142,10 @@ export function connectOpenCodeLifecycle(
           sseMaxRetryAttempts: 1,
         }),
       list: async (signal) => {
-        const result = await input.client.session.list({
-          query: { directory: input.directory, limit: 1001 },
+        const sessions = await listOpenCodeSessions(
+          api,
+          input.directory,
           signal,
-          throwOnError: true,
-        });
-        // V1 has no cursor on this endpoint. Refuse a truncated snapshot instead
-        // of silently reporting a reconciled directory with omitted sessions.
-        if (!Array.isArray(result.data) || result.data.length >= 1001)
-          throw new Error("Session reconciliation needs pagination");
-        const sessions = result.data.filter(
-          (s) => s.directory === input.directory && !s.time.archived,
         );
         listedSessionIds = sessions.map((s) => s.id);
         return sessions;
