@@ -26,4 +26,8 @@ for name in sys.argv[1:]:
     rows.append({"agents": data["count"], "calls": data["toolCalls"], "tools": len(data["toolSchema"]["tools"]), "schemaTokensPerAgent": schema_tokens, "argumentTokens": argument_tokens, "textResultTokens": result_tokens, "callsTokensTotal": argument_tokens + result_tokens, "withSchemaPerAgentTotal": argument_tokens + result_tokens + data["count"] * schema_tokens, "byTool": {name: {"calls": sum(call["name"] == name for call in calls), "textResultTokens": sum(tokens(block["text"]) for call in calls if call["name"] == name for block in call["result"]["content"] if block["type"] == "text")} for name in sorted({call["name"] for call in calls})}})
     rows[-1]["instructionsTokensPerAgent"] = instruction_tokens
     rows[-1]["catalogAndInstructionsTokensPerAgent"] = None if instruction_tokens is None else schema_tokens + instruction_tokens
+    for name, stats in rows[-1]["byTool"].items():
+        per_call = [sum(tokens(block["text"]) for block in call["result"]["content"] if block["type"] == "text") for call in calls if call["name"] == name]
+        stats["minTextResultTokensPerCall"] = min(per_call)
+        stats["maxTextResultTokensPerCall"] = max(per_call)
 print(json.dumps({"tokenizer": "tiktoken 0.12.0 / o200k_base", "measurement": "Explicit call name/arguments and text-result tokens. Schema JSON counted separately. Instruction counts are null when absent from historical captures. No hidden prompt framing, reasoning, caching adjustment or claim of a live model bill.", "runs": rows}, indent=2))

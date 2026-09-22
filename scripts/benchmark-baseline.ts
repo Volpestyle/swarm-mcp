@@ -20,7 +20,8 @@ const pollMs = Number(process.env.SWARM_BENCH_POLL_MS ?? 2000);
 if (!Number.isFinite(pollMs) || pollMs < 20) throw new Error("Invalid poll interval");
 const messagesPerAgent = Number(process.env.SWARM_BENCH_MESSAGES ?? 12);
 const idleMs = Number(process.env.SWARM_BENCH_IDLE_MS ?? 4200);
-if (![messagesPerAgent, idleMs].every(n => Number.isSafeInteger(n) && n >= 0)) throw new Error("Invalid benchmark duration or message count");
+const warmupMs = Number(process.env.SWARM_BENCH_WARMUP_MS ?? 0);
+if (![messagesPerAgent, idleMs, warmupMs].every(n => Number.isSafeInteger(n) && n >= 0)) throw new Error("Invalid benchmark duration or message count");
 
 if (worker) {
   const index = Number(process.argv[5]);
@@ -88,6 +89,7 @@ if (worker) {
   };
   const polling = setInterval(read, pollMs);
   const heartbeat = setInterval(() => timed(() => registry.heartbeat(agent.id)), 10000);
+  await sleep(warmupMs);
   const idleCpuStart = process.cpuUsage();
   const idleStart = performance.now();
   await sleep(idleMs);
@@ -145,7 +147,7 @@ if (worker) {
   inspection.close();
   console.log(JSON.stringify({
     hardware: { cpu: cpus()[0]?.model, logicalCpus: cpus().length, physicalMemoryBytes: totalmem(), platform: platform(), release: release(), bun: Bun.version },
-    workload: { count, mode, pollMs, messagesPerAgent, bodyBytes: 256, idleMs, fixture },
+    workload: { count, mode, pollMs, messagesPerAgent, bodyBytes: 256, idleMs, warmupMs, fixture },
     accepted: sum("accepted"), received: sum("received"), unread, duplicateDeliveries: sum("duplicateDeliveries"),
     deliveryMs: { p50: percentile(latencies, .5), p95: percentile(latencies, .95) },
     deliveredPerSecond: sum("received") / (durationMs / 1000),

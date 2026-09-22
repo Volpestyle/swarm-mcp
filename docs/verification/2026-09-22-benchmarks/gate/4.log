@@ -1,0 +1,6 @@
+...............................................[swarm-mcp] runtime with env prefix TEST: session has no AGENT_IDENTITY / SWARM_TEST_IDENTITY / SWARM_IDENTITY env set; swarm registration skipped. Raw binaries don't join the swarm — launch via a per-profile worker/gateway alias from swarm-mcp/env/launchers.zsh.example (or your own copy) to coordinate. Set SWARM_MCP_ALLOW_UNLABELED=1 to opt back in to unlabeled registration from a trusted shell.
+.
+----------------------------------------------------------------------
+Ran 48 tests in 0.098s
+
+OK

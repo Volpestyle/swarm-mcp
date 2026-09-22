@@ -1,0 +1,2223 @@
+{
+  "count": 8,
+  "fixture": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-compact-context-BXu4kR",
+  "server": {
+    "name": "swarm",
+    "version": "2.0.0"
+  },
+  "instructions": "Identifiers contain 1..128 characters. Other text fields contain 1..1024 unless their schema specifies a different bound. Use swarm_sync to resume. Assign work with a stable command ID; retry uncertain mutations with the same ID. Fetch leases messages; acknowledge only after processing. Task ownership requires the returned attempt ID and fence. Wait timeouts never cancel work.",
+  "toolSchema": {
+    "tools": [
+      {
+        "name": "swarm_sync",
+        "description": "Bootstrap once; resume with an event cursor for targeted deltas.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "waitMs": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 30000
+            }
+          },
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      }
+                    },
+                    "cursor": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "cursor"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "scope": {
+                      "type": "string"
+                    },
+                    "actor": {
+                      "type": "string"
+                    },
+                    "eventCursor": {
+                      "type": "number"
+                    },
+                    "tasks": {
+                      "type": "object",
+                      "properties": {
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          }
+                        },
+                        "cursor": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "items",
+                        "cursor"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "inbox": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "state": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "state",
+                          "count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "scope",
+                    "actor",
+                    "eventCursor",
+                    "tasks",
+                    "inbox"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_find",
+        "description": "Find scoped peers or task summaries; use taskId for details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "peers",
+                "tasks",
+                "task"
+              ]
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            },
+            "owner": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "cursor": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "limit": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      }
+                    },
+                    "cursor": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "cursor"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "number"
+                    },
+                    "contract": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "dependencies": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "owner": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "actor": {
+                              "type": "string"
+                            },
+                            "attemptId": {
+                              "type": "string"
+                            },
+                            "fence": {
+                              "type": "number"
+                            },
+                            "leaseUntil": {
+                              "type": "number"
+                            },
+                            "active": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "actor",
+                            "attemptId",
+                            "fence",
+                            "leaseUntil",
+                            "active"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "result": {},
+                    "retention": {
+                      "type": "string",
+                      "enum": [
+                        "retained",
+                        "expired"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "taskId",
+                    "scope",
+                    "title",
+                    "status",
+                    "version",
+                    "contract",
+                    "dependencies",
+                    "owner",
+                    "result",
+                    "retention"
+                  ],
+                  "additionalProperties": {}
+                }
+              ]
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_assign",
+        "description": "Create work; routing dispatches via owner policy. Reassign with intentId and expectedVersion.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "contract": {
+              "type": "object",
+              "properties": {
+                "objective": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "worktree": {
+                  "type": "string"
+                },
+                "acceptanceCriteria": {
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expectedArtifacts": {
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "constraints": {
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "objective",
+                "worktree",
+                "acceptanceCriteria",
+                "expectedArtifacts",
+                "constraints"
+              ],
+              "additionalProperties": false
+            },
+            "dependencies": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "routing": {
+              "type": "object",
+              "properties": {
+                "intentId": {
+                  "type": "string"
+                },
+                "capabilities": {
+                  "maxItems": 64,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "durable": {
+                  "type": "boolean"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "expectedVersion": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "capabilities",
+                "durable"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "commandId",
+            "title",
+            "contract"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    },
+                    "cursor": {
+                      "type": "number"
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "cursor",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "reasons": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ],
+                  "additionalProperties": {}
+                }
+              ]
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_task",
+        "description": "Manage ownership/progress; finish with evidence/limitations. Cancel dispatch with intentId.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "claim",
+                "renew",
+                "progress",
+                "finish",
+                "cancel",
+                "retry",
+                "recover"
+              ]
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "intentId": {
+              "type": "string"
+            },
+            "expectedVersion": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "attemptId": {
+              "type": "string"
+            },
+            "fence": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "note": {
+              "type": "string"
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "completed",
+                "failed",
+                "cancelled"
+              ]
+            },
+            "report": {
+              "type": "object",
+              "properties": {
+                "summary": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "limitations": {
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "summary",
+                "evidence",
+                "limitations"
+              ]
+            }
+          },
+          "required": [
+            "commandId",
+            "action",
+            "taskId"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    },
+                    "cursor": {
+                      "type": "number"
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "cursor",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "reasons": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ],
+                  "additionalProperties": {}
+                }
+              ]
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_send",
+        "description": "Send a typed peer message; assign work with swarm_assign.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string"
+            },
+            "recipient": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "question",
+                "blocker",
+                "decision_request",
+                "completion_notice"
+              ]
+            },
+            "body": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "taskId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "commandId",
+            "recipient",
+            "kind",
+            "body",
+            "threadId"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                "cursor": {
+                  "type": "number"
+                },
+                "replayed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "value",
+                "cursor",
+                "replayed"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_inbox",
+        "description": "Fetch leases one message. Ack only after processing; reject with a reason for retry.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "fetch",
+                "ack",
+                "reject"
+              ]
+            },
+            "consumer": {
+              "type": "string"
+            },
+            "messageId": {
+              "type": "string"
+            },
+            "leaseToken": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "commandId",
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                "cursor": {
+                  "type": "number"
+                },
+                "replayed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "value",
+                "cursor",
+                "replayed"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_wait",
+        "description": "Wait for completion; timeout returns a resumable reference.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string"
+            },
+            "timeoutMs": {
+              "default": 30000,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 30000
+            }
+          },
+          "required": [
+            "taskId"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "uri": {
+                  "type": "string"
+                },
+                "waitState": {
+                  "type": "string",
+                  "enum": [
+                    "terminal",
+                    "timeout",
+                    "interrupted"
+                  ]
+                },
+                "task": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "status",
+                    "version"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "required": [
+                "taskId",
+                "uri",
+                "waitState",
+                "task"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_context",
+        "description": "Read or mutate versioned shared state; set/delete require expectedVersion.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "get",
+                "set",
+                "append",
+                "delete"
+              ]
+            },
+            "key": {
+              "type": "string"
+            },
+            "commandId": {
+              "type": "string"
+            },
+            "expectedVersion": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "value": {}
+          },
+          "required": [
+            "action",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    },
+                    "cursor": {
+                      "type": "number"
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "cursor",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "number"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "live",
+                        "missing",
+                        "expired",
+                        "deleted"
+                      ]
+                    },
+                    "value": {}
+                  },
+                  "required": [
+                    "key",
+                    "version",
+                    "status",
+                    "value"
+                  ],
+                  "additionalProperties": {}
+                }
+              ]
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_evidence",
+        "description": "Capture worktree files or record findings with provenance; read bytes via artifact URI.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "capture",
+                "record"
+              ]
+            },
+            "summary": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "mediaType": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "result",
+                "decision",
+                "annotation"
+              ]
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+            },
+            "files": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "verification": {
+              "type": "string"
+            },
+            "artifactIds": {
+              "default": [],
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "attemptId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "commandId",
+            "action",
+            "summary"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                "cursor": {
+                  "type": "number"
+                },
+                "replayed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "value",
+                "cursor",
+                "replayed"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      }
+    ]
+  },
+  "toolCalls": 32,
+  "transcript": [
+    {
+      "agent": 0,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-0\",\"eventCursor\":8,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-0",
+            "eventCursor": 8,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 27.433799999999792
+    },
+    {
+      "agent": 1,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-1\",\"eventCursor\":8,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-1",
+            "eventCursor": 8,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.13149999999996
+    },
+    {
+      "agent": 2,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-2\",\"eventCursor\":8,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-2",
+            "eventCursor": 8,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.123399999999947
+    },
+    {
+      "agent": 3,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-3\",\"eventCursor\":8,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-3",
+            "eventCursor": 8,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.1141999999999825
+    },
+    {
+      "agent": 4,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-4\",\"eventCursor\":8,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-4",
+            "eventCursor": 8,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.20010000000002
+    },
+    {
+      "agent": 5,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-5\",\"eventCursor\":8,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-5",
+            "eventCursor": 8,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.2388999999998305
+    },
+    {
+      "agent": 6,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-6\",\"eventCursor\":8,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-6",
+            "eventCursor": 8,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.084600000000137
+    },
+    {
+      "agent": 7,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-7\",\"eventCursor\":8,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-7",
+            "eventCursor": 8,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.38590000000022
+    },
+    {
+      "agent": 0,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-0",
+        "recipient": "agent-1",
+        "kind": "question",
+        "threadId": "thread-0",
+        "body": "fixture handoff 0: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"df9723bf-5cd9-44eb-9375-0bcc612f8303\",\"recipients\":[\"agent-1\"],\"idempotencyKey\":\"send-0\"},\"cursor\":9,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "df9723bf-5cd9-44eb-9375-0bcc612f8303",
+              "recipients": [
+                "agent-1"
+              ],
+              "idempotencyKey": "send-0"
+            },
+            "cursor": 9,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 5.58179999999993
+    },
+    {
+      "agent": 1,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-1",
+        "recipient": "agent-2",
+        "kind": "question",
+        "threadId": "thread-1",
+        "body": "fixture handoff 1: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"94200bcb-5f3f-4e74-8480-33cb1a1bb492\",\"recipients\":[\"agent-2\"],\"idempotencyKey\":\"send-1\"},\"cursor\":10,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "94200bcb-5f3f-4e74-8480-33cb1a1bb492",
+              "recipients": [
+                "agent-2"
+              ],
+              "idempotencyKey": "send-1"
+            },
+            "cursor": 10,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.822299999999814
+    },
+    {
+      "agent": 2,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-2",
+        "recipient": "agent-3",
+        "kind": "question",
+        "threadId": "thread-2",
+        "body": "fixture handoff 2: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"36700b5c-f30e-4263-9fcf-0ffc38abb4f9\",\"recipients\":[\"agent-3\"],\"idempotencyKey\":\"send-2\"},\"cursor\":11,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "36700b5c-f30e-4263-9fcf-0ffc38abb4f9",
+              "recipients": [
+                "agent-3"
+              ],
+              "idempotencyKey": "send-2"
+            },
+            "cursor": 11,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.957600000000184
+    },
+    {
+      "agent": 3,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-3",
+        "recipient": "agent-4",
+        "kind": "question",
+        "threadId": "thread-3",
+        "body": "fixture handoff 3: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"7a2abebb-df54-4045-a8fd-0e356e49bd82\",\"recipients\":[\"agent-4\"],\"idempotencyKey\":\"send-3\"},\"cursor\":12,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "7a2abebb-df54-4045-a8fd-0e356e49bd82",
+              "recipients": [
+                "agent-4"
+              ],
+              "idempotencyKey": "send-3"
+            },
+            "cursor": 12,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 6.2948999999998705
+    },
+    {
+      "agent": 4,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-4",
+        "recipient": "agent-5",
+        "kind": "question",
+        "threadId": "thread-4",
+        "body": "fixture handoff 4: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"f853f763-5acb-4ccd-90fe-c15b9ffc64b5\",\"recipients\":[\"agent-5\"],\"idempotencyKey\":\"send-4\"},\"cursor\":13,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "f853f763-5acb-4ccd-90fe-c15b9ffc64b5",
+              "recipients": [
+                "agent-5"
+              ],
+              "idempotencyKey": "send-4"
+            },
+            "cursor": 13,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.5096999999996115
+    },
+    {
+      "agent": 5,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-5",
+        "recipient": "agent-6",
+        "kind": "question",
+        "threadId": "thread-5",
+        "body": "fixture handoff 5: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"2b8d3fd9-c850-4265-a483-472246363f3e\",\"recipients\":[\"agent-6\"],\"idempotencyKey\":\"send-5\"},\"cursor\":14,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "2b8d3fd9-c850-4265-a483-472246363f3e",
+              "recipients": [
+                "agent-6"
+              ],
+              "idempotencyKey": "send-5"
+            },
+            "cursor": 14,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.1612999999997555
+    },
+    {
+      "agent": 6,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-6",
+        "recipient": "agent-7",
+        "kind": "question",
+        "threadId": "thread-6",
+        "body": "fixture handoff 6: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"21b54754-c268-4201-8ca5-2b098809f798\",\"recipients\":[\"agent-7\"],\"idempotencyKey\":\"send-6\"},\"cursor\":15,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "21b54754-c268-4201-8ca5-2b098809f798",
+              "recipients": [
+                "agent-7"
+              ],
+              "idempotencyKey": "send-6"
+            },
+            "cursor": 15,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.321300000000065
+    },
+    {
+      "agent": 7,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-7",
+        "recipient": "agent-0",
+        "kind": "question",
+        "threadId": "thread-7",
+        "body": "fixture handoff 7: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"3fdcde27-7bed-451d-ac9f-d960a4ca3448\",\"recipients\":[\"agent-0\"],\"idempotencyKey\":\"send-7\"},\"cursor\":16,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "3fdcde27-7bed-451d-ac9f-d960a4ca3448",
+              "recipients": [
+                "agent-0"
+              ],
+              "idempotencyKey": "send-7"
+            },
+            "cursor": 16,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 5.63169999999991
+    },
+    {
+      "agent": 0,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-0",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"3fdcde27-7bed-451d-ac9f-d960a4ca3448\",\"sender\":\"agent-7\",\"recipient\":\"agent-0\",\"kind\":\"question\",\"body\":\"fixture handoff 7: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-7\",\"createdAt\":1790079816191,\"expiresAt\":null,\"idempotencyKey\":\"send-7\",\"audience\":\"direct\"},\"leaseToken\":\"ab7f237b-7970-46d6-9aa5-02096db0c723\",\"leaseUntil\":1790079846196,\"attempt\":1}]},\"cursor\":17,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "3fdcde27-7bed-451d-ac9f-d960a4ca3448",
+                    "sender": "agent-7",
+                    "recipient": "agent-0",
+                    "kind": "question",
+                    "body": "fixture handoff 7: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-7",
+                    "createdAt": 1790079816191,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-7",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "ab7f237b-7970-46d6-9aa5-02096db0c723",
+                  "leaseUntil": 1790079846196,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 17,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.509500000000116
+    },
+    {
+      "agent": 0,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-0",
+        "action": "ack",
+        "messageId": "3fdcde27-7bed-451d-ac9f-d960a4ca3448",
+        "leaseToken": "ab7f237b-7970-46d6-9aa5-02096db0c723"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"3fdcde27-7bed-451d-ac9f-d960a4ca3448\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790079816201},\"cursor\":18,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "3fdcde27-7bed-451d-ac9f-d960a4ca3448",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790079816201
+            },
+            "cursor": 18,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.313999999999851
+    },
+    {
+      "agent": 1,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-1",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"df9723bf-5cd9-44eb-9375-0bcc612f8303\",\"sender\":\"agent-0\",\"recipient\":\"agent-1\",\"kind\":\"question\",\"body\":\"fixture handoff 0: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-0\",\"createdAt\":1790079816158,\"expiresAt\":null,\"idempotencyKey\":\"send-0\",\"audience\":\"direct\"},\"leaseToken\":\"be10e428-65d5-4cc3-8e94-b856e5b4c12d\",\"leaseUntil\":1790079846205,\"attempt\":1}]},\"cursor\":19,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "df9723bf-5cd9-44eb-9375-0bcc612f8303",
+                    "sender": "agent-0",
+                    "recipient": "agent-1",
+                    "kind": "question",
+                    "body": "fixture handoff 0: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-0",
+                    "createdAt": 1790079816158,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-0",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "be10e428-65d5-4cc3-8e94-b856e5b4c12d",
+                  "leaseUntil": 1790079846205,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 19,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.300099999999929
+    },
+    {
+      "agent": 1,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-1",
+        "action": "ack",
+        "messageId": "df9723bf-5cd9-44eb-9375-0bcc612f8303",
+        "leaseToken": "be10e428-65d5-4cc3-8e94-b856e5b4c12d"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"df9723bf-5cd9-44eb-9375-0bcc612f8303\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790079816210},\"cursor\":20,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "df9723bf-5cd9-44eb-9375-0bcc612f8303",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790079816210
+            },
+            "cursor": 20,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 6.104499999999916
+    },
+    {
+      "agent": 2,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-2",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"94200bcb-5f3f-4e74-8480-33cb1a1bb492\",\"sender\":\"agent-1\",\"recipient\":\"agent-2\",\"kind\":\"question\",\"body\":\"fixture handoff 1: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-1\",\"createdAt\":1790079816163,\"expiresAt\":null,\"idempotencyKey\":\"send-1\",\"audience\":\"direct\"},\"leaseToken\":\"21378484-4496-4e81-8caa-475916ab0029\",\"leaseUntil\":1790079846215,\"attempt\":1}]},\"cursor\":21,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "94200bcb-5f3f-4e74-8480-33cb1a1bb492",
+                    "sender": "agent-1",
+                    "recipient": "agent-2",
+                    "kind": "question",
+                    "body": "fixture handoff 1: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-1",
+                    "createdAt": 1790079816163,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-1",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "21378484-4496-4e81-8caa-475916ab0029",
+                  "leaseUntil": 1790079846215,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 21,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.9857999999999265
+    },
+    {
+      "agent": 2,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-2",
+        "action": "ack",
+        "messageId": "94200bcb-5f3f-4e74-8480-33cb1a1bb492",
+        "leaseToken": "21378484-4496-4e81-8caa-475916ab0029"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"94200bcb-5f3f-4e74-8480-33cb1a1bb492\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790079816218},\"cursor\":22,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "94200bcb-5f3f-4e74-8480-33cb1a1bb492",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790079816218
+            },
+            "cursor": 22,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.4140000000002146
+    },
+    {
+      "agent": 3,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-3",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"36700b5c-f30e-4263-9fcf-0ffc38abb4f9\",\"sender\":\"agent-2\",\"recipient\":\"agent-3\",\"kind\":\"question\",\"body\":\"fixture handoff 2: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-2\",\"createdAt\":1790079816167,\"expiresAt\":null,\"idempotencyKey\":\"send-2\",\"audience\":\"direct\"},\"leaseToken\":\"296a2440-c150-4f7e-97d5-b061ef874cb2\",\"leaseUntil\":1790079846222,\"attempt\":1}]},\"cursor\":23,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "36700b5c-f30e-4263-9fcf-0ffc38abb4f9",
+                    "sender": "agent-2",
+                    "recipient": "agent-3",
+                    "kind": "question",
+                    "body": "fixture handoff 2: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-2",
+                    "createdAt": 1790079816167,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-2",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "296a2440-c150-4f7e-97d5-b061ef874cb2",
+                  "leaseUntil": 1790079846222,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 23,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.766700000000128
+    },
+    {
+      "agent": 3,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-3",
+        "action": "ack",
+        "messageId": "36700b5c-f30e-4263-9fcf-0ffc38abb4f9",
+        "leaseToken": "296a2440-c150-4f7e-97d5-b061ef874cb2"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"36700b5c-f30e-4263-9fcf-0ffc38abb4f9\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790079816227},\"cursor\":24,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "36700b5c-f30e-4263-9fcf-0ffc38abb4f9",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790079816227
+            },
+            "cursor": 24,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.5372000000002117
+    },
+    {
+      "agent": 4,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-4",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"7a2abebb-df54-4045-a8fd-0e356e49bd82\",\"sender\":\"agent-3\",\"recipient\":\"agent-4\",\"kind\":\"question\",\"body\":\"fixture handoff 3: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-3\",\"createdAt\":1790079816172,\"expiresAt\":null,\"idempotencyKey\":\"send-3\",\"audience\":\"direct\"},\"leaseToken\":\"3e6abd09-9e97-4a44-b08f-c53d3e075146\",\"leaseUntil\":1790079846230,\"attempt\":1}]},\"cursor\":25,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "7a2abebb-df54-4045-a8fd-0e356e49bd82",
+                    "sender": "agent-3",
+                    "recipient": "agent-4",
+                    "kind": "question",
+                    "body": "fixture handoff 3: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-3",
+                    "createdAt": 1790079816172,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-3",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "3e6abd09-9e97-4a44-b08f-c53d3e075146",
+                  "leaseUntil": 1790079846230,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 25,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.9605999999998858
+    },
+    {
+      "agent": 4,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-4",
+        "action": "ack",
+        "messageId": "7a2abebb-df54-4045-a8fd-0e356e49bd82",
+        "leaseToken": "3e6abd09-9e97-4a44-b08f-c53d3e075146"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"7a2abebb-df54-4045-a8fd-0e356e49bd82\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790079816234},\"cursor\":26,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "7a2abebb-df54-4045-a8fd-0e356e49bd82",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790079816234
+            },
+            "cursor": 26,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.333900000000085
+    },
+    {
+      "agent": 5,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-5",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"f853f763-5acb-4ccd-90fe-c15b9ffc64b5\",\"sender\":\"agent-4\",\"recipient\":\"agent-5\",\"kind\":\"question\",\"body\":\"fixture handoff 4: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-4\",\"createdAt\":1790079816178,\"expiresAt\":null,\"idempotencyKey\":\"send-4\",\"audience\":\"direct\"},\"leaseToken\":\"af89b5c0-2e37-40f7-8777-fb399ae57053\",\"leaseUntil\":1790079846239,\"attempt\":1}]},\"cursor\":27,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "f853f763-5acb-4ccd-90fe-c15b9ffc64b5",
+                    "sender": "agent-4",
+                    "recipient": "agent-5",
+                    "kind": "question",
+                    "body": "fixture handoff 4: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-4",
+                    "createdAt": 1790079816178,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-4",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "af89b5c0-2e37-40f7-8777-fb399ae57053",
+                  "leaseUntil": 1790079846239,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 27,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.9067000000000007
+    },
+    {
+      "agent": 5,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-5",
+        "action": "ack",
+        "messageId": "f853f763-5acb-4ccd-90fe-c15b9ffc64b5",
+        "leaseToken": "af89b5c0-2e37-40f7-8777-fb399ae57053"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"f853f763-5acb-4ccd-90fe-c15b9ffc64b5\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790079816242},\"cursor\":28,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "f853f763-5acb-4ccd-90fe-c15b9ffc64b5",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790079816242
+            },
+            "cursor": 28,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.2128999999999905
+    },
+    {
+      "agent": 6,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-6",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"2b8d3fd9-c850-4265-a483-472246363f3e\",\"sender\":\"agent-5\",\"recipient\":\"agent-6\",\"kind\":\"question\",\"body\":\"fixture handoff 5: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-5\",\"createdAt\":1790079816182,\"expiresAt\":null,\"idempotencyKey\":\"send-5\",\"audience\":\"direct\"},\"leaseToken\":\"e3b93965-583e-4ebc-81e6-566f5896d261\",\"leaseUntil\":1790079846246,\"attempt\":1}]},\"cursor\":29,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "2b8d3fd9-c850-4265-a483-472246363f3e",
+                    "sender": "agent-5",
+                    "recipient": "agent-6",
+                    "kind": "question",
+                    "body": "fixture handoff 5: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-5",
+                    "createdAt": 1790079816182,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-5",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "e3b93965-583e-4ebc-81e6-566f5896d261",
+                  "leaseUntil": 1790079846246,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 29,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.7305999999998676
+    },
+    {
+      "agent": 6,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-6",
+        "action": "ack",
+        "messageId": "2b8d3fd9-c850-4265-a483-472246363f3e",
+        "leaseToken": "e3b93965-583e-4ebc-81e6-566f5896d261"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"2b8d3fd9-c850-4265-a483-472246363f3e\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790079816251},\"cursor\":30,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "2b8d3fd9-c850-4265-a483-472246363f3e",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790079816251
+            },
+            "cursor": 30,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.997100000000046
+    },
+    {
+      "agent": 7,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-7",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"21b54754-c268-4201-8ca5-2b098809f798\",\"sender\":\"agent-6\",\"recipient\":\"agent-7\",\"kind\":\"question\",\"body\":\"fixture handoff 6: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-6\",\"createdAt\":1790079816186,\"expiresAt\":null,\"idempotencyKey\":\"send-6\",\"audience\":\"direct\"},\"leaseToken\":\"f482320c-fec2-46dc-a1aa-f8f8827f873d\",\"leaseUntil\":1790079846255,\"attempt\":1}]},\"cursor\":31,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "21b54754-c268-4201-8ca5-2b098809f798",
+                    "sender": "agent-6",
+                    "recipient": "agent-7",
+                    "kind": "question",
+                    "body": "fixture handoff 6: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-6",
+                    "createdAt": 1790079816186,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-6",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "f482320c-fec2-46dc-a1aa-f8f8827f873d",
+                  "leaseUntil": 1790079846255,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 31,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.009299999999712
+    },
+    {
+      "agent": 7,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-7",
+        "action": "ack",
+        "messageId": "21b54754-c268-4201-8ca5-2b098809f798",
+        "leaseToken": "f482320c-fec2-46dc-a1aa-f8f8827f873d"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"21b54754-c268-4201-8ca5-2b098809f798\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790079816258},\"cursor\":32,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "21b54754-c268-4201-8ca5-2b098809f798",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790079816258
+            },
+            "cursor": 32,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 5.030499999999847
+    }
+  ],
+  "limitations": "Real stdio catalog/bootstrap/send/fetch/ack. Trusted enrollment excluded from model calls. Explicit processing acknowledgment adds a call compared with legacy poll; no claim of reduced handoff calls. No inference or hidden host framing measured. Text results counted once; hosts may additionally include structuredContent."
+}

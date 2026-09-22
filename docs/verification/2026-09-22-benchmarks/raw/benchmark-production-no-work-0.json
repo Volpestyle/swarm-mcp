@@ -1,0 +1,184 @@
+{
+  "source": {
+    "revision": "074b1ef958138f332d097e2c47d2b4fca2024c1a",
+    "workingTree": "M scripts/benchmark-baseline.ts\n M src/generated/protocol.ts",
+    "diffSha256": "9bb6613b1bd3fb316c5e987580b4bcdcab7c407df4cab3bb54e3491c66e1ceb0",
+    "ownerBundleSha256": "cb278807ba014cfcc9a520029458b164b720dbf7910427c06954142ef8b55ed1",
+    "harnessSha256": "e31334bd97d3581ed98baeac944bb164fe8fc64bc05cd46a5e090a2e4aba83bf"
+  },
+  "revision": "074b1ef958138f332d097e2c47d2b4fca2024c1a",
+  "hardware": {
+    "cpu": "Intel(R) Core(TM) i9-14900KF",
+    "logicalCpus": 32,
+    "physicalMemoryBytes": 34034339840,
+    "platform": "win32",
+    "release": "10.0.26200",
+    "bun": "1.3.11",
+    "node": "v22.14.0"
+  },
+  "workload": {
+    "profiled": false,
+    "count": 0,
+    "messagesPerAgent": 0,
+    "bodyBytes": 256,
+    "spacingMs": 73,
+    "idleMs": 4200,
+    "warmupMs": 2000,
+    "slowMs": 0,
+    "deferredConsumerMs": 0,
+    "root": "C:\\Users\\volpe\\AppData\\Local\\Temp\\coordination-bench-5RC1kp"
+  },
+  "accepted": 0,
+  "received": 0,
+  "deliveryMs": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "acknowledgeMs": {
+    "p50": null,
+    "p95": null
+  },
+  "sendToDeliverMs": {
+    "p50": null,
+    "p95": null
+  },
+  "deliveredPerSecond": 0,
+  "aggregateIdleCpuPercentOfOneCore": 0,
+  "ownerCpuPercent": 0,
+  "ownerPid": 9676,
+  "ownerWorkingSetBytes": 54480896,
+  "ownerPrivateBytes": 67280896,
+  "processMemory": {
+    "at": 1790079792484,
+    "processes": [
+      {
+        "Id": 9676,
+        "CPU": 0.109375,
+        "WorkingSet64": 54480896,
+        "PrivateMemorySize64": 67280896
+      }
+    ]
+  },
+  "aggregateWorkerRssBytes": 0,
+  "explicitRequestBytes": 0,
+  "explicitResponseBytes": 0,
+  "transportRequests": 0,
+  "errors": [],
+  "diagnostics": {
+    "observedAt": 1790079792486,
+    "adapterCoverage": {
+      "evidenceDate": "2026-09-22",
+      "meaning": "Candidate support, not host discovery or a liveness claim",
+      "opencode": {
+        "boundaries": [
+          "turn_start",
+          "tool_complete"
+        ],
+        "idleWake": true,
+        "coverage": "installed-host verified",
+        "limitation": "killed/resumed delivery and large histories unverified"
+      },
+      "claude": {
+        "boundaries": [
+          "turn_start",
+          "tool_complete"
+        ],
+        "idleWake": false,
+        "coverage": "installed-host verified",
+        "limitation": "waits for native boundary; legacy-plugin rollout pending"
+      },
+      "codex": {
+        "boundaries": [
+          "owner_driven"
+        ],
+        "idleWake": false,
+        "coverage": "degraded",
+        "limitation": "automatic enrollment and autonomous delivery unverified"
+      },
+      "hermes": {
+        "boundaries": [
+          "in_process"
+        ],
+        "idleWake": false,
+        "coverage": "degraded",
+        "limitation": "lifecycle tests only; installed-host delivery unverified"
+      }
+    },
+    "scope": "benchmark",
+    "freshnessMs": 60000,
+    "summary": {
+      "total": 0,
+      "pending": null,
+      "leased": null,
+      "deadLetter": null,
+      "acknowledged": null,
+      "retries": 0,
+      "meanAcknowledgmentMs": null
+    },
+    "recoveryCounts": [],
+    "deliveryLatency": {
+      "meanFirstDeliveryMs": null,
+      "measuredMessages": 0
+    },
+    "deliveries": {
+      "items": [],
+      "truncated": false
+    },
+    "tasks": {
+      "items": [],
+      "truncated": false
+    },
+    "sessions": {
+      "items": [
+        {
+          "actor": "benchmark-controller",
+          "sessionId": "1d5ab01b-5043-4132-8e9e-41940da80708",
+          "generation": 1,
+          "state": "active",
+          "runtime": "unavailable",
+          "runtimeAt": null,
+          "transportAt": null,
+          "progressAt": null,
+          "availability": "unavailable",
+          "processLiveness": "not established by enrollment or transport activity"
+        }
+      ],
+      "truncated": false
+    },
+    "audit": {
+      "items": [],
+      "truncated": false
+    },
+    "wakes": {
+      "items": [],
+      "truncated": false
+    },
+    "wakeCoverage": "Authenticated recipient self-reports; accepted means host admission, never processing acknowledgment. Missing records do not establish failure.",
+    "database": {
+      "journalMode": "wal",
+      "synchronous": 2
+    },
+    "processMetrics": {
+      "since": 1790079785240,
+      "staleOwnerRejections": 0,
+      "databaseBusyErrors": 0,
+      "writerAcquisitions": 1,
+      "writerAcquireMs": 0.017899999999997362,
+      "maxWriterAcquireMs": 0.017899999999997362,
+      "retention": "this owner process only; writer acquisition time includes uncontended overhead"
+    },
+    "protocol": {
+      "modern": "2026-07-28",
+      "legacy": [
+        "2025-11-25",
+        "2025-06-18",
+        "2025-03-26",
+        "2024-11-05",
+        "2024-10-07"
+      ]
+    }
+  },
+  "workers": [],
+  "limitations": "Production Node owner and independent Bun IPC clients; no model inference or MCP serialization. JSON volumes omit transport framing. First-delivery timestamp is transaction timestamp (includes commit time); acknowledgment is measured through response. Windows memory includes shared working-set pages. Deferred consumer stays connected; not a process-disconnect/restart proof. No processing side effects beyond fixture acknowledgment."
+}
