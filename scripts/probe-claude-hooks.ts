@@ -7,10 +7,12 @@ import { join, resolve } from "node:path";
 import { enrollRuntime } from "../src/coordination/runtime-launcher";
 import { CoordinationClient } from "../src/coordination/ipc";
 import { hasClaudeContext } from "../src/coordination/claude-context";
+import { setTimeout as delay } from "node:timers/promises";
 
 const capture = process.argv[2];
 const executable = process.argv[3];
 const expiryProbe = process.argv[4] === "--lease-expiry";
+const restartProbe = process.argv[4] === "--restart";
 if (!capture || !executable)
   throw new Error(
     "Usage: probe-claude-hooks <capture.json> <claude executable>",
@@ -50,13 +52,15 @@ const sender = await enrollRuntime({
   ...options,
   hostSessionId: "fixture-sender",
 });
-const recipient = await enrollRuntime({ ...options, hostSessionId: sessionId });
+let recipient = await enrollRuntime({ ...options, hostSessionId: sessionId });
+const initialRecipient = recipient;
 const client = await CoordinationClient.connect(
   sender.environment.SWARM_COORDINATOR_ENDPOINT,
   sender.environment.SWARM_SESSION_CAPABILITY,
 );
 let child: ReturnType<typeof Bun.spawn> | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;
+let timeout: ReturnType<typeof setTimeout> | undefined;
 try {
   const sent: string[] = [];
   const send = async (body: string) => {
@@ -76,6 +80,14 @@ try {
   const envelopes: object[] = [];
   const beforeAck: string[] = [];
   const refreshed = new Set<string>();
+  const observedTokens = new Set<string>();
+  let replayedEnvelopes = 0;
+  let contextAfterKill: boolean[] = [];
+  let crashReady = false;
+  let releaseCrash!: () => void;
+  const crashBarrier = new Promise<void>((resolve) => {
+    releaseCrash = resolve;
+  });
   const strings = (value: unknown): string[] =>
     typeof value === "string"
       ? [value]
@@ -109,7 +121,7 @@ try {
           }
         });
       const original = leases.find(
-        (item) => item.message && !seen.includes(item.message.id),
+        (item) => item.message && !observedTokens.has(item.leaseToken),
       );
       const renewal = leases.find(
         (item) =>
@@ -123,9 +135,12 @@ try {
       let content: unknown[];
       let stop = "end_turn";
       if (lease) {
+        observedTokens.add(lease.leaseToken);
         if (original) {
-          envelopes.push(lease.message);
-          seen.push(lease.message.id);
+          if (!seen.includes(lease.message.id)) {
+            envelopes.push(lease.message);
+            seen.push(lease.message.id);
+          } else replayedEnvelopes++;
         } else refreshed.add(lease.leaseToken);
         const status = (await client.request({
           op: "message_status",
@@ -133,6 +148,13 @@ try {
         })) as { deliveries: Array<{ state: string }> };
         beforeAck.push(status.deliveries[0]!.state);
         if (requests === 1) await send("claude-post-tool-fixture");
+        if (restartProbe && requests === 2) {
+          // Let one assistant/tool exchange persist a resumable transcript.
+          // Then kill the host before either delivery is acknowledged.
+          crashReady = true;
+          await crashBarrier;
+          return new Response("fixture host terminated", { status: 503 });
+        }
         stop = "tool_use";
         content = [
           {
@@ -141,9 +163,11 @@ try {
             name: "Bash",
             input: {
               command:
-                expiryProbe && requests === 1
-                  ? 'node -e "setTimeout(()=>{},32000)"'
-                  : `node "${join(bundles, "ack.mjs").replaceAll("\\", "/")}" ${lease.message.id} ${lease.leaseToken}`,
+                restartProbe && requests === 1
+                  ? "node --version"
+                  : expiryProbe && requests === 1
+                    ? 'node -e "setTimeout(()=>{},32000)"'
+                    : `node "${join(bundles, "ack.mjs").replaceAll("\\", "/")}" ${lease.message.id} ${lease.leaseToken}`,
               description:
                 "Acknowledge the fixture peer message through the coordinator",
             },
@@ -256,34 +280,110 @@ try {
     DISABLE_TELEMETRY: "1",
     DISABLE_ERROR_REPORTING: "1",
   });
-  child = Bun.spawn({
-    cmd: [
-      executable,
-      "-p",
-      "Run the local fixture.",
-      "--session-id",
-      sessionId,
-      "--settings",
-      settings,
-      "--setting-sources",
-      "",
-      "--strict-mcp-config",
-      "--tools",
-      "Bash",
-      "--allowedTools",
-      "Bash",
-      "--model",
-      "claude-sonnet-4-6",
-      "--output-format",
-      "json",
-    ],
-    cwd: root,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-  });
-  const timeout = setTimeout(() => child?.kill(), expiryProbe ? 90000 : 45000);
+  const launch = (resume: boolean) =>
+    Bun.spawn({
+      cmd: [
+        executable,
+        "-p",
+        "Run the local fixture.",
+        resume ? "--resume" : "--session-id",
+        sessionId,
+        "--settings",
+        settings,
+        "--setting-sources",
+        "",
+        "--strict-mcp-config",
+        "--tools",
+        "Bash",
+        "--allowedTools",
+        "Bash",
+        "--model",
+        "claude-sonnet-4-6",
+        "--output-format",
+        "json",
+      ],
+      cwd: root,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+  child = launch(false);
+  timeout = setTimeout(
+    () => child?.kill(),
+    // Restart includes two native startups, real lease expiry and shutdown.
+    // This harness deadline does not change coordinator or hook deadlines.
+    restartProbe ? 180000 : expiryProbe ? 120000 : 90000,
+  );
+  let terminatedExit: number | undefined;
+  let fencedCode: string | undefined;
+  if (restartProbe) {
+    const deadline = Date.now() + 30000;
+    while (!crashReady && Date.now() < deadline) await delay(20);
+    if (!crashReady) {
+      child.kill();
+      await child.exited;
+      const diagnostic = await new Response(child.stderr).text();
+      writeFileSync(
+        capture,
+        JSON.stringify(
+          {
+            result: "failed",
+            phase: "crash barrier",
+            requests,
+            seen: seen.length,
+            beforeAck,
+            stderrBytes: Buffer.byteLength(diagnostic),
+          },
+          null,
+          2,
+        ),
+      );
+      throw new Error("Host did not reach crash barrier");
+    }
+    const firstOutput = new Response(child.stdout).text();
+    const firstError = new Response(child.stderr).text();
+    child.kill(9);
+    terminatedExit = await child.exited;
+    releaseCrash();
+    await Promise.all([firstOutput, firstError]);
+    const savedTranscript = [
+      ...new Bun.Glob("**/*.jsonl").scanSync({
+        cwd: join(root, "claude-config"),
+        absolute: true,
+      }),
+    ].find((path) => path.endsWith(`${sessionId}.jsonl`));
+    if (savedTranscript)
+      contextAfterKill = await Promise.all(
+        envelopes.map((message) =>
+          hasClaudeContext(
+            savedTranscript,
+            sessionId,
+            message,
+            AbortSignal.timeout(5000),
+          ),
+        ),
+      );
+    await delay(32000);
+    recipient = await enrollRuntime({
+      ...options,
+      hostSessionId: sessionId,
+      incarnation: randomUUID(),
+    });
+    const old = await CoordinationClient.connect(
+      initialRecipient.environment.SWARM_COORDINATOR_ENDPOINT,
+      initialRecipient.environment.SWARM_SESSION_CAPABILITY,
+    );
+    try {
+      await old.request({ op: "bootstrap" });
+    } catch (error) {
+      fencedCode = (error as { code?: string }).code;
+    } finally {
+      old.close();
+    }
+    Object.assign(env, recipient.environment);
+    child = launch(true);
+  }
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
@@ -355,6 +455,18 @@ try {
     endedCapabilityError: endedCode,
     persistedContext,
     leaseExpiryProbe: expiryProbe,
+    restartProbe,
+    restart: restartProbe
+      ? {
+          terminatedExit,
+          sameActor: recipient.actor === initialRecipient.actor,
+          initialGeneration: initialRecipient.generation,
+          resumedGeneration: recipient.generation,
+          oldCapabilityError: fencedCode,
+          contextAfterKill,
+          replayedEnvelopes,
+        }
+      : undefined,
     leaseRefreshes: refreshed.size,
     scriptedLocalModel: true,
   };
@@ -362,18 +474,29 @@ try {
   writeFileSync(capture, JSON.stringify(evidence, null, 2) + "\n");
   if (
     exitCode !== 0 ||
-    requests !== (expiryProbe ? 4 : 3) ||
+    requests !== (restartProbe ? 5 : expiryProbe ? 4 : 3) ||
     seen.length !== 2 ||
     beforeAck.some((s) => s !== "leased") ||
     states.some((s) => s !== "acknowledged") ||
     endedCode !== "stale_session" ||
     persistedContext.length !== 2 ||
     persistedContext.some((found) => !found) ||
-    refreshed.size !== (expiryProbe ? 1 : 0)
+    (restartProbe
+      ? refreshed.size !== contextAfterKill.filter(Boolean).length ||
+        replayedEnvelopes !== contextAfterKill.filter((found) => !found).length
+      : refreshed.size !== (expiryProbe ? 1 : 0)) ||
+    (restartProbe &&
+      (terminatedExit === 0 ||
+        recipient.actor !== initialRecipient.actor ||
+        recipient.generation !== initialRecipient.generation + 1 ||
+        fencedCode !== "stale_session" ||
+        contextAfterKill.length !== 2 ||
+        !contextAfterKill[0]))
   )
     throw new Error(`Claude probe incomplete; inspect ${capture}`);
   console.log(capture);
 } finally {
+  if (timeout) clearTimeout(timeout);
   child?.kill();
   if (child) await child.exited;
   server?.stop(true);
