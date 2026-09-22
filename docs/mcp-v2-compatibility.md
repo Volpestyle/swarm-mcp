@@ -25,10 +25,17 @@ Resource values have private, zero-TTL caching. Stable tool/resource/prompt
 catalogs and discovery use private 60-second caching. The SDK supplies wire
 envelopes; application callbacks do not hand-assemble protocol-only fields.
 
+Inbox notifications are also tested with an independent peer subprocess sending
+to the registered recipient while only the inbox resource is subscribed. Raw
+requests verify rejection of an unsupported opening revision, missing request
+metadata and malformed metadata, followed by successful valid requests. The SDK
+pins the era at connection establishment: it does not renegotiate on subsequent
+version strings. In SDK 2.0.0 a later well-formed unsupported revision string is
+processed using the pinned codec; callers must reconnect to negotiate a revision.
+
 These subprocess tests do not establish installed Codex, Claude, Hermes or
 OpenCode host support, or that receiving a notification wakes a model. Runtime
-delivery and wake behavior are separate VUH-1339 acceptance checks. Inbox-specific
-notification and raw negotiation/error coverage remain open in VUH-1337.
+delivery and wake behavior are separate VUH-1339 acceptance checks.
 
 ## Tasks extension decision
 
