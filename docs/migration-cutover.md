@@ -110,6 +110,7 @@ old process presence is not evidence of a current recipient identity.
   "scopes": [{
     "from": "legacy-scope",
     "to": "isolated-canary",
+    "taskController": "new-reviewer-id",
     "recipients": { "old-worker-id": "new-worker-id" },
     "broadcastRecipients": ["new-worker-id", "new-reviewer-id"]
   }]
@@ -121,7 +122,10 @@ node dist/coordination/migration-cli.js import C:/isolated-cutover/snapshot-001 
 ```
 
 Choose the target scope/actor IDs from the intended trusted runtime enrollment;
-the importer does not enroll sessions. All scoped source rows need a mapping,
+the importer does not enroll sessions. `taskController` becomes the creator of
+imported tasks and their reviews, retaining the ability to cancel or retry them;
+it grants scheduling authority, never a live execution attempt. The original
+requester remains historical provenance. All scoped source rows need a mapping,
 including historical instances. The schema-11 candidate includes the complete
 source rows in `legacy_records`, linked by `legacy_imports` to the snapshot hash
 and plan. Original SQLite bytes remain in the verified snapshot. Binary values
@@ -165,5 +169,5 @@ of directory operations on every filesystem.
 delivery/ack, blocked claims and explicit reconciliation through the real core.
 It also runs a Node importer and abruptly terminates it before transaction commit
 and before publication: neither candidate can start. Combined migration tests
-currently pass 11 tests / 104 assertions. Isolated runtime restart/lease-recovery
+currently cover both scheduling authority and lease ownership. Isolated runtime restart/lease-recovery
 and operational rollback remain the next canary gate.

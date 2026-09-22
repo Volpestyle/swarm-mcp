@@ -10,7 +10,7 @@ import { CoordinationCore } from "../src/coordination/core";
 import { randomBytes } from "node:crypto";
 import { build } from "esbuild";
 
-const plan: LegacyImportPlan = { version: 1, scopes: [{ from: "old", to: "new", recipients: { bob: "new-bob" }, broadcastRecipients: ["new-bob", "new-alice"] }] };
+const plan: LegacyImportPlan = { version: 1, scopes: [{ from: "old", to: "new", taskController: "new-bob", recipients: { bob: "new-bob" }, broadcastRecipients: ["new-bob", "new-alice"] }] };
 async function fixture(revision: string) {
   const root = mkdtempSync(join(tmpdir(), "legacy-import-"));
   mkdirSync(join(root, "src")); mkdirSync(join(root, "sql"));
@@ -55,6 +55,8 @@ for (const revision of ["b446c18", "b95f607"]) test(`${revision}: import preserv
   try {
     const session = store.openSession({ scope: "new", agentId: "new-bob", requestId: "new", resumeToken: randomBytes(32).toString("hex") });
     const actor = store.authorize(session.capability);
+    const peer = store.openSession({ scope: "new", agentId: "new-alice", requestId: "peer", resumeToken: randomBytes(32).toString("hex") });
+    expect(() => core.command(peer, { id: "peer-cancel", type: "task.cancel", payload: { taskId: summary.holds[0]!.reviewTaskId, expectedVersion: 1 } })).toThrow("Only the task creator");
     expect(() => core.command(actor, { id: "claim-held", type: "task.claim", payload: { taskId: summary.holds[0]!.taskId, expectedVersion: 1 } })).toThrow();
     const fetch = core.command(actor, { id: "fetch", type: "inbox.fetch", payload: { consumer: "new", limit: 10 } }) as any;
     expect(fetch.value.deliveries).toHaveLength(2);
@@ -64,7 +66,11 @@ for (const revision of ["b446c18", "b95f607"]) test(`${revision}: import preserv
     core.command(actor, { id: "review-done", type: "task.finish", payload: { taskId: summary.holds[0]!.reviewTaskId,
       attemptId: review.value.attemptId, fence: review.value.fence, outcome: "completed",
       result: { evidence: "Fixture old writers stopped; side effects and missing predecessor reconciled" } } });
-    expect(core.command(actor, { id: "claim-reviewed", type: "task.claim", payload: { taskId: summary.holds[0]!.taskId, expectedVersion: 2 } })).toBeTruthy();
+    const claimed = core.command(actor, { id: "claim-reviewed", type: "task.claim", payload: { taskId: summary.holds[0]!.taskId, expectedVersion: 2 } }) as any;
+    const failed = core.command(actor, { id: "fail-reviewed", type: "task.finish", payload: { taskId: summary.holds[0]!.taskId,
+      attemptId: claimed.value.attemptId, fence: claimed.value.fence, outcome: "failed" } }) as any;
+    const retried = core.command(actor, { id: "controller-retry", type: "task.retry", payload: { taskId: summary.holds[0]!.taskId, expectedVersion: failed.value.task.version } }) as any;
+    expect(retried.value.task.status).toBe("open");
   } finally { store.close(); }
   await expect(importLegacy(snapshot, destination, plan)).rejects.toThrow();
   await restoreLegacy(snapshot, join(root, "rollback.db"));
@@ -73,7 +79,7 @@ for (const revision of ["b446c18", "b95f607"]) test(`${revision}: import preserv
 test("unmapped recipient and interrupted import never publish a usable candidate", async () => {
   const { root, snapshot } = await fixture("b95f607");
   const bad = join(root, "unmapped");
-  await expect(importLegacy(snapshot, bad, { version: 1, scopes: [{ from: "old", to: "new", recipients: {} }] })).rejects.toThrow("Unresolved");
+  await expect(importLegacy(snapshot, bad, { version: 1, scopes: [{ from: "old", to: "new", taskController: "new-bob", recipients: {} }] })).rejects.toThrow("Unresolved");
   expect(existsSync(bad)).toBe(false);
   const failed = join(root, "failed");
   await expect(importLegacy(snapshot, failed, plan, () => { throw new Error("injected crash before commit"); })).rejects.toThrow("injected crash");

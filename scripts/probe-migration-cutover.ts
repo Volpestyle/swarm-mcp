@@ -53,7 +53,7 @@ try {
     INSERT INTO context(id,scope,instance_id,file,type,content) VALUES('lock','old','worker','result.txt','lock','old ownership');`);
   legacy.close();
   const manifest = await backupLegacy(source, snapshot);
-  const imported = await importLegacy(snapshot, destination, { version: 1, scopes: [{ from: "old", to: "canary", recipients: { worker: "worker" } }] });
+  const imported = await importLegacy(snapshot, destination, { version: 1, scopes: [{ from: "old", to: "canary", taskController: "worker", recipients: { worker: "worker" } }] });
   const hold = imported.holds[0]!;
   const launcherSecret = randomBytes(32).toString("hex"), config = join(root, "owner.json");
   writeFileSync(config, JSON.stringify({ databasePath: join(destination, "coordination.db"), launcherSecret }), { mode: 0o600 });

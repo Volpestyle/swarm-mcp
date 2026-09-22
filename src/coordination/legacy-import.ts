@@ -7,7 +7,7 @@ import { readLegacySnapshotRows } from "./legacy-snapshot";
 import { requireText } from "./errors";
 
 export type LegacyImportPlan = { version: 1; scopes: Array<{
-  from: string; to: string; recipients: Record<string, string>;
+  from: string; to: string; taskController: string; recipients: Record<string, string>;
   broadcastRecipients?: string[];
 }> };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -31,6 +31,7 @@ export async function importLegacy(directory: string, destination: string, input
   const targets = new Set<string>();
   for (const scope of plan.scopes) {
     text(scope.from, "source scope", true); requireText(scope.to, "destination scope");
+    requireText(scope.taskController, "task controller");
     if (scopes.has(scope.from) || targets.has(scope.to)) throw new Error("Import scope mappings must be one-to-one");
     if (!scope.recipients || typeof scope.recipients !== "object" || Array.isArray(scope.recipients))
       throw new Error("Import recipient mapping is required");
@@ -105,19 +106,20 @@ export async function importLegacy(directory: string, destination: string, input
         db.prepare("INSERT INTO events(scope,actor,type,entity_id,payload,created_at) VALUES(?,?,?,?,?,?)")
           .run(scope, "legacy-import", type, entity, json(payload), now);
       for (const row of tables.tasks ?? []) {
-        const scope = scopes.get(String(row.scope ?? ""))!.to;
+        const mapping = scopes.get(String(row.scope ?? ""))!;
+        const scope = mapping.to;
         const taskId = id("task", row.scope, row.id);
         const status = row.status === "done" || row.status === "completed" ? "completed"
           : row.status === "failed" ? "failed" : row.status === "cancelled" ? "cancelled" : "blocked";
-        const provenance = { legacyStatus: row.status, legacyAssignee: row.assignee ?? null,
+        const provenance = { legacyStatus: row.status, legacyRequester: row.requester, legacyAssignee: row.assignee ?? null,
           legacyTaskId: row.id, resultSource: "legacy_records", importId, verifiedProcessing: false };
         db.prepare("INSERT INTO tasks(id,scope,creator,title,status,version,created_at,updated_at,result,reason) VALUES(?,?,?,?,?,1,?,?,?,?)")
-          .run(taskId, scope, `legacy:${row.requester}`, String(row.title), status, now, now,
+          .run(taskId, scope, mapping.taskController, String(row.title), status, now, now,
             json(provenance), status === "blocked" ? "legacy_reconciliation_required" : "legacy_terminal_record_unverified");
         if (status === "blocked") {
           const reviewTaskId = id("review", row.scope, row.id);
           db.prepare("INSERT INTO tasks(id,scope,creator,title,status,version,created_at,updated_at,reason,result) VALUES(?,?,?,?, 'open',1,?,?,?,?)")
-            .run(reviewTaskId, scope, "legacy-import", `Reconcile imported task: ${row.title}`, now, now,
+            .run(reviewTaskId, scope, mapping.taskController, `Reconcile imported task: ${row.title}`, now, now,
               "Check old writers, completed side effects, dependencies and new work contract before releasing this task", json(provenance));
           db.prepare("INSERT INTO task_dependencies VALUES(?,?)").run(taskId, reviewTaskId);
           summary.holds.push({ scope, legacyTaskId: String(row.id), taskId, reviewTaskId });
