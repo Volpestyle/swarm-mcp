@@ -1,7 +1,12 @@
 import { createServer, createConnection, type Socket } from "node:net";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
-import { CoordinationCore, type ActorContext, type CoreCommand } from "./core";
+import {
+  CoordinationCore,
+  type ActorContext,
+  type CoreCommand,
+  type DispatchRequest,
+} from "./core";
 import { CoordinationError, requireText } from "./errors";
 import type { ArtifactImport, FindingFilter } from "./evidence";
 import type { PeerFilter, TaskFilter } from "./queries";
@@ -14,6 +19,7 @@ export type Operation =
   | { op: "peers"; filter?: PeerFilter }
   | { op: "tasks"; filter?: TaskFilter }
   | { op: "command"; command: CoreCommand }
+  | { op: "dispatch"; input: DispatchRequest }
   | { op: "artifact_import"; input: ArtifactImport }
   | { op: "artifact"; artifactId: string }
   | { op: "artifact_read"; artifactId: string; offset?: number; limit?: number }
@@ -187,6 +193,17 @@ export async function serveCoordination(options: {
             result = options.core.command(
               actor,
               raw.command as unknown as CoreCommand,
+            );
+            break;
+          case "dispatch":
+            if (!record(raw.input))
+              throw new CoordinationError(
+                "invalid_input",
+                "Invalid dispatch request",
+              );
+            result = await options.core.dispatch(
+              actor,
+              raw.input as unknown as DispatchRequest,
             );
             break;
           case "task_wait":

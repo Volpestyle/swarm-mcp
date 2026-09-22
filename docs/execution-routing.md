@@ -128,6 +128,20 @@ The regression exercises stop timeout, coordinator reopen, pending stop, confirm
 stop, repeated cancellation and pre-start cancellation using a controlled provider.
 Concrete host adapters must still implement and prove their stop-token fencing.
 
+## Authenticated service boundary
+
+`CoordinationCore.dispatch` and the IPC `dispatch` operation accept assign,
+cancel and explicit reassign requests. They derive actor/scope from the current
+session capability. The owner injects a trusted configuration resolver for policy
+and providers; request fields cannot replace it. An unconfigured owner reports
+`unsupported_runtime`. Reassignment carries its stable command ID and expected
+task version across retries, while assignment retains the intent identity.
+
+The Node-owner IPC regression verifies assignment/retry, conflicting work,
+capacity exhaustion and the unconfigured case. Forged top-level actor, scope and
+policy fields do not change the accepted worker or configured limit. Production
+owner configuration and the MCP tool surface are still pending.
+
 ## Reassignment and fallback
 
 The trusted `dispatch.reassign` transaction is an explicit creator retry, with a

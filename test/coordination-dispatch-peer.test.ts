@@ -4,10 +4,10 @@ import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CoordinationStore } from "../src/coordination/store";
+import { CoordinationCore } from "../src/coordination/core";
 import {
   existingPeerProvider,
   cancelDispatchIntent,
-  runDispatchIntent,
 } from "../src/coordination/dispatch-runner";
 import type {
   DispatchIntent,
@@ -75,8 +75,17 @@ for (const outcome of ["completed", "cancelled"] as const)
       }),
     ];
     try {
-      const run = () =>
-        runDispatchIntent({ store, requester, intent, policy, providers });
+      const core = new CoordinationCore(store, (context) => {
+        expect(context.actor).toBe(requester.actor);
+        return { policy, providers };
+      });
+      await expect(
+        new CoordinationCore(store).dispatch(requester, {
+          action: "assign",
+          intent,
+        }),
+      ).rejects.toThrow("not configured");
+      const run = () => core.dispatch(requester, { action: "assign", intent });
       store.execute(
         { ...requester, id: "fill-inbox", type: "message.send", payload: {} },
         (tx) =>

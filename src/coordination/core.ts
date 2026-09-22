@@ -1,7 +1,13 @@
 import { CoordinationError, requireText } from "./errors";
 import { CoordinationStore, type CommandResult, type Json } from "./store";
 import type { InboxCommand } from "./inbox";
-import type { SessionCommand } from "./sessions";
+import type { SessionCommand, SessionContext } from "./sessions";
+import type { DispatchIntent, DispatchPolicy } from "./dispatch";
+import {
+  runDispatchIntent,
+  cancelDispatchIntent,
+  type DispatchProvider,
+} from "./dispatch-runner";
 import type { TaskCommand } from "./tasks";
 import type { ReservationCommand, Resource } from "./reservations";
 import { canonicalPath, mapWorktreeFile } from "./worktrees";
@@ -30,8 +36,87 @@ export type CoreCommand =
   | EvidenceCommand
   | ReservationCommand;
 
+export type DispatchRequest =
+  | { action: "assign"; intent: DispatchIntent }
+  | { action: "cancel"; intentId: string }
+  | {
+      action: "reassign";
+      commandId: string;
+      expectedVersion: number;
+      intent: DispatchIntent;
+    };
+export type DispatchConfiguration = (context: SessionContext) => {
+  policy: DispatchPolicy;
+  providers: readonly DispatchProvider[];
+};
+
 export class CoordinationCore {
-  constructor(private readonly store: CoordinationStore) {}
+  constructor(
+    private readonly store: CoordinationStore,
+    private readonly dispatchConfiguration?: DispatchConfiguration,
+  ) {}
+
+  async dispatch(context: ActorContext, input: DispatchRequest) {
+    this.store.assertContext(context);
+    if (!context.sessionId || !context.generation)
+      throw new CoordinationError(
+        "session_required",
+        "Dispatch requires a current session",
+      );
+    if (!input || !["assign", "cancel", "reassign"].includes(input.action))
+      throw new CoordinationError("invalid_input", "Unknown dispatch action");
+    if (!this.dispatchConfiguration)
+      throw new CoordinationError(
+        "unsupported_runtime",
+        "Trusted dispatch routes are not configured",
+      );
+    if (
+      input.action !== "cancel" &&
+      (!input.intent ||
+        typeof input.intent !== "object" ||
+        Array.isArray(input.intent))
+    )
+      throw new CoordinationError(
+        "invalid_input",
+        "Dispatch requires a work intent",
+      );
+    const requester = context as SessionContext;
+    // Configuration is supplied by the owner, never deserialized from a request.
+    const configured = this.dispatchConfiguration(requester);
+    if (input.action === "cancel")
+      return cancelDispatchIntent({
+        store: this.store,
+        requester,
+        intentId: input.intentId,
+        providers: configured.providers,
+      });
+    if (input.action === "reassign") {
+      const result = this.store.execute(
+        {
+          ...requester,
+          id: input.commandId,
+          type: "dispatch.reassign",
+          payload: {
+            intent: input.intent as unknown as Json,
+            expectedVersion: input.expectedVersion,
+          },
+        },
+        (tx) =>
+          tx.dispatch.reassign(
+            input.intent,
+            configured.policy,
+            input.expectedVersion,
+          ),
+      ).value;
+      if (result.status === "blocked") return result;
+    }
+    return runDispatchIntent({
+      store: this.store,
+      requester,
+      intent: input.intent,
+      ...configured,
+    });
+  }
   bootstrap(context: ActorContext) {
     this.store.assertContext(context);
     return this.store.bootstrap(context.scope, context.actor);

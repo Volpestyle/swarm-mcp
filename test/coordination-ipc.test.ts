@@ -68,6 +68,66 @@ const command = {
   payload: { title: "work over local IPC" },
 };
 
+test("dispatch over authenticated IPC uses owner routes and deduplicates assignment", async () => {
+  const { client, worktreeRoot } = await fixture("dispatch");
+  const intent = {
+    intentId: "ipc-dispatch",
+    title: "Work",
+    capabilities: ["code"],
+    durable: true,
+    contract: {
+      objective: "Work",
+      worktree: worktreeRoot,
+      acceptanceCriteria: ["Verified"],
+      expectedArtifacts: [],
+      constraints: [],
+    },
+  };
+  const request = {
+    op: "dispatch" as const,
+    input: { action: "assign" as const, intent },
+    scope: "forged",
+    actor: "forged",
+    policy: { maximum: 999, routes: [] },
+  };
+  const first = (await client.request(request)) as {
+    status: string;
+    taskId: string;
+    attemptId: string;
+  };
+  expect(first.status).toBe("bound");
+  const replay = (await client.request(request)) as typeof first;
+  expect(replay.taskId).toBe(first.taskId);
+  expect(replay.attemptId).toBe(first.attemptId);
+  const attempts = await client.request({
+    op: "attempts",
+    taskId: first.taskId,
+  });
+  expect(attempts).toMatchObject([{ actor: "peer" }]);
+  expect(
+    await client
+      .request({
+        op: "dispatch",
+        input: { action: "assign", intent: { ...intent, title: "Changed" } },
+      })
+      .catch((error) => error),
+  ).toMatchObject({ code: "idempotency_conflict" });
+  const blocked = await client.request({
+    op: "dispatch",
+    input: { action: "assign", intent: { ...intent, intentId: "second" } },
+  });
+  expect(blocked).toMatchObject({ status: "blocked" });
+  const disabled = await fixture("sessions");
+  expect(
+    await disabled.client
+      .request({
+        op: "dispatch",
+        input: { action: "assign", intent },
+      })
+      .catch((error) => error),
+  ).toMatchObject({ code: "unsupported_runtime" });
+});
+
 test("launcher enrollment is separate from agent authority and resume fences old transports", async () => {
   const { client, connect, worktreeRoot } = await fixture("sessions");
   const input = {

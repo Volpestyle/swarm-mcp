@@ -4,6 +4,7 @@ import { CoordinationError } from "../../src/coordination/errors";
 import { randomBytes } from "node:crypto";
 import { launcherEnrollment } from "../../src/coordination/enrollment";
 import { dirname } from "node:path";
+import { existingPeerProvider } from "../../src/coordination/dispatch-runner";
 import {
   CoordinationClient,
   localEndpoint,
@@ -13,11 +14,21 @@ const [path, mode] = process.argv.slice(2);
 if (!path) throw new Error("Missing fixture path");
 const store = await CoordinationStore.open({ path });
 const session =
-  mode === "sessions"
+  mode === "sessions" || mode === "dispatch"
     ? store.openSession({
         scope: "test",
         agentId: "alice",
         requestId: "fixture-enroll",
+        resumeToken: randomBytes(32).toString("hex"),
+        worktree: { root: dirname(path), repository: dirname(path) },
+      })
+    : undefined;
+const peer =
+  mode === "dispatch"
+    ? store.openSession({
+        scope: "test",
+        agentId: "peer",
+        requestId: "peer-enroll",
         resumeToken: randomBytes(32).toString("hex"),
         worktree: { root: dirname(path), repository: dirname(path) },
       })
@@ -28,7 +39,44 @@ const options = {
       ? launcherEnrollment(store, "fixture-launcher-secret-32-characters")
       : undefined,
   endpoint: localEndpoint(path),
-  core: new CoordinationCore(store),
+  core: new CoordinationCore(
+    store,
+    peer
+      ? (requester) => ({
+          policy: {
+            active: 0,
+            maximum: 1,
+            observationMaxAgeMs: 60000,
+            routes: [
+              {
+                id: "peer",
+                path: "peer",
+                scope: "test",
+                host: "node",
+                worktree: dirname(path),
+                capabilities: ["code"],
+                durable: true,
+                availability: "idle",
+                observedAt: Date.now(),
+                active: 0,
+                capacity: 1,
+                overhead: 0,
+                authorized: true,
+              },
+            ],
+          },
+          providers: [
+            existingPeerProvider({
+              store,
+              requester,
+              routeId: "peer",
+              worker: peer,
+              authorized: () => true,
+            }),
+          ],
+        })
+      : undefined,
+  ),
   authorize: (capability: string) => {
     if (session) return store.authorize(capability);
     if (capability === "alice-secret") return { scope: "test", actor: "alice" };
