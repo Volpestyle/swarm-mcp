@@ -30,6 +30,17 @@ hosts. Tool failures set `isError`; errors carry a code, message and retryable
 flag. Fetch/ack and task mutations are not marked read-only. The schema advertises
 the envelope; operation-specific result schemas and normalization are still open.
 
+Payload budgets use UTF-8 JSON bytes. Command result values and event payloads
+are limited to 64 KiB inside the write transaction; excess rolls back state,
+events and receipt together. Event reads stop at 96 KiB and advance the cursor
+only through returned rows. Compact tools and JSON resources cap data at 128 KiB;
+readers that exceed it must narrow their query or use artifact references.
+These are data budgets, not total wire-frame sizes: the compatibility text
+envelope duplicates structuredContent and JSON escaping adds overhead. Error
+messages are truncated to 1,024 characters. Artifact bytes remain separately
+paged at 16 KiB. Oversized existing records from earlier candidate builds are
+not rewritten; this is not a migration of an installed legacy database.
+
 Task details include the authoritative scope and creator, parsed contract fields,
 dependency IDs, current attempt owner/fence/lease and parsed completion evidence.
 An owner is marked active only while its attempt, session and lease are active;

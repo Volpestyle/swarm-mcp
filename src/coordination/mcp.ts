@@ -3,6 +3,7 @@ import { z } from "zod";
 import { CoordinationError } from "./errors";
 import type { Operation } from "./ipc";
 import type { Json } from "./store";
+import { boundedJson, MCP_DATA_BYTES } from "./payload-limits";
 const subscriptions = new WeakMap<McpServer, Set<string>>();
 const observableResources = new Set([
   "swarm://inbox",
@@ -114,6 +115,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
       async (args, ctx) => {
         try {
           const data = await run(args, ctx.mcpReq.signal);
+          boundedJson(data ?? null, MCP_DATA_BYTES, "Tool result");
           const structuredContent = {
             ok: true,
             data: data ?? null,
@@ -139,7 +141,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
               code,
               message:
                 error instanceof Error
-                  ? error.message
+                  ? error.message.slice(0, 1024)
                   : "Coordinator request failed",
               retryable: ["disconnected", "timeout", "overloaded"].includes(
                 code,
@@ -517,7 +519,11 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
       {
         uri: uri.href,
         mimeType: "application/json",
-        text: JSON.stringify(await request(operation)),
+        text: boundedJson(
+          await request(operation),
+          MCP_DATA_BYTES,
+          "Resource result",
+        ),
       },
     ],
   });

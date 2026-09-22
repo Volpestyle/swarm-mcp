@@ -78,6 +78,49 @@ afterEach(() => {
 });
 
 describe("coordination command boundary", () => {
+  test("oversized receipts and events roll back before acceptance", async () => {
+    const { core, store } = await open();
+    const input = { ...actor, ...create };
+    expect(() =>
+      store.execute(input, (tx) => {
+        const result = tx.tasks.create(create.payload);
+        return { ...result, oversized: "界".repeat(22000) };
+      }),
+    ).toThrow("Command result exceeds");
+    expect(core.events(actor).items).toEqual([]);
+    expect(store.taskSummaries(actor.scope).items).toEqual([]);
+    expect(() =>
+      store.execute(input, (tx) => {
+        tx.event("test.large", "test", "界".repeat(22000));
+        return null;
+      }),
+    ).toThrow("Event payload exceeds");
+    expect(core.events(actor).items).toEqual([]);
+    expect(core.command(actor, create).replayed).toBe(false);
+  });
+
+  test("event byte pages retain every event and advance only through returned rows", async () => {
+    const { core, store } = await open();
+    for (let index = 0; index < 3; index++)
+      store.execute({ ...actor, ...create, id: `large-${index}` }, (tx) => {
+        tx.event("test.large", String(index), "界".repeat(20000));
+        return null;
+      });
+    let cursor = 0;
+    const entities: string[] = [];
+    for (let index = 0; index < 3; index++) {
+      const page = core.events(actor, cursor, 20);
+      expect(page.items).toHaveLength(1);
+      expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(
+        96 * 1024,
+      );
+      entities.push(page.items[0]!.entity_id);
+      cursor = page.cursor;
+    }
+    expect(entities).toEqual(["0", "1", "2"]);
+    expect(core.events(actor, cursor).items).toEqual([]);
+  });
+
   test("commits task, event and reusable result together", async () => {
     const { core, store } = await open();
     let notice = 0;

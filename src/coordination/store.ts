@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
 import { CoordinationError, requireText } from "./errors";
+import {
+  boundedJson,
+  COMMAND_RESULT_BYTES,
+  EVENT_PAYLOAD_BYTES,
+  EVENT_PAGE_BYTES,
+} from "./payload-limits";
 import { migrate, type FaultHook } from "./migrations";
 import { openSqlite, type Sqlite } from "./sqlite";
 import { ArtifactFiles } from "./artifact-files";
@@ -235,6 +241,7 @@ export class WriteTransaction {
   event(type: string, entityId: string, payload: Json) {
     requireText(type, "event type");
     requireText(entityId, "entity ID");
+    boundedJson(payload, EVENT_PAYLOAD_BYTES, "Event payload");
     const result = this.db
       .prepare(
         "INSERT INTO events(scope,actor,type,entity_id,payload,created_at) VALUES(?,?,?,?,?,?)",
@@ -355,6 +362,7 @@ export class CoordinationStore {
       );
       const value = apply(tx);
       const serialized = canonical(value); // Also rejects accidental async callbacks.
+      boundedJson(value, COMMAND_RESULT_BYTES, "Command result");
       if (tx.writes && !tx.cursor)
         throw new CoordinationError(
           "missing_event",
@@ -589,10 +597,23 @@ export class CoordinationStore {
       .all(scope, after, limit) as Array<
       Omit<Event, "payload"> & { payload: string }
     >;
-    return {
-      items: rows.map((row) => ({ ...row, payload: JSON.parse(row.payload) })),
-      cursor: rows.at(-1)?.id ?? after,
-    };
+    const items: Event[] = [];
+    let bytes = 64; // Envelope and cursor, including a maximum safe integer.
+    for (const row of rows) {
+      const event = { ...row, payload: JSON.parse(row.payload) };
+      const size = Buffer.byteLength(JSON.stringify(event)) + 1;
+      if (bytes + size > EVENT_PAGE_BYTES) {
+        if (!items.length)
+          throw new CoordinationError(
+            "payload_too_large",
+            "Stored event exceeds the page budget",
+          );
+        break;
+      }
+      items.push(event);
+      bytes += size;
+    }
+    return { items, cursor: items.at(-1)?.id ?? after };
   }
 
   subscribe(listener: (cursor: number) => void): () => void {

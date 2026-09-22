@@ -66,6 +66,6 @@ version and returns an attempt fence used by subsequent writes. Wait timeout or
 disconnect never cancels execution; cancellation is a separate mutation.
 
 Held and immediate compact event reads return at most 20 events. Resume from the
-returned cursor to drain the rest. This is an item cap, not yet a serialized-byte
-cap. Tools offering cancellation, shared-value deletion/replacement, or delivery
+returned cursor to drain the rest. Event pages also stop at 96 KiB of UTF-8 JSON.
+Tools offering cancellation, shared-value deletion/replacement, or delivery
 acknowledgment advertise destructiveHint. Fetch/ack are not read-only.
