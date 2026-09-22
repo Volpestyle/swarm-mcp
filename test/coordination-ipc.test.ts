@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
 import { build } from "esbuild";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CoordinationClient } from "../src/coordination/ipc";
@@ -46,21 +46,87 @@ async function fixture(mode?: string) {
   const { value } = await reader.read();
   reader.releaseLock();
   if (!value) throw new Error(await new Response(child.stderr).text());
-  const { endpoint, capability: sessionCapability } = JSON.parse(
-    new TextDecoder().decode(value),
-  );
+  const {
+    endpoint,
+    capability: sessionCapability,
+    worktreeRoot,
+  } = JSON.parse(new TextDecoder().decode(value));
   const connect = async (capability = sessionCapability ?? "alice-secret") => {
     const client = await CoordinationClient.connect(endpoint, capability);
     cleanup.push(() => client.close());
     return client;
   };
-  return { client: await connect(), connect };
+  return {
+    client: await connect(),
+    connect,
+    worktreeRoot: worktreeRoot as string,
+  };
 }
 const command = {
   id: "ipc-create",
   type: "task.create" as const,
   payload: { title: "work over local IPC" },
 };
+
+test("artifact bytes, evidence links and shared context round trip through the owner", async () => {
+  const { client, worktreeRoot } = await fixture("sessions");
+  const path = join(worktreeRoot, "evidence.txt");
+  writeFileSync(path, "verified IPC evidence");
+  const captured = (await client.request({
+    op: "artifact_import",
+    input: {
+      id: "import",
+      path: "evidence.txt",
+      summary: "IPC verification",
+      mediaType: "text/plain",
+    },
+  })) as { value: { artifactId: string } };
+  unlinkSync(path);
+  const read = (await client.request({
+    op: "artifact_read",
+    artifactId: captured.value.artifactId,
+  })) as { status: string; data: string };
+  expect(read.status).toBe("available");
+  expect(Buffer.from(read.data, "base64").toString()).toBe(
+    "verified IPC evidence",
+  );
+  await client.request({
+    op: "command",
+    command: {
+      id: "finding",
+      type: "finding.record",
+      payload: {
+        kind: "decision",
+        summary: "Verified transport",
+        revision: "a".repeat(40),
+        files: [],
+        verification: "IPC roundtrip",
+        artifactIds: [captured.value.artifactId],
+      },
+    },
+  });
+  const findings = (await client.request({
+    op: "findings",
+    filter: { kind: "decision" },
+  })) as { items: Array<{ artifacts: Array<{ status: string }> }> };
+  expect(findings.items[0]!.artifacts[0]!.status).toBe("available");
+  await client.request({
+    op: "command",
+    command: {
+      id: "set",
+      type: "kv.set",
+      payload: {
+        key: "evidence",
+        value: { artifactId: captured.value.artifactId },
+        expectedVersion: 0,
+      },
+    },
+  });
+  expect(await client.request({ op: "kv", key: "evidence" })).toMatchObject({
+    version: 1,
+    value: { artifactId: captured.value.artifactId },
+  });
+});
 
 test("session capability fences task ownership over IPC after suspension", async () => {
   const { client } = await fixture("sessions");

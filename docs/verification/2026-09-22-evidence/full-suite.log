@@ -1,0 +1,893 @@
+bun test v1.3.11 (af24e281)
+bun.exe :
+At C:\Users\volpe\AppData\Roaming\npm\bun.ps1:14 char:3
++   & "$basedir/node_modules/bun/bin/bun.exe"   $args
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+src\paths.test.ts:
+(pass) file resolves relative and worktree absolute paths against a canonical file_root
+
+test\cmd.test.ts:
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:105:24)
+(fail) CLI registration adoption > register uses SWARM_MCP_SCOPE when --scope is omitted
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:127:18)
+(fail) CLI registration adoption > bootstrap recreates a pruned preassigned instance from env
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:144:19)
+(fail) CLI registration adoption > register --adopt-instance-id adopts the lease row and keeps identity rows keyed to it
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:210:19)
+(fail) CLI registration adoption > register --adopt-instance-id falls through when the lease is in another scope
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:240:19)
+(fail) CLI registration adoption > bootstrap --adopt-instance-id returns a snapshot for the adopted lease [16.00ms]
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:273:18)
+(fail) CLI registration adoption > bootstrap includes configured same-identity work tracker
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:322:21)
+(fail) CLI task notifications > worker commands use SWARM_MCP_SCOPE when --scope is omitted
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:383:21)
+(fail) CLI task notifications > request-task prompts an explicit assignee
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:432:20)
+(fail) CLI dispatch spawn authority > dispatch --help prints help instead of failing flag parsing [16.00ms]
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:442:20)
+(fail) CLI dispatch spawn authority > rejects non-gateway requesters
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:461:21)
+(fail) CLI dispatch spawn authority > allows gateway requesters
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:485:21)
+(fail) CLI dispatch spawn authority > dispatch --wait-for-completion returns a completion timeout snapshot
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:520:21)
+(fail) CLI dispatch spawn authority > dispatch falls back to a live generalist before spawning [15.00ms]
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:557:21)
+(fail) CLI dispatch spawn authority > dispatch --force-spawn bypasses live worker matching
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:596:21)
+(fail) CLI dispatch spawn authority > dispatch prefers an exact role over a generalist
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:629:21)
+(fail) CLI dispatch spawn authority > dispatch can explicitly use the legacy swarm-ui spawner
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:700:21)
+(fail) CLI dispatch spawn authority > dispatch defaults to the herdr spawner [16.00ms]
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:788:21)
+(fail) CLI dispatch spawn authority > dispatch rejects unknown spawner before creating work
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:853:20)
+(fail) CLI workspace identity bridge > prompt-peer repairs stale workspace handle aliases before nudging
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:930:23)
+(fail) CLI workspace identity bridge > resolve-workspace-handle maps a backend handle back to a swarm instance
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:990:20)
+(fail) CLI file path normalization > lock and unlock normalize relative paths through the registered instance root [16.00ms]
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:1030:21)
+(fail) CLI file path normalization > request-task and dispatch normalize --file paths
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:1074:20)
+(fail) CLI doctor > doctor reports OK on a fresh db and exits 0
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:1091:20)
+(fail) CLI doctor > doctor --json emits a structured report with checks array
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:1124:23)
+(fail) CLI claim and update-task > claim transitions an open task to in_progress and update-task moves it to a terminal status [15.00ms]
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:1195:20)
+(fail) CLI claim and update-task > claim fails with a non-zero exit code for a non-existent task (text mode)
+66 |     ...extra,
+67 |   };
+68 | }
+69 |
+70 | function runCli(dbPath: string, args: string[], extraEnv: Record<string, string> = {}) {
+71 |   const result = Bun.spawnSync({
+                          ^
+error: ENOENT: no such file or directory, uv_spawn 'bun'
+      at runCli (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:71:22)
+      at register (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:86:18)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\cmd.test.ts:1217:20)
+(fail) CLI claim and update-task > update-task requires a valid --status flag
+
+test\coordination-core.test.ts:
+(pass) coordination command boundary > commits task, event and reusable result together [16.00ms]
+(pass) coordination command boundary > same timestamps remain observable through ordered paginated cursors [31.00ms]
+(pass) coordination command boundary > cancel checks scope, creator and version inside its transaction [16.00ms]
+(pass) coordination command boundary > transaction failure rolls back state, event and command receipt [31.00ms]
+(pass) coordination command boundary > failed notification cannot turn a committed command into a failed acceptance [15.00ms]
+(pass) coordination command boundary > mutation without an event is rejected and rolled back [16.00ms]
+(pass) real process persistence and migration > identity inspection stays consistent when another connection commits migration between reads [31.00ms]
+(pass) real process persistence and migration > commit-before-publish crash is replayable after process restart (bun) [266.00ms]
+(pass) real process persistence and migration > commit-before-publish crash is replayable after process restart (node) [250.00ms]
+(pass) real process persistence and migration > process exit during migration leaves no adopted partial schema (bun) [281.00ms]
+(pass) real process persistence and migration > process exit during migration leaves no adopted partial schema (node) [266.00ms]
+(pass) real process persistence and migration > concurrent startup and repeated commands converge on one state change (bun) [1390.00ms]
+(pass) real process persistence and migration > concurrent startup and repeated commands converge on one state change (node) [1391.00ms]
+(pass) real process persistence and migration > legacy and newer databases are refused without rewriting their version [31.00ms]
+
+test\coordination-evidence.test.ts:
+(pass) retention changes require the author and findings reject unstable provenance [31.00ms]
+(pass) immutable capture survives source removal/restart and replays the original receipt [47.00ms]
+(pass) metadata failure leaves no accepted reference and retry uses a complete blob [31.00ms]
+(pass) findings expose annotation freshness, provenance and missing/expired artifact references [47.00ms]
+(pass) artifact reads detect corruption and reject cross-scope references [15.00ms]
+(pass) task result provenance and explicit retention preserve control history [32.00ms]
+(pass) finding pagination and retention boundaries remain visible after restart [47.00ms]
+(pass) artifact before_command_commit process exit recovers without partial references (bun) [296.00ms]
+(pass) artifact after_command_commit process exit recovers without partial references (bun) [313.00ms]
+(pass) artifact before_command_commit process exit recovers without partial references (node) [281.00ms]
+(pass) artifact after_command_commit process exit recovers without partial references (node) [297.00ms]
+
+test\coordination-inbox.test.ts:
+(pass) fetch replay preserves the lease; acknowledgment is explicit and idempotent [31.00ms]
+(pass) recipient restart retains hour-old work and fences stale delivery tokens [47.00ms]
+(pass) bounded retry and backoff expose poison messages without blocking healthy work [31.00ms]
+(pass) explicit expiry keeps visible records and scoped announcements have separate deliveries [16.00ms]
+(pass) recipient quota is atomic for fanout and does not block independent recipients [15.00ms]
+(pass) untrusted command properties cannot replace the authorized scope or sender [32.00ms]
+(pass) version-one migration preserves tasks and rolls back interrupted schema changes [46.00ms]
+(pass) lost fetch and ack responses survive abrupt process exit (bun) [797.00ms]
+(pass) crashed consumer loses lease and eight concurrent consumers claim once (bun) [1657.00ms]
+(pass) lost fetch and ack responses survive abrupt process exit (node) [515.00ms]
+(pass) crashed consumer loses lease and eight concurrent consumers claim once (node) [1610.00ms]
+
+test\coordination-ipc.test.ts:
+(pass) artifact bytes, evidence links and shared context round trip through the owner [407.00ms]
+(pass) session capability fences task ownership over IPC after suspension [265.00ms]
+(pass) inbox leases and acknowledgments round trip through the authenticated owner [266.00ms]
+(pass) Bun client command and replay use the Node owner's durable core [266.00ms]
+(pass) held event wait wakes after a committed relevant event [250.00ms]
+(pass) capability binds actor and scope; invalid capability cannot mutate [265.00ms]
+(pass) disconnect rejects pending wait and reconnect replays committed events [250.00ms]
+(pass) Node owner rejects a duplicate named-pipe service without crashing [266.00ms]
+(pass) Node client uses the same command interface [250.00ms]
+
+test\coordination-reservations.test.ts:
+(pass) multi-file acquisition is atomic and conflict includes actionable holder details [47.00ms]
+(pass) nested tools reuse enclosing grants without releasing them [31.00ms]
+(pass) expired and superseded holders cannot release or renew replacement grants [47.00ms]
+(pass) cross-worktree edits warn without physical serialization; integration is exclusive [31.00ms]
+(pass) task-bound grants expire with their attempt and checks reject stale fences [31.00ms]
+
+test\coordination-sessions.test.ts:
+(pass) restart adoption preserves identity and inbox but supersedes old session commands and reads [31.00ms]
+(pass) lost enrollment response replays without a new incarnation or persisted plaintext secrets [31.00ms]
+(pass) launcher identity canonicalizes paths and preserves configured profile roots [16.00ms]
+(pass) project/profile binding is independent of labels and enrolled agents cannot omit session fencing [16.00ms]
+(pass) transport, runtime and progress observations remain independent through long tools and suspension [31.00ms]
+
+test\coordination-shared-context.test.ts:
+(pass) compare-and-set prevents lost updates and history survives restart [46.00ms]
+(pass) append is atomic, replay deduplicates and payload size stays bounded [16.00ms]
+(pass) expiry and deletion remain visible and cannot reset version numbers [31.00ms]
+(pass) prefix and history retrieval are bounded and paginated [16.00ms]
+(pass) eight concurrent writers preserve every append and accept one CAS (bun) [2797.00ms]
+(pass) eight concurrent writers preserve every append and accept one CAS (node) [2765.00ms]
+
+test\coordination-tasks.test.ts:
+(pass) expired ownership is recovered once and stale completion cannot overwrite its replacement [47.00ms]
+(pass) suspended owner is recoverable and cannot resume its old task attempt [31.00ms]
+(pass) long tool lease renewal is independent of heartbeat and model progress [31.00ms]
+(pass) restart adoption fences the old task attempt even before its lease expires [32.00ms]
+(pass) cancellation during work rejects late success and propagates dependency state through retry [31.00ms]
+(pass) failed attempts retain results across retry and task addressing remains scope-bound [31.00ms]
+(pass) simultaneous task claims accept exactly one owner (bun) [1422.00ms]
+(pass) simultaneous task claims accept exactly one owner (node) [1391.00ms]
+
+test\coordination-worktrees.test.ts:
+(pass) real Git worktrees share logical mapping while retaining separate physical files [4422.00ms]
+(pass) new files resolve ancestor links and reject symlink escape and Git metadata [16.00ms]
+
+test\coordination-write-hooks.test.ts:
+(pass) real pre/post hooks serialize competing subprocess writes and release the winning grant [3078.00ms]
+(pass) integration critical section blocks another worktree's subprocess until release [1703.00ms]
+(pass) opted-in hooks deny unknown path payloads and unreachable coordinators [1250.00ms]
+(pass) Codex rename hook reserves source and destination atomically [2297.00ms]
+(pass) Node owner recovers expired grants and rejects stale client release [94.00ms]
+
+test\dispatch-s7-no-double-spawn.test.ts:
+(pass) S7: no-double-spawn under retry > Layer 1: request_task with the same idempotency_key returns the existing task [32.00ms]
+106 |
+107 | export function requireDispatchAuthority(scope: string, requester: string) {
+108 |   if (envTruthy("SWARM_MCP_ALLOW_SPAWN")) return;
+109 |   const inst = instanceById(scope, requester);
+110 |   if (hasLabelToken(inst, "mode:gateway")) return;
+111 |   throw new Error(
+                  ^
+error: dispatch is gateway-only. Use a requester labeled mode:gateway, or set SWARM_MCP_ALLOW_SPAWN=1 from a trusted operator shell.
+      at requireDispatchAuthority (C:\Users\volpe\swarm-mcp-redesign\src\dispatch.ts:111:13)
+      at runDispatch (C:\Users\volpe\swarm-mcp-redesign\src\dispatch.ts:635:3)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\dispatch-s7-no-double-spawn.test.ts:190:31)
+200 |       idempotency_key: idempotencyKey,
+201 |     });
+202 |
+203 |     // Verify the spawn lock is in place before B runs.
+204 |     const locksBeforeB = spawnLocksFor(scope);
+205 |     expect(locksBeforeB).toHaveLength(1);
+                               ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 1
+Received length: 0
+
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\dispatch-s7-no-double-spawn.test.ts:205:26)
+(fail) S7: no-double-spawn under retry > Layer 2: concurrent dispatches from the same gateway fire exactly one spawn [15.00ms]
+106 |
+107 | export function requireDispatchAuthority(scope: string, requester: string) {
+108 |   if (envTruthy("SWARM_MCP_ALLOW_SPAWN")) return;
+109 |   const inst = instanceById(scope, requester);
+110 |   if (hasLabelToken(inst, "mode:gateway")) return;
+111 |   throw new Error(
+                  ^
+error: dispatch is gateway-only. Use a requester labeled mode:gateway, or set SWARM_MCP_ALLOW_SPAWN=1 from a trusted operator shell.
+      at requireDispatchAuthority (C:\Users\volpe\swarm-mcp-redesign\src\dispatch.ts:111:13)
+      at runDispatch (C:\Users\volpe\swarm-mcp-redesign\src\dispatch.ts:635:3)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\dispatch-s7-no-double-spawn.test.ts:266:31)
+275 |       wait_seconds: 1,
+276 |       idempotency_key: idempotencyKey,
+277 |     });
+278 |
+279 |     const locksBeforeB = spawnLocksFor(scope);
+280 |     expect(locksBeforeB).toHaveLength(1);
+                               ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 1
+Received length: 0
+
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\dispatch-s7-no-double-spawn.test.ts:280:26)
+(fail) S7: no-double-spawn under retry > Cross-instance: two gateway instances racing the same intent fire exactly one spawn [31.00ms]
+
+test\dispatch-visibility.test.ts:
+106 |
+107 | export function requireDispatchAuthority(scope: string, requester: string) {
+108 |   if (envTruthy("SWARM_MCP_ALLOW_SPAWN")) return;
+109 |   const inst = instanceById(scope, requester);
+110 |   if (hasLabelToken(inst, "mode:gateway")) return;
+111 |   throw new Error(
+                  ^
+error: dispatch is gateway-only. Use a requester labeled mode:gateway, or set SWARM_MCP_ALLOW_SPAWN=1 from a trusted operator shell.
+      at requireDispatchAuthority (C:\Users\volpe\swarm-mcp-redesign\src\dispatch.ts:111:13)
+      at runDispatch (C:\Users\volpe\swarm-mcp-redesign\src\dispatch.ts:635:3)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\dispatch-visibility.test.ts:113:37)
+(fail) dispatch task visibility > spawned worker can see the dispatched task via get_task and list_tasks [16.00ms]
+106 |
+107 | export function requireDispatchAuthority(scope: string, requester: string) {
+108 |   if (envTruthy("SWARM_MCP_ALLOW_SPAWN")) return;
+109 |   const inst = instanceById(scope, requester);
+110 |   if (hasLabelToken(inst, "mode:gateway")) return;
+111 |   throw new Error(
+                  ^
+error: dispatch is gateway-only. Use a requester labeled mode:gateway, or set SWARM_MCP_ALLOW_SPAWN=1 from a trusted operator shell.
+      at requireDispatchAuthority (C:\Users\volpe\swarm-mcp-redesign\src\dispatch.ts:111:13)
+      at runDispatch (C:\Users\volpe\swarm-mcp-redesign\src\dispatch.ts:635:3)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\dispatch-visibility.test.ts:214:37)
+(fail) dispatch task visibility > late-adoption: worker registers after the leased instance is reclaimed [16.00ms]
+
+test\events.test.ts:
+(pass) events: registry > register emits instance.registered [31.00ms]
+(pass) events: registry > deregister emits instance.deregistered [16.00ms]
+(pass) events: registry > offline prune emits instance.stale_reclaimed inside the cleanup tx [31.00ms]
+(pass) events: messages > send emits message.sent [31.00ms]
+(pass) events: messages > broadcast emits one message.broadcast event with recipient count [31.00ms]
+(pass) events: kv > set emits kv.set with the actor [16.00ms]
+(pass) events: kv > set without actor leaves actor null [31.00ms]
+(pass) events: kv > del only emits when something was deleted [16.00ms]
+(pass) events: context > lock emits context.lock_acquired [31.00ms]
+(pass) events: context > clearLocks emits context.lock_released only when something was removed [31.00ms]
+(pass) events: tasks + cascades > request emits task.created [32.00ms]
+(pass) events: tasks + cascades > claim then update emits the right pair [31.00ms]
+(pass) events: tasks + cascades > completing a task that unblocks dependents emits task.cascade.unblocked [31.00ms]
+(pass) events: tasks + cascades > failing a dep cascades cancellation to all dependents [31.00ms]
+(pass) events: TTL > cleanup deletes events older than 24h [32.00ms]
+(pass) events: scope filtering > listSince only returns rows for the requested scope [15.00ms]
+(pass) events: scope filtering > listSince respects sinceId [16.00ms]
+
+test\herdr_socket.test.ts:
+(pass) herdr socket path resolution > uses an explicit HERDR_SOCKET_PATH unchanged
+(pass) herdr socket path resolution > loads socket path from the current identity's profile env file [15.00ms]
+(pass) herdr socket path resolution > expands simple shell-style env values from profile env files
+(pass) herdr socket path resolution > falls back to empty string when the profile env file is missing
+(pass) herdr socket path resolution > accepts identity tokens with the identity: prefix
+(pass) herdr socket path resolution > returns empty when no identity is set
+
+test\identity.test.ts:
+(pass) identityToken > extracts identity:<name> token from label
+(pass) identityToken > returns empty string when no identity token present
+(pass) identityName > returns just the identity name without prefix
+(pass) processIdentity > reads AGENT_IDENTITY env and returns identity:<name>
+(pass) processIdentity > returns empty string when AGENT_IDENTITY unset or empty
+(pass) crossIdentityReason > blocks when both sides have different identity tokens
+(pass) crossIdentityReason > allows when both sides share the same identity
+(pass) crossIdentityReason > blocks when either side is missing an identity token
+(pass) crossIdentityReason > honors SWARM_MCP_ALLOW_UNLABELED escape hatch
+(pass) crossIdentityReason > honors SWARM_MCP_ALLOW_CROSS_IDENTITY escape hatch
+
+test\launcher_identity.test.ts:
+(pass) launcher identity profile resolution > target profile aliases win when the caller env belongs to another profile
+(pass) launcher identity profile resolution > free-form profile names normalize for env and launcher lookup
+
+test\prompts.test.ts:
+(pass) prompts > setup prompt covers register + bootstrap and points to the skill
+(pass) prompts > protocol prompt is the inline doctrine fallback for plugin-less runtimes
+(pass) prompts > roleBootstrap returns role-specific guidance with skill reference
+(pass) prompts > roleBootstrap returns empty for missing or unknown roles
+
+test\swarm.test.ts:
+(pass) database schema > bootstrap stamps the shared schema version [16.00ms]
+(pass) messages > broadcast fans out per recipient and stays inside scope [31.00ms]
+106 |
+107 | export function requireDispatchAuthority(scope: string, requester: string) {
+108 |   if (envTruthy("SWARM_MCP_ALLOW_SPAWN")) return;
+109 |   const inst = instanceById(scope, requester);
+110 |   if (hasLabelToken(inst, "mode:gateway")) return;
+111 |   throw new Error(
+                  ^
+error: dispatch is gateway-only. Use a requester labeled mode:gateway, or set SWARM_MCP_ALLOW_SPAWN=1 from a trusted operator shell.
+      at requireDispatchAuthority (C:\Users\volpe\swarm-mcp-redesign\src\dispatch.ts:111:13)
+      at runDispatch (C:\Users\volpe\swarm-mcp-redesign\src\dispatch.ts:635:3)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\swarm.test.ts:150:36)
+(fail) messages > completion waits consume matching task messages for the requester [16.00ms]
+(pass) cleanup > removes internal spawn locks once their dispatch task is terminal [31.00ms]
+(pass) registry adoption > adopts an existing unadopted row via preassignedId [16.00ms]
+(pass) registry adoption > falls through to fresh insert with same id when pre-created row was pruned [15.00ms]
+(pass) registry adoption > register without preassignedId still creates adopted row [16.00ms]
+(pass) registry adoption > register with an existing session label adopts instead of duplicating [16.00ms]
+(pass) registry adoption > register with adoptInstanceId adopts an existing same-scope row [15.00ms]
+(pass) registry adoption > register with wrong-scope adoptInstanceId falls through to a fresh row [16.00ms]
+(pass) registry adoption > register preserves adoptInstanceId when the leased row was already pruned [16.00ms]
+(pass) scope > non-git directories fall back to their own path as scope [15.00ms]
+(pass) scope > stale instances remain visible until they are offline [16.00ms]
+(pass) scope > offline instances are pruned before lookups succeed [15.00ms]
+(pass) scope > setLease creates an unadopted placeholder hidden from list_instances [16.00ms]
+(pass) scope > leases that expire without adoption are reclaimed [16.00ms]
+(pass) scope > adoption clears lease_until and flips adopted=1 [15.00ms]
+(pass) scope > legacy zombies (adopted=1 with future heartbeat, no lease_until) are reclaimed [16.00ms]
+(pass) tasks > claiming is single-winner, transitions to in_progress, and updates are ownership checked [31.00ms]
+(pass) tasks > pre-assigned task is started by the assignee via claim_task [16.00ms]
+(pass) tasks > claiming open work is blocked until unread messages are polled [31.00ms]
+(pass) tasks > claiming can explicitly override the unread-message guard [31.00ms]
+(pass) tasks > offline assignees are released and their locks are removed [16.00ms]
+(pass) tasks > creating a task after dependency failure auto-cancels it [31.00ms]
+(pass) tasks > creating an approval_required task after dependency cancellation auto-cancels it [16.00ms]
+(pass) tasks > snapshot includes failed, cancelled, and approval_required tasks [31.00ms]
+(pass) tasks > snapshot can omit terminal rows while returning terminal counts [31.00ms]
+(pass) claim_next_task > atomically claims the highest-priority open task [32.00ms]
+(pass) claim_next_task > prefers tasks already assigned to the caller [31.00ms]
+(pass) claim_next_task > filters by type and file overlap [31.00ms]
+(pass) claim_next_task > is blocked by unread messages unless explicitly overridden [16.00ms]
+(pass) priority > tasks are listed in priority order (highest first) [31.00ms]
+(pass) dependencies > task with unmet deps starts as blocked [16.00ms]
+(pass) dependencies > task with already-done deps starts as open [31.00ms]
+(pass) dependencies > auto-unblocks when dependency completes [15.00ms]
+(pass) dependencies > auto-unblocks to claimed when assignee is pre-set [32.00ms]
+(pass) dependencies > multi-dep task only unblocks when all deps are done [47.00ms]
+(pass) dependencies > auto-cancels dependents when dependency fails [31.00ms]
+(pass) dependencies > auto-cancels dependents when dependency is cancelled [15.00ms]
+(pass) dependencies > rejects invalid dependency IDs
+(pass) dependencies > blocked tasks cannot be moved to a terminal status by a non-owner [32.00ms]
+(pass) dependencies > blocked tasks can be cancelled by requester [15.00ms]
+(pass) idempotency > duplicate idempotency key returns existing task [16.00ms]
+(pass) idempotency > different idempotency keys create separate tasks [16.00ms]
+(pass) idempotency > idempotency keys are scoped [31.00ms]
+(pass) approval > approval_required task starts in correct status [15.00ms]
+(pass) approval > approve transitions to open when no deps [16.00ms]
+(pass) approval > approve transitions to claimed when assignee is pre-set [16.00ms]
+(pass) approval > approve transitions to blocked when deps are unmet [15.00ms]
+(pass) approval > approve auto-cancels when dep has already failed [32.00ms]
+(pass) approval > approval_required tasks can be cancelled [31.00ms]
+(pass) approval > approval_required tasks cannot be moved to done before approval [15.00ms]
+(pass) approval > approve + deps: approved then deps complete → unblocks [32.00ms]
+(pass) approval > approve + deps: deps complete then approve → open [31.00ms]
+(pass) parent_task_id > task can reference a parent task [31.00ms]
+(pass) parent_task_id > rejects invalid parent task ID [16.00ms]
+(pass) task relationships and handoffs > review and fix task relationships are stored and validated [15.00ms]
+(pass) task relationships and handoffs > batch creation resolves $N review and fix relationships [32.00ms]
+(pass) task relationships and handoffs > report_progress stores progress metadata and preserves or clears optional fields [15.00ms]
+(pass) task relationships and handoffs > complete_task stores structured result, clears progress, and releases task file locks [47.00ms]
+(pass) task relationships and handoffs > complete_task requires tracker disposition for Linear-backed tasks [31.00ms]
+(pass) task relationships and handoffs > complete_task requires tracker disposition when task metadata requires it [32.00ms]
+(pass) offline release with new statuses > blocked tasks keep status when assignee goes offline [31.00ms]
+(pass) locks > only one active lock can exist per file per scope [16.00ms]
+(pass) locks > default lock is re-entrant for the same instance [31.00ms]
+(pass) locks > exclusive=true conflicts on same-instance re-entry [15.00ms]
+(pass) locks > exclusive=true conflicts on different-instance lock [32.00ms]
+(pass) locks > exclusive=true succeeds when no lock exists [15.00ms]
+(pass) locks > cross-identity lock attempts on another identity root are blocked [16.00ms]
+(pass) locks > cross-identity lock conflicts return a redacted owner [31.00ms]
+(pass) locks > clearLocks releases an exclusive lock [31.00ms]
+(pass) locks > lock conflict includes owner and active task context [32.00ms]
+(pass) locks > fileLock reads active lock without acquiring a lock [31.00ms]
+(pass) locks > terminal task update releases edit locks but keeps internal locks [31.00ms]
+(pass) locks > terminal task update keeps edit locks for other active tasks [47.00ms]
+(pass) locks > terminal task update releases locks tagged with that task_id even when file is not in task.files [31.00ms]
+(pass) locks > legacy locks without task_id still release via task.files at terminal update [32.00ms]
+(pass) locks > releaseInstanceLocksForTask returns 0 and is a no-op when no locks match [15.00ms]
+(pass) locks > terminal task update keeps locks tagged with a different active task_id [31.00ms]
+(pass) batch creation > creates multiple tasks atomically [16.00ms]
+(pass) batch creation > $N references resolve to correct task IDs [16.00ms]
+(pass) batch creation > rejects forward references [15.00ms]
+(pass) batch creation > rejects duplicate idempotency keys within one batch [16.00ms]
+(pass) batch creation > rejects self-references [16.00ms]
+(pass) batch creation > rejects out-of-range $N references [15.00ms]
+(pass) batch creation > mixed $N refs and external task IDs [31.00ms]
+(pass) batch creation > new batch task with failed external dependency is auto-cancelled [16.00ms]
+(pass) batch creation > idempotency: existing tasks reused, new tasks created [16.00ms]
+(pass) batch creation > $N parent_task_id resolves correctly [15.00ms]
+(pass) batch creation > rolls back entire batch on validation failure [16.00ms]
+(pass) batch creation > priority is respected in batch [16.00ms]
+(pass) batch creation > empty batch returns error [15.00ms]
+(pass) batch creation > diamond DAG from design spec [31.00ms]
+(pass) swarm_status > summarizes current coordination state and next action [47.00ms]
+(pass) swarm_status > surfaces file collision and lock compliance warnings [47.00ms]
+(pass) list_instances label filter > filters by label substring [16.00ms]
+(pass) list_instances label filter > returns all when no filter [15.00ms]
+(pass) kv > keys are namespaced by scope [16.00ms]
+(pass) kv > append creates array from scratch [16.00ms]
+(pass) kv > append pushes to existing array
+(pass) kv > append wraps non-array existing value [15.00ms]
+(pass) kv > append returns new array length [16.00ms]
+(pass) kv > version changes on same-second writes [16.00ms]
+(pass) kv > version changes when deleting a key [31.00ms]
+(pass) kv > set cannot overwrite a key owned by another identity [31.00ms]
+(pass) kv > cleanup removes old orphaned instance-scoped kv and keeps durable plans [47.00ms]
+(pass) kv > cleanup dry-run reports orphaned kv without deleting it [16.00ms]
+(pass) kv > cleanup deletes locks whose owning instance is no longer registered [15.00ms]
+(pass) kv > orphan-lock sweep dry-run reports without deleting [31.00ms]
+(pass) planner ownership > first active planner claims owner/planner automatically [16.00ms]
+(pass) planner ownership > owner/planner fails over to the next planner on deregister [31.00ms]
+(pass) planner ownership > owner/planner fails over when the current owner goes offline [32.00ms]
+(pass) linear promotion bridge (VUH-36) > evaluatePromotion creates when policy fires and tracker is configured [15.00ms]
+(pass) linear promotion bridge (VUH-36) > evaluatePromotion skips when no tracker is configured [16.00ms]
+(pass) linear promotion bridge (VUH-36) > evaluatePromotion skips when label has no identity token
+(pass) linear promotion bridge (VUH-36) > type=test and trivial inline edits are not promoted [15.00ms]
+(pass) linear promotion bridge (VUH-36) > explicit linear:VUH-XX in idempotency key writes the binding row immediately [32.00ms]
+(pass) linear promotion bridge (VUH-36) > per-dispatch promote=false suppresses promotion even when policy would fire [15.00ms]
+(pass) linear promotion bridge (VUH-36) > identity mismatch between task label and configured tracker is refused [16.00ms]
+(pass) linear promotion bridge (VUH-36) > a worker missing the Linear MCP records tracker_update_skipped on complete_task [16.00ms]
+56 |   if (!identity) return;
+57 |   const roots = identityRoots(identity);
+58 |   if (!roots.length) return;
+59 |   if (roots.some((base) => isUnder(dir, base) && isUnder(fileRoot, base))) return;
+60 |   const rootsEnvName = profileScopedEnvName(identity, "ROOTS") || `SWARM_MCP_<PROFILE>_ROOTS`;
+61 |   throw new Error(
+                 ^
+error: Registration blocked: identity:default directory must be under one of C:\tmp, C:\Users\volpe\swarm-mcp-redesign\C, C:\Users\volpe\swarm-mcp-redesign. Set SWARM_MCP_DEFAULT_ROOTS to override.
+      at validateIdentityDirectory (C:\Users\volpe\swarm-mcp-redesign\src\registry.ts:61:13)
+      at register (C:\Users\volpe\swarm-mcp-redesign\src\registry.ts:174:3)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\swarm.test.ts:2507:21)
+(fail) linear promotion bridge (VUH-36) > dispatch attaches promotion decision to its response [15.00ms]
+56 |   if (!identity) return;
+57 |   const roots = identityRoots(identity);
+58 |   if (!roots.length) return;
+59 |   if (roots.some((base) => isUnder(dir, base) && isUnder(fileRoot, base))) return;
+60 |   const rootsEnvName = profileScopedEnvName(identity, "ROOTS") || `SWARM_MCP_<PROFILE>_ROOTS`;
+61 |   throw new Error(
+                 ^
+error: Registration blocked: identity:default directory must be under one of C:\tmp, C:\Users\volpe\swarm-mcp-redesign\C, C:\Users\volpe\swarm-mcp-redesign. Set SWARM_MCP_DEFAULT_ROOTS to override.
+      at validateIdentityDirectory (C:\Users\volpe\swarm-mcp-redesign\src\registry.ts:61:13)
+      at register (C:\Users\volpe\swarm-mcp-redesign\src\registry.ts:174:3)
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\swarm.test.ts:2538:21)
+(fail) linear promotion bridge (VUH-36) > dispatch with explicit promote_identifier emits a link decision and writes binding
+
+test\workspace_identity.test.ts:
+(pass) workspace backend registry > resolves published identities through registered synthetic backends [47.00ms]
+(pass) workspace backend registry > prompt_peer finds recipients published under a non-default backend [31.00ms]
+(pass) workspace backend registry > peek_peer reads recipients through their published workspace backend [31.00ms]
+387 |       handle: "pane-7",
+388 |       source: "recent-unwrapped",
+389 |       lines: 12,
+390 |     });
+391 |
+392 |     expect(result).toEqual({
+                         ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "ok": true,
+-   "value": {
+-     "lines": 12,
+-     "source": "recent-unwrapped",
+-     "text":
+- "peer output
+- "
+- ,
+-   },
++   "error": "ENOENT: no such file or directory, uv_spawn 'C:\Users\volpe\AppData\Local\Temp\fake-herdr-read-jfGm3B\herdr'",
++   "ok": false,
+  }
+
+- Expected  - 9
++ Received  + 2
+
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\workspace_identity.test.ts:392:20)
+(fail) workspace backend registry > herdr backend reads pane text through herdr pane read [16.00ms]
+(pass) workspace backend registry > instance annotations expose published herdr pane metadata without changing identity [31.00ms]
+(pass) workspace backend registry > lock conflicts include owner pane metadata when it is published [31.00ms]
+(pass) workspace backend registry > dispatch routes only to compatible identity workers and reserves the task [47.00ms]
+(pass) workspace backend registry > dispatch can wait for terminal task completion when requested [375.00ms]
+(pass) workspace backend registry > dispatch default idempotency survives prompt and harness drift [31.00ms]
+(pass) workspace backend registry > dispatch completion wait times out with the latest task snapshot [47.00ms]
+(pass) workspace backend registry > dispatch does not cross identity boundary to reuse a live worker [32.00ms]
+(pass) workspace backend registry > dispatch does not cross identity boundary for generalist fallback [46.00ms]
+(pass) workspace backend registry > dispatch does not route identified work to an unlabeled worker [16.00ms]
+(pass) workspace backend registry > dispatch maps personal requester launchers and passes identity to spawner [78.00ms]
+(pass) workspace backend registry > herdr default harness honors Hermes identity env
+(pass) workspace backend registry > dispatch rejects spawn labels with a conflicting identity [16.00ms]
+(pass) workspace backend registry > dispatch binds spawned workers before releasing the spawn mutex [47.00ms]
+(pass) workspace backend registry > dispatch fails spawned handoff when worker cannot see the task [47.00ms]
+(pass) workspace backend registry > dispatch nudges a spawned worker by default [46.00ms]
+(pass) workspace backend registry > dispatch kickstarts a spawn-ready worker before the spawner wait returns [63.00ms]
+1086 |       lock_path: "/__swarm/spawn/implementer/launch123",
+1087 |       lock_note: { task_id: "task-1" },
+1088 |       wait_seconds: 0,
+1089 |     });
+1090 |
+1091 |     expect(result.status).toBe("spawn_in_flight");
+                                 ^
+error: expect(received).toBe(expected)
+
+Expected: "spawn_in_flight"
+Received: "spawn_failed"
+
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\workspace_identity.test.ts:1091:27)
+(fail) workspace backend registry > herdr spawner pre-creates a leased instance and publishes pane identity [31.00ms]
+1185 |       launch_token: "launch-layout-2",
+1186 |       lock_path: "/__swarm/spawn/implementer/launch-layout-2",
+1187 |       lock_note: { task_id: "task-2" },
+1188 |     });
+1189 |
+1190 |     expect(first).toMatchObject({
+                         ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "status": "spawn_in_flight",
+-   "workspace_handle": {
+-     "pane_id": "pane-root",
+-     "placement": {
+-       "group": "vuh-batch",
+-       "reason": "created scope workspace",
+-       "reused_tab": false,
+-       "reused_workspace": false,
+-     },
+-     "workspace_id": "workspace-1",
+-   },
++   "error": "herdr workspace create failed: ENOENT: no such file or directory, uv_spawn 'C:\Users\volpe\AppData\Local\Temp\fake-herdr-layout-HuMGAj\herdr'",
++   "status": "spawn_failed",
+  }
+
+- Expected  - 11
++ Received  + 2
+
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\workspace_identity.test.ts:1190:19)
+(fail) workspace backend registry > herdr spawner reuses a scope workspace when no parent pane is known [31.00ms]
+1288 |       launch_token: "launch-grid-2",
+1289 |       lock_path: "/__swarm/spawn/implementer/launch-grid-2",
+1290 |       lock_note: { task_id: "task-2" },
+1291 |     });
+1292 |
+1293 |     expect(first).toMatchObject({
+                         ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "workspace_handle": {
+-     "placement": {
+-       "layout": {
+-         "cols": 2,
+-         "kind": "grid",
+-         "pane_count": 1,
+-         "rows": 1,
+-         "status": "deferred",
+-         "target_panes": 2,
+-       },
+-       "max_panes_per_tab": 2,
+-     },
+-   },
++   "error": "herdr workspace create failed: ENOENT: no such file or directory, uv_spawn 'C:\Users\volpe\AppData\Local\Temp\fake-herdr-grid-rwBDFE\herdr'",
++   "status": "spawn_failed",
+  }
+
+- Expected  - 13
++ Received  + 2
+
+      at <anonymous> (C:\Users\volpe\swarm-mcp-redesign\test\workspace_identity.test.ts:1293:19)
+(fail) workspace backend registry > herdr spawner applies generic grid layout when the tab reaches target pane count [32.00ms]
+(pass) workspace backend registry > herdr launch wait ignores unadopted leased placeholders [15.00ms]
+(pass) workspace backend registry > workspace_identity does not own child process transport calls [16.00ms]
+(pass) workspace backend registry > deregister sweeps the instance's published identity rows [31.00ms]
+(pass) workspace backend registry > stale-reclaim cleanup also sweeps identity rows [31.00ms]
+(pass) workspace backend registry > peek_peer refuses when target resolves to the caller's own published pane [32.00ms]
+(pass) workspace backend registry > peek_peer refuses when backend.currentLocalHandle equals target pane [47.00ms]
+(pass) workspace backend registry > resolvePublishedWorkspaceIdentity refuses recycled pane occupied by a different agent [15.00ms]
+(pass) workspace backend registry > resolvePublishedWorkspaceIdentity surfaces live agent name on success [16.00ms]
+(pass) workspace backend registry > ensureLocalWorkspaceIdentity republishes when KV pane differs from current local handle [31.00ms]
+(pass) workspace backend registry > ensureLocalWorkspaceIdentity is a no-op when KV already matches current local handle [16.00ms]
+(pass) workspace backend registry > ensureLocalWorkspaceIdentity reports no_local_handle when backend can't determine it [15.00ms]
+(pass) workspace backend registry > orphan identity rows older than orphanKvTtl are swept by cleanupOrphanKv [32.00ms]
+
+38 tests failed:
+(fail) CLI registration adoption > register uses SWARM_MCP_SCOPE when --scope is omitted
+(fail) CLI registration adoption > bootstrap recreates a pruned preassigned instance from env
+(fail) CLI registration adoption > register --adopt-instance-id adopts the lease row and keeps identity rows keyed to it
+(fail) CLI registration adoption > register --adopt-instance-id falls through when the lease is in another scope
+(fail) CLI registration adoption > bootstrap --adopt-instance-id returns a snapshot for the adopted lease [16.00ms]
+(fail) CLI registration adoption > bootstrap includes configured same-identity work tracker
+(fail) CLI task notifications > worker commands use SWARM_MCP_SCOPE when --scope is omitted
+(fail) CLI task notifications > request-task prompts an explicit assignee
+(fail) CLI dispatch spawn authority > dispatch --help prints help instead of failing flag parsing [16.00ms]
+(fail) CLI dispatch spawn authority > rejects non-gateway requesters
+(fail) CLI dispatch spawn authority > allows gateway requesters
+(fail) CLI dispatch spawn authority > dispatch --wait-for-completion returns a completion timeout snapshot
+(fail) CLI dispatch spawn authority > dispatch falls back to a live generalist before spawning [15.00ms]
+(fail) CLI dispatch spawn authority > dispatch --force-spawn bypasses live worker matching
+(fail) CLI dispatch spawn authority > dispatch prefers an exact role over a generalist
+(fail) CLI dispatch spawn authority > dispatch can explicitly use the legacy swarm-ui spawner
+(fail) CLI dispatch spawn authority > dispatch defaults to the herdr spawner [16.00ms]
+(fail) CLI dispatch spawn authority > dispatch rejects unknown spawner before creating work
+(fail) CLI workspace identity bridge > prompt-peer repairs stale workspace handle aliases before nudging
+(fail) CLI workspace identity bridge > resolve-workspace-handle maps a backend handle back to a swarm instance
+(fail) CLI file path normalization > lock and unlock normalize relative paths through the registered instance root [16.00ms]
+(fail) CLI file path normalization > request-task and dispatch normalize --file paths
+(fail) CLI doctor > doctor reports OK on a fresh db and exits 0
+(fail) CLI doctor > doctor --json emits a structured report with checks array
+(fail) CLI claim and update-task > claim transitions an open task to in_progress and update-task moves it to a terminal status [15.00ms]
+(fail) CLI claim and update-task > claim fails with a non-zero exit code for a non-existent task (text mode)
+(fail) CLI claim and update-task > update-task requires a valid --status flag
+(fail) S7: no-double-spawn under retry > Layer 2: concurrent dispatches from the same gateway fire exactly one spawn [15.00ms]
+(fail) S7: no-double-spawn under retry > Cross-instance: two gateway instances racing the same intent fire exactly one spawn [31.00ms]
+(fail) dispatch task visibility > spawned worker can see the dispatched task via get_task and list_tasks [16.00ms]
+(fail) dispatch task visibility > late-adoption: worker registers after the leased instance is reclaimed [16.00ms]
+(fail) messages > completion waits consume matching task messages for the requester [16.00ms]
+(fail) linear promotion bridge (VUH-36) > dispatch attaches promotion decision to its response [15.00ms]
+(fail) linear promotion bridge (VUH-36) > dispatch with explicit promote_identifier emits a link decision and writes binding
+(fail) workspace backend registry > herdr backend reads pane text through herdr pane read [16.00ms]
+(fail) workspace backend registry > herdr spawner pre-creates a leased instance and publishes pane identity [31.00ms]
+(fail) workspace backend registry > herdr spawner reuses a scope workspace when no parent pane is known [31.00ms]
+(fail) workspace backend registry > herdr spawner applies generic grid layout when the tab reaches target pane count [32.00ms]
+
+ 267 pass
+ 38 fail
+ 993 expect() calls
+Ran 305 tests across 21 files. [48.27s]

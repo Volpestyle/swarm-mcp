@@ -3,7 +3,7 @@ import { CoordinationError } from "./errors";
 
 // A separate application identity prevents accidental adoption of legacy swarm.db.
 export const APPLICATION_ID = 0x53574d32;
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 7;
 export type FaultPoint =
   | "before_migration_commit"
   | "before_command_commit"
@@ -103,6 +103,38 @@ const migrations = [
   );
   CREATE UNIQUE INDEX reservation_owner ON reservations(scope,kind,resource) WHERE state='active';
   CREATE INDEX reservation_logical ON reservations(scope,repository,logical_path,state);`,
+  `CREATE TABLE shared_kv (
+    scope TEXT NOT NULL, key TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>0),
+    value TEXT, deleted INTEGER NOT NULL CHECK(deleted IN (0,1)),
+    author TEXT NOT NULL, updated_at INTEGER NOT NULL, expires_at INTEGER,
+    PRIMARY KEY(scope,key)
+  );
+  CREATE TABLE shared_kv_history (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL, key TEXT NOT NULL,
+    version INTEGER NOT NULL, value TEXT, deleted INTEGER NOT NULL,
+    author TEXT NOT NULL, updated_at INTEGER NOT NULL, expires_at INTEGER,
+    UNIQUE(scope,key,version)
+  );
+  CREATE INDEX shared_history_scope_key ON shared_kv_history(scope,key,seq);`,
+  `ALTER TABLE tasks ADD COLUMN expires_at INTEGER;
+  CREATE TABLE artifacts (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, scope TEXT NOT NULL,
+    digest TEXT NOT NULL, bytes INTEGER NOT NULL, summary TEXT NOT NULL, media_type TEXT NOT NULL,
+    author TEXT NOT NULL, source_path TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER
+  );
+  CREATE INDEX artifact_scope_cursor ON artifacts(scope,seq);
+  CREATE TABLE findings (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, scope TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('result','decision','annotation')), summary TEXT NOT NULL,
+    task_id TEXT REFERENCES tasks(id), attempt_id TEXT REFERENCES task_attempts(id),
+    author TEXT NOT NULL, session_id TEXT, revision TEXT NOT NULL, files TEXT NOT NULL,
+    verification TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER
+  );
+  CREATE TABLE finding_artifacts (
+    finding_id TEXT NOT NULL REFERENCES findings(id), artifact_id TEXT NOT NULL REFERENCES artifacts(id),
+    PRIMARY KEY(finding_id,artifact_id)
+  );
+  CREATE INDEX finding_scope_task ON findings(scope,task_id,seq);`,
 ];
 
 function version(db: Sqlite): number {

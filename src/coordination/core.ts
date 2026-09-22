@@ -1,10 +1,17 @@
-import { CoordinationError } from "./errors";
+import { CoordinationError, requireText } from "./errors";
 import { CoordinationStore, type CommandResult, type Json } from "./store";
 import type { InboxCommand } from "./inbox";
 import type { SessionCommand } from "./sessions";
 import type { TaskCommand } from "./tasks";
 import type { ReservationCommand, Resource } from "./reservations";
 import { canonicalPath, mapWorktreeFile } from "./worktrees";
+import type { SharedContextCommand } from "./shared-context";
+import {
+  expiry,
+  type ArtifactImport,
+  type EvidenceCommand,
+  type FindingFilter,
+} from "./evidence";
 
 // Trusted application context. The local service supplies this after validating
 // its session capability; transports must never treat a caller's label as auth.
@@ -18,6 +25,8 @@ export type CoreCommand =
   | InboxCommand
   | SessionCommand
   | TaskCommand
+  | SharedContextCommand
+  | EvidenceCommand
   | ReservationCommand;
 
 export class CoordinationCore {
@@ -70,6 +79,16 @@ export class CoordinationCore {
       },
       (tx) => {
         switch (command.type) {
+          case "finding.record":
+            return tx.evidence.record(command.payload);
+          case "retention.set":
+            return tx.evidence.retention(command.payload);
+          case "kv.set":
+            return tx.shared.set(command.payload);
+          case "kv.append":
+            return tx.shared.append(command.payload);
+          case "kv.delete":
+            return tx.shared.delete(command.payload);
           case "reservation.acquire":
             return tx.reservations.acquire(command.payload, resources);
           case "reservation.renew":
@@ -136,6 +155,134 @@ export class CoordinationCore {
     this.store.assertContext(context);
     return this.store.task(context.scope, id);
   }
+  async importArtifact(context: ActorContext, input: ArtifactImport) {
+    const command = {
+      ...context,
+      id: input.id,
+      type: "artifact.import",
+      payload: { ...input },
+    };
+    const cached = this.store.replay(command);
+    if (cached) return cached;
+    requireText(input.summary, "summary", 2048);
+    if (input.mediaType !== undefined)
+      requireText(input.mediaType, "mediaType", 128);
+    expiry(this.store.now(), input.ttlMs);
+    const source = mapWorktreeFile(this.store.worktree(context), input.path);
+    const captured = await this.store.artifactFiles.capture(
+      context.scope,
+      source.physical,
+    );
+    return this.store.execute(command, (tx) =>
+      tx.evidence.artifact(input, captured, source.logical),
+    );
+  }
+  async artifact(context: ActorContext, id: string) {
+    this.store.assertContext(context);
+    const row = this.store.artifact(context.scope, id);
+    if (!row) return { artifactId: id, status: "missing_reference" };
+    const physical = await this.store.artifactFiles.inspect(context.scope, row);
+    this.store.assertContext(context);
+    const current = this.store.artifact(context.scope, id)!;
+    const status =
+      current.expires_at !== null && current.expires_at <= this.store.now()
+        ? "expired"
+        : physical;
+    return {
+      artifactId: id,
+      uri: `swarm://artifacts/${id}`,
+      status,
+      digest: current.digest,
+      bytes: current.bytes,
+      summary: current.summary,
+      mediaType: current.media_type,
+      author: current.author,
+      sourcePath: current.source_path,
+      createdAt: current.created_at,
+      expiresAt: current.expires_at,
+    };
+  }
+  async artifacts(context: ActorContext, cursor = 0, limit = 50) {
+    this.store.assertContext(context);
+    const rows = this.store.artifacts(context.scope, cursor, limit);
+    return {
+      items: await Promise.all(
+        rows.map((row) => this.artifact(context, row.id)),
+      ),
+      cursor: rows.at(-1)?.seq ?? cursor,
+    };
+  }
+  async readArtifact(
+    context: ActorContext,
+    id: string,
+    offset = 0,
+    limit = 32768,
+  ) {
+    this.store.assertContext(context);
+    const row = this.store.artifact(context.scope, id);
+    if (!row)
+      return { artifactId: id, status: "missing_reference", data: null };
+    if (row.expires_at !== null && row.expires_at <= this.store.now())
+      return { artifactId: id, status: "expired", data: null };
+    const result = await this.store.artifactFiles.read(
+      context.scope,
+      row,
+      offset,
+      limit,
+    );
+    this.store.assertContext(context);
+    const current = this.store.artifact(context.scope, id)!;
+    if (current.expires_at !== null && current.expires_at <= this.store.now())
+      return { artifactId: id, status: "expired", data: null };
+    return { artifactId: id, ...result };
+  }
+  async findings(context: ActorContext, filter: FindingFilter = {}) {
+    this.store.assertContext(context);
+    const result = this.store.findings(context.scope, filter);
+    const refs = [...new Set(result.items.flatMap((item) => item.artifactIds))];
+    const metadata = new Map<
+      string,
+      Awaited<ReturnType<CoordinationCore["artifact"]>>
+    >();
+    for (let i = 0; i < refs.length; i += 20)
+      await Promise.all(
+        refs.slice(i, i + 20).map(async (id) => {
+          metadata.set(id, await this.artifact(context, id));
+        }),
+      );
+    this.store.assertContext(context);
+    return {
+      items: result.items.map((item) => ({
+        ...item,
+        artifacts: item.artifactIds.map((id) => metadata.get(id)!),
+      })),
+      cursor: result.cursor,
+    };
+  }
+
+  shared(context: ActorContext, key: string) {
+    this.store.assertContext(context);
+    return this.store.shared(context.scope, key);
+  }
+  sharedList(
+    context: ActorContext,
+    prefix?: string,
+    cursor?: string,
+    limit?: number,
+  ) {
+    this.store.assertContext(context);
+    return this.store.sharedList(context.scope, prefix, cursor, limit);
+  }
+  sharedHistory(
+    context: ActorContext,
+    key: string,
+    cursor?: number,
+    limit?: number,
+  ) {
+    this.store.assertContext(context);
+    return this.store.sharedHistory(context.scope, key, cursor, limit);
+  }
+
   reservations(context: ActorContext, limit?: number) {
     this.store.assertContext(context);
     return this.store.reservations(context.scope, limit);

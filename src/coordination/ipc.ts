@@ -3,13 +3,22 @@ import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { CoordinationCore, type ActorContext, type CoreCommand } from "./core";
 import { CoordinationError, requireText } from "./errors";
+import type { ArtifactImport, FindingFilter } from "./evidence";
 
 const MAX_FRAME_BYTES = 65536;
 export type Operation =
   | { op: "command"; command: CoreCommand }
+  | { op: "artifact_import"; input: ArtifactImport }
+  | { op: "artifact"; artifactId: string }
+  | { op: "artifact_read"; artifactId: string; offset?: number; limit?: number }
+  | { op: "artifacts"; cursor?: number; limit?: number }
+  | { op: "findings"; filter?: FindingFilter }
   | { op: "task"; taskId: string }
   | { op: "attempts"; taskId: string }
   | { op: "reservations"; limit?: number }
+  | { op: "kv"; key: string }
+  | { op: "kv_list"; prefix?: string; cursor?: string; limit?: number }
+  | { op: "kv_history"; key: string; cursor?: number; limit?: number }
   | { op: "inbox"; cursor?: number; limit?: number }
   | { op: "message_status"; messageId: string }
   | { op: "events"; cursor: number; limit?: number }
@@ -87,6 +96,48 @@ export async function serveCoordination(options: {
         counted = true;
         let result: unknown;
         switch (raw.op) {
+          case "artifact_import":
+            if (!record(raw.input))
+              throw new CoordinationError(
+                "invalid_input",
+                "Invalid artifact import",
+              );
+            result = await options.core.importArtifact(
+              actor,
+              raw.input as unknown as ArtifactImport,
+            );
+            break;
+          case "artifact":
+            requireText(raw.artifactId, "artifact ID");
+            result = await options.core.artifact(actor, raw.artifactId);
+            break;
+          case "artifact_read":
+            requireText(raw.artifactId, "artifact ID");
+            result = await options.core.readArtifact(
+              actor,
+              raw.artifactId,
+              raw.offset as number | undefined,
+              raw.limit as number | undefined,
+            );
+            break;
+          case "artifacts":
+            result = await options.core.artifacts(
+              actor,
+              raw.cursor as number | undefined,
+              raw.limit as number | undefined,
+            );
+            break;
+          case "findings":
+            if (raw.filter !== undefined && !record(raw.filter))
+              throw new CoordinationError(
+                "invalid_input",
+                "Invalid findings filter",
+              );
+            result = await options.core.findings(
+              actor,
+              raw.filter as FindingFilter | undefined,
+            );
+            break;
           case "command":
             if (!record(raw.command) || !record(raw.command.payload))
               throw new CoordinationError("invalid_input", "Invalid command");
@@ -106,6 +157,27 @@ export async function serveCoordination(options: {
           case "reservations":
             result = options.core.reservations(
               actor,
+              raw.limit as number | undefined,
+            );
+            break;
+          case "kv":
+            requireText(raw.key, "key");
+            result = options.core.shared(actor, raw.key);
+            break;
+          case "kv_list":
+            result = options.core.sharedList(
+              actor,
+              raw.prefix as string | undefined,
+              raw.cursor as string | undefined,
+              raw.limit as number | undefined,
+            );
+            break;
+          case "kv_history":
+            requireText(raw.key, "key");
+            result = options.core.sharedHistory(
+              actor,
+              raw.key,
+              raw.cursor as number | undefined,
               raw.limit as number | undefined,
             );
             break;

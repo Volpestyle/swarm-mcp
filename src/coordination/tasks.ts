@@ -71,16 +71,28 @@ function positive(value: number, name: string, max = Number.MAX_SAFE_INTEGER) {
       `${name} must be a positive integer no greater than ${max}`,
     );
 }
-export function readAttempts(db: Sqlite, scope: string, taskId: string) {
+export function readAttempts(
+  db: Sqlite,
+  scope: string,
+  taskId: string,
+  at = Date.now(),
+) {
   return (
     db
       .prepare(
-        "SELECT a.* FROM task_attempts a JOIN tasks t ON t.id=a.task_id WHERE t.scope=? AND t.id=? ORDER BY a.fence",
+        "SELECT a.*,t.expires_at AS task_expires_at FROM task_attempts a JOIN tasks t ON t.id=a.task_id WHERE t.scope=? AND t.id=? ORDER BY a.fence",
       )
-      .all(scope, taskId) as Attempt[]
-  ).map((row) => ({
+      .all(scope, taskId) as Array<Attempt & { task_expires_at: number | null }>
+  ).map(({ task_expires_at, ...row }) => ({
     ...row,
-    result: row.result === null ? null : (JSON.parse(row.result) as Json),
+    retentionState:
+      task_expires_at !== null && task_expires_at <= at
+        ? "expired"
+        : "retained",
+    result:
+      row.result === null || (task_expires_at !== null && task_expires_at <= at)
+        ? null
+        : (JSON.parse(row.result) as Json),
   }));
 }
 
@@ -336,6 +348,11 @@ export class TaskTransaction {
       requireText(payload.reason, "reason", 2048);
     const result = JSON.stringify(payload.result ?? null),
       reason = payload.reason ?? null;
+    if (Buffer.byteLength(result) > 8192)
+      throw new CoordinationError(
+        "payload_too_large",
+        "Task results are limited to 8 KiB; reference an artifact for patches or logs",
+      );
     this.db
       .prepare(
         "UPDATE task_attempts SET state=?,ended_at=?,result=?,reason=? WHERE id=?",
@@ -383,7 +400,7 @@ export class TaskTransaction {
     const status = this.dependencies(task.id).length ? "blocked" : "open";
     this.db
       .prepare(
-        "UPDATE tasks SET status=?,version=version+1,updated_at=?,result=NULL,reason='creator_retry' WHERE id=?",
+        "UPDATE tasks SET status=?,version=version+1,updated_at=?,result=NULL,reason='creator_retry',expires_at=NULL WHERE id=?",
       )
       .run(status, this.at, task.id);
     this.change("task.retried", task.id, { version: task.version + 1, status });

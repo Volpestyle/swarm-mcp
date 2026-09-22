@@ -2,6 +2,7 @@ import { CoordinationStore } from "../../src/coordination/store";
 import { CoordinationCore } from "../../src/coordination/core";
 import { CoordinationError } from "../../src/coordination/errors";
 import { randomBytes } from "node:crypto";
+import { dirname } from "node:path";
 import {
   CoordinationClient,
   localEndpoint,
@@ -17,6 +18,7 @@ const session =
         agentId: "alice",
         requestId: "fixture-enroll",
         resumeToken: randomBytes(32).toString("hex"),
+        worktree: { root: dirname(path), repository: dirname(path) },
       })
     : undefined;
 const options = {
@@ -62,6 +64,7 @@ if (mode === "duplicate") {
   console.log(
     JSON.stringify({
       endpoint: service.endpoint,
+      worktreeRoot: dirname(path),
       capability: session?.capability,
     }),
   );

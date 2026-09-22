@@ -2,6 +2,20 @@ import { createHash } from "node:crypto";
 import { CoordinationError, requireText } from "./errors";
 import { migrate, type FaultHook } from "./migrations";
 import { openSqlite, type Sqlite } from "./sqlite";
+import { ArtifactFiles } from "./artifact-files";
+import {
+  EvidenceTransaction,
+  artifactRow,
+  artifactRows,
+  readFindings,
+  type FindingFilter,
+} from "./evidence";
+import {
+  SharedContextTransaction,
+  readShared,
+  listShared,
+  sharedHistory,
+} from "./shared-context";
 import { ReservationTransaction, readReservations } from "./reservations";
 import { TaskTransaction, readAttempts, type TaskState } from "./tasks";
 import {
@@ -45,6 +59,8 @@ export interface Task {
   attempt_counter: number;
   result: string | null;
   reason: string | null;
+  expires_at?: number | null;
+  retentionState?: "retained" | "expired";
 }
 export interface Event {
   id: number;
@@ -100,7 +116,26 @@ function canonical(value: Json, depth = 0): string {
   );
 }
 
+function commandFingerprint(command: Command) {
+  for (const [name, value] of Object.entries({
+    scope: command.scope,
+    actor: command.actor,
+    id: command.id,
+    type: command.type,
+  }))
+    requireText(value, name);
+  const encoded = canonical({ type: command.type, payload: command.payload });
+  if (Buffer.byteLength(encoded) > 65536)
+    throw new CoordinationError(
+      "payload_too_large",
+      "Command exceeds 64 KiB; reference an artifact instead",
+    );
+  return createHash("sha256").update(encoded).digest("hex");
+}
+
 export class WriteTransaction {
+  readonly evidence: EvidenceTransaction;
+  readonly shared: SharedContextTransaction;
   readonly reservations: ReservationTransaction;
   readonly tasks: TaskTransaction;
   readonly sessions: SessionTransaction;
@@ -113,6 +148,24 @@ export class WriteTransaction {
     readonly at: number,
     policy: InboxPolicy = DEFAULT_INBOX_POLICY,
   ) {
+    this.evidence = new EvidenceTransaction(
+      db,
+      command,
+      at,
+      (type, id, payload) => {
+        this.writes++;
+        this.event(type, id, payload);
+      },
+    );
+    this.shared = new SharedContextTransaction(
+      db,
+      command,
+      at,
+      (type, id, payload) => {
+        this.writes++;
+        this.event(type, id, payload);
+      },
+    );
     this.reservations = new ReservationTransaction(
       db,
       command,
@@ -197,6 +250,7 @@ export class CoordinationStore {
     private readonly db: Sqlite,
     private readonly clock: () => number,
     private readonly inboxPolicy: InboxPolicy,
+    readonly artifactFiles: ArtifactFiles,
     private readonly fault?: FaultHook,
   ) {}
 
@@ -215,6 +269,7 @@ export class CoordinationStore {
         db,
         options.clock ?? Date.now,
         policy,
+        new ArtifactFiles(options.path),
         options.fault,
       );
     } catch (error) {
@@ -228,6 +283,34 @@ export class CoordinationStore {
       throw new CoordinationError("closed", "Coordinator store is closed");
   }
 
+  private cached(
+    command: Command,
+    fingerprint: string,
+  ): CommandResult<Json> | undefined {
+    const cached = this.db
+      .prepare(
+        "SELECT fingerprint,result,cursor FROM commands WHERE scope=? AND actor=? AND command_id=?",
+      )
+      .get(command.scope, command.actor, command.id) as
+      | { fingerprint: string; result: string; cursor: number }
+      | undefined;
+    if (!cached) return undefined;
+    if (cached.fingerprint !== fingerprint)
+      throw new CoordinationError(
+        "idempotency_conflict",
+        "Command ID was already used with different content",
+      );
+    return {
+      value: JSON.parse(cached.result),
+      cursor: cached.cursor,
+      replayed: true,
+    };
+  }
+  replay(command: Command) {
+    this.assertContext(command);
+    return this.cached(command, commandFingerprint(command));
+  }
+
   execute<T extends Json>(
     command: Command,
     apply: (transaction: WriteTransaction) => T,
@@ -239,20 +322,7 @@ export class CoordinationStore {
         "nested_command",
         "Commands must not nest or await external work",
       );
-    for (const [name, value] of Object.entries({
-      scope: command.scope,
-      actor: command.actor,
-      id: command.id,
-      type: command.type,
-    }))
-      requireText(value, name);
-    const encoded = canonical({ type: command.type, payload: command.payload });
-    if (Buffer.byteLength(encoded) > 65536)
-      throw new CoordinationError(
-        "payload_too_large",
-        "Command exceeds 64 KiB; reference an artifact instead",
-      );
-    const fingerprint = createHash("sha256").update(encoded).digest("hex");
+    const fingerprint = commandFingerprint(command);
     this.executing = true;
     let committed = false;
     let began = false;
@@ -262,28 +332,11 @@ export class CoordinationStore {
       began = true;
       before?.();
       if (command.type !== "session.open") this.assertContext(command);
-      const cached = this.db
-        .prepare(
-          "SELECT fingerprint,result,cursor FROM commands WHERE scope=? AND actor=? AND command_id=?",
-        )
-        .get(command.scope, command.actor, command.id) as {
-        fingerprint: string;
-        result: string;
-        cursor: number;
-      } | null;
+      const cached = this.cached(command, fingerprint);
       if (cached) {
-        if (cached.fingerprint !== fingerprint)
-          throw new CoordinationError(
-            "idempotency_conflict",
-            "Command ID was already used with different content",
-          );
         this.db.exec("COMMIT");
         committed = true;
-        return {
-          value: JSON.parse(cached.result),
-          cursor: cached.cursor,
-          replayed: true,
-        };
+        return cached as CommandResult<T>;
       }
       const tx = new WriteTransaction(
         this.db,
@@ -415,6 +468,19 @@ export class CoordinationStore {
     return readSession(this.db, scope, id);
   }
 
+  shared(scope: string, key: string) {
+    this.ensureOpen();
+    return readShared(this.db, scope, key, this.clock());
+  }
+  sharedList(scope: string, prefix?: string, cursor?: string, limit?: number) {
+    this.ensureOpen();
+    return listShared(this.db, scope, this.clock(), prefix, cursor, limit);
+  }
+  sharedHistory(scope: string, key: string, cursor?: number, limit?: number) {
+    this.ensureOpen();
+    return sharedHistory(this.db, scope, key, this.clock(), cursor, limit);
+  }
+
   reservations(scope: string, limit?: number) {
     this.ensureOpen();
     return readReservations(this.db, scope, this.clock(), limit);
@@ -422,7 +488,7 @@ export class CoordinationStore {
 
   attempts(scope: string, taskId: string) {
     this.ensureOpen();
-    return readAttempts(this.db, scope, taskId);
+    return readAttempts(this.db, scope, taskId, this.clock());
   }
 
   messageStatus(scope: string, actor: string, id: string) {
@@ -430,13 +496,39 @@ export class CoordinationStore {
     return readMessageStatus(this.db, scope, actor, id);
   }
 
+  now() {
+    this.ensureOpen();
+    return this.clock();
+  }
+  artifact(scope: string, id: string) {
+    this.ensureOpen();
+    return artifactRow(this.db, scope, id);
+  }
+  artifacts(scope: string, cursor?: number, limit?: number) {
+    this.ensureOpen();
+    return artifactRows(this.db, scope, cursor, limit);
+  }
+  findings(scope: string, filter?: FindingFilter) {
+    this.ensureOpen();
+    return readFindings(this.db, scope, this.clock(), filter);
+  }
+
   task(scope: string, id: string): Task | null {
     this.ensureOpen();
-    return (
+    const task =
       (this.db
         .prepare("SELECT * FROM tasks WHERE scope=? AND id=?")
-        .get(scope, id) as Task | undefined | null) ?? null
-    );
+        .get(scope, id) as Task | undefined | null) ?? null;
+    if (!task) return null;
+    const expired =
+      task.expires_at !== null &&
+      task.expires_at !== undefined &&
+      task.expires_at <= this.clock();
+    return {
+      ...task,
+      result: expired ? null : task.result,
+      retentionState: expired ? "expired" : "retained",
+    };
   }
 
   events(
