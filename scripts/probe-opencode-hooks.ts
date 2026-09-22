@@ -30,6 +30,8 @@ if (!output)
   throw new Error("Usage: bun scripts/probe-opencode-hooks.ts output.json");
 const root = mkdtempSync(join(tmpdir(), "swarm-opencode-probe-"));
 const events = join(root, "events.jsonl");
+const shellBarrier = join(root, "shell-barrier");
+let firstModelRequestAt: number | undefined;
 const readTarget = join(root, "fixture.txt");
 writeFileSync(readTarget, "harmless tool fixture\n");
 const ackProbe = resolve("dist/test/runtime-ack-probe.mjs");
@@ -46,6 +48,7 @@ const modelServer = Bun.serve({
     if (new URL(request.url).pathname !== "/v1/chat/completions")
       return new Response("Unexpected route", { status: 404 });
     const body = (await request.json()) as (typeof modelRequests)[number];
+    firstModelRequestAt ??= Date.now();
     modelRequests.push(body);
     if (modelRequests.length > 6)
       return new Response("Fixture request budget exceeded", { status: 400 });
@@ -339,27 +342,32 @@ try {
   });
   assert.equal(restored.status, 200);
   await waitFor("coordination.enrolled", session.id, 2);
-  const shellResponse = await fetch(
-    base + "/session/" + session.id + "/shell",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        agent: "build",
-        model: { providerID: "probe", modelID: "no-inference" },
-        command: 'node "' + shellProbe.replaceAll("\\", "/") + '"',
-      }),
-      signal: AbortSignal.timeout(20000),
-    },
+  const shellPromise = fetch(base + "/session/" + session.id + "/shell", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      agent: "build",
+      model: { providerID: "probe", modelID: "no-inference" },
+      command:
+        'node "' +
+        shellProbe.replaceAll("\\", "/") +
+        '" "' +
+        shellBarrier.replaceAll("\\", "/") +
+        '"',
+    }),
+    signal: AbortSignal.timeout(20000),
+  });
+  for (let i = 0; i < 100 && !existsSync(shellBarrier + ".ready"); i++)
+    await delay(50);
+  assert.ok(
+    existsSync(shellBarrier + ".ready"),
+    "Shell must be running before queued prompt",
   );
-  assert.equal(shellResponse.status, 200, await shellResponse.clone().text());
-  const shellResult = (await shellResponse.json()) as {
-    parts: Array<{ type: string; state?: { output?: string } }>;
-  };
-  const shellOutput =
-    shellResult.parts.find((part) => part.type === "tool")?.state?.output ?? "";
-  const shellEvidence = JSON.parse(shellOutput.trim());
-  assert.equal(shellEvidence.marker, "swarm-shell-probe");
+  const busyResponse = await fetch(base + "/session/status", {
+    signal: AbortSignal.timeout(5000),
+  });
+  const busy = (await busyResponse.json()) as Record<string, { type: string }>;
+  assert.equal(busy[session.id].type, "busy");
   const enrollments = readFileSync(events, "utf8")
     .trim()
     .split("\n")
@@ -369,13 +377,7 @@ try {
         event.type === "coordination.enrolled" &&
         event.hostSessionId === session.id,
     );
-  assert.equal(shellEvidence.snapshot.actor, enrollments.at(-1).actor);
-  assert.equal(shellEvidence.snapshot.scope, observer.scope);
-  assert.deepEqual(shellEvidence.keys, [
-    "SWARM_COORDINATOR_ENDPOINT",
-    "SWARM_PROBE_EVENTS",
-    "SWARM_SESSION_CAPABILITY",
-  ]);
+  let shellEvidence;
   const coordinator = await CoordinationClient.connect(
     observer.environment.SWARM_COORDINATOR_ENDPOINT,
     observer.environment.SWARM_SESSION_CAPABILITY,
@@ -388,7 +390,7 @@ try {
         id: "post-tool-probe",
         type: "message.send",
         payload: {
-          recipient: shellEvidence.snapshot.actor,
+          recipient: enrollments.at(-1).actor,
           kind: "question",
           body: "peer-message-fixture-7392",
         },
@@ -404,6 +406,47 @@ try {
       }),
       signal: AbortSignal.timeout(30000),
     });
+    let promptPersisted = false;
+    for (let i = 0; i < 100; i++) {
+      const records = readFileSync(events, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      promptPersisted = records.some(
+        (event) =>
+          event.type === "message.part.updated" &&
+          event.properties.part?.text === "Read fixture.txt once.",
+      );
+      if (promptPersisted) break;
+      await delay(25);
+    }
+    assert.ok(
+      promptPersisted,
+      "Host must persist queued prompt while shell remains active",
+    );
+    assert.equal(
+      modelRequests.length,
+      0,
+      "Queued prompt must not interrupt the shell",
+    );
+    writeFileSync(shellBarrier + ".release", "release");
+    const shellResponse = await shellPromise;
+    assert.equal(shellResponse.status, 200, await shellResponse.clone().text());
+    const shellResult = (await shellResponse.json()) as {
+      parts: Array<{ type: string; state?: { output?: string } }>;
+    };
+    const shellOutput =
+      shellResult.parts.find((part) => part.type === "tool")?.state?.output ??
+      "";
+    shellEvidence = JSON.parse(shellOutput.trim());
+    assert.equal(shellEvidence.marker, "swarm-shell-probe");
+    assert.equal(shellEvidence.snapshot.actor, enrollments.at(-1).actor);
+    assert.equal(shellEvidence.snapshot.scope, observer.scope);
+    assert.deepEqual(shellEvidence.keys, [
+      "SWARM_COORDINATOR_ENDPOINT",
+      "SWARM_PROBE_EVENTS",
+      "SWARM_SESSION_CAPABILITY",
+    ]);
     await waitFor("availability.blocked", session.id);
     await waitFor("availability.recovered", session.id);
     const recovered = readFileSync(events, "utf8")
@@ -475,7 +518,15 @@ try {
       3,
       "Read, acknowledgment, then completion",
     );
+    assert.ok(
+      firstModelRequestAt! >=
+        Number(readFileSync(shellBarrier + ".completed", "utf8")),
+    );
     deliveryEvidence = {
+      promptQueuedWhileBusy: true,
+      modelWaitedForShell:
+        firstModelRequestAt! >=
+        Number(readFileSync(shellBarrier + ".completed", "utf8")),
       scriptedLocalModel: true,
       requests: modelRequests.length,
       toolResultReachedModel: true,

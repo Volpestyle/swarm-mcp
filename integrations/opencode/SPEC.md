@@ -114,6 +114,25 @@ availability: two independently scheduled subscriptions can replay an older
 status after a newer one. `connectOpenCodeLifecycle` forwards stream loss to
 the adapter so subsequent tool callbacks defer until reconnection.
 
+## Wake admission evidence
+
+`opencode-admission-race.json` submits a normal session prompt while a real
+user shell is held at a fixture barrier. The host reports busy and persists the
+new prompt, but the local model endpoint receives no request before release.
+After the shell finishes, the model loop reads the fixture and completes the
+existing delivery/permission/reconnect/acknowledgment checks. This proves the
+active user-shell race; it does not claim every active model-tool race or a
+finished automatic wake implementation.
+
+The tagged [runner](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/effect/runner.ts)
+coalesces an existing run and queues behind a shell. The
+[prompt implementation](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/session/prompt.ts)
+persists the user message before requesting that run. A status check therefore
+cannot be treated as an atomic idle reservation: wake logic must tolerate native
+queuing if the host becomes busy, keep durable pending work on uncertain
+acceptance, and coalesce/reconcile its own prompt requests. It must not cancel
+the current run or spawn a replacement session.
+
 ## Actual host evidence
 
 Run the installed native executable, not its Windows package shim:
