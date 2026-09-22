@@ -54,6 +54,7 @@ export async function prepareClaudeLaunch(
   options: Omit<Parameters<typeof enrollRuntime>[0], "host"> & {
     hookPath: string;
     clientPath?: string;
+    mcpPath?: string;
     settings?: Settings;
     resume?: boolean;
   },
@@ -73,6 +74,12 @@ export async function prepareClaudeLaunch(
   const clientPath =
     options.clientPath ?? join(dirname(options.hookPath), "client-cli.js");
   shellPath(clientPath);
+  const mcpPath =
+    options.mcpPath ?? join(dirname(options.hookPath), "mcp-cli.js");
+  shellPath(mcpPath);
+  const mcp = JSON.stringify({
+    mcpServers: { swarm: { command: options.nodePath, args: [mcpPath] } },
+  });
   // Leave room for Windows argument escaping and the caller's remaining flags.
   if (Buffer.byteLength(serialized) > 8 * 1024)
     throw new Error("Claude additional settings exceed 8 KiB");
@@ -90,6 +97,8 @@ export async function prepareClaudeLaunch(
       options.hostSessionId,
       "--settings",
       serialized,
+      "--mcp-config",
+      mcp,
     ],
   };
 }

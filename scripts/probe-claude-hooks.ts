@@ -14,6 +14,7 @@ const capture = process.argv[2];
 const executable = process.argv[3];
 const expiryProbe = process.argv[4] === "--lease-expiry";
 const restartProbe = process.argv[4] === "--restart";
+const mcpProbe = process.argv[4] === "--mcp";
 if (!capture || !executable)
   throw new Error(
     "Usage: probe-claude-hooks <capture.json> <claude executable>",
@@ -24,6 +25,7 @@ for (const [entry, file] of [
   ["src/coordination/owner-cli.ts", "owner.mjs"],
   ["src/coordination/claude-hook-cli.ts", "hook.mjs"],
   ["src/coordination/client-cli.ts", "client.mjs"],
+  ["src/coordination/mcp-cli.ts", "mcp.mjs"],
   ["scripts/fixtures/runtime-ack-probe.ts", "ack.mjs"],
 ])
   await build({
@@ -59,6 +61,7 @@ let recipient = await prepareClaudeLaunch({
   hostSessionId: sessionId,
   hookPath: join(bundles, "hook.mjs"),
   clientPath: join(bundles, "client.mjs"),
+  mcpPath: join(bundles, "mcp.mjs"),
 });
 const initialRecipient = recipient;
 const client = await CoordinationClient.connect(
@@ -86,6 +89,7 @@ try {
   const seen: string[] = [];
   const envelopes: object[] = [];
   const beforeAck: string[] = [];
+  const advertised = new Set<string>();
   const refreshed = new Set<string>();
   const observedTokens = new Set<string>();
   let replayedEnvelopes = 0;
@@ -113,6 +117,12 @@ try {
       if (!url.pathname.endsWith("/messages"))
         return new Response("fixture route unavailable", { status: 404 });
       const body = await request.json();
+      for (const tool of body.tools ?? [])
+        if (
+          typeof tool.name === "string" &&
+          tool.name.startsWith("mcp__swarm__")
+        )
+          advertised.add(tool.name);
       requests++;
       if (requests > 5) throw new Error("Model request budget exceeded");
       const leases = strings(body.messages)
@@ -167,17 +177,24 @@ try {
           {
             type: "tool_use",
             id: `toolu_fixture_${requests}`,
-            name: "Bash",
-            input: {
-              command:
-                restartProbe && requests === 1
-                  ? "node --version"
-                  : expiryProbe && requests === 1
-                    ? 'node -e "setTimeout(()=>{},32000)"'
-                    : `node "${join(bundles, "ack.mjs").replaceAll("\\", "/")}" ${lease.message.id} ${lease.leaseToken}`,
-              description:
-                "Acknowledge the fixture peer message through the coordinator",
-            },
+            name: mcpProbe ? "mcp__swarm__swarm_inbox" : "Bash",
+            input: mcpProbe
+              ? {
+                  action: "ack",
+                  commandId: `fixture-ack-${lease.message.id}`,
+                  messageId: lease.message.id,
+                  leaseToken: lease.leaseToken,
+                }
+              : {
+                  command:
+                    restartProbe && requests === 1
+                      ? "node --version"
+                      : expiryProbe && requests === 1
+                        ? 'node -e "setTimeout(()=>{},32000)"'
+                        : `node "${join(bundles, "ack.mjs").replaceAll("\\", "/")}" ${lease.message.id} ${lease.leaseToken}`,
+                  description:
+                    "Acknowledge the fixture peer message through the coordinator",
+                },
           },
         ];
       } else content = [{ type: "text", text: "fixture complete" }];
@@ -285,6 +302,7 @@ try {
         "Bash",
         "--allowedTools",
         "Bash",
+        ...(mcpProbe ? ["mcp__swarm__swarm_inbox"] : []),
         "--model",
         "claude-sonnet-4-6",
         "--output-format",
@@ -359,6 +377,7 @@ try {
       incarnation: randomUUID(),
       hookPath: join(bundles, "hook.mjs"),
       clientPath: join(bundles, "client.mjs"),
+      mcpPath: join(bundles, "mcp.mjs"),
       resume: true,
     });
     const old = await CoordinationClient.connect(
@@ -446,6 +465,8 @@ try {
     endedCapabilityError: endedCode,
     persistedContext,
     leaseExpiryProbe: expiryProbe,
+    mcpProbe,
+    advertisedCoordinatorTools: [...advertised].sort(),
     restartProbe,
     restart: restartProbe
       ? {
@@ -465,6 +486,7 @@ try {
   writeFileSync(capture, JSON.stringify(evidence, null, 2) + "\n");
   if (
     exitCode !== 0 ||
+    (mcpProbe && !advertised.has("mcp__swarm__swarm_inbox")) ||
     requests !== (restartProbe ? 5 : expiryProbe ? 4 : 3) ||
     seen.length !== 2 ||
     beforeAck.some((s) => s !== "leased") ||

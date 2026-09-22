@@ -21,6 +21,22 @@ plus native session/settings arguments. Set `resume: true` and use a new
 incarnation for an explicit native resume. The caller owns host execution; the
 helper never creates a process in response to peer delivery.
 
+The returned arguments also configure a stdio MCP server named `swarm`, using
+the supplied Node executable and `mcpPath` (default: `mcp-cli.js` beside the hook).
+That server inherits the bound endpoint and session capability from the launched
+host environment; credentials do not appear in the serialized command-line
+configuration. This mounts the compact coordinator API for the agent, including
+`swarm_inbox` acknowledgment, rather than requiring a fixture-specific shell
+command. It does not grant tool permissions or change persistent MCP settings.
+
+Run the probe with `--mcp` for `claude-mcp.json`. Installed Claude advertises all
+nine coordinator tools to the local scripted model endpoint. The fixture invokes
+`mcp__swarm__swarm_inbox` to acknowledge each delivered envelope; the real native
+MCP call reaches the coordinator, and its post-tool hook admits the next message.
+Three model requests finish with both deliveries acknowledged and the session
+capability closed on exit. This establishes the full hook→MCP→coordinator path;
+the model endpoint is scripted and supplies no evidence of model comprehension.
+
 The environment also declares `SWARM_COORDINATOR_HOOK_OWNER=launcher` and supplies
 `SWARM_COORDINATOR_CLIENT` as argv JSON. The client defaults to `client-cli.js`
 beside the hook executable; callers may supply an explicit `clientPath`.

@@ -14,6 +14,7 @@ test("legacy Claude entrypoints use launcher lifecycle and coordinator write lea
   for (const [source, file] of [
     ["owner-cli", "owner.mjs"],
     ["client-cli", "client.mjs"],
+    ["mcp-cli", "mcp.mjs"],
     ["claude-hook-cli", "hook.mjs"],
   ])
     await build({
@@ -38,6 +39,7 @@ test("legacy Claude entrypoints use launcher lifecycle and coordinator write lea
     ownerPath: join(bundles, "owner.mjs"),
     hookPath: join(bundles, "hook.mjs"),
     clientPath: join(bundles, "client.mjs"),
+    mcpPath: join(bundles, "mcp.mjs"),
     hostSessionId: sessionId,
     incarnation: "test",
     identity: {
@@ -93,6 +95,9 @@ test("legacy Claude entrypoints use launcher lifecycle and coordinator write lea
     return stdout;
   };
   try {
+    expect(launch.arguments.join(" ")).not.toContain(
+      launch.environment.SWARM_SESSION_CAPABILITY,
+    );
     expect(await run("session_start")).toBe("");
     expect(await run("session_end")).toBe("");
     expect(await client.request({ op: "bootstrap" })).toMatchObject({
