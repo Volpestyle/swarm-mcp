@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { build } from "esbuild";
 import { Database } from "bun:sqlite";
 import { tmpdir } from "node:os";
@@ -284,26 +284,21 @@ test("untrusted command properties cannot replace the authorized scope or sender
 });
 
 test("version-one migration preserves tasks and rolls back interrupted schema changes", async () => {
-  const env = await setup();
-  env.core.command(alice, {
-    id: "existing-task",
-    type: "task.create",
-    payload: { title: "keep me" },
-  });
-  env.store.close();
-  const db = new Database(env.path);
-  db.exec(
-    "DROP TABLE dispatch_intents; DROP TABLE finding_artifacts; DROP TABLE findings; DROP TABLE artifacts; DROP TABLE shared_kv_history; DROP TABLE shared_kv; DROP TABLE reservations; DROP TABLE task_attempts; DROP TABLE task_dependencies; DROP TABLE sessions; DROP TABLE agents; DROP TABLE inbox_deliveries; DROP TABLE inbox_messages; ALTER TABLE tasks DROP COLUMN expires_at; ALTER TABLE tasks DROP COLUMN contract; PRAGMA user_version=1",
-  );
+  const path = join(mkdtempSync(join(tmpdir(), "coordinator-v1-")), "db.sqlite");
+  const db = new Database(path);
+  db.exec(readFileSync(resolve("test/fixtures/coordinator-v1.sql"), "utf8"));
+  db.exec(`INSERT INTO tasks VALUES('existing-task','test','alice','keep me','open',1,1000,1000);
+    INSERT INTO events(scope,actor,type,entity_id,payload,created_at)
+    VALUES('test','alice','task.created','existing-task','{}',1000);`);
   db.close();
   const failure = await CoordinationStore.open({
-    path: env.path,
+    path,
     fault: (point) => {
       if (point === "before_migration_commit") throw new Error("interrupted");
     },
   }).catch((error) => error);
   expect(failure.message).toBe("interrupted");
-  const inspect = new Database(env.path);
+  const inspect = new Database(path);
   expect(inspect.query("PRAGMA user_version").get()).toEqual({
     user_version: 1,
   });
@@ -313,8 +308,10 @@ test("version-one migration preserves tasks and rolls back interrupted schema ch
       .get(),
   ).toBeNull();
   inspect.close();
-  const { core } = await env.open();
+  const store = await CoordinationStore.open({ path }); stores.push(store);
+  const core = new CoordinationCore(store);
   expect(core.events(alice).items[0]!.type).toBe("task.created");
+  expect(core.task(alice, "existing-task")).toMatchObject({ title: "keep me", status: "open" });
   core.command(alice, send());
   expect(core.inbox(bob).items).toHaveLength(1);
 });
