@@ -1,0 +1,12 @@
+$ node scripts/generate-protocol-types.mjs && esbuild src/cli.ts src/index.ts src/coordination/client-cli.ts src/coordination/mcp-cli.ts src/coordination/owner-cli.ts src/coordination/claude-hook-cli.ts src/coordination/claude-launcher.ts src/coordination/codex-launcher.ts src/coordination/dispatch-runner.ts src/coordination/opencode-dispatch.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --packages=external --loader:.sql=text --banner:js='#!/usr/bin/env node'
+wrote C:\Users\volpe\swarm-mcp-redesign\src\generated\protocol.ts
+wrote C:\Users\volpe\swarm-mcp-redesign\apps\swarm-ui\src\lib\generated\protocol.ts
+
+  dist\cli.js                          319.0kb
+  dist\index.js                        234.0kb
+  dist\coordination\owner-cli.js       165.3kb
+  dist\coordination\mcp-cli.js          29.7kb
+  dist\coordination\codex-launcher.js   27.6kb
+  ...and 5 more output files...
+
+Done in 20ms
