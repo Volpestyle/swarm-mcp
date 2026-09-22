@@ -158,6 +158,26 @@ for (const mode of ["modern", "legacy"] as const)
       });
       const timedOut = await call("swarm_wait", { taskId, timeoutMs: 1 });
       expect(timedOut.waitState).toBe("timeout");
+      // More than the adapter's eight-wait ceiling proves cancelled waits give
+      // their slots back. Cancelling transport waits must never cancel work.
+      for (let i = 0; i < 9; i++) {
+        const controller = new AbortController();
+        const pending = client
+          .callTool(
+            { name: "swarm_wait", arguments: { taskId, timeoutMs: 30000 } },
+            { signal: controller.signal },
+          )
+          .catch((error) => error);
+        await delay(50);
+        controller.abort();
+        expect(await pending).toBeInstanceOf(Error);
+        expect(
+          (await call("swarm_find", { kind: "task", taskId })).status,
+        ).toBe("running");
+      }
+      expect(
+        (await call("swarm_wait", { taskId, timeoutMs: 0 })).waitState,
+      ).toBe("timeout");
       const resumed = await client.readResource({ uri: timedOut.uri });
       expect(
         JSON.parse((resumed.contents[0] as { text: string }).text),

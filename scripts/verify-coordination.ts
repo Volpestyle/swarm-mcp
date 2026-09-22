@@ -87,4 +87,32 @@ for (const [index, command] of commands.entries()) {
     break;
   }
 }
-process.exitCode = failed ? 1 : 0;
+const finalSource = {
+  revision: git("rev-parse", "HEAD"),
+  workingTree: git("status", "--porcelain"),
+  diffSha256: createHash("sha256")
+    .update(git("diff", "HEAD", "--"))
+    .digest("hex"),
+};
+const sourceChanged =
+  finalSource.revision !== manifest.revision ||
+  finalSource.workingTree !== manifest.workingTree ||
+  finalSource.diffSha256 !== manifest.diffSha256;
+writeFileSync(
+  join(output, "manifest.json"),
+  JSON.stringify(
+    {
+      ...manifest,
+      finishedAt: new Date().toISOString(),
+      finalSource,
+      sourceChanged,
+    },
+    null,
+    2,
+  ) + "\n",
+);
+if (sourceChanged)
+  console.error(
+    "Source changed during verification; rerun against a stable revision.",
+  );
+process.exitCode = failed || sourceChanged ? 1 : 0;
