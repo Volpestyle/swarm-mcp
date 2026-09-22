@@ -21,6 +21,23 @@ plus native session/settings arguments. Set `resume: true` and use a new
 incarnation for an explicit native resume. The caller owns host execution; the
 helper never creates a process in response to peer delivery.
 
+The environment also declares `SWARM_COORDINATOR_HOOK_OWNER=launcher` and supplies
+`SWARM_COORDINATOR_CLIENT` as argv JSON. The client defaults to `client-cli.js`
+beside the hook executable; callers may supply an explicit `clientPath`.
+Existing Python start/end hooks recognize launcher ownership and skip all legacy
+registration, metadata, KV and deregistration work. Existing pre/post write hooks
+use the coordinator client for reservation acquisition/release. In launcher mode,
+known writes with missing credentials/client/native binding or a different native
+session are denied. Legacy sessions without the marker retain their existing path.
+
+`coordination-claude-legacy.test.ts` invokes the actual Python entrypoints with a
+real Node owner/client and a legacy CLI trap. It verifies no legacy calls, no
+premature session close, and acquire/release of a real reservation. This is direct
+entrypoint evidence; it does not claim that the installed Claude host exercised
+a write-tool denial. `claude-legacy-binding.json` separately verifies native
+delivery/acknowledgment using the expanded launcher environment. Migrating the
+legacy slash commands and bundled role skill remains separate rollout work.
+
 The build includes `dist/coordination/claude-launcher.js` and
 `dist/coordination/claude-hook-cli.js`. Hook commands quote literal paths for the
 host's POSIX shell (Git Bash on the verified Windows installation). Additional

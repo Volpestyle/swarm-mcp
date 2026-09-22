@@ -54,6 +54,42 @@ class HookCoreLifecycleTests(unittest.TestCase):
             self.core.run_session_start_hook(io.StringIO(json.dumps(payload)))
         return out.getvalue()
 
+    def test_launcher_owned_lifecycle_never_touches_legacy_state(self) -> None:
+        os.environ["SWARM_COORDINATOR_HOOK_OWNER"] = "launcher"
+        with mock.patch.object(self.core, "run_swarm") as legacy, \
+                mock.patch.object(self.core, "write_session_meta") as write_meta, \
+                mock.patch.object(self.core, "read_session_meta") as read_meta:
+            self.assertEqual(self.run_hook({"session_id": "native", "source": "startup"}), "")
+            self.assertEqual(self.core.run_session_end_hook(io.StringIO('{"session_id":"native"}')), 0)
+            legacy.assert_not_called()
+            write_meta.assert_not_called()
+            read_meta.assert_not_called()
+
+    def test_launcher_write_binding_does_not_fall_back_to_legacy(self) -> None:
+        os.environ["SWARM_COORDINATOR_HOOK_OWNER"] = "launcher"
+        payload = {"session_id": "native", "tool_name": "Write", "tool_input": {"file_path": "/tmp/file"}}
+        with mock.patch.object(self.core, "find_peer_lock_conflict") as legacy:
+            for values in ({}, {"SWARM_COORDINATOR_CLIENT": '["node","client.js"]',
+                               "SWARM_COORDINATOR_ENDPOINT": "endpoint", "SWARM_SESSION_CAPABILITY": "capability",
+                               "SWARM_NATIVE_SESSION_ID": "other"}):
+                with self.subTest(values=list(values)), mock.patch.dict(os.environ, values):
+                    out = io.StringIO()
+                    with redirect_stdout(out):
+                        self.core.run_pre_tool_use_hook(io.StringIO(json.dumps(payload)))
+                    self.assertEqual(json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny")
+            legacy.assert_not_called()
+
+    def test_launcher_write_binding_uses_coordinator_reservations(self) -> None:
+        with mock.patch.dict(os.environ, {"SWARM_COORDINATOR_HOOK_OWNER": "launcher",
+                "SWARM_COORDINATOR_CLIENT": '["node","client.js"]', "SWARM_COORDINATOR_ENDPOINT": "endpoint",
+                "SWARM_SESSION_CAPABILITY": "capability", "SWARM_NATIVE_SESSION_ID": "native"}), \
+                mock.patch("integrations._shared.swarm_hook_core.leased_writes.enter", return_value={}) as enter, \
+                mock.patch.object(self.core, "find_peer_lock_conflict") as legacy:
+            payload = {"session_id": "native", "tool_name": "Write", "tool_input": {"file_path": "/tmp/file"}}
+            self.core.run_pre_tool_use_hook(io.StringIO(json.dumps(payload)))
+            enter.assert_called_once_with(payload, ["/tmp/file"])
+            legacy.assert_not_called()
+
     def test_session_start_registers_and_publishes_herdr_identity(self) -> None:
         os.environ["HERDR_PANE_ID"] = "pane-1"
         os.environ["HERDR_SOCKET_PATH"] = "/tmp/herdr.sock"

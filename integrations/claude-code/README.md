@@ -4,6 +4,17 @@ The redesign adds opt-in leased writes through the shared hooks. See
 [worktree reservations and coverage](../../docs/worktree-reservations.md).
 Without the new coordinator environment, the legacy behavior below remains.
 
+The candidate `prepareClaudeLaunch` integration sets
+`SWARM_COORDINATOR_HOOK_OWNER=launcher` and an argv-JSON coordinator client.
+In this mode the existing Python start/end entrypoints leave lifecycle ownership
+to the launcher and Node hook; they do not register another legacy identity,
+publish legacy KV state or inject legacy bootstrap instructions. Known write
+hooks use coordinator reservations. An incomplete or mismatched native binding
+denies the write instead of falling back to legacy lock checks.
+
+This is hook compatibility, not installation of the candidate or migration of
+the legacy slash commands/role skill. See [candidate setup and evidence](SPEC.md).
+
 Lifecycle bridge between Claude Code sessions and the swarm-mcp coordinator,
 mirroring the [hermes plugin](../hermes/) inside the constraints of the Claude
 Code plugin model.

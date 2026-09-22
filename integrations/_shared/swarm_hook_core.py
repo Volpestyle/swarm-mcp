@@ -793,6 +793,10 @@ class HookCore:
         return "\n".join(lines)
 
     def run_session_start_hook(self, stdin) -> int:
+        # A coordinator launcher owns registration and context delivery. Never
+        # create a second legacy identity or inject obsolete bootstrap guidance.
+        if os.environ.get("SWARM_COORDINATOR_HOOK_OWNER") == "launcher":
+            return 0
         payload = self.read_hook_input(stdin)
         session_id = str(payload.get("session_id") or "")
         cwd = str(payload.get("cwd") or self.session_cwd())
@@ -897,6 +901,14 @@ class HookCore:
 
         tool_input = payload.get("tool_input")
         paths = self.write_paths_for_tool(tool_name, tool_input)
+        if os.environ.get("SWARM_COORDINATOR_HOOK_OWNER") == "launcher":
+            if (not leased_writes.enabled()
+                    or not os.environ.get("SWARM_COORDINATOR_ENDPOINT")
+                    or not os.environ.get("SWARM_SESSION_CAPABILITY")
+                    or not os.environ.get("SWARM_NATIVE_SESSION_ID")
+                    or payload.get("session_id") != os.environ["SWARM_NATIVE_SESSION_ID"]):
+                self.emit_block("swarm coordinator binding is incomplete or belongs to another native session")
+                return 0
         if leased_writes.enabled():
             try:
                 result = leased_writes.enter(payload, paths)
@@ -988,6 +1000,8 @@ class HookCore:
         return None
 
     def run_session_end_hook(self, stdin) -> int:
+        if os.environ.get("SWARM_COORDINATOR_HOOK_OWNER") == "launcher":
+            return 0
         payload = self.read_hook_input(stdin)
         session_id = str(payload.get("session_id") or "")
         meta = self.read_session_meta(session_id)

@@ -23,6 +23,7 @@ const bundles = mkdtempSync(resolve("dist/test/claude-probe-"));
 for (const [entry, file] of [
   ["src/coordination/owner-cli.ts", "owner.mjs"],
   ["src/coordination/claude-hook-cli.ts", "hook.mjs"],
+  ["src/coordination/client-cli.ts", "client.mjs"],
   ["scripts/fixtures/runtime-ack-probe.ts", "ack.mjs"],
 ])
   await build({
@@ -57,6 +58,7 @@ let recipient = await prepareClaudeLaunch({
   ...options,
   hostSessionId: sessionId,
   hookPath: join(bundles, "hook.mjs"),
+  clientPath: join(bundles, "client.mjs"),
 });
 const initialRecipient = recipient;
 const client = await CoordinationClient.connect(
@@ -356,6 +358,7 @@ try {
       hostSessionId: sessionId,
       incarnation: randomUUID(),
       hookPath: join(bundles, "hook.mjs"),
+      clientPath: join(bundles, "client.mjs"),
       resume: true,
     });
     const old = await CoordinationClient.connect(

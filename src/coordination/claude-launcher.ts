@@ -1,4 +1,4 @@
-import { isAbsolute } from "node:path";
+import { isAbsolute, dirname, join } from "node:path";
 import { statSync } from "node:fs";
 import { enrollRuntime } from "./runtime-launcher";
 
@@ -53,6 +53,7 @@ export function claudeHookSettings(
 export async function prepareClaudeLaunch(
   options: Omit<Parameters<typeof enrollRuntime>[0], "host"> & {
     hookPath: string;
+    clientPath?: string;
     settings?: Settings;
     resume?: boolean;
   },
@@ -69,6 +70,9 @@ export async function prepareClaudeLaunch(
     options.settings,
   );
   const serialized = JSON.stringify(settings);
+  const clientPath =
+    options.clientPath ?? join(dirname(options.hookPath), "client-cli.js");
+  shellPath(clientPath);
   // Leave room for Windows argument escaping and the caller's remaining flags.
   if (Buffer.byteLength(serialized) > 8 * 1024)
     throw new Error("Claude additional settings exceed 8 KiB");
@@ -78,6 +82,8 @@ export async function prepareClaudeLaunch(
     environment: {
       ...enrolled.environment,
       SWARM_NATIVE_SESSION_ID: options.hostSessionId,
+      SWARM_COORDINATOR_HOOK_OWNER: "launcher",
+      SWARM_COORDINATOR_CLIENT: JSON.stringify([options.nodePath, clientPath]),
     },
     arguments: [
       options.resume ? "--resume" : "--session-id",
