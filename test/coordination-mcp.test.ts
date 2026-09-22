@@ -135,9 +135,12 @@ for (const mode of ["modern", "legacy"] as const)
           active: true,
         },
       });
+      const timedOut = await call("swarm_wait", { taskId, timeoutMs: 1 });
+      expect(timedOut.waitState).toBe("timeout");
+      const resumed = await client.readResource({ uri: timedOut.uri });
       expect(
-        (await call("swarm_wait", { taskId, timeoutMs: 1 })).waitState,
-      ).toBe("timeout");
+        JSON.parse((resumed.contents[0] as { text: string }).text),
+      ).toMatchObject({ taskId, status: "running", owner: { actor: "alice" } });
       const stale = await client.callTool({
         name: "swarm_task",
         arguments: {

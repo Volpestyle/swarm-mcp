@@ -1,5 +1,20 @@
 # Compact API context measurements
 
+## Output-schema follow-up
+
+`compact-schema-2.json` captures the later catalog with receipt/page/bootstrap,
+task ownership, shared-key and wait output schemas. It measures **4,040 catalog
+tokens**, 1,016 call argument/text tokens, and 9,096 including catalogs for two
+agents. The catalog remains below the legacy 6,042 tokens but fails the 3,000
+target. The measurements below describe the earlier envelope-only catalog;
+they are retained as historical evidence, not the final budget result.
+
+The current schemas describe stable result structure while leaving variable
+command values and page entries extensible. Both modern and legacy real MCP
+workflows pass, including reading the task URI returned by a timed-out wait.
+
+## Initial envelope-only measurements
+
 Actual stdio MCP adapters against a separate Node coordinator, with disposable
 databases and 2 or 32 independently enrolled sessions. Each agent bootstraps,
 sends to its next peer, fetches the previous peer's message, verifies its body,

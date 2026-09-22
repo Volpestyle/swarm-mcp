@@ -4,6 +4,7 @@ import { CoordinationError } from "./errors";
 import type { Operation } from "./ipc";
 import type { Json } from "./store";
 import { boundedJson, MCP_DATA_BYTES } from "./payload-limits";
+import { outputSchema, type CompactToolName } from "./mcp-output";
 const subscriptions = new WeakMap<McpServer, Set<string>>();
 const observableResources = new Set([
   "swarm://inbox",
@@ -41,13 +42,6 @@ const contract = z
     constraints: z.array(text).max(20),
   })
   .strict();
-const output = z.object({
-  ok: z.boolean(),
-  data: z.unknown(),
-  error: z
-    .object({ code: z.string(), message: z.string(), retryable: z.boolean() })
-    .nullable(),
-});
 function required<T>(value: T | undefined, name: string): T {
   if (value === undefined)
     throw new CoordinationError(
@@ -86,7 +80,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
     },
   );
   function tool<S extends z.ZodRawShape>(
-    name: string,
+    name: CompactToolName,
     description: string,
     shape: S,
     readOnly: boolean,
@@ -100,7 +94,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
       {
         description,
         inputSchema: z.object(shape).strict(),
-        outputSchema: output,
+        outputSchema: outputSchema(name),
         annotations: {
           readOnlyHint: readOnly,
           idempotentHint: true,
@@ -548,6 +542,19 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
     "swarm://tasks",
     { description: "First page of scoped task summaries." },
     (uri) => jsonResource(uri, { op: "tasks", filter: { limit: 10 } }),
+  );
+  server.registerResource(
+    "task-detail",
+    new ResourceTemplate("swarm://tasks/{taskId}", { list: undefined }),
+    {
+      description:
+        "Read the current task contract, ownership and retained result.",
+    },
+    (uri, variables) =>
+      jsonResource(uri, {
+        op: "task_detail",
+        taskId: String(variables.taskId),
+      }),
   );
   server.registerResource(
     "shared-context",

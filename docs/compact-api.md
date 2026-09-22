@@ -27,8 +27,12 @@ summary, evidence and explicit limitations (an empty limitations list is allowed
 
 Tools return a structured envelope `{ok,data,error}` and JSON text for compatible
 hosts. Tool failures set `isError`; errors carry a code, message and retryable
-flag. Fetch/ack and task mutations are not marked read-only. The schema advertises
-the envelope; operation-specific result schemas and normalization are still open.
+flag. Fetch/ack and task mutations are not marked read-only. Output schemas cover
+receipt cursor/replay metadata, paginated results, bootstrap state, normalized
+task ownership, shared-key status and bounded wait outcomes/references. Variable
+command values and page entries remain extensible objects. Wait references can
+be read directly as task resources. The richer catalog currently exceeds its
+3,000-token target; further surface simplification remains open.
 
 Payload budgets use UTF-8 JSON bytes. Command result values and event payloads
 are limited to 64 KiB inside the write transaction; excess rolls back state,
