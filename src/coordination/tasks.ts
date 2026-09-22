@@ -422,6 +422,41 @@ export class TaskTransaction {
     this.propagate(task.id);
     return { task: { ...this.task(task.id) } };
   }
+  /** Trusted dispatch termination evidence, not a public task command. */
+  confirmStoppedCancellation(payload: AttemptRef) {
+    const task = this.task(payload.taskId);
+    const attempt = this.db
+      .prepare("SELECT * FROM task_attempts WHERE id=?")
+      .get(payload.attemptId) as Attempt | undefined;
+    if (
+      task.status !== "cancel_requested" ||
+      task.current_attempt !== payload.attemptId ||
+      !attempt ||
+      attempt.task_id !== task.id ||
+      attempt.fence !== payload.fence ||
+      attempt.state !== "running"
+    )
+      throw new CoordinationError(
+        "conflict",
+        "Stopped attempt does not match pending cancellation",
+      );
+    this.db
+      .prepare(
+        "UPDATE task_attempts SET state='cancelled',ended_at=?,reason='provider_stopped' WHERE id=?",
+      )
+      .run(this.at, attempt.id);
+    this.db
+      .prepare(
+        "UPDATE tasks SET status='cancelled',current_attempt=NULL,version=version+1,updated_at=?,reason='provider_stopped' WHERE id=?",
+      )
+      .run(this.at, task.id);
+    this.change("task.cancelled", task.id, {
+      attemptId: attempt.id,
+      fence: attempt.fence,
+      reason: "provider_stopped",
+    });
+    this.propagate(task.id);
+  }
   retry(payload: { taskId: string; expectedVersion: number }) {
     const task = this.task(payload.taskId);
     this.creator(task, payload.expectedVersion);

@@ -18,6 +18,67 @@ export interface DispatchProvider {
     signal: AbortSignal,
   ): Promise<ProvisionedWorker>;
   find(token: string, signal: AbortSignal): Promise<ProvisionedWorker | null>;
+  /** Must fence future starts for this token as well as stop existing work.
+   * A missing lookup alone cannot return stopped: true. Repeats are idempotent. */
+  stop?(token: string, signal: AbortSignal): Promise<{ stopped: boolean }>;
+}
+
+/** Creator cancellation commits before provider effects. Termination is scoped to
+ * the dispatch token, not necessarily the lifetime of a shared worker process. */
+export async function cancelDispatchIntent(options: {
+  store: CoordinationStore;
+  requester: SessionContext;
+  intentId: string;
+  providers: readonly DispatchProvider[];
+  timeoutMs?: number;
+}) {
+  const { store, requester, intentId } = options;
+  const timeoutMs = options.timeoutMs ?? 5000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000)
+    throw new Error("Dispatch provider timeout must be 1..60000 ms");
+  const cancellation = store.execute(
+    {
+      ...requester,
+      id: randomUUID(),
+      type: "dispatch.cancel",
+      payload: { intentId },
+    },
+    (tx) => tx.dispatch.requestCancellation(intentId),
+  ).value;
+  if (cancellation.status === "released") return cancellation;
+  const release = (stopped?: { token: string; routeId: string }) =>
+    store.execute(
+      {
+        ...requester,
+        id: randomUUID(),
+        type: "dispatch.release",
+        payload: { intentId },
+      },
+      (tx) => tx.dispatch.release({ intentId, stopped }),
+    ).value;
+  if (cancellation.status === "reserved") return release();
+  const matches = options.providers.filter(
+    (provider) => provider.routeId === cancellation.routeId,
+  );
+  const provider = matches.length === 1 ? matches[0] : undefined;
+  if (!provider?.stop || !provider.authorized())
+    return {
+      status: "blocked",
+      taskId: cancellation.taskId,
+      reasons: ["termination_unavailable"],
+    };
+  if (!cancellation.token)
+    throw new Error("Dispatch has no provisioning token");
+  try {
+    const result = await bounded(timeoutMs, (signal) =>
+      provider.stop!(cancellation.token!, signal),
+    );
+    if (result.stopped !== true)
+      return { status: "uncertain", taskId: cancellation.taskId };
+  } catch {
+    return { status: "uncertain", taskId: cancellation.taskId };
+  }
+  return release({ token: cancellation.token, routeId: cancellation.routeId });
 }
 
 async function bounded<T>(

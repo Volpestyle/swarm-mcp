@@ -113,11 +113,9 @@ export class DispatchTransaction {
     const row = this.intent(input.intentId);
     if (row.state === "released")
       return { status: "released", taskId: row.task_id, existing: true };
-    const task = this.db
+    let task = this.db
       .prepare("SELECT status FROM tasks WHERE scope=? AND id=?")
       .get(this.command.scope, row.task_id) as { status: string };
-    if (!["completed", "failed", "cancelled"].includes(task.status))
-      throw new CoordinationError("conflict", "Dispatch task is not terminal");
     if (
       row.state !== "reserved" &&
       (!input.stopped ||
@@ -128,6 +126,16 @@ export class DispatchTransaction {
         "conflict",
         "Dispatch requires confirmed provider termination",
       );
+    if (task.status === "cancel_requested" && row.state === "bound") {
+      this.tasks.confirmStoppedCancellation({
+        taskId: row.task_id,
+        attemptId: row.attempt_id!,
+        fence: row.fence!,
+      });
+      task = { status: "cancelled" };
+    }
+    if (!["completed", "failed", "cancelled"].includes(task.status))
+      throw new CoordinationError("conflict", "Dispatch task is not terminal");
     this.db
       .prepare(
         "UPDATE dispatch_intents SET state='released' WHERE scope=? AND intent_id=?",
@@ -135,6 +143,26 @@ export class DispatchTransaction {
       .run(this.command.scope, input.intentId);
     this.change("dispatch.released", input.intentId, { taskId: row.task_id });
     return { status: "released", taskId: row.task_id, existing: false };
+  }
+
+  requestCancellation(intentId: string) {
+    const row = this.intent(intentId);
+    const task = this.db
+      .prepare("SELECT * FROM tasks WHERE scope=? AND id=?")
+      .get(this.command.scope, row.task_id) as Task;
+    if (task.creator !== this.command.actor)
+      throw new CoordinationError(
+        "conflict",
+        "Only the task creator may cancel dispatch",
+      );
+    if (["open", "blocked", "running"].includes(task.status))
+      this.tasks.cancel({ taskId: task.id, expectedVersion: task.version });
+    return {
+      status: row.state,
+      taskId: row.task_id,
+      routeId: row.route_id,
+      token: row.provision_token,
+    };
   }
 
   /** Launcher-verified provisioning result only; never model-supplied identity. */

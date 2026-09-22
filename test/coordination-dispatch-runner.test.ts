@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { CoordinationStore } from "../src/coordination/store";
 import {
   runDispatchIntent,
+  cancelDispatchIntent,
   type DispatchProvider,
   type ProvisionedWorker,
 } from "../src/coordination/dispatch-runner";
@@ -160,6 +161,98 @@ for (const failure of ["lost-response", "timeout"] as const)
           tx.dispatch.reserve({ ...intent, intentId: "next-action" }, policy),
       ).value;
       expect(next.status).toBe("reserved");
+      let stopMode: "timeout" | "pending" | "stopped" = "timeout";
+      const cancelProvider: DispatchProvider = {
+        ...provider,
+        async start({ token }) {
+          external.set(token, { externalId: "next-worker", worker });
+          return external.get(token)!;
+        },
+        async stop(token, signal) {
+          expect(external.has(token)).toBe(true);
+          if (stopMode === "timeout")
+            return await new Promise((_, reject) =>
+              signal.addEventListener(
+                "abort",
+                () => reject(new Error("Stop response lost")),
+                { once: true },
+              ),
+            );
+          return { stopped: stopMode === "stopped" };
+        },
+      };
+      const nextBound = await runDispatchIntent({
+        store,
+        requester,
+        intent: { ...intent, intentId: "next-action" },
+        policy,
+        providers: [cancelProvider],
+      });
+      if (!("attemptId" in nextBound)) throw new Error("Missing next attempt");
+      const cancel = (actor = requester) =>
+        cancelDispatchIntent({
+          store,
+          requester: actor,
+          intentId: "next-action",
+          providers: [cancelProvider],
+          timeoutMs: 20,
+        });
+      await expect(cancel(worker)).rejects.toThrow("Only the task creator");
+      expect((await cancel()).status).toBe("uncertain");
+      expect(store.task("scope", nextBound.taskId)?.status).toBe(
+        "cancel_requested",
+      );
+      expect(() =>
+        store.execute(
+          { ...worker, id: "late-result", type: "task.finish", payload: {} },
+          (tx) =>
+            tx.tasks.finish({
+              taskId: nextBound.taskId,
+              attemptId: nextBound.attemptId,
+              fence: nextBound.fence,
+              outcome: "completed",
+            }),
+        ),
+      ).toThrow("Acknowledge cancellation");
+      store.close();
+      store = await CoordinationStore.open({ path });
+      stopMode = "pending";
+      expect((await cancel()).status).toBe("uncertain");
+      expect(store.task("scope", nextBound.taskId)?.status).toBe(
+        "cancel_requested",
+      );
+      stopMode = "stopped";
+      expect((await cancel()).status).toBe("released");
+      const neverStarted = store.execute(
+        {
+          ...requester,
+          id: "reserve-never-started",
+          type: "dispatch.reserve",
+          payload: {},
+        },
+        (tx) =>
+          tx.dispatch.reserve({ ...intent, intentId: "never-started" }, policy),
+      ).value;
+      if (!("taskId" in neverStarted)) throw new Error("Missing reservation");
+      expect(
+        (
+          await cancelDispatchIntent({
+            store,
+            requester,
+            intentId: "never-started",
+            providers: [],
+          })
+        ).status,
+      ).toBe("released");
+      expect(store.task("scope", neverStarted.taskId)?.status).toBe(
+        "cancelled",
+      );
+      expect(store.attempts("scope", neverStarted.taskId)).toHaveLength(0);
+      expect(store.task("scope", nextBound.taskId)?.status).toBe("cancelled");
+      expect(store.attempts("scope", nextBound.taskId)[0]?.state).toBe(
+        "cancelled",
+      );
+      expect((await cancel()).status).toBe("released");
     } finally {
       store.close();
     }

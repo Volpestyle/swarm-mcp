@@ -82,6 +82,21 @@ retrying a released intent returns its existing task without another launch.
 Regression tests reject early release and mismatched tokens, retain capacity
 until confirmation, and allow the next reservation after release.
 
+`cancelDispatchIntent` commits creator-authorized cancellation before calling the
+provider. Before provisioning, it cancels and releases without a provider call.
+Otherwise it requests idempotent `stop(token)` outside the transaction. A provider
+must both stop current work and fence future starts for that token before returning
+`stopped: true`; a missing lookup is insufficient, including when cancellation
+races a delayed start. Stop applies to this dispatch's work, not necessarily an
+entire shared worker process. Missing stop support preserves a blocker; timeouts
+and incomplete stops retain uncertainty and capacity across restart.
+
+Confirmed stop closes the matching pending-cancellation attempt and releases its
+reservation atomically. Late success is rejected once cancellation is requested.
+The regression exercises stop timeout, coordinator reopen, pending stop, confirmed
+stop, repeated cancellation and pre-start cancellation using a controlled provider.
+Concrete host adapters must still implement and prove their stop-token fencing.
+
 ## Legacy implementation audit
 
 The referenced historical tickets are inputs, not execution dependencies:
