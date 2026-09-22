@@ -222,13 +222,32 @@ export class TaskTransaction {
     });
     return { task: { ...this.task(id) } };
   }
-  claim(payload: {
-    taskId: string;
-    expectedVersion: number;
-    leaseMs?: number;
-  }) {
+  claim(
+    payload: {
+      taskId: string;
+      expectedVersion: number;
+      leaseMs?: number;
+    },
+    reservedIntent?: string,
+  ) {
     const context = this.session(),
       task = this.task(payload.taskId);
+    const dispatch = this.db
+      .prepare(
+        "SELECT intent_id,state FROM dispatch_intents WHERE scope=? AND task_id=? AND state<>'released'",
+      )
+      .get(this.command.scope, task.id) as
+      | { intent_id: string; state: string }
+      | undefined;
+    if (
+      dispatch &&
+      (dispatch.intent_id !== reservedIntent ||
+        dispatch.state !== "provisioning")
+    )
+      throw new CoordinationError(
+        "conflict",
+        "Task ownership is reserved by dispatch",
+      );
     positive(payload.expectedVersion, "expectedVersion");
     const duration = payload.leaseMs ?? 60000;
     positive(duration, "leaseMs", 300000);

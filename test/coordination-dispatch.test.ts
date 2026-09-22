@@ -70,13 +70,13 @@ test("concurrent Node dispatch reservations share one task and retain capacity a
     packages: "external",
   });
   try {
-    const run = async (context: typeof alice) => {
+    const run = async (context: typeof alice, begin = false) => {
       const child = Bun.spawn(
         [
           Bun.which("node")!,
           worker,
           path,
-          JSON.stringify({ context, input, policy }),
+          JSON.stringify({ context, input, policy, begin }),
         ],
         { stdout: "pipe", stderr: "pipe" },
       );
@@ -92,6 +92,16 @@ test("concurrent Node dispatch reservations share one task and retain capacity a
     expect(results.filter((result) => result.created)).toHaveLength(1);
     expect(results[0].taskId).toBe(results[1].taskId);
     expect(store.task("scope", results[0].taskId)?.status).toBe("open");
+    expect(() =>
+      store.execute(
+        { ...bob, id: "steal", type: "task.claim", payload: {} },
+        (tx) =>
+          tx.tasks.claim({ taskId: results[0].taskId, expectedVersion: 1 }),
+      ),
+    ).toThrow("reserved by dispatch");
+    const starts = await Promise.all([run(alice, true), run(bob, true)]);
+    expect(starts.filter((result) => result.start)).toHaveLength(1);
+    expect(starts[0].token).toBe(starts[1].token);
     const reopened = await CoordinationStore.open({ path });
     try {
       const reserve = (id: string, intent: DispatchIntent) =>
@@ -115,6 +125,110 @@ test("concurrent Node dispatch reservations share one task and retain capacity a
         reserve("changed-work", { ...input, title: "Different work" }),
       ).toThrow("different work");
       expect(reopened.taskSummaries("scope").items).toHaveLength(1);
+      const retryStart = reopened.execute(
+        {
+          ...bob,
+          id: "resume-provisioning",
+          type: "dispatch.begin",
+          payload: {},
+        },
+        (tx) => tx.dispatch.begin(input.intentId),
+      ).value;
+      expect(retryStart).toMatchObject({
+        start: false,
+        token: starts[0].token,
+      });
+      const worker = enroll("worker");
+      const binding = {
+        intentId: input.intentId,
+        token: starts[0].token,
+        routeId: "native",
+        externalId: "native-thread",
+        worker,
+      };
+      const bind = (id: string, value = binding) =>
+        reopened.execute(
+          { ...alice, id, type: "dispatch.bind", payload: value },
+          (tx) => tx.dispatch.bind(value),
+        ).value;
+      const accepted = bind("bind-first");
+      expect(bind("bind-retry")).toEqual({ ...accepted, existing: true });
+      expect(reopened.attempts("scope", results[0].taskId)).toHaveLength(1);
+      expect(() => bind("bind-other", { ...binding, worker: bob })).toThrow(
+        "another worker",
+      );
+      expect(reopened.task("scope", results[0].taskId)?.status).toBe("running");
+      const finishPayload = {
+        taskId: accepted.taskId,
+        attemptId: accepted.attemptId,
+        fence: accepted.fence,
+        outcome: "completed" as const,
+        result: { artifact: "verified-result" },
+      };
+      expect(() =>
+        reopened.execute(
+          {
+            ...bob,
+            id: "wrong-completion",
+            type: "task.finish",
+            payload: finishPayload,
+          },
+          (tx) => tx.tasks.finish(finishPayload),
+        ),
+      ).toThrow();
+      const finish = () =>
+        reopened.execute(
+          {
+            ...worker,
+            id: "native-completion",
+            type: "task.finish",
+            payload: finishPayload,
+          },
+          (tx) => tx.tasks.finish(finishPayload),
+        );
+      expect(finish().replayed).toBe(false);
+      expect(finish().replayed).toBe(true);
+      expect(reopened.task("scope", accepted.taskId)?.status).toBe("completed");
+      const cancelled = reopened.execute(
+        {
+          ...alice,
+          id: "reserve-cancel",
+          type: "dispatch.reserve",
+          payload: {},
+        },
+        (tx) =>
+          tx.dispatch.reserve(
+            { ...input, intentId: "cancel-before-start" },
+            {
+              ...policy,
+              maximum: 2,
+              routes: policy.routes.map((route) => ({ ...route, capacity: 2 })),
+            },
+          ),
+      ).value;
+      if (!("taskId" in cancelled))
+        throw new Error("Cancellation fixture was not reserved");
+      reopened.execute(
+        {
+          ...alice,
+          id: "cancel-before-start",
+          type: "task.cancel",
+          payload: {},
+        },
+        (tx) =>
+          tx.tasks.cancel({ taskId: cancelled.taskId, expectedVersion: 1 }),
+      );
+      expect(() =>
+        reopened.execute(
+          {
+            ...alice,
+            id: "begin-cancelled",
+            type: "dispatch.begin",
+            payload: {},
+          },
+          (tx) => tx.dispatch.begin("cancel-before-start"),
+        ),
+      ).toThrow("no longer open");
     } finally {
       reopened.close();
     }

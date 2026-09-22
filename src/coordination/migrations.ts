@@ -3,7 +3,7 @@ import { CoordinationError } from "./errors";
 
 // A separate application identity prevents accidental adoption of legacy swarm.db.
 export const APPLICATION_ID = 0x53574d32;
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 export type FaultPoint =
   | "before_migration_commit"
   | "before_command_commit"
@@ -145,6 +145,11 @@ const migrations = [
     PRIMARY KEY(scope,intent_id)
   );
   CREATE INDEX dispatch_capacity ON dispatch_intents(scope,state,route_id);`,
+  `ALTER TABLE dispatch_intents ADD COLUMN provision_token TEXT;
+  ALTER TABLE dispatch_intents ADD COLUMN external_id TEXT;
+  ALTER TABLE dispatch_intents ADD COLUMN worker_session TEXT;
+  ALTER TABLE dispatch_intents ADD COLUMN attempt_id TEXT;
+  ALTER TABLE dispatch_intents ADD COLUMN fence INTEGER;`,
 ];
 
 function version(db: Sqlite): number {

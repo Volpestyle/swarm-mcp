@@ -26,14 +26,30 @@ model command payload. This primitive is not yet exposed through the agent API.
 
 Reservations do not expire into permission to provision again. A crash may leave
 an unresolved intent; later provisioning reconciliation must prove the external
-outcome before releasing or retrying it. Provisioning, binding to a task attempt,
-release and cancellation still need implementation. The current reservation never
-launches a process or reports a worker as accepted.
+outcome before releasing or retrying it. External provisioning adapters, release
+and cancellation still need implementation. The reservation itself never launches
+a process or reports a worker as accepted.
+
+Schema 10 records a provisioning token before external effects. `begin` advances
+reserved → provisioning once; another command or restarted caller receives the
+same token with `start: false`. The caller must also honor the command receipt's
+`replayed` flag: replaying a cached `start: true` result is not new permission to
+provision. Uncertain outcomes require lookup by this token, not another spawn.
+
+The launcher's verified result binds route, token, external identity and an active
+same-scope worker session in one transaction. Binding claims the task for that
+worker with the existing attempt/fence mechanism; a duplicate result returns the
+same attempt, and another worker is rejected. Ordinary task claims cannot bypass
+an unreleased dispatch reservation. Native completion uses the same worker-bound
+`task.finish` command and stable command ID, not a parallel legacy task record.
 
 The dispatch regression runs two independent Node processes against one database.
 Exactly one creates a reservation/task; both receive the same task ID. Reopening
 the store retains that reservation and capacity, rejects different work with the
 same intent, and blocks an additional intent at the configured concurrency limit.
+The same processes race provisioning start: one wins, both see one token, and a
+reopened caller reconciles. Binding/finish tests prove one attempt, reject another
+worker's completion and replay the accepted result without a second completion.
 
 ## Legacy implementation audit
 
