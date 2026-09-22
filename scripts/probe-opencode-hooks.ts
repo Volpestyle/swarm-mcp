@@ -204,8 +204,13 @@ export const Probe = async ({directory, client, serverUrl}) => {
   const record = event => appendFileSync(process.env.SWARM_PROBE_EVENTS, JSON.stringify(event)+'\\n');
   record({type:'plugin.loaded',directory});
   const hooks = opencodeLifecycle(${JSON.stringify(launcherOptions)}, event => record({ ...event, type: 'coordination.' + event.type }));
-  connectOpenCodeLifecycle({directory, client, serverUrl}, hooks, state => record({type: 'observer.' + state}));
-  return {...hooks, event: async (input) => { await hooks.event(input); record(input.event); }};
+  const observedHooks = {...hooks, event: async input => {
+    await hooks.event(input);
+    const id = input.event.properties?.sessionID;
+    if (id && (input.event.type === 'session.status' || input.event.type.startsWith('permission.'))) record({type: 'availability.' + hooks.observe(id).state, hostSessionId: id, evidence: hooks.observe(id).evidence});
+  }};
+  connectOpenCodeLifecycle({directory, client, serverUrl}, observedHooks, state => record({type: 'observer.' + state}));
+  return {...hooks, event: async (input) => { record(input.event); }};
 };`,
 );
 const env = {
@@ -226,6 +231,7 @@ const env = {
   OPENCODE_CONFIG_CONTENT: JSON.stringify({
     plugin: [pathToFileURL(plugin).href],
     enabled_providers: ["fixture"],
+    permission: { read: "ask" },
     model: "fixture/probe",
     small_model: "fixture/probe",
     provider: {
@@ -371,7 +377,7 @@ try {
         },
       },
     })) as { value: { messageId: string } };
-    const prompt = await fetch(base + "/session/" + session.id + "/message", {
+    const promptPromise = fetch(base + "/session/" + session.id + "/message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -381,6 +387,37 @@ try {
       }),
       signal: AbortSignal.timeout(30000),
     });
+    await waitFor("availability.blocked", session.id);
+    const blockedStatus = (await coordinator.request({
+      op: "message_status",
+      messageId: sent.value.messageId,
+    })) as { deliveries: Array<{ state: string }> };
+    assert.equal(
+      blockedStatus.deliveries[0].state,
+      "pending",
+      "Permission wait must not consume inbox",
+    );
+    const asked = readFileSync(events, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find(
+        (event) =>
+          event.type === "permission.asked" &&
+          event.properties.sessionID === session.id,
+      );
+    assert.ok(asked);
+    const reply = await fetch(
+      base + "/session/" + session.id + "/permissions/" + asked.properties.id,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: "once" }),
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    assert.equal(reply.status, 200);
+    const prompt = await promptPromise;
     assert.equal(prompt.status, 200);
     const promptResult = await prompt.text();
     const received = modelRequests
@@ -419,6 +456,7 @@ try {
       requests: modelRequests.length,
       toolResultReachedModel: true,
       messageId: sent.value.messageId,
+      stateWhilePermissionBlocked: blockedStatus.deliveries[0].state,
       stateAfterAdmission: observedLeaseState,
       stateAfterExplicitAck: status.deliveries[0].state,
     };

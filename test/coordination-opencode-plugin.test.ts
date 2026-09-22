@@ -68,6 +68,24 @@ test("OpenCode post-tool admission preserves explicit ack and suppresses repeate
       });
     const output = { output: "original tool output" };
     const input = { sessionID: "recipient", callID: "first" };
+    await hooks.event({
+      event: {
+        type: "permission.asked",
+        properties: { sessionID: "recipient", id: "waiting" },
+      },
+    });
+    await hooks["tool.execute.after"](input, output);
+    expect(output.output).toBe("original tool output");
+    const blocked = (await recipient.request({ op: "bootstrap" })) as {
+      inbox: Array<{ state: string; count: number }>;
+    };
+    expect(blocked.inbox).toEqual([{ state: "pending", count: 2 }]);
+    await hooks.event({
+      event: {
+        type: "permission.replied",
+        properties: { sessionID: "recipient", requestID: "waiting" },
+      },
+    });
     await hooks["tool.execute.after"](input, output);
     const first = output.output;
     expect(first.startsWith("original tool output")).toBe(true);

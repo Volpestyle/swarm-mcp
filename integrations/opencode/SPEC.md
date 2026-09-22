@@ -65,6 +65,26 @@ It uses no external model service. Retained evidence redacts lease tokens.
 Durable context deduplication across restart/lease expiry and idle wakeups remain
 unproven.
 
+`opencode-availability.json` adds a real `read` permission wait to that agent
+loop. The adapter observes `blocked` and the coordinator delivery remains
+`pending`. The fixture replies once through the native permission API; the read
+then completes, the message reaches the next model request, and explicit
+acknowledgment succeeds. No permission prompt is bypassed by the adapter.
+
+Availability tracks status events and outstanding permission/question IDs.
+Duplicate asks are idempotent; one reply cannot clear a different wait. Replies
+establish busy, never idle; retry is busy. Stream loss and deletion establish
+disconnected. Unknown sessions/statuses are unsupported until verified host
+evidence arrives. Post-tool delivery checks blocked/disconnected both before
+fetch and immediately before admission. Permission/question reconstruction on
+startup and idle admission via an authoritative status check remain open.
+
+The wrapper feeds operational events from the SSE observer only. Its native
+event hook may record diagnostics, but must not feed the same events back into
+availability: two independently scheduled subscriptions can replay an older
+status after a newer one. `connectOpenCodeLifecycle` forwards stream loss to
+the adapter so subsequent tool callbacks defer until reconnection.
+
 ## Actual host evidence
 
 Run the installed native executable, not its Windows package shim:

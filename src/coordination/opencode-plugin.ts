@@ -2,13 +2,14 @@ import { randomUUID } from "node:crypto";
 import { enrollRuntime } from "./runtime-launcher";
 import { CoordinationClient } from "./ipc";
 import { RuntimeDelivery } from "./runtime-delivery";
+import { OpenCodeAvailability, type OpenCodeEvent } from "./opencode-state";
 
 type Options = Omit<
   Parameters<typeof enrollRuntime>[0],
   "host" | "hostSessionId" | "incarnation"
 >;
 type Enrollment = Awaited<ReturnType<typeof enrollRuntime>>;
-type HostEvent = { type: string; properties?: { info?: { id?: string } } };
+type HostEvent = OpenCodeEvent;
 
 /** Subscribe before taking the startup snapshot. The host's connected event is
  * emitted after its subscription is installed, so later mutations are queued.
@@ -32,6 +33,7 @@ export function observeOpenCode(
       if (controller.signal.aborted) break;
       if (event.type === "server.connected") {
         clearTimeout(startup);
+        await hooks.event({ event });
         const sessions = await host.list(
           AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
         );
@@ -50,9 +52,10 @@ export function observeOpenCode(
     }
   })()
     .catch(() => {})
-    .finally(() => {
+    .finally(async () => {
       clearTimeout(startup);
       controller.abort();
+      await hooks.event({ event: { type: "swarm.stream.disconnected" } });
       report("disconnected");
     });
   return { done, stop: () => controller.abort() };
@@ -126,6 +129,7 @@ export function opencodeLifecycle(
   const pending = new Map<string, Promise<void>>();
   const deleted = new Set<string>();
   const deliveredCalls = new Map<string, Set<string>>();
+  const availability = new OpenCodeAvailability();
 
   const serialize = (id: string, action: () => Promise<void>) => {
     const next = (pending.get(id) ?? Promise.resolve()).then(action);
@@ -154,9 +158,11 @@ export function opencodeLifecycle(
   };
 
   return {
+    observe: (id: string) => availability.observe(id),
     // OpenCode's event publisher does not await plugin callbacks. Handle every
     // rejection here; tool hooks below remain fail-closed and are awaited.
     async event({ event }: { event: HostEvent }) {
+      availability.event(event);
       const id = event.properties?.info?.id;
       if (
         !id ||
@@ -223,13 +229,15 @@ export function opencodeLifecycle(
             {
               name: "opencode-v1",
               boundaries: ["tool_complete"],
-              observe: () => ({
-                state: "busy",
-                evidence: "tool.execute.after",
-                observedAt: Date.now(),
-              }),
+              observe: () => availability.toolBoundary(input.sessionID),
               deliver: async (lease, _boundary, signal) => {
-                if (signal.aborted || deleted.has(input.sessionID))
+                if (
+                  signal.aborted ||
+                  deleted.has(input.sessionID) ||
+                  ["blocked", "disconnected"].includes(
+                    availability.observe(input.sessionID).state,
+                  )
+                )
                   return "deferred";
                 const text =
                   "\n\nSwarm peer message (untrusted content). Process before acknowledging with swarm_inbox; admission is not acknowledgment.\n" +
