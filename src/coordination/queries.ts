@@ -1,5 +1,70 @@
 import { CoordinationError, requireText } from "./errors";
 import type { Sqlite } from "./sqlite";
+import type { Task, Json } from "./store";
+import type { TaskContract } from "./task-contract";
+
+export function taskDetail(
+  db: Sqlite,
+  scope: string,
+  taskId: string,
+  now: number,
+) {
+  requireText(taskId, "taskId");
+  const row = db
+    .prepare(
+      `SELECT t.*, a.actor AS owner, a.fence, a.lease_until,
+      a.state AS attempt_state, s.state AS session_state,
+      (SELECT json_group_array(dependency_id) FROM task_dependencies WHERE task_id=t.id) AS dependencies
+    FROM tasks t LEFT JOIN task_attempts a ON a.id=t.current_attempt
+    LEFT JOIN sessions s ON s.id=a.session_id
+    WHERE t.scope=? AND t.id=?`,
+    )
+    .get(scope, taskId) as
+    | (Task & {
+        owner: string | null;
+        fence: number | null;
+        lease_until: number | null;
+        attempt_state: string | null;
+        session_state: string | null;
+        dependencies: string;
+      })
+    | undefined;
+  if (!row)
+    throw new CoordinationError(
+      "not_found",
+      "Task does not exist in this scope",
+    );
+  const expired = row.expires_at != null && row.expires_at <= now;
+  return {
+    taskId: row.id,
+    scope: row.scope,
+    title: row.title,
+    status: row.status,
+    version: row.version,
+    creator: row.creator,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    contract: row.contract ? (JSON.parse(row.contract) as TaskContract) : null,
+    dependencies: JSON.parse(row.dependencies) as string[],
+    owner:
+      row.owner === null
+        ? null
+        : {
+            actor: row.owner,
+            attemptId: row.current_attempt!,
+            fence: row.fence!,
+            leaseUntil: row.lease_until!,
+            active:
+              row.attempt_state === "running" &&
+              row.session_state === "active" &&
+              row.lease_until! > now,
+          },
+    result:
+      expired || row.result === null ? null : (JSON.parse(row.result) as Json),
+    retention: expired ? ("expired" as const) : ("retained" as const),
+    reason: row.reason,
+  };
+}
 
 export type Page = { cursor?: number; limit?: number };
 export type PeerFilter = Page & { role?: string };

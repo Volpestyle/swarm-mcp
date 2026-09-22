@@ -9,7 +9,7 @@ The legacy `swarm-mcp` entry remains available while migration is completed.
 | Tool | Common path |
 | --- | --- |
 | `swarm_sync` | Omit cursor for bootstrap; retain eventCursor and resume with deltas; optionally wait up to 30 seconds |
-| `swarm_find` | Page scoped peers/tasks or read one task |
+| `swarm_find` | Page scoped peers/tasks or read a normalized task with contract, dependencies, current owner and parsed result |
 | `swarm_assign` | Persist a contract and dependencies; return immediately with a durable task ID |
 | `swarm_task` | Claim with expectedVersion; use attemptId/fence for renew/progress/finish; cancel/retry/recover explicitly |
 | `swarm_send` | Send a typed question, blocker, decision request or completion notice with a threadId |
@@ -25,6 +25,12 @@ Tools return a structured envelope `{ok,data,error}` and JSON text for compatibl
 hosts. Tool failures set `isError`; errors carry a code, message and retryable
 flag. Fetch/ack and task mutations are not marked read-only. The schema advertises
 the envelope; operation-specific result schemas and normalization are still open.
+
+Task details include the authoritative scope and creator, parsed contract fields,
+dependency IDs, current attempt owner/fence/lease and parsed completion evidence.
+An owner is marked active only while its attempt, session and lease are active;
+terminal tasks have no current owner. Historical attribution remains in the
+attempt records. Expired result values are omitted while control history remains.
 
 The adapter caps concurrent waits at eight. Each wait uses its own authenticated
 IPC connection so cancelling it tears down that owner-side wait without disrupting

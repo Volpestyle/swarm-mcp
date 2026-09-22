@@ -153,7 +153,10 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
     true,
     (a) => {
       if (a.kind === "task")
-        return request({ op: "task", taskId: required(a.taskId, "taskId") });
+        return request({
+          op: "task_detail",
+          taskId: required(a.taskId, "taskId"),
+        });
       return request(
         a.kind === "peers"
           ? {

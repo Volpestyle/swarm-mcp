@@ -95,6 +95,19 @@ test("compact MCP executes durable task and inbox workflows through the Node own
         expectedVersion: 1,
       })
     ).value;
+    const detail = await call("swarm_find", { kind: "task", taskId });
+    expect(detail).toMatchObject({
+      taskId,
+      scope: "test",
+      contract: assignment.contract,
+      dependencies: [],
+      owner: {
+        actor: "alice",
+        attemptId: claim.attemptId,
+        fence: claim.fence,
+        active: true,
+      },
+    });
     expect((await call("swarm_wait", { taskId, timeoutMs: 1 })).waitState).toBe(
       "timeout",
     );
@@ -120,6 +133,10 @@ test("compact MCP executes durable task and inbox workflows through the Node own
       fence: claim.fence,
       outcome: "completed",
       report: { summary: "verified", evidence: ["roundtrip"], limitations: [] },
+    });
+    expect(await call("swarm_find", { kind: "task", taskId })).toMatchObject({
+      owner: null,
+      result: { summary: "verified", evidence: ["roundtrip"], limitations: [] },
     });
     expect((await call("swarm_wait", { taskId, timeoutMs: 0 })).waitState).toBe(
       "terminal",

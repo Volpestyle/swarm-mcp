@@ -22,6 +22,7 @@ import {
   bootstrap,
   peers,
   taskSummaries,
+  taskDetail,
   type PeerFilter,
   type TaskFilter,
 } from "./queries";
@@ -557,6 +558,10 @@ export class CoordinationStore {
       result: expired ? null : task.result,
       retentionState: expired ? "expired" : "retained",
     };
+  }
+  taskDetail(scope: string, id: string) {
+    this.ensureOpen();
+    return taskDetail(this.db, scope, id, this.clock());
   }
 
   events(

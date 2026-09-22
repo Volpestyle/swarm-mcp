@@ -18,6 +18,7 @@ export type Operation =
   | { op: "artifacts"; cursor?: number; limit?: number }
   | { op: "findings"; filter?: FindingFilter }
   | { op: "task"; taskId: string }
+  | { op: "task_detail"; taskId: string }
   | { op: "task_wait"; taskId: string; timeoutMs: number }
   | { op: "attempts"; taskId: string }
   | { op: "reservations"; limit?: number }
@@ -184,6 +185,10 @@ export async function serveCoordination(options: {
           case "task":
             requireText(raw.taskId, "task ID");
             result = options.core.task(actor, raw.taskId);
+            break;
+          case "task_detail":
+            requireText(raw.taskId, "taskId");
+            result = options.core.taskDetail(actor, raw.taskId);
             break;
           case "attempts":
             requireText(raw.taskId, "task ID");

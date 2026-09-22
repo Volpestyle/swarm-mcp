@@ -168,6 +168,10 @@ export class CoordinationCore {
     this.store.assertContext(context);
     return this.store.task(context.scope, id);
   }
+  taskDetail(context: ActorContext, id: string) {
+    this.store.assertContext(context);
+    return this.store.taskDetail(context.scope, id);
+  }
   async importArtifact(context: ActorContext, input: ArtifactImport) {
     const command = {
       ...context,

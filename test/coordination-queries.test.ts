@@ -43,6 +43,16 @@ test("bootstrap resumes from a scoped snapshot and summary pages omit large payl
       type: "task.claim",
       payload: { taskId: tasks[0]!.id, expectedVersion: 1 },
     });
+    expect(core.taskDetail(alice, tasks[0]!.id)).toMatchObject({
+      scope: "test",
+      taskId: tasks[0]!.id,
+      dependencies: [],
+      owner: { actor: "bob", active: true },
+      contract: null,
+    });
+    expect(() => core.taskDetail(outside, tasks[0]!.id)).toThrow(
+      "does not exist",
+    );
     core.command(alice, {
       id: "send",
       type: "message.send",
@@ -84,6 +94,7 @@ test("bootstrap resumes from a scoped snapshot and summary pages omit large payl
     ).toHaveLength(1);
     core.command(bob, { id: "suspend", type: "session.suspend", payload: {} });
     expect(core.peers(alice, { role: "reviewer" }).items).toEqual([]);
+    expect(core.taskDetail(alice, tasks[0]!.id).owner!.active).toBe(false);
     expect(() => core.bootstrap(bob)).toThrow();
     expect(() => core.peers(alice, { limit: 51 })).toThrow("1..50");
     expect(() => core.taskSummaries(alice, { status: "invented" })).toThrow(
