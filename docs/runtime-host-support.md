@@ -10,6 +10,12 @@ permanent claims about capabilities missing from a host.
 | Codex 0.155.1 | Isolated app-server initialization, plugin event configuration parsing, idle thread and rejected idle steering; native MCP discovery, actor authentication, fetch and explicit acknowledgment through thread-scoped app-server calls | MCP actor is fixture-enrolled, not automatically bound to the native thread. Fixture hooks are untrusted; automatic lifecycle and context delivery remain unverified. Treat this as a degraded integration |
 | Hermes | Existing in-process lifecycle implementation inspected; 23 Python lifecycle tests pass | No `hermes` executable on this PATH or `hermes_cli` module in the inspected Python. Actual-host delivery is unverified |
 
+Codex's two-thread probe also verifies distinct per-thread MCP credentials in one
+app server: the second actor cannot fetch the first actor's message, and its
+configuration does not replace the first actor's binding. Both actors are still
+fixture-enrolled. Neither tested native-ID environment variable was present in
+the MCP subprocess; native lifecycle binding must use an explicit host API path.
+
 OpenCode and Claude evidence uses scripted localhost model endpoints; it proves
 host execution and context assembly, not model comprehension. Captures live in
 `docs/verification/2026-09-22-runtime/`; integration specs name their reproduction

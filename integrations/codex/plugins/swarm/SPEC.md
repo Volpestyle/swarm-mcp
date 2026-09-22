@@ -34,6 +34,17 @@ This path makes no model request. The fixture actor is enrolled before the nativ
 thread exists; this verifies MCP transport and authorization, not automatic
 per-thread identity, lifecycle or model-context delivery.
 
+The extended two-thread run uses `thread/start.config` with
+`mcp_servers.swarm.env` to override the second thread's endpoint/capability.
+Both native threads authenticate as distinct actors, the original binding stays
+unchanged, and a peer inbox fetch leaves the original actor's message pending.
+Evidence: `docs/verification/2026-09-22-runtime/codex-thread-isolation.json`.
+In this installed-host run, neither `CODEX_THREAD_ID` nor `CODEX_SESSION_ID` was
+present in the MCP subprocess. A future lifecycle bridge must obtain the native
+thread ID from the host API and bind it explicitly; it cannot infer it from
+these environment variables. Rediscover this behavior when the host changes.
+Per-thread MCP configuration is verified; both enrollments remain fixtures.
+
 The probe's hooks are reported as untrusted. Listing a hook is not execution:
 live setup must obtain normal hook trust before claiming automatic delivery.
 No live trust/config changes were made. Automatic native-thread enrollment, safe

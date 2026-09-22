@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { build } from "esbuild";
 import { once } from "node:events";
+import { pathToFileURL } from "node:url";
 import { enrollRuntime } from "../src/coordination/runtime-launcher";
 import { CoordinationClient } from "../src/coordination/ipc";
 
@@ -44,6 +45,18 @@ const coordinator = await CoordinationClient.connect(
   enrolled.environment.SWARM_COORDINATOR_ENDPOINT,
   enrolled.environment.SWARM_SESSION_CAPABILITY,
 );
+const nativeContextPath = join(root, "native-context.json");
+const mcpWrapperPath = join(bundles, "inspect-context.mjs");
+writeFileSync(
+  mcpWrapperPath,
+  `import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(nativeContextPath)}, JSON.stringify({
+  threadId: process.env.CODEX_THREAD_ID ?? null,
+  sessionId: process.env.CODEX_SESSION_ID ?? null
+}));
+await import(${JSON.stringify(pathToFileURL(join(bundles, "mcp-cli.mjs")).href)});
+`,
+);
 writeFileSync(
   join(home, "config.toml"),
   `model = "fixture"
@@ -55,7 +68,7 @@ wire_api = "responses"
 requires_openai_auth = false
 [mcp_servers.swarm]
 command = ${JSON.stringify(Bun.which("node"))}
-args = [${JSON.stringify(join(bundles, "mcp-cli.mjs"))}]
+args = [${JSON.stringify(mcpWrapperPath)}]
 env_vars = ["SWARM_COORDINATOR_ENDPOINT", "SWARM_SESSION_CAPABILITY"]
 `,
 );
@@ -171,9 +184,13 @@ try {
   const tools = Object.keys(swarm?.tools ?? {}).sort();
   if (!tools.includes("swarm_inbox"))
     throw new Error("Codex did not discover the coordinator inbox tool");
-  const invoke = async (tool: string, arguments_: unknown) => {
+  const invoke = async (
+    tool: string,
+    arguments_: unknown,
+    targetThread = threadId,
+  ) => {
     const result = await call("mcpServer/tool/call", {
-      threadId,
+      threadId: targetThread,
       server: "swarm",
       tool,
       arguments: arguments_,
@@ -222,6 +239,67 @@ try {
   })) as { deliveries: Array<{ state: string }> };
   if (status.deliveries[0].state !== "acknowledged")
     throw new Error("Codex MCP acknowledgment did not commit");
+  const peer = await enrollRuntime({
+    stateDirectory: join(root, "private"),
+    nodePath: Bun.which("node")!,
+    ownerPath: join(bundles, "owner-cli.mjs"),
+    host: "codex",
+    hostSessionId: "second-app-server-fixture",
+    incarnation: "initial",
+    identity: {
+      projectRoot: root,
+      directory: root,
+      fileRoot: root,
+      profile: "fixture",
+      allowedRoots: [root],
+    },
+  });
+  const peerThread = await call("thread/start", {
+    cwd: root,
+    model: "fixture",
+    modelProvider: "fixture",
+    approvalPolicy: "never",
+    sandbox: "read-only",
+    config: { "mcp_servers.swarm.env": peer.environment },
+  });
+  const peerSync = await invoke("swarm_sync", {}, peerThread.thread.id);
+  const originalSync = await invoke("swarm_sync", {});
+  if (
+    peerSync.actor !== peer.actor ||
+    originalSync.actor !== enrolled.actor ||
+    peer.actor === enrolled.actor
+  )
+    throw new Error("Codex thread-scoped MCP identities were not isolated");
+  const privateMessage = (await coordinator.request({
+    op: "command",
+    command: {
+      id: "codex-private-message",
+      type: "message.send",
+      payload: {
+        recipient: enrolled.actor,
+        kind: "question",
+        body: "Only the original actor may consume this",
+      },
+    },
+  })) as { value: { messageId: string } };
+  const peerInbox = await invoke(
+    "swarm_inbox",
+    {
+      commandId: "codex-peer-fetch",
+      action: "fetch",
+      consumer: "peer",
+    },
+    peerThread.thread.id,
+  );
+  if (peerInbox.value.deliveries.length !== 0)
+    throw new Error("Codex peer fetched another actor's inbox");
+  const privateStatus = (await coordinator.request({
+    op: "message_status",
+    messageId: privateMessage.value.messageId,
+  })) as { deliveries: Array<{ state: string }> };
+  if (privateStatus.deliveries[0].state !== "pending")
+    throw new Error("Peer fetch changed another actor's delivery");
+  await call("thread/unsubscribe", { threadId: peerThread.thread.id });
   const snapshot = await call("thread/read", { threadId }).catch(
     (error: Error) => ({ error: error.message }),
   );
@@ -252,7 +330,15 @@ try {
       actorMatched: true,
       stateBeforeExplicitAck: beforeAck.deliveries[0].state,
       stateAfterExplicitAck: status.deliveries[0].state,
-      identityBinding: "fixture enrollment; not automatic native-thread lifecycle",
+      identityBinding:
+        "fixture enrollment; not automatic native-thread lifecycle",
+      nativeMcpContext: JSON.parse(readFileSync(nativeContextPath, "utf8")),
+      perThreadConfiguration: {
+        distinctActors: true,
+        originalBindingPreserved: true,
+        peerInboxEmpty: true,
+        originalMessageState: privateStatus.deliveries[0].state,
+      },
       driver: "thread-scoped app-server MCP call; no model turn",
     },
   };
