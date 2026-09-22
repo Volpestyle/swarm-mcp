@@ -4,9 +4,13 @@ import { dirname, join, resolve } from "node:path";
 import { CoordinationCore, type ActorContext, type CoreCommand } from "./core";
 import { CoordinationError, requireText } from "./errors";
 import type { ArtifactImport, FindingFilter } from "./evidence";
+import type { PeerFilter, TaskFilter } from "./queries";
 
 const MAX_FRAME_BYTES = 65536;
 export type Operation =
+  | { op: "bootstrap" }
+  | { op: "peers"; filter?: PeerFilter }
+  | { op: "tasks"; filter?: TaskFilter }
   | { op: "command"; command: CoreCommand }
   | { op: "artifact_import"; input: ArtifactImport }
   | { op: "artifact"; artifactId: string }
@@ -96,6 +100,27 @@ export async function serveCoordination(options: {
         counted = true;
         let result: unknown;
         switch (raw.op) {
+          case "bootstrap":
+            result = options.core.bootstrap(actor);
+            break;
+          case "peers":
+          case "tasks":
+            if (raw.filter !== undefined && !record(raw.filter))
+              throw new CoordinationError(
+                "invalid_input",
+                "Filter must be an object",
+              );
+            result =
+              raw.op === "peers"
+                ? options.core.peers(
+                    actor,
+                    raw.filter as PeerFilter | undefined,
+                  )
+                : options.core.taskSummaries(
+                    actor,
+                    raw.filter as TaskFilter | undefined,
+                  );
+            break;
           case "artifact_import":
             if (!record(raw.input))
               throw new CoordinationError(

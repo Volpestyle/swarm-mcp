@@ -70,6 +70,22 @@ const command = {
 
 test("artifact bytes, evidence links and shared context round trip through the owner", async () => {
   const { client, worktreeRoot } = await fixture("sessions");
+  const initial = (await client.request({ op: "bootstrap" })) as {
+    actor: string;
+    eventCursor: number;
+  };
+  expect(initial.eventCursor).toBeGreaterThanOrEqual(0);
+  const peers = (await client.request({
+    op: "peers",
+    filter: { limit: 1 },
+  })) as { items: Array<{ agentId: string }> };
+  expect(peers.items[0]!.agentId).toBe(initial.actor);
+  await client.request({ op: "command", command });
+  const summaries = (await client.request({
+    op: "tasks",
+    filter: { status: "open" },
+  })) as { items: Array<{ title: string }> };
+  expect(summaries.items[0]!.title).toBe(command.payload.title);
   const path = join(worktreeRoot, "evidence.txt");
   writeFileSync(path, "verified IPC evidence");
   const captured = (await client.request({

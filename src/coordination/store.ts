@@ -19,6 +19,13 @@ import {
 import { ReservationTransaction, readReservations } from "./reservations";
 import { TaskTransaction, readAttempts, type TaskState } from "./tasks";
 import {
+  bootstrap,
+  peers,
+  taskSummaries,
+  type PeerFilter,
+  type TaskFilter,
+} from "./queries";
+import {
   SessionTransaction,
   authorizeSession,
   validateSession,
@@ -500,6 +507,26 @@ export class CoordinationStore {
   now() {
     this.ensureOpen();
     return this.clock();
+  }
+  peers(scope: string, filter?: PeerFilter) {
+    this.ensureOpen();
+    return peers(this.db, scope, filter);
+  }
+  taskSummaries(scope: string, filter?: TaskFilter) {
+    this.ensureOpen();
+    return taskSummaries(this.db, scope, filter);
+  }
+  bootstrap(scope: string, actor: string) {
+    this.ensureOpen();
+    this.db.exec("BEGIN");
+    try {
+      const result = bootstrap(this.db, scope, actor);
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
   artifact(scope: string, id: string) {
     this.ensureOpen();

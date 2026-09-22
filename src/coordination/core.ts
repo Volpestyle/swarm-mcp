@@ -6,6 +6,7 @@ import type { TaskCommand } from "./tasks";
 import type { ReservationCommand, Resource } from "./reservations";
 import { canonicalPath, mapWorktreeFile } from "./worktrees";
 import type { SharedContextCommand } from "./shared-context";
+import type { PeerFilter, TaskFilter } from "./queries";
 import {
   expiry,
   type ArtifactImport,
@@ -31,6 +32,18 @@ export type CoreCommand =
 
 export class CoordinationCore {
   constructor(private readonly store: CoordinationStore) {}
+  bootstrap(context: ActorContext) {
+    this.store.assertContext(context);
+    return this.store.bootstrap(context.scope, context.actor);
+  }
+  peers(context: ActorContext, filter?: PeerFilter) {
+    this.store.assertContext(context);
+    return this.store.peers(context.scope, filter);
+  }
+  taskSummaries(context: ActorContext, filter?: TaskFilter) {
+    this.store.assertContext(context);
+    return this.store.taskSummaries(context.scope, filter);
+  }
 
   command(context: ActorContext, command: CoreCommand): CommandResult<Json> {
     let resources: Resource[] = [];
