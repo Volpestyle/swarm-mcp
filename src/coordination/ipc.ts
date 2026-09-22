@@ -9,6 +9,7 @@ export type Operation =
   | { op: "command"; command: CoreCommand }
   | { op: "task"; taskId: string }
   | { op: "attempts"; taskId: string }
+  | { op: "reservations"; limit?: number }
   | { op: "inbox"; cursor?: number; limit?: number }
   | { op: "message_status"; messageId: string }
   | { op: "events"; cursor: number; limit?: number }
@@ -101,6 +102,12 @@ export async function serveCoordination(options: {
           case "attempts":
             requireText(raw.taskId, "task ID");
             result = options.core.attempts(actor, raw.taskId);
+            break;
+          case "reservations":
+            result = options.core.reservations(
+              actor,
+              raw.limit as number | undefined,
+            );
             break;
           case "events":
             result = options.core.events(

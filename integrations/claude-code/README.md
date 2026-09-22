@@ -1,5 +1,9 @@
 # swarm — Claude Code plugin
 
+The redesign adds opt-in leased writes through the shared hooks. See
+[worktree reservations and coverage](../../docs/worktree-reservations.md).
+Without the new coordinator environment, the legacy behavior below remains.
+
 Lifecycle bridge between Claude Code sessions and the swarm-mcp coordinator,
 mirroring the [hermes plugin](../hermes/) inside the constraints of the Claude
 Code plugin model.

@@ -3,6 +3,8 @@ import { CoordinationStore, type CommandResult, type Json } from "./store";
 import type { InboxCommand } from "./inbox";
 import type { SessionCommand } from "./sessions";
 import type { TaskCommand } from "./tasks";
+import type { ReservationCommand, Resource } from "./reservations";
+import { canonicalPath, mapWorktreeFile } from "./worktrees";
 
 // Trusted application context. The local service supplies this after validating
 // its session capability; transports must never treat a caller's label as auth.
@@ -12,21 +14,72 @@ export interface ActorContext {
   sessionId?: string;
   generation?: number;
 }
-export type CoreCommand = InboxCommand | SessionCommand | TaskCommand;
+export type CoreCommand =
+  | InboxCommand
+  | SessionCommand
+  | TaskCommand
+  | ReservationCommand;
 
 export class CoordinationCore {
   constructor(private readonly store: CoordinationStore) {}
 
   command(context: ActorContext, command: CoreCommand): CommandResult<Json> {
+    let resources: Resource[] = [];
+    if (command.type === "reservation.acquire") {
+      const worktree = this.store.worktree(context);
+      if (command.payload.kind === "file") {
+        if (
+          !Array.isArray(command.payload.paths) ||
+          !command.payload.paths.length ||
+          command.payload.paths.length > 100
+        )
+          throw new CoordinationError(
+            "invalid_input",
+            "File reservations require 1..100 paths",
+          );
+        resources = command.payload.paths.map((path) => ({
+          kind: "file",
+          ...mapWorktreeFile(worktree, path),
+        }));
+      } else if (command.payload.kind === "integration") {
+        const repository = canonicalPath(worktree.repository);
+        resources = [
+          {
+            kind: "integration",
+            physical: repository,
+            repository,
+            worktree: canonicalPath(worktree.root),
+            logical: "integration",
+          },
+        ];
+      } else
+        throw new CoordinationError(
+          "invalid_input",
+          "Unknown reservation kind",
+        );
+    }
     return this.store.execute(
       {
         id: command.id,
         type: command.type,
-        payload: command.payload,
+        payload:
+          command.type === "reservation.acquire"
+            ? { ...command.payload, resources }
+            : command.payload,
         ...context,
       },
       (tx) => {
         switch (command.type) {
+          case "reservation.acquire":
+            return tx.reservations.acquire(command.payload, resources);
+          case "reservation.renew":
+            return tx.reservations.renew(command.payload);
+          case "reservation.release":
+            return tx.reservations.release(command.payload);
+          case "reservation.check":
+            return tx.reservations.check(command.payload);
+          case "reservation.sweep":
+            return tx.reservations.sweep();
           case "session.observe":
             return tx.sessions.observe(command.payload);
           case "session.suspend":
@@ -83,6 +136,11 @@ export class CoordinationCore {
     this.store.assertContext(context);
     return this.store.task(context.scope, id);
   }
+  reservations(context: ActorContext, limit?: number) {
+    this.store.assertContext(context);
+    return this.store.reservations(context.scope, limit);
+  }
+
   attempts(context: ActorContext, taskId: string) {
     this.store.assertContext(context);
     return this.store.attempts(context.scope, taskId);

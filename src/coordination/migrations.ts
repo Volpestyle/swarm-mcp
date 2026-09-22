@@ -3,7 +3,7 @@ import { CoordinationError } from "./errors";
 
 // A separate application identity prevents accidental adoption of legacy swarm.db.
 export const APPLICATION_ID = 0x53574d32;
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 export type FaultPoint =
   | "before_migration_commit"
   | "before_command_commit"
@@ -89,6 +89,20 @@ const migrations = [
     UNIQUE(task_id,fence)
   );
   CREATE UNIQUE INDEX task_one_running_attempt ON task_attempts(task_id) WHERE state='running';`,
+  `ALTER TABLE sessions ADD COLUMN worktree_root TEXT;
+  ALTER TABLE sessions ADD COLUMN repository_root TEXT;
+  CREATE TABLE reservations (
+    fence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+    scope TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('file','integration')),
+    resource TEXT NOT NULL, logical_path TEXT NOT NULL, repository TEXT NOT NULL, worktree TEXT NOT NULL,
+    actor TEXT NOT NULL, session_id TEXT NOT NULL REFERENCES sessions(id), generation INTEGER NOT NULL,
+    attempt_id TEXT REFERENCES task_attempts(id), reason TEXT NOT NULL,
+    created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('active','released','expired','superseded')),
+    ended_at INTEGER
+  );
+  CREATE UNIQUE INDEX reservation_owner ON reservations(scope,kind,resource) WHERE state='active';
+  CREATE INDEX reservation_logical ON reservations(scope,repository,logical_path,state);`,
 ];
 
 function version(db: Sqlite): number {
@@ -124,7 +138,17 @@ function checkIdentity(db: Sqlite) {
 
 export function migrate(db: Sqlite, fault?: FaultHook) {
   db.exec("PRAGMA busy_timeout = 5000");
-  checkIdentity(db);
+  // The ID, schema tables and version must come from one read snapshot. A
+  // concurrent first startup can commit between these reads before we own the
+  // writer lock; mixing the old ID with new tables falsely rejects our database.
+  db.exec("BEGIN");
+  try {
+    checkIdentity(db);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
   // journal_mode is outside the migration transaction; the application identity,
   // DDL and version are committed together. FULL durability is not negotiable.
   db.exec("PRAGMA journal_mode = WAL");

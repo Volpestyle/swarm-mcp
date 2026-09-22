@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { CoordinationError, requireText } from "./errors";
 import { migrate, type FaultHook } from "./migrations";
 import { openSqlite, type Sqlite } from "./sqlite";
+import { ReservationTransaction, readReservations } from "./reservations";
 import { TaskTransaction, readAttempts, type TaskState } from "./tasks";
 import {
   SessionTransaction,
@@ -100,6 +101,7 @@ function canonical(value: Json, depth = 0): string {
 }
 
 export class WriteTransaction {
+  readonly reservations: ReservationTransaction;
   readonly tasks: TaskTransaction;
   readonly sessions: SessionTransaction;
   readonly inbox: InboxTransaction;
@@ -111,6 +113,15 @@ export class WriteTransaction {
     readonly at: number,
     policy: InboxPolicy = DEFAULT_INBOX_POLICY,
   ) {
+    this.reservations = new ReservationTransaction(
+      db,
+      command,
+      at,
+      (type, id, payload) => {
+        this.writes++;
+        this.event(type, id, payload);
+      },
+    );
     this.tasks = new TaskTransaction(db, command, at, (type, id, payload) => {
       this.writes++;
       this.event(type, id, payload);
@@ -340,6 +351,7 @@ export class CoordinationStore {
         payload: {
           label: input.label ?? null,
           resumeProof: secretHash(input.resumeToken),
+          worktree: input.worktree ?? null,
         },
       },
       (tx) => tx.sessions.open(input, capability),
@@ -353,6 +365,28 @@ export class CoordinationStore {
   authorize(capability: string) {
     this.ensureOpen();
     return authorizeSession(this.db, capability);
+  }
+
+  worktree(context: {
+    scope: string;
+    actor: string;
+    sessionId?: string;
+    generation?: number;
+  }) {
+    this.assertContext(context);
+    const row = this.db
+      .prepare(
+        "SELECT worktree_root,repository_root FROM sessions WHERE id=? AND scope=? AND agent_id=?",
+      )
+      .get(context.sessionId ?? "", context.scope, context.actor) as
+      | { worktree_root: string | null; repository_root: string | null }
+      | undefined;
+    if (!row?.worktree_root || !row.repository_root)
+      throw new CoordinationError(
+        "worktree_required",
+        "Launcher must bind this session to a worktree before reserving writes",
+      );
+    return { root: row.worktree_root, repository: row.repository_root };
   }
 
   assertContext(context: {
@@ -379,6 +413,11 @@ export class CoordinationStore {
   session(scope: string, id: string) {
     this.ensureOpen();
     return readSession(this.db, scope, id);
+  }
+
+  reservations(scope: string, limit?: number) {
+    this.ensureOpen();
+    return readReservations(this.db, scope, this.clock(), limit);
   }
 
   attempts(scope: string, taskId: string) {

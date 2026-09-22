@@ -1,5 +1,10 @@
 # swarm — Codex CLI plugin
 
+The redesign adds opt-in leased writes through the shared hooks. See
+[worktree reservations and coverage](../../../../docs/worktree-reservations.md).
+Actual installed-host hook delivery remains a runtime validation gate; without
+the new coordinator environment, the legacy behavior below remains.
+
 Lifecycle bridge between Codex CLI sessions and the swarm-mcp coordinator,
 mirroring the [hermes plugin](../../../hermes/) and the
 [Claude Code plugin](../../../claude-code/) inside the constraints of the

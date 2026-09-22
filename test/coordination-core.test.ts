@@ -6,10 +6,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CoordinationStore, type Json } from "../src/coordination/store";
 import { CoordinationCore } from "../src/coordination/core";
+import { openSqlite, type Sqlite } from "../src/coordination/sqlite";
 import {
   APPLICATION_ID,
   SCHEMA_VERSION,
   type FaultHook,
+  migrate,
 } from "../src/coordination/migrations";
 
 const stores: CoordinationStore[] = [];
@@ -197,6 +199,40 @@ describe("coordination command boundary", () => {
 });
 
 describe("real process persistence and migration", () => {
+  test("identity inspection stays consistent when another connection commits migration between reads", async () => {
+    const path = fixture(),
+      reader = await openSqlite(path);
+    reader.exec("PRAGMA journal_mode=WAL");
+    const writer = await openSqlite(path);
+    let injected = false;
+    const interleaved: Sqlite = {
+      exec: (sql) => reader.exec(sql),
+      close: () => reader.close(),
+      prepare: (sql) => {
+        const statement = reader.prepare(sql);
+        return {
+          ...statement,
+          all: (...args) => statement.all(...args),
+          run: (...args) => statement.run(...args),
+          get: (...args) => {
+            const result = statement.get(...args);
+            if (sql === "PRAGMA application_id" && !injected) {
+              injected = true;
+              migrate(writer);
+            }
+            return result;
+          },
+        };
+      },
+    };
+    try {
+      expect(() => migrate(interleaved)).not.toThrow();
+      expect(injected).toBe(true);
+    } finally {
+      reader.close();
+      writer.close();
+    }
+  });
   test.each(["bun", "node"] as const)(
     "commit-before-publish crash is replayable after process restart (%s)",
     async (runtime) => {

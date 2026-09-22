@@ -9,6 +9,7 @@ import { realpathSync } from "node:fs";
 import { isAbsolute, relative } from "node:path";
 import type { Sqlite } from "./sqlite";
 import type { Command, Json } from "./store";
+import type { Worktree } from "./worktrees";
 
 export type SessionContext = {
   scope: string;
@@ -38,6 +39,7 @@ export type Enrollment = {
   requestId: string;
   resumeToken: string;
   label?: string;
+  worktree?: Worktree;
 };
 type Agent = {
   scope: string;
@@ -251,6 +253,15 @@ export class SessionTransaction {
         secretHash(capability),
         this.at,
       );
+    if (input.worktree) {
+      requireText(input.worktree.root, "worktree root", 4096);
+      requireText(input.worktree.repository, "repository root", 4096);
+      this.db
+        .prepare(
+          "UPDATE sessions SET worktree_root=?,repository_root=? WHERE id=?",
+        )
+        .run(input.worktree.root, input.worktree.repository, id);
+    }
     this.change("session.opened", id, { agentId: input.agentId, generation });
     return {
       scope: input.scope,

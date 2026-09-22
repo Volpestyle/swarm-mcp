@@ -251,7 +251,7 @@ test("version-one migration preserves tasks and rolls back interrupted schema ch
   env.store.close();
   const db = new Database(env.path);
   db.exec(
-    "DROP TABLE task_attempts; DROP TABLE task_dependencies; DROP TABLE sessions; DROP TABLE agents; DROP TABLE inbox_deliveries; DROP TABLE inbox_messages; PRAGMA user_version=1",
+    "DROP TABLE reservations; DROP TABLE task_attempts; DROP TABLE task_dependencies; DROP TABLE sessions; DROP TABLE agents; DROP TABLE inbox_deliveries; DROP TABLE inbox_messages; PRAGMA user_version=1",
   );
   db.close();
   const failure = await CoordinationStore.open({
