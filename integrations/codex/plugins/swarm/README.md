@@ -28,9 +28,9 @@ parallels, see [`integrations/hermes/SPEC.md`](../../../hermes/SPEC.md) and
 | Responsibility | Mechanism |
 |---|---|
 | Auto-`register` on session start | `SessionStart` hook → `swarm-mcp register`, stores `instance_id` in hook scratch metadata |
-| Auto-`deregister` on session end | `Stop` hook → `swarm-mcp deregister` |
+| Auto-`deregister` on session end | `SessionEnd` hook → `swarm-mcp deregister` |
 | Enforce peer-declared locks on `apply_patch` | `PreToolUse` (matcher: `apply_patch`) → parses the patch envelope, reads `swarm-mcp locks --json`, emits `permissionDecision: deny` when a peer holds any of the patch's files. Never acquires. |
-| Publish and cleanup workspace identity | `SessionStart` / `Stop` hooks → publish/delete current workspace handle when `HERDR_PANE_ID` is present |
+| Publish and cleanup workspace identity | `SessionStart` / `SessionEnd` hooks → publish/delete current workspace handle when `HERDR_PANE_ID` is present |
 | Publish configured work tracker | `SessionStart` hook reads tracker config and writes `config/work_tracker/<identity>` KV |
 | Gateway conductor mode | `SWARM_CODEX_ROLE=gateway` registers as `role:planner`; make easy edits locally, use the MCP `dispatch` tool for medium/large task/spawn routing |
 | Gateway SOUL priming | `SessionStart` appends this repo's [`SOUL.md`](./SOUL.md) for gateway/lead sessions |
@@ -199,9 +199,9 @@ Hooks pick up the same env knobs as the hermes / Claude Code plugins, with
 | `SWARM_CODEX_FILE_ROOT` / `SWARM_HERMES_FILE_ROOT` / `SWARM_MCP_FILE_ROOT` | Override the file root passed to `register`. |
 | `SWARM_CODEX_AGENT_ROLE` / `SWARM_AGENT_ROLE` | Adds a `role:<name>` token to the derived label. Accepts `planner`, `implementer`, `reviewer`, `researcher`, `generalist`, or `worker` (the default; emits no token). |
 | `SWARM_CODEX_ROLE` / `SWARM_ROLE` | `worker` by default. Set `gateway` for planner/conductor behavior. |
-| `SWARM_CODEX_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `Stop` deregisters normally. |
+| `SWARM_CODEX_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `SessionEnd` deregisters normally. |
 | `SWARM_CODEX_WORK_TRACKER` / `SWARM_WORK_TRACKER` | JSON tracker config to publish at `config/work_tracker/<identity>`; use this for Linear/Jira/GitHub policy, not credentials. |
-| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, SessionStart publishes workspace identity for peer wakes and reports `pane.report_agent state=idle`; Stop releases that herdr agent authority. Missing env/socket failures fall back to herdr heuristics. See [`backend-configuration.md`](../../../../docs/backend-configuration.md). |
+| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, SessionStart publishes workspace identity for peer wakes and reports `pane.report_agent state=idle`; SessionEnd releases that herdr agent authority. Missing env/socket failures fall back to herdr heuristics. See [`backend-configuration.md`](../../../../docs/backend-configuration.md). |
 
 **Repo-wide role default — `.swarm-role` file.**
 If `SWARM_CODEX_AGENT_ROLE` is unset, the hook walks up from `cwd` to the
@@ -260,11 +260,11 @@ If the deny message never appears, the most common causes are:
 - SessionStart additionalContext priming registration with derived args
 - Pre-tool peer-lock check with deny-on-conflict, fail-open elsewhere
 - /swarm slash command
-- Best-effort identity KV cleanup on Stop
+- Best-effort identity KV cleanup on SessionEnd
 
 ### v0.2 — Autonomous lifecycle + gateway mode ✓ (this version)
 - `swarm-mcp register` / `deregister` / `list-instances`
-- SessionStart/Stop hooks call lifecycle commands directly
+- SessionStart/SessionEnd hooks call lifecycle commands directly
 - Gateway-mode planner labels, local-small/dispatch-large routing, and MCP `dispatch`
 
 ### v0.3 — Verify hook payload contract

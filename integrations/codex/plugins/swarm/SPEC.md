@@ -1,7 +1,34 @@
 # swarm Codex plugin — design notes
 
-**Status:** v0.2.0 current
+**Status:** legacy adapter with corrected lifecycle mapping; redesign delivery unverified
 **Audience:** future contributors, the operator, agents reading this directory
+
+## Installed-host audit (VUH-1339, 2026-09-22)
+
+Codex 0.155.1 loads this plugin's event definitions through `hooks/list` in an
+isolated app-server probe. Cleanup is now mapped to `SessionEnd`, with its
+supported three-second timeout, instead of `Stop`. `Stop` finishes a turn and
+must not deregister a session that can receive another turn. The
+[official hook reference](https://learn.chatgpt.com/docs/hooks) documents the
+distinction. Cleanup remains best effort and may exceed the host deadline when
+legacy subprocess operations are slow; durable leases remain the fallback.
+
+`scripts/probe-codex-lifecycle.ts` loads the actual event configuration but
+replaces commands with harmless fixture commands. It uses an isolated Codex
+home and no inference, verifies the configured hook count and absence of `Stop`
+cleanup, creates an idle thread, checks that idle `turn/steer` is rejected, and
+unsubscribes. `thread/read` immediately after creation may race rollout persistence;
+the capture records its actual response. Unsubscribe is not session termination.
+Evidence: `docs/verification/2026-09-22-runtime/codex-lifecycle.json`.
+
+The probe's hooks are reported as untrusted. Listing a hook is not execution:
+live setup must obtain normal hook trust before claiming automatic delivery.
+No live trust/config changes were made. New coordinator enrollment, safe context
+delivery/acknowledgment, restart deduplication and authorized idle turn admission
+remain unverified in Codex. `turn/steer` is for an active turn; an idle wake needs
+a validated `turn/start` path on the existing thread.
+
+## Legacy design
 
 This file captures the design constraints behind the Codex adapter so v0.2+
 doesn't have to re-derive them from conversation. The broader adapter contract
@@ -69,7 +96,7 @@ that a near-1:1 port works:
 |---|---|---|
 | Manifest | `.claude-plugin/plugin.json` | `.codex-plugin/plugin.json` |
 | Hooks file | `hooks.json` (root or `hooks/`) | `hooks.json` (root) |
-| Hook events | `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`, … | `SessionStart`, `Stop`, `PreToolUse`, `PostToolUse`, … |
+| Hook events | `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`, … | `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`, … |
 | Slash commands | `commands/<name>.md` with frontmatter | `commands/<name>.md` with frontmatter |
 | MCP servers | `.mcp.json` | `.mcp.json` |
 | Skills | `skills/<name>/SKILL.md` | `skills/<name>/SKILL.md` |
@@ -105,7 +132,7 @@ What does *not* port cleanly:
 | Hook | Fires | Plugin behavior |
 |---|---|---|
 | `SessionStart` (matcher: `startup\|resume`) | New or resumed conversation | Compute label/scope/identity; call `swarm-mcp register`; write per-session scratch metadata including `instance_id`; publish `identity/workspace/herdr/<instance_id>` if `HERDR_PANE_ID` is present; emit `additionalContext` telling the agent it is registered and should follow the swarm role workflow. |
-| `Stop` | Conversation ends | Best-effort `kv del identity/workspace/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
+| `SessionEnd` | Conversation ends | Best-effort `kv del identity/workspace/herdr/<instance_id>`; `swarm-mcp deregister`; clear the session scratch dir. |
 | `PreToolUse` (matcher: `apply_patch`) | Before each `apply_patch` dispatch | Parse the patch envelope; read-only check via `swarm-mcp locks --scope <s> --json`. If any returned lock row targets one of the patch's files and is held by an `instance_id` other than ours, emit `permissionDecision: deny`. Never acquires a lock. |
 | `PostToolUse` | — | **Not wired in new installs.** A no-op stub remains in the plugin source so already-installed configs that still register `PostToolUse` keep loading; new `hooks.json` omits the entry. |
 
@@ -246,7 +273,7 @@ turns, `swarm-mcp locks` shows no residual locks.
 `/swarm` inside a registered session prints a compact summary listing
 instance count, task counts, kv key count, and recent message count.
 
-**S6: Stop identity cleanup**
+**S6: SessionEnd identity cleanup**
 With `HERDR_PANE_ID` set and the agent having published
 `identity/workspace/herdr/<id>`, exiting the session should result in
 `swarm-mcp kv get identity/workspace/herdr/<id>` returning empty/error.
