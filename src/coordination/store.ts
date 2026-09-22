@@ -24,6 +24,7 @@ import {
 } from "./shared-context";
 import { ReservationTransaction, readReservations } from "./reservations";
 import { TaskTransaction, readAttempts, type TaskState } from "./tasks";
+import { DispatchTransaction } from "./dispatch";
 import {
   bootstrap,
   peers,
@@ -153,6 +154,7 @@ export class WriteTransaction {
   readonly shared: SharedContextTransaction;
   readonly reservations: ReservationTransaction;
   readonly tasks: TaskTransaction;
+  readonly dispatch: DispatchTransaction;
   readonly sessions: SessionTransaction;
   readonly inbox: InboxTransaction;
   writes = 0;
@@ -194,6 +196,16 @@ export class WriteTransaction {
       this.writes++;
       this.event(type, id, payload);
     });
+    this.dispatch = new DispatchTransaction(
+      db,
+      command,
+      at,
+      this.tasks,
+      (type, id, payload) => {
+        this.writes++;
+        this.event(type, id, payload);
+      },
+    );
     this.sessions = new SessionTransaction(
       db,
       command,

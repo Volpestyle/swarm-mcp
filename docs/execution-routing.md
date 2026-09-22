@@ -17,6 +17,24 @@ task binding, provisioning reconciliation and native completion integration are
 still required before this can execute work. Do not treat a selected candidate
 as an accepted owner; only the coordinator's fenced task attempt establishes that.
 
+Schema 9 adds `dispatch_intents`. The trusted write transaction reserves an
+intent and creates its task atomically. Scope-wide intent identity spans requesting
+agents; changed work under the same intent is rejected. Capacity includes all
+unreleased intents, so another gateway or a reopened coordinator cannot reserve
+the same slot. The policy comes from trusted adapter configuration, outside the
+model command payload. This primitive is not yet exposed through the agent API.
+
+Reservations do not expire into permission to provision again. A crash may leave
+an unresolved intent; later provisioning reconciliation must prove the external
+outcome before releasing or retrying it. Provisioning, binding to a task attempt,
+release and cancellation still need implementation. The current reservation never
+launches a process or reports a worker as accepted.
+
+The dispatch regression runs two independent Node processes against one database.
+Exactly one creates a reservation/task; both receive the same task ID. Reopening
+the store retains that reservation and capacity, rejects different work with the
+same intent, and blocks an additional intent at the configured concurrency limit.
+
 ## Legacy implementation audit
 
 The referenced historical tickets are inputs, not execution dependencies:
