@@ -116,12 +116,42 @@ uv run --with tiktoken==0.12.0 python scripts/count-context-tokens.py dist/test/
 ```
 
 Use `SWARM_BENCH_PROFILE=1` for a diagnostic CPU profile, then remove it before
-budget measurements. The harness reports results but does not yet enforce all
-architecture budgets. Its defer option leaves the consumer connected and is
+budget measurements. The harness exits nonzero for incomplete delivery; the
+budget verifier below enforces the measured subset of architecture budgets.
+Its defer option leaves the consumer connected and is
 not a physical-disconnect test. Transport byte counts omit framing; commit-time
 delivery measurements include commit duration. Host wake and inference latency
 are absent. The native-runtime comparison and representative task/user-prompt
 accounting remain outstanding.
+
+## Executable budget check
+
+`scripts/verify-coordination-budgets.py` accepts explicit captures for 2/8/32
+agents, a matched legacy 32-agent baseline and tokenizer output. It enforces
+the selected workload, unique and durably acknowledged deliveries, WAL/FULL
+writer evidence, no busy errors, p95/p99 latency, owner working/private memory,
+60-second idle CPU, throughput, fixture resident-memory comparison, core schema
+tokens, per-agent sync text and manual handoff call counts. Latency and throughput
+are recomputed from samples rather than trusting their summary fields.
+
+```powershell
+$raw='docs/verification/2026-09-22-benchmarks/raw'
+python scripts/verify-coordination-budgets.py --agents2 "$raw/benchmark-production-batched-final-2.json" --agents8 "$raw/benchmark-production-batched-final-8.json" --agents32 "$raw/benchmark-production-idle60-32.json" --baseline32 "$raw/benchmark-baseline-idle60-32.json" --tokens "$raw/benchmark-context-tokens.json"
+```
+
+Use newly generated paths to gate a fresh campaign. The retained captures pass;
+the output is retained in `budget-verification.json`. Negative checks rejected
+a missing acknowledgment and a copy with every delivery delayed to 274 ms.
+The original pre-optimization capture also fails, first because it lacks the
+later writer-durability metadata; do not claim that specific invocation reached
+the latency check. An initial verifier KeyError on that absent field was corrected
+to an explicit rejection before recording these checks.
+
+This checker does not prove full-host memory, native-only performance, real-host
+automatic behavior, crash/restart invariants or hosted CI. Those require their
+own evidence. See the [mixed-host capture](../2026-09-22-mixed-host/README.md)
+for actual host call/prompt accounting and the
+[consumer verifier](../2026-09-22-consumers/README.md) for reconnect/saturation.
 
 ## Correctness gate
 
