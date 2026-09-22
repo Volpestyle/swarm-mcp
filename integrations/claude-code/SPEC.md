@@ -1,7 +1,43 @@
 # swarm Claude Code plugin — design notes
 
-**Status:** v0.2.0 current
+**Status:** redesign delivery candidate; legacy v0.2 notes retained below
 **Audience:** future contributors, the operator, agents reading this directory
+
+## Redesign adapter (VUH-1339)
+
+`src/coordination/claude-hook.ts` targets installed Claude Code 2.1.278.
+The trusted launcher enrolls a fixed native session ID and supplies only its
+endpoint, session capability and `SWARM_NATIVE_SESSION_ID` to the host.
+Every hook checks that its input session matches that binding. `SessionStart`
+verifies the capability; `SessionEnd` closes it. This is separate from the legacy
+Python plugin and has not been installed into live user settings.
+
+`UserPromptSubmit` and `PostToolUse` fetch at most one leased envelope through
+the shared runtime delivery contract. They return
+`hookSpecificOutput.additionalContext` with the matching `hookEventName`.
+An actual callback establishes the supported boundary; there is no guessed
+timer boundary or implicit acknowledgment. Hook transport failures return a
+generic error and leave the message unacknowledged. The CLI bounds input size.
+
+Run `bun scripts/probe-claude-hooks.ts <capture.json> <claude executable>`.
+The probe uses a disposable config/workspace, explicit hook settings, no inherited
+MCP servers, fixture credentials and a local scripted Anthropic-compatible endpoint.
+The actual host receives one message at turn start, executes a shell acknowledgment,
+receives another message at the post-tool boundary, and acknowledges that message.
+The coordinator verifies each is leased before its explicit tool action and
+acknowledged afterward. After native exit, the closed capability is rejected.
+Capture: `docs/verification/2026-09-22-runtime/claude-delivery.json`.
+The fixture proves host context assembly and tool execution, not model comprehension.
+No model request bodies, capabilities or lease tokens are retained in the capture.
+
+The [official hook reference](https://code.claude.com/docs/en/hooks) supplies the
+JSON contract; the installed executable probe supplies version-specific evidence.
+Remaining: durable context deduplication and lease refresh across resume,
+launcher/legacy-plugin integration, availability outside callbacks, and validated
+idle wake admission. Until that work lands this adapter delivers only at native
+turn/tool boundaries; it does not start a model loop or spawn an agent to wake it.
+
+## Legacy design
 
 This file captures the design constraints behind the Claude Code adapter so
 v0.2+ doesn't have to re-derive them from conversation. The broader adapter

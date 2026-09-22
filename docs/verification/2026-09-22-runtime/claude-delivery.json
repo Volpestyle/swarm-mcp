@@ -1,0 +1,25 @@
+{
+  "host": "Claude Code",
+  "version": "2.1.278 (Claude Code)",
+  "sessionId": "4a590dcb-ddf1-4678-ada5-7096e4dcc8db",
+  "exitCode": 0,
+  "requests": 3,
+  "sent": 2,
+  "seen": 2,
+  "beforeAck": [
+    "leased",
+    "leased"
+  ],
+  "states": [
+    "acknowledged",
+    "acknowledged"
+  ],
+  "hostResult": {
+    "subtype": "success",
+    "isError": false,
+    "turns": 3
+  },
+  "stderrBytes": 0,
+  "endedCapabilityError": "stale_session",
+  "scriptedLocalModel": true
+}
