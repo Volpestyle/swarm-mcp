@@ -662,26 +662,14 @@ try {
     assert.deepEqual(persistedContext, [true, true]);
     let leaseRefreshState: string | undefined;
     if (expiryProbe) {
-      await delay(32000);
-      const recovery = await fetch(
-        base + "/session/" + session.id + "/message",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            agent: "build",
-            model: { providerID: "fixture", modelID: "probe" },
-            parts: [
-              {
-                type: "text",
-                text: "Continue the retained peer-message fixture.",
-              },
-            ],
-          }),
-          signal: AbortSignal.timeout(30000),
-        },
-      );
-      assert.equal(recovery.status, 200, await recovery.clone().text());
+      // Only observe: expiry recovery must come from the inbox observer, with
+      // no explicit prompt or model polling supplied by this fixture.
+      const recoveryDeadline = Date.now() + 45000;
+      while (Date.now() < recoveryDeadline) {
+        const status = await api.session.status({}, { throwOnError: true });
+        if (modelRequests.length === 6 && !status.data[session.id]) break;
+        await delay(100);
+      }
       assert.ok(refreshedLease);
       assert.equal(modelRequests.length, 6);
       const recoveredDelivery = (await coordinator.request({
@@ -694,6 +682,7 @@ try {
     deliveryEvidence = {
       persistedContext,
       leaseExpiryProbe: expiryProbe,
+      autonomousLeaseRecovery: expiryProbe,
       leaseRefreshState,
       wake: {
         busyDeferred: true,

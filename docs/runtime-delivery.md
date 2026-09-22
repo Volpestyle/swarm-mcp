@@ -41,13 +41,13 @@ the returned session capability verifies it is still current before returning.
 Only the endpoint and session capability are returned in the child environment;
 owner and resume secrets remain in launcher state. OpenCode V1 lifecycle hooks
 now use this composition; startup reconciliation, delivery/wake hooks and other
-hosts remain to be completed.
+hosts have evidence and remaining limits in `docs/runtime-host-support.md`.
 
 `RuntimeDelivery` consumes an authenticated coordinator request function and a
 trusted host adapter. It has no spawn or terminal-injection API. Enrollment and
 session capabilities belong to the launcher; the adapter is bound to one actor.
-Host-specific integration and two-host end-to-end verification remain VUH-1339
-work. The shared core alone is not proof of delivery in Codex or Claude Code.
+Host-specific integration remains VUH-1339 work. OpenCode and Claude Code have
+installed-host evidence; the shared core alone is not proof of host delivery.
 
 Host observations carry a state, source evidence and observation timestamp:
 
@@ -68,8 +68,12 @@ disconnected and unsupported states defer without fetching.
 Wake hints first query the durable message's delivery status. Only pending work
 for this actor can wake an existing idle session. Concurrent hints share one
 wake, accepted wakeups coalesce until a boundary, and failed attempts have a
-one-second retry floor. There is no model polling loop or automatic retry timer.
-The runtime event observer is responsible for subsequent opportunities.
+one-second retry floor. The shared driver has no model polling loop. The OpenCode
+inbox observer uses deadline timers for lease expiry, TTL and inbox retry backoff.
+It recovers only the authenticated recipient's deliveries through `inbox.sweep`
+when the host is ready. A new attempt gets its own persisted wake intent, while
+repeated hints within that attempt reconcile the same native prompt. Context
+inspection suppresses repeated envelopes and supplies fresh lease metadata.
 
 At a supported boundary, one durable lease is fetched. Concurrent boundary calls
 share that attempt. Host admission leaves the delivery leased: it is not proof

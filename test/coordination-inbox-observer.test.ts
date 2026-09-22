@@ -115,6 +115,32 @@ test("inbox observer reconnects to a restarted production owner without replacin
       inbox: [{ state: "pending", count: 1 }],
     });
 
+    await retained.request({
+      op: "command",
+      command: {
+        id: "lease",
+        type: "inbox.fetch",
+        payload: { consumer: "test", leaseMs: 100 },
+      },
+    });
+    // Busy hosts do not recover a lease into a fresh wake until a safe idle
+    // observation. No model request or external sweep drives this recovery.
+    await delay(150);
+    expect(await retained.request({ op: "bootstrap" })).toMatchObject({
+      inbox: [{ state: "leased", count: 1 }],
+    });
+    idle = true;
+    observer.kick();
+    await until(() => hints.length === 3);
+    expect(hints[2]).toBe(hints[0]);
+    expect(
+      await retained.request({ op: "message_status", messageId: hints[0] }),
+    ).toMatchObject({
+      deliveries: [
+        { state: "pending", attempts: 1, error: "delivery_lease_expired" },
+      ],
+    });
+
     let rejected = 0;
     const unauthorized = observeInbox({
       endpoint,

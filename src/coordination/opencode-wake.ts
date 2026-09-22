@@ -41,20 +41,21 @@ export class OpenCodeWake {
       deliveries: Array<{
         recipient: string;
         state: string;
+        attempts: number;
         nextAttemptAt?: number;
         expiresAt?: number | null;
       }>;
     };
-    if (
-      !delivery.deliveries.some(
-        (d) =>
-          d.recipient === o.actor &&
-          d.state === "pending" &&
-          (d.nextAttemptAt ?? 0) <= Date.now() &&
-          (d.expiresAt == null || d.expiresAt > Date.now()),
-      )
-    )
-      return { status: "deferred" };
+    const pending = delivery.deliveries.find(
+      (d) =>
+        d.recipient === o.actor &&
+        d.state === "pending" &&
+        (d.nextAttemptAt ?? 0) <= Date.now() &&
+        (d.expiresAt == null || d.expiresAt > Date.now()),
+    );
+    if (!pending) return { status: "deferred" };
+    if (!Number.isSafeInteger(pending.attempts) || pending.attempts < 0)
+      throw new Error("Invalid delivery attempt count");
     const signal = AbortSignal.any([
       AbortSignal.timeout(5000),
       ...(lifetime ? [lifetime] : []),
@@ -80,7 +81,9 @@ export class OpenCodeWake {
       o.stateDirectory,
       o.scope,
       o.hostSessionId,
-      messageId,
+      // Reconcile one prompt per delivery attempt. An expired lease needs a
+      // fresh turn, not the already-completed prompt from its previous attempt.
+      JSON.stringify([messageId, pending.attempts]),
     );
     const existing = await o.api.session.message(
       { sessionID: o.hostSessionId, messageID: intent.messageId },

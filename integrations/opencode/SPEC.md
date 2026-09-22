@@ -102,8 +102,14 @@ The real-host probe passes, and a private-state regression test rereads the
 same owner identity after an 11-second idle interval. Existing tests still
 reject insecure directories and malformed credentials.
 
-Reproduce the extended lease-expiry run by adding `--lease-expiry` after the
-native executable argument in the probe command below.
+`opencode-autonomous-lease.json` extends the expiry proof: the fixture supplies
+no recovery prompt. The observer waits for the real lease deadline and retry
+backoff, sweeps through the coordinator, and wakes the idle native session.
+The adapter finds the original context and appends only renewed lease metadata;
+the fixture explicitly acknowledges. The run completes with six model requests.
+Reproduce this autonomous lease-expiry run by adding `--lease-expiry` after the
+native executable argument in the probe command below. The earlier
+`opencode-lease-refresh.json` remains evidence for explicit-prompt recovery.
 
 `opencode-availability.json` adds a real `read` permission wait to that agent
 loop. The adapter observes `blocked` and the coordinator delivery remains
@@ -208,8 +214,17 @@ SQLite instead of transporting each acknowledged message. The default inbox
 query still includes that history. Active pagination preserves both pending and
 leased work and does not mutate either. Bootstrap captures the event cursor before scanning the backlog;
 host idle/snapshot-ready events also recheck pending work. Reads never lease or
-acknowledge messages. Expired work is ignored, and pending backoff uses a timer
-at its next attempt time rather than model polling.
+acknowledge messages. Timers track lease expiry, message TTL and pending backoff.
+Once the host is ready, due work invokes the authenticated recipient's
+`inbox.sweep`; the coordinator enforces TTL, attempt limits and exponential
+backoff. A new read then schedules or wakes eligible pending work. Busy/blocked
+hosts wait for an idle observation; no timer invokes a model directly.
+
+Wake intents are keyed by message and completed delivery-attempt count. An
+expired attempt can therefore request a fresh native turn, while repeated hints
+or adapter replacement reconcile the same prompt for the same attempt. A lost
+POST response with an absent prompt still remains uncertain; this change does
+not authorize blind resubmission.
 
 Host disposal and session deletion stop their observers, close IPC connections
 and abort an in-flight wake request before any later POST. This cannot undo a
@@ -227,8 +242,10 @@ with the original capability. It also verifies retry exhaustion, explicit stop
 and terminal authentication failure. The test supplies the owner restart.
 `opencode-inbox-retry.json` verifies the installed-host delivery flow remains
 working with this observer; it does not inject a coordinator crash into that host
-run. Expired-lease recovery remains open; it must coordinate with durable host
-context deduplication. Exhausted observers require lifecycle reinitialization.
+run. The test also verifies that a busy host retains an expired lease and an
+idle observation recovers it after coordinator backoff. Installed-host autonomous
+expiry recovery is recorded separately above. Exhausted observers require
+lifecycle reinitialization.
 
 ## Actual host evidence
 

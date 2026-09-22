@@ -1,5 +1,6 @@
 import { CoordinationClient } from "./ipc";
 import { setTimeout as delay } from "node:timers/promises";
+import { randomUUID } from "node:crypto";
 
 type Options = {
   endpoint: string;
@@ -102,10 +103,34 @@ function observeConnection(options: Options) {
               state: string;
               nextAttemptAt?: number;
               expiresAt?: number | null;
+              leaseUntil?: number | null;
             }>;
             cursor: number;
           };
           if (!page.items.length) break;
+          const now = Date.now();
+          const due = page.items.some(
+            (item) =>
+              (item.expiresAt != null && item.expiresAt <= now) ||
+              (item.state === "leased" &&
+                item.leaseUntil != null &&
+                item.leaseUntil <= now),
+          );
+          if (due) {
+            // Recovery changes only this authenticated recipient's deliveries.
+            // The coordinator applies retry backoff and attempt/TTL limits.
+            await reads!.request({
+              op: "command",
+              command: { id: randomUUID(), type: "inbox.sweep", payload: {} },
+            });
+            dirty = true;
+            break;
+          }
+          for (const item of page.items) {
+            if (item.expiresAt != null) schedule(item.expiresAt);
+            if (item.state === "leased" && item.leaseUntil != null)
+              schedule(item.leaseUntil);
+          }
           const pending = page.items.find((item) => {
             if (
               item.state !== "pending" ||
