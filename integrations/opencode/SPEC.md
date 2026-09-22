@@ -54,8 +54,16 @@ post-tool callback, appends a labeled peer envelope to builtin `output` or MCP
 the same call ID are suppressed within the plugin instance. Unknown output
 shapes do not fetch. The real-coordinator adapter test verifies both output
 forms, retained lease state, explicit acknowledgment and repeated callbacks.
-Actual host invocation of this hook, durable context deduplication across
-restart/lease expiry, and wakeups remain unproven.
+`opencode-delivery.json` exercises this hook through the installed host's real
+agent loop. A localhost OpenAI-compatible fixture requests a file read, receives
+the peer envelope in the next model request, and requests an explicit shell
+acknowledgment using the received lease. The third request sees the acknowledgment
+result and completes. SQLite confirms `leased` before that explicit action and
+the coordinator confirms `acknowledged` afterward. The fixture is deterministic:
+this proves host tool execution and context assembly, not model comprehension.
+It uses no external model service. Retained evidence redacts lease tokens.
+Durable context deduplication across restart/lease expiry and idle wakeups remain
+unproven.
 
 ## Actual host evidence
 

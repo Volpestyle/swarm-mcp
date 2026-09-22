@@ -1,3 +1,4 @@
+import { CoordinationClient } from "../src/coordination/ipc";
 import { Database } from "bun:sqlite";
 import { build } from "esbuild";
 import { enrollRuntime } from "../src/coordination/runtime-launcher";
@@ -29,6 +30,127 @@ if (!output)
   throw new Error("Usage: bun scripts/probe-opencode-hooks.ts output.json");
 const root = mkdtempSync(join(tmpdir(), "swarm-opencode-probe-"));
 const events = join(root, "events.jsonl");
+const readTarget = join(root, "fixture.txt");
+writeFileSync(readTarget, "harmless tool fixture\n");
+const ackProbe = resolve("dist/test/runtime-ack-probe.mjs");
+let observedLeaseState: string | undefined;
+const leaseTokens = new Set<string>();
+const modelRequests: Array<{
+  messages: Array<{ role: string; content?: unknown }>;
+  tools?: unknown[];
+}> = [];
+const modelServer = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  async fetch(request) {
+    if (new URL(request.url).pathname !== "/v1/chat/completions")
+      return new Response("Unexpected route", { status: 404 });
+    const body = (await request.json()) as (typeof modelRequests)[number];
+    modelRequests.push(body);
+    if (modelRequests.length > 6)
+      return new Response("Fixture request budget exceeded", { status: 400 });
+    const hasResult = body.messages.some(
+      (message) =>
+        message.role === "tool" &&
+        JSON.stringify(message.content).includes("harmless tool fixture"),
+    );
+    const acknowledged = body.messages.some(
+      (message) =>
+        message.role === "tool" &&
+        JSON.stringify(message.content).includes("swarm-fixture-acknowledged"),
+    );
+    let toolCall;
+    if (hasResult && !acknowledged) {
+      const received = body.messages.find(
+        (message) =>
+          message.role === "tool" &&
+          JSON.stringify(message.content).includes("peer-message-fixture-7392"),
+      );
+      if (!received || typeof received.content !== "string")
+        throw new Error("Missing peer envelope");
+      const lease = JSON.parse(received.content.split("\n").at(-1)!);
+      leaseTokens.add(lease.leaseToken);
+      assert.ok(
+        [lease.message.id, lease.leaseToken].every((value) =>
+          /^[a-zA-Z0-9-]+$/.test(value),
+        ),
+      );
+      const db = new Database(join(root, "private", "coordination.db"), {
+        readonly: true,
+      });
+      try {
+        observedLeaseState = (
+          db
+            .query("SELECT state FROM inbox_deliveries WHERE message_id=?")
+            .get(lease.message.id) as { state: string }
+        ).state;
+      } finally {
+        db.close();
+      }
+      toolCall = {
+        name: "bash",
+        arguments: JSON.stringify({
+          command:
+            'node "' +
+            ackProbe.replaceAll("\\", "/") +
+            '" ' +
+            lease.message.id +
+            " " +
+            lease.leaseToken,
+          description: "Acknowledge processed fixture message",
+        }),
+      };
+    } else if (!hasResult) {
+      toolCall = {
+        name: "read",
+        arguments: JSON.stringify({ filePath: readTarget }),
+      };
+    }
+    const chunks = toolCall
+      ? [
+          {
+            delta: {
+              role: "assistant",
+              tool_calls: [
+                {
+                  index: 0,
+                  id: hasResult ? "call_fixture_ack" : "call_fixture_read",
+                  type: "function",
+                  function: toolCall,
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+          { delta: {}, finish_reason: "tool_calls" },
+        ]
+      : [
+          {
+            delta: { role: "assistant", content: "fixture complete" },
+            finish_reason: null,
+          },
+          { delta: {}, finish_reason: "stop" },
+        ];
+    const payload =
+      chunks
+        .map(
+          (choice) =>
+            "data: " +
+            JSON.stringify({
+              id: "fixture",
+              object: "chat.completion.chunk",
+              created: 1,
+              model: "probe",
+              choices: [{ index: 0, ...choice }],
+            }) +
+            "\n\n",
+        )
+        .join("") + "data: [DONE]\n\n";
+    return new Response(payload, {
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  },
+});
 const plugin = join(root, "probe.mjs");
 const lifecyclePath = resolve("dist/test/opencode-lifecycle.mjs");
 await build({
@@ -47,6 +169,14 @@ await build({
   format: "esm",
   packages: "external",
   outfile: shellProbe,
+});
+await build({
+  entryPoints: ["scripts/fixtures/runtime-ack-probe.ts"],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  packages: "external",
+  outfile: ackProbe,
 });
 const launcherOptions = {
   stateDirectory: join(root, "private"),
@@ -95,7 +225,23 @@ const env = {
   SWARM_PROBE_EVENTS: events,
   OPENCODE_CONFIG_CONTENT: JSON.stringify({
     plugin: [pathToFileURL(plugin).href],
-    enabled_providers: [],
+    enabled_providers: ["fixture"],
+    model: "fixture/probe",
+    small_model: "fixture/probe",
+    provider: {
+      fixture: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Local scripted probe",
+        options: {
+          baseURL: `http://127.0.0.1:${modelServer.port}/v1`,
+          apiKey: "fixture",
+        },
+        models: {
+          probe: { name: "probe", limit: { context: 32768, output: 1024 } },
+        },
+      },
+    },
+    agent: { title: { disable: true }, summary: { disable: true } },
   }),
 };
 // Do not inherit server authentication or an explicit external config path.
@@ -207,6 +353,78 @@ try {
     "SWARM_PROBE_EVENTS",
     "SWARM_SESSION_CAPABILITY",
   ]);
+  const coordinator = await CoordinationClient.connect(
+    observer.environment.SWARM_COORDINATOR_ENDPOINT,
+    observer.environment.SWARM_SESSION_CAPABILITY,
+  );
+  let deliveryEvidence;
+  try {
+    const sent = (await coordinator.request({
+      op: "command",
+      command: {
+        id: "post-tool-probe",
+        type: "message.send",
+        payload: {
+          recipient: shellEvidence.snapshot.actor,
+          kind: "question",
+          body: "peer-message-fixture-7392",
+        },
+      },
+    })) as { value: { messageId: string } };
+    const prompt = await fetch(base + "/session/" + session.id + "/message", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agent: "build",
+        model: { providerID: "fixture", modelID: "probe" },
+        parts: [{ type: "text", text: "Read fixture.txt once." }],
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    assert.equal(prompt.status, 200);
+    const promptResult = await prompt.text();
+    const received = modelRequests
+      .flatMap((request) => request.messages)
+      .filter(
+        (message) =>
+          message.role === "tool" &&
+          JSON.stringify(message.content).includes("peer-message-fixture-7392"),
+      );
+    assert.ok(
+      received.length > 0,
+      "Peer envelope absent from model tool result: " +
+        promptResult.slice(0, 1000),
+    );
+    const status = (await coordinator.request({
+      op: "message_status",
+      messageId: sent.value.messageId,
+    })) as { deliveries: Array<{ state: string }> };
+    assert.equal(
+      observedLeaseState,
+      "leased",
+      "Host admission must not acknowledge processing",
+    );
+    assert.equal(
+      status.deliveries[0].state,
+      "acknowledged",
+      "Explicit host tool must acknowledge processing",
+    );
+    assert.equal(
+      modelRequests.length,
+      3,
+      "Read, acknowledgment, then completion",
+    );
+    deliveryEvidence = {
+      scriptedLocalModel: true,
+      requests: modelRequests.length,
+      toolResultReachedModel: true,
+      messageId: sent.value.messageId,
+      stateAfterAdmission: observedLeaseState,
+      stateAfterExplicitAck: status.deliveries[0].state,
+    };
+  } finally {
+    coordinator.close();
+  }
   const removed = await fetch(base + "/session/" + session.id, {
     method: "DELETE",
     signal: AbortSignal.timeout(10000),
@@ -297,19 +515,26 @@ try {
         sessions: [session.id, warmSession.id],
         coordinatorSessions,
         shellEvidence,
+        deliveryEvidence,
         createdEvents: recorded.filter(
           (event) => event.type === "session.created",
         ).length,
         recorded,
         limitations:
-          "Actual host plugin load, Subscription-first enrollment, instance restart reconciliation with stable actor and fenced generation, and close for two native sessions. Missing session.created is recorded, not assumed supported. Actual shell.env capability authenticated by child bootstrap. No model invocation, tool.execute.after delivery, reservation denial or wakeup proven.",
+          "Actual host plugin load, Subscription-first enrollment, instance restart reconciliation with stable actor and fenced generation, and close for two native sessions. Missing session.created is recorded, not assumed supported. Actual shell.env capability authenticated by child bootstrap. Real host tools and model-request assembly verified using a local scripted OpenAI-compatible endpoint; no external model inference or semantic understanding claimed. Reservation denial, idle wakeup and restart delivery deduplication remain unproven.",
       },
-      null,
+      (_key, value) => {
+        if (typeof value !== "string") return value;
+        for (const token of leaseTokens)
+          value = value.replaceAll(token, "<lease-token>");
+        return value;
+      },
       2,
     ),
   );
   console.log(output);
 } finally {
+  modelServer.stop(true);
   child.kill();
   await child.exited;
   await stderr;
