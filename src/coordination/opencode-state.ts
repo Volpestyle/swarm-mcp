@@ -16,12 +16,19 @@ export class OpenCodeAvailability {
   private observations = new Map<string, RuntimeObservation>();
   private waiting = new Map<string, Set<string>>();
   private disconnected = false;
+  private recovering = false;
 
   observe(id: string): RuntimeObservation {
     if (this.disconnected)
       return {
         state: "disconnected",
         evidence: "host event stream disconnected",
+        observedAt: Date.now(),
+      };
+    if (this.recovering)
+      return {
+        state: "unsupported",
+        evidence: "Host snapshot in progress",
         observedAt: Date.now(),
       };
     return (
@@ -40,6 +47,13 @@ export class OpenCodeAvailability {
   event(event: OpenCodeEvent) {
     if (event.type === "server.connected") {
       this.disconnected = false;
+      this.recovering = true;
+      this.observations.clear();
+      this.waiting.clear();
+      return;
+    }
+    if (event.type === "swarm.snapshot.ready") {
+      this.recovering = false;
       return;
     }
     if (
@@ -85,6 +99,7 @@ export class OpenCodeAvailability {
 
   toolBoundary(id: string) {
     const current = this.observe(id);
+    if (this.recovering) return current;
     if (current.state === "blocked" || current.state === "disconnected")
       return current;
     this.set(id, "busy", "tool.execute.after");

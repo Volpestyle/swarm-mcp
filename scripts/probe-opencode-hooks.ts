@@ -204,12 +204,22 @@ export const Probe = async ({directory, client, serverUrl}) => {
   const record = event => appendFileSync(process.env.SWARM_PROBE_EVENTS, JSON.stringify(event)+'\\n');
   record({type:'plugin.loaded',directory});
   const hooks = opencodeLifecycle(${JSON.stringify(launcherOptions)}, event => record({ ...event, type: 'coordination.' + event.type }));
+  let connection;
+  let restarted = false;
+  let blockedSession;
+  const startObserver = () => connectOpenCodeLifecycle({directory, client, serverUrl}, observedHooks, state => record({type: 'observer.' + state}));
   const observedHooks = {...hooks, event: async input => {
     await hooks.event(input);
+    if (input.event.type === 'swarm.snapshot.ready' && blockedSession) record({type: 'availability.recovered', hostSessionId: blockedSession, state: hooks.observe(blockedSession).state});
+    if (input.event.type === 'permission.asked' && !restarted) {
+      restarted = true;
+      blockedSession = input.event.properties.sessionID;
+      queueMicrotask(() => { connection.stop(); void connection.done.then(() => { connection = startObserver(); }); });
+    }
     const id = input.event.properties?.sessionID;
     if (id && (input.event.type === 'session.status' || input.event.type.startsWith('permission.'))) record({type: 'availability.' + hooks.observe(id).state, hostSessionId: id, evidence: hooks.observe(id).evidence});
   }};
-  connectOpenCodeLifecycle({directory, client, serverUrl}, observedHooks, state => record({type: 'observer.' + state}));
+  connection = startObserver();
   return {...hooks, event: async (input) => { record(input.event); }};
 };`,
 );
@@ -388,6 +398,13 @@ try {
       signal: AbortSignal.timeout(30000),
     });
     await waitFor("availability.blocked", session.id);
+    await waitFor("availability.recovered", session.id);
+    const recovered = readFileSync(events, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find((event) => event.type === "availability.recovered");
+    assert.equal(recovered.state, "blocked");
     const blockedStatus = (await coordinator.request({
       op: "message_status",
       messageId: sent.value.messageId,
@@ -456,6 +473,7 @@ try {
       requests: modelRequests.length,
       toolResultReachedModel: true,
       messageId: sent.value.messageId,
+      stateRecoveredAfterStreamRestart: recovered.state,
       stateWhilePermissionBlocked: blockedStatus.deliveries[0].state,
       stateAfterAdmission: observedLeaseState,
       stateAfterExplicitAck: status.deliveries[0].state,
@@ -505,11 +523,11 @@ try {
     );
   assert.equal(
     recorded.filter((event) => event.type === "observer.reconciled").length,
-    2,
+    3,
   );
   assert.equal(
     recorded.filter((event) => event.type === "observer.disconnected").length,
-    1,
+    2,
   );
   const db = new Database(join(root, "private", "coordination.db"), {
     readonly: true,

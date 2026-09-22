@@ -76,8 +76,23 @@ Duplicate asks are idempotent; one reply cannot clear a different wait. Replies
 establish busy, never idle; retry is busy. Stream loss and deletion establish
 disconnected. Unknown sessions/statuses are unsupported until verified host
 evidence arrives. Post-tool delivery checks blocked/disconnected both before
-fetch and immediately before admission. Permission/question reconstruction on
-startup and idle admission via an authoritative status check remain open.
+fetch and immediately before admission. Permission/question reconstruction now
+runs before snapshot readiness; authoritative idle admission remains open.
+
+`opencode-recovery.json` stops and recreates the observer while the actual host
+is waiting for read permission. Status, pending permissions and pending questions
+are read through the pinned `@opencode-ai/sdk@1.4.3` public HTTP client; the
+injected V1 client lacks the latter two methods. This SDK import does not change
+the V1 plugin hook API. HTTP requests use the actual server URL, directory and
+the host's configured server credentials.
+
+Reconnection clears stale observations/waits and defers tool admission while
+the snapshot is incomplete. The real-host probe restores blocked from the
+snapshot, verifies pending inbox state, then grants that one fixture permission
+and completes delivery/acknowledgment. Unit tests additionally check that stale
+idle cannot survive reconnection. The probe explicitly recreates the observer;
+automatic reconnect/backoff policy is still open. Snapshot failure reports
+disconnected and never declares readiness.
 
 The wrapper feeds operational events from the SSE observer only. Its native
 event hook may record diagnostics, but must not feed the same events back into

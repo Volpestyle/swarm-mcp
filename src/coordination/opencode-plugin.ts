@@ -3,6 +3,7 @@ import { enrollRuntime } from "./runtime-launcher";
 import { CoordinationClient } from "./ipc";
 import { RuntimeDelivery } from "./runtime-delivery";
 import { OpenCodeAvailability, type OpenCodeEvent } from "./opencode-state";
+import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 type Options = Omit<
   Parameters<typeof enrollRuntime>[0],
@@ -20,6 +21,7 @@ export function observeOpenCode(
       signal: AbortSignal,
     ): Promise<{ stream: AsyncIterable<HostEvent> }>;
     list(signal: AbortSignal): Promise<Array<{ id: string }>>;
+    states(signal: AbortSignal): Promise<HostEvent[]>;
   },
   hooks: { event(input: { event: HostEvent }): Promise<void> },
   report: (state: "reconciled" | "disconnected") => void,
@@ -43,6 +45,12 @@ export function observeOpenCode(
             event: { type: "session.updated", properties: { info } },
           });
         }
+        for (const event of await host.states(
+          AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+        )) {
+          await hooks.event({ event });
+        }
+        await hooks.event({ event: { type: "swarm.snapshot.ready" } });
         report("reconciled");
       } else if (event.type === "server.instance.disposed") {
         break;
@@ -85,6 +93,17 @@ export function connectOpenCodeLifecycle(
   hooks: { event(input: { event: HostEvent }): Promise<void> },
   report: (state: "reconciled" | "disconnected") => void,
 ) {
+  // The installed host's injected V1 SDK lacks permission/question listing.
+  // Use the same-version public HTTP SDK; this is not a V2 plugin API change.
+  const api = createOpencodeClient({
+    baseUrl: input.serverUrl.href,
+    directory: input.directory,
+    headers: process.env.OPENCODE_SERVER_PASSWORD
+      ? {
+          Authorization: `Basic ${Buffer.from(`${process.env.OPENCODE_SERVER_USERNAME ?? "opencode"}:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`,
+        }
+      : undefined,
+  });
   return observeOpenCode(
     {
       subscribe: (signal) =>
@@ -107,6 +126,28 @@ export function connectOpenCodeLifecycle(
         return result.data.filter(
           (s) => s.directory === input.directory && !s.time.archived,
         );
+      },
+      states: async (signal) => {
+        const requests = { signal, throwOnError: true as const };
+        const [status, permissions, questions] = await Promise.all([
+          api.session.status({ directory: input.directory }, requests),
+          api.permission.list({ directory: input.directory }, requests),
+          api.question.list({ directory: input.directory }, requests),
+        ]);
+        return [
+          ...Object.entries(status.data).map(([sessionID, status]) => ({
+            type: "session.status",
+            properties: { sessionID, status },
+          })),
+          ...permissions.data.map((properties) => ({
+            type: "permission.asked",
+            properties,
+          })),
+          ...questions.data.map((properties) => ({
+            type: "question.asked",
+            properties,
+          })),
+        ];
       },
     },
     hooks,
