@@ -133,6 +133,23 @@ queuing if the host becomes busy, keep durable pending work on uncertain
 acceptance, and coalesce/reconcile its own prompt requests. It must not cancel
 the current run or spawn a replacement session.
 
+`OpenCodeWake` now admits a wake only for committed pending work for its actor,
+an existing unarchived native session, idle host status and no pending host
+permission/question. Concurrent hints share one attempt. Before the HTTP POST,
+private launcher state publishes stable host message/part IDs for that scope,
+native session and peer message. Later instances reconcile that exact host
+message. An uncertain attempt whose message is absent remains uncertain rather
+than posting again; recovery of that ambiguous intent still needs an explicit
+policy. HTTP 204 means request admission, not persistence or processing.
+
+`opencode-wake.json` verifies busy deferral, two concurrent hints producing one
+additional native model request, and a new helper reusing the retained message.
+The peer delivery stays pending. Lost-response tests cover both a host that
+persisted the prompt and one that did not, with exactly one POST in either case.
+This wake helper is not yet connected to the coordinator event observer or
+turn-start payload delivery. End-to-end autonomous idle delivery therefore
+remains open, as do message-context deduplication and the second host.
+
 ## Actual host evidence
 
 Run the installed native executable, not its Windows package shim:

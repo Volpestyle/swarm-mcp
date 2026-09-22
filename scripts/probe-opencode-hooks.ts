@@ -1,3 +1,5 @@
+import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { OpenCodeWake } from "../src/coordination/opencode-wake";
 import { CoordinationClient } from "../src/coordination/ipc";
 import { Database } from "bun:sqlite";
 import { build } from "esbuild";
@@ -396,6 +398,22 @@ try {
         },
       },
     })) as { value: { messageId: string } };
+    const api = createOpencodeClient({ baseUrl: base, directory: root });
+    const wakeOptions = {
+      api,
+      request: (operation: import("../src/coordination/ipc").Operation) =>
+        coordinator.request(operation),
+      actor: enrollments.at(-1).actor,
+      scope: observer.scope,
+      hostSessionId: session.id,
+      stateDirectory: launcherOptions.stateDirectory,
+    };
+    const wake = new OpenCodeWake(wakeOptions);
+    assert.equal(
+      (await wake.notify(sent.value.messageId)).status,
+      "deferred",
+      "Busy shell must defer wake",
+    );
     const promptPromise = fetch(base + "/session/" + session.id + "/message", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -522,7 +540,64 @@ try {
       firstModelRequestAt! >=
         Number(readFileSync(shellBarrier + ".completed", "utf8")),
     );
+    const next = (await coordinator.request({
+      op: "command",
+      command: {
+        id: "wake-probe",
+        type: "message.send",
+        payload: {
+          recipient: wakeOptions.actor,
+          kind: "question",
+          body: "wake-only-fixture",
+        },
+      },
+    })) as { value: { messageId: string } };
+    const [wakeA, wakeB] = await Promise.all([
+      wake.notify(next.value.messageId),
+      wake.notify(next.value.messageId),
+    ]);
+    assert.equal(wakeA.status, "accepted");
+    assert.deepEqual(wakeA, wakeB);
+    for (let i = 0; i < 100; i++) {
+      const status = await api.session.status(
+        {},
+        { throwOnError: true, signal: AbortSignal.timeout(2000) },
+      );
+      if (modelRequests.length === 4 && !status.data[session.id]) break;
+      await delay(25);
+    }
+    assert.equal(
+      modelRequests.length,
+      4,
+      "Coalesced wake starts one additional model request",
+    );
+    const replay = await new OpenCodeWake(wakeOptions).notify(
+      next.value.messageId,
+    );
+    assert.equal(replay.status, "accepted");
+    assert.equal(replay.messageId, wakeA.messageId);
+    const retained = await api.session.message(
+      { sessionID: session.id, messageID: wakeA.messageId! },
+      { throwOnError: true },
+    );
+    assert.equal(retained.data.info.id, wakeA.messageId);
+    const pendingWake = (await coordinator.request({
+      op: "message_status",
+      messageId: next.value.messageId,
+    })) as { deliveries: Array<{ state: string }> };
+    assert.equal(
+      pendingWake.deliveries[0].state,
+      "pending",
+      "Wake is not consumption or acknowledgment",
+    );
     deliveryEvidence = {
+      wake: {
+        busyDeferred: true,
+        coalescedRequests: 2,
+        modelRequests: 1,
+        replayedMessageId: replay.messageId,
+        inboxState: pendingWake.deliveries[0].state,
+      },
       promptQueuedWhileBusy: true,
       modelWaitedForShell:
         firstModelRequestAt! >=

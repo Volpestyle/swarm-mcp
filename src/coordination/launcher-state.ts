@@ -167,3 +167,40 @@ export function agentState(
     );
   return result;
 }
+
+/** A single owner publishes an intent before contacting the host. A later
+ * process reconciles the same IDs rather than blindly injecting another turn. */
+export function wakeState(
+  directory: string,
+  scope: string,
+  session: string,
+  message: string,
+) {
+  prepareLauncherDirectory(directory);
+  if (
+    ![scope, session, message].every(
+      (value) =>
+        typeof value === "string" && value.length > 0 && value.length <= 4096,
+    )
+  )
+    throw new Error("Invalid wake identity");
+  const key = createHash("sha256")
+    .update(JSON.stringify([scope, session, message]))
+    .digest("hex");
+  // Match the installed host's ascending ID time prefix; keep the random tail
+  // independent so parallel trusted launchers cannot collide.
+  const time = ((BigInt(Date.now()) * 4096n + 1n) & 0xffffffffffffn)
+    .toString(16)
+    .padStart(12, "0");
+  const candidate = {
+    messageId: `msg_${time}${randomBytes(7).toString("hex")}`,
+    partId: `prt_${time}${randomBytes(7).toString("hex")}`,
+  };
+  const saved = record(directory, `wake-${key}.json`, () => candidate);
+  if (
+    !/^msg_[a-f0-9]{26}$/.test(saved.messageId) ||
+    !/^prt_[a-f0-9]{26}$/.test(saved.partId)
+  )
+    throw new Error("Invalid retained wake intent");
+  return { ...saved, fresh: saved.messageId === candidate.messageId };
+}
