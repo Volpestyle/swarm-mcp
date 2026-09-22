@@ -3,7 +3,7 @@ import { CoordinationError } from "./errors";
 
 // A separate application identity prevents accidental adoption of legacy swarm.db.
 export const APPLICATION_ID = 0x53574d32;
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export type FaultPoint =
   | "before_migration_commit"
   | "before_command_commit"
@@ -31,6 +31,24 @@ const migrations = [
     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
   );
   CREATE INDEX tasks_scope_id ON tasks(scope, id);`,
+  `CREATE TABLE inbox_messages (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+    scope TEXT NOT NULL, sender TEXT NOT NULL, envelope_version INTEGER NOT NULL CHECK(envelope_version=1),
+    kind TEXT NOT NULL, body TEXT NOT NULL, task_id TEXT, thread_id TEXT,
+    created_at INTEGER NOT NULL, expires_at INTEGER, idempotency_key TEXT NOT NULL,
+    audience TEXT NOT NULL CHECK(audience IN ('direct','announcement')),
+    max_attempts INTEGER NOT NULL CHECK(max_attempts>0), backoff_ms INTEGER NOT NULL,
+    UNIQUE(scope,sender,idempotency_key)
+  );
+  CREATE TABLE inbox_deliveries (
+    message_id TEXT NOT NULL REFERENCES inbox_messages(id), recipient TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('pending','leased','acknowledged','expired','dead_letter')),
+    attempts INTEGER NOT NULL DEFAULT 0, consumer TEXT, lease_token TEXT, lease_until INTEGER,
+    next_attempt_at INTEGER NOT NULL, acknowledged_at INTEGER, last_error TEXT,
+    PRIMARY KEY(message_id,recipient)
+  );
+  CREATE INDEX inbox_messages_scope_seq ON inbox_messages(scope,seq);
+  CREATE INDEX inbox_recipient_state ON inbox_deliveries(recipient,state,next_attempt_at);`,
 ];
 
 function version(db: Sqlite): number {

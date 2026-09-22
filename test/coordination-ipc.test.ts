@@ -60,6 +60,44 @@ const command = {
   payload: { title: "work over local IPC" },
 };
 
+test("inbox leases and acknowledgments round trip through the authenticated owner", async () => {
+  const { client } = await fixture();
+  await client.request({
+    op: "command",
+    command: {
+      id: "send",
+      type: "message.send",
+      payload: { recipient: "alice", kind: "notice", body: "hello" },
+    },
+  });
+  const result = (await client.request({
+    op: "command",
+    command: { id: "fetch", type: "inbox.fetch", payload: { consumer: "ipc" } },
+  })) as {
+    value: {
+      deliveries: Array<{ message: { id: string }; leaseToken: string }>;
+    };
+  };
+  const item = result.value.deliveries[0]!;
+  await client.request({
+    op: "command",
+    command: {
+      id: "ack",
+      type: "inbox.ack",
+      payload: { messageId: item.message.id, leaseToken: item.leaseToken },
+    },
+  });
+  const status = (await client.request({
+    op: "message_status",
+    messageId: item.message.id,
+  })) as { deliveries: Array<{ state: string }> };
+  expect(status.deliveries[0]!.state).toBe("acknowledged");
+  const inbox = (await client.request({ op: "inbox" })) as {
+    items: Array<{ state: string }>;
+  };
+  expect(inbox.items[0]!.state).toBe("acknowledged");
+});
+
 test("Bun client command and replay use the Node owner's durable core", async () => {
   const { client } = await fixture();
   const created = (await client.request({ op: "command", command })) as {

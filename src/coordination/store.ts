@@ -2,6 +2,14 @@ import { createHash } from "node:crypto";
 import { CoordinationError, requireText } from "./errors";
 import { migrate, type FaultHook } from "./migrations";
 import { openSqlite, type Sqlite } from "./sqlite";
+import {
+  InboxTransaction,
+  DEFAULT_INBOX_POLICY,
+  validateInboxPolicy,
+  readInbox,
+  readMessageStatus,
+  type InboxPolicy,
+} from "./inbox";
 
 export type Json =
   | null
@@ -74,13 +82,26 @@ function canonical(value: Json, depth = 0): string {
 }
 
 export class WriteTransaction {
+  readonly inbox: InboxTransaction;
   writes = 0;
   cursor = 0;
   constructor(
     private readonly db: Sqlite,
     readonly command: Command,
     readonly at: number,
-  ) {}
+    policy: InboxPolicy = DEFAULT_INBOX_POLICY,
+  ) {
+    this.inbox = new InboxTransaction(
+      db,
+      command,
+      at,
+      (type, id, payload) => {
+        this.writes++;
+        this.event(type, id, payload);
+      },
+      policy,
+    );
+  }
 
   task(id: string): Task | null {
     return (
@@ -154,6 +175,7 @@ export class CoordinationStore {
   private constructor(
     private readonly db: Sqlite,
     private readonly clock: () => number,
+    private readonly inboxPolicy: InboxPolicy,
     private readonly fault?: FaultHook,
   ) {}
 
@@ -161,13 +183,17 @@ export class CoordinationStore {
     path: string;
     clock?: () => number;
     fault?: FaultHook;
+    inboxPolicy?: Partial<InboxPolicy>;
   }) {
     const db = await openSqlite(options.path);
     try {
+      const policy = { ...DEFAULT_INBOX_POLICY, ...options.inboxPolicy };
+      validateInboxPolicy(policy);
       migrate(db, options.fault);
       return new CoordinationStore(
         db,
         options.clock ?? Date.now,
+        policy,
         options.fault,
       );
     } catch (error) {
@@ -235,7 +261,12 @@ export class CoordinationStore {
           replayed: true,
         };
       }
-      const tx = new WriteTransaction(this.db, command, this.clock());
+      const tx = new WriteTransaction(
+        this.db,
+        command,
+        this.clock(),
+        this.inboxPolicy,
+      );
       const value = apply(tx);
       const serialized = canonical(value); // Also rejects accidental async callbacks.
       if (tx.writes && !tx.cursor)
@@ -277,6 +308,16 @@ export class CoordinationStore {
       }
     }
     return result;
+  }
+
+  inbox(scope: string, actor: string, cursor = 0, limit = 50) {
+    this.ensureOpen();
+    return readInbox(this.db, scope, actor, cursor, limit);
+  }
+
+  messageStatus(scope: string, actor: string, id: string) {
+    this.ensureOpen();
+    return readMessageStatus(this.db, scope, actor, id);
   }
 
   task(scope: string, id: string): Task | null {

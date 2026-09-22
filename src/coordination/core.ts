@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { CoordinationError, requireText } from "./errors";
 import { CoordinationStore, type CommandResult, type Json } from "./store";
+import type { InboxCommand } from "./inbox";
 
 // Trusted application context. The local service supplies this after validating
 // its session capability; transports must never treat a caller's label as auth.
@@ -9,6 +10,7 @@ export interface ActorContext {
   actor: string;
 }
 export type CoreCommand =
+  | InboxCommand
   | { id: string; type: "task.create"; payload: { title: string } }
   | {
       id: string;
@@ -20,8 +22,28 @@ export class CoordinationCore {
   constructor(private readonly store: CoordinationStore) {}
 
   command(context: ActorContext, command: CoreCommand): CommandResult<Json> {
-    return this.store.execute({ ...context, ...command }, (tx) => {
+    return this.store.execute({ ...command, ...context }, (tx) => {
       switch (command.type) {
+        case "message.send":
+          return tx.inbox.send(
+            command.payload,
+            [command.payload.recipient],
+            "direct",
+          );
+        case "message.announce":
+          return tx.inbox.send(
+            command.payload,
+            command.payload.recipients,
+            "announcement",
+          );
+        case "inbox.fetch":
+          return tx.inbox.fetch(command.payload);
+        case "inbox.ack":
+          return tx.inbox.acknowledge(command.payload);
+        case "inbox.reject":
+          return tx.inbox.reject(command.payload);
+        case "inbox.sweep":
+          return tx.inbox.sweep();
         case "task.create": {
           requireText(command.payload.title, "title", 1024);
           const task = {
@@ -82,6 +104,12 @@ export class CoordinationCore {
 
   task(context: ActorContext, id: string) {
     return this.store.task(context.scope, id);
+  }
+  inbox(context: ActorContext, cursor = 0, limit = 50) {
+    return this.store.inbox(context.scope, context.actor, cursor, limit);
+  }
+  messageStatus(context: ActorContext, id: string) {
+    return this.store.messageStatus(context.scope, context.actor, id);
   }
   events(context: ActorContext, cursor = 0, limit = 100) {
     return this.store.events(context.scope, cursor, limit);
