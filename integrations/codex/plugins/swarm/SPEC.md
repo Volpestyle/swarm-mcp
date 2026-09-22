@@ -45,6 +45,26 @@ thread ID from the host API and bind it explicitly; it cannot infer it from
 these environment variables. Rediscover this behavior when the host changes.
 Per-thread MCP configuration is verified; both enrollments remain fixtures.
 
+### Trusted native resume
+
+`src/coordination/codex-launcher.ts` exports `resumeCodexThread`. The app-server
+owner supplies a native thread ID, trusted workspace identity, incarnation and
+absolute Node/MCP entrypoints. The helper verifies the saved thread's ID and
+workspace and scans the loaded-thread inventory before enrolling. It refuses an
+already loaded thread, resumes the existing thread with per-thread MCP credentials,
+and checks the authenticated actor through the native MCP tool path. It does not
+change approval or sandbox settings or create a thread. The owner must serialize
+lifecycle operations and inspect uncertain outcomes before retrying.
+
+Run the probe with a final `--resume` argument to verify this helper against the
+installed host. The probe persists a harmless history item, explicitly archives/
+unarchives the disposable native thread, and resumes it twice. The same native
+ID retains one actor, advances generation 1 to 2, and rejects the first capability
+as `stale_session`. A loaded-thread retry is refused before enrollment.
+Evidence: `docs/verification/2026-09-22-runtime/codex-native-resume.json`.
+This is controlled native resume without inference; it does not establish crash
+recovery, automatic lifecycle observation or model-visible inbox delivery.
+
 The probe's hooks are reported as untrusted. Listing a hook is not execution:
 live setup must obtain normal hook trust before claiming automatic delivery.
 No live trust/config changes were made. Automatic native-thread enrollment, safe

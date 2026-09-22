@@ -6,8 +6,10 @@ import { once } from "node:events";
 import { pathToFileURL } from "node:url";
 import { enrollRuntime } from "../src/coordination/runtime-launcher";
 import { CoordinationClient } from "../src/coordination/ipc";
+import { resumeCodexThread } from "../src/coordination/codex-launcher";
+import { CoordinationError } from "../src/coordination/errors";
 
-const [capture, executable] = process.argv.slice(2);
+const [capture, executable, mode] = process.argv.slice(2);
 if (!capture || !executable)
   throw new Error(
     "Usage: probe-codex-lifecycle <capture.json> <native codex executable>",
@@ -300,6 +302,82 @@ try {
   if (privateStatus.deliveries[0].state !== "pending")
     throw new Error("Peer fetch changed another actor's delivery");
   await call("thread/unsubscribe", { threadId: peerThread.thread.id });
+  let nativeResume: unknown;
+  if (mode === "--resume") {
+    await call("thread/inject_items", {
+      threadId,
+      items: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Native resume fixture" }],
+        },
+      ],
+    });
+    await call("thread/archive", { threadId });
+    await call("thread/unarchive", { threadId });
+    const nativeOptions = {
+      stateDirectory: join(root, "private"),
+      nodePath: Bun.which("node")!,
+      ownerPath: join(bundles, "owner-cli.mjs"),
+      mcpPath: join(bundles, "mcp-cli.mjs"),
+      hostSessionId: threadId,
+      incarnation: "native-first",
+      identity: {
+        projectRoot: root,
+        directory: root,
+        fileRoot: root,
+        profile: "fixture",
+        allowedRoots: [root],
+      },
+    };
+    const native = await resumeCodexThread(nativeOptions, call);
+    const nativeSync = await invoke("swarm_sync", {});
+    if (native.threadId !== threadId || nativeSync.actor !== native.actor)
+      throw new Error("Native Codex resume did not bind the native actor");
+    const loadedRefused = await resumeCodexThread(
+      { ...nativeOptions, incarnation: "must-not-enroll" },
+      call,
+    ).then(
+      () => false,
+      (error: Error) => error.message.includes("already loaded"),
+    );
+    if (!loadedRefused)
+      throw new Error("Loaded Codex thread was not protected");
+    await call("thread/archive", { threadId });
+    await call("thread/unarchive", { threadId });
+    const next = await resumeCodexThread(
+      { ...nativeOptions, incarnation: "native-second" },
+      call,
+    );
+    const oldClient = await CoordinationClient.connect(
+      native.environment.SWARM_COORDINATOR_ENDPOINT,
+      native.environment.SWARM_SESSION_CAPABILITY,
+    );
+    let oldCapabilityRejected: boolean;
+    try {
+      oldCapabilityRejected = await oldClient.request({ op: "bootstrap" }).then(
+        () => false,
+        (error: unknown) =>
+          error instanceof CoordinationError && error.code === "stale_session",
+      );
+    } finally {
+      oldClient.close();
+    }
+    if (
+      next.actor !== native.actor ||
+      next.generation !== native.generation + 1 ||
+      !oldCapabilityRejected
+    )
+      throw new Error("Codex resume failed identity or generation fencing");
+    nativeResume = {
+      sameThread: true,
+      actorMatched: true,
+      generations: [native.generation, next.generation],
+      loadedRefused,
+      oldCapabilityRejected,
+    };
+  }
   const snapshot = await call("thread/read", { threadId }).catch(
     (error: Error) => ({ error: error.message }),
   );
@@ -325,6 +403,7 @@ try {
     unsubscribe,
     notifications: [...new Set(notices)],
     inferenceRequested: false,
+    nativeResume,
     mcp: {
       tools,
       actorMatched: true,

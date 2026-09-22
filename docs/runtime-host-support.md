@@ -7,13 +7,17 @@ permanent claims about capabilities missing from a host.
 | --- | --- | --- |
 | OpenCode 1.4.3 | Installed-host lifecycle/restart, busy/blocked gating, post-tool and autonomous idle-turn delivery, explicit ack, retained-context deduplication and autonomous metadata-only refresh after real lease expiry | Killed/resumed-host delivery, uncertain wake recovery and large-history enrollment remain open |
 | Claude Code 2.1.278 | Trusted-launcher hook/MCP binding, installed-host turn-start/post-tool delivery and native MCP ack, session-end closure, transcript-based deduplication, real lease expiry and forced-kill/native-resume recovery from a saved transcript | Legacy-plugin rollout and recovery before the first saved transcript remain open; delivery only at native boundaries, no idle wake implementation |
-| Codex 0.155.1 | Isolated app-server initialization, plugin event configuration parsing, idle thread and rejected idle steering; native MCP discovery, actor authentication, fetch and explicit acknowledgment through thread-scoped app-server calls | MCP actor is fixture-enrolled, not automatically bound to the native thread. Fixture hooks are untrusted; automatic lifecycle and context delivery remain unverified. Treat this as a degraded integration |
+| Codex 0.155.1 | Native MCP discovery, actor authentication, explicit fetch/ack and per-thread isolation; trusted helper resumes an existing native thread with a stable actor and fences the previous generation | New-thread enrollment, automatic lifecycle observation and context delivery remain unverified. Fixture hooks are untrusted. Treat this as a degraded integration |
 | Hermes | Existing in-process lifecycle implementation inspected; 23 Python lifecycle tests pass | No `hermes` executable on this PATH or `hermes_cli` module in the inspected Python. Actual-host delivery is unverified |
 
 Codex's two-thread probe also verifies distinct per-thread MCP credentials in one
 app server: the second actor cannot fetch the first actor's message, and its
-configuration does not replace the first actor's binding. Both actors are still
-fixture-enrolled. Neither tested native-ID environment variable was present in
+configuration does not replace the first actor's binding. Those actors are
+fixture-enrolled. A separate native-resume probe binds the real thread ID through
+`resumeCodexThread`, proves actor stability across generations 1 and 2, refuses
+already loaded threads and rejects the old capability. It uses explicit archive/
+unarchive to unload the disposable host thread, not a crash or automatic recovery.
+Neither tested native-ID environment variable was present in
 the MCP subprocess; native lifecycle binding must use an explicit host API path.
 
 OpenCode and Claude evidence uses scripted localhost model endpoints; it proves
