@@ -1,0 +1,83 @@
+bun test v1.3.11 (af24e281)
+bun.exe :
+At C:\Users\volpe\AppData\Roaming\npm\bun.ps1:14 char:3
++   & "$basedir/node_modules/bun/bin/bun.exe"   $args
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+src\paths.test.ts:
+(pass) file resolves relative and worktree absolute paths against a canonical file_root [16.00ms]
+
+test\prompts.test.ts:
+(pass) prompts > setup prompt includes the bootstrap flow
+(pass) prompts > protocol prompt includes lock and task guidance
+(pass) prompts > docs snippets stay aligned with host-neutral usage
+
+test\swarm.test.ts:
+(pass) messages > broadcast fans out per recipient and stays inside scope [16.00ms]
+(pass) scope > non-git directories fall back to their own path as scope [15.00ms]
+(pass) scope > stale instances are pruned before lookups succeed [16.00ms]
+(pass) tasks > claiming is single-winner and updates are ownership checked [16.00ms]
+(pass) tasks > stale assignees are released and their locks are removed [15.00ms]
+(pass) tasks > creating a task after dependency failure auto-cancels it [31.00ms]
+(pass) tasks > creating an approval_required task after dependency cancellation auto-cancels it [16.00ms]
+(pass) tasks > snapshot includes failed, cancelled, and approval_required tasks [16.00ms]
+(pass) priority > tasks are listed in priority order (highest first) [15.00ms]
+(pass) dependencies > task with unmet deps starts as blocked [16.00ms]
+(pass) dependencies > task with already-done deps starts as open [16.00ms]
+(pass) dependencies > auto-unblocks when dependency completes [15.00ms]
+(pass) dependencies > auto-unblocks to claimed when assignee is pre-set [31.00ms]
+(pass) dependencies > multi-dep task only unblocks when all deps are done [16.00ms]
+(pass) dependencies > auto-cancels dependents when dependency fails [16.00ms]
+(pass) dependencies > auto-cancels dependents when dependency is cancelled [15.00ms]
+(pass) dependencies > rejects invalid dependency IDs [16.00ms]
+(pass) dependencies > blocked tasks cannot be moved to in_progress [16.00ms]
+(pass) dependencies > blocked tasks can be cancelled by requester [15.00ms]
+(pass) idempotency > duplicate idempotency key returns existing task [16.00ms]
+(pass) idempotency > different idempotency keys create separate tasks [15.00ms]
+(pass) idempotency > idempotency keys are scoped [16.00ms]
+(pass) approval > approval_required task starts in correct status
+(pass) approval > approve transitions to open when no deps [16.00ms]
+(pass) approval > approve transitions to claimed when assignee is pre-set [15.00ms]
+(pass) approval > approve transitions to blocked when deps are unmet [16.00ms]
+(pass) approval > approve auto-cancels when dep has already failed [16.00ms]
+(pass) approval > approval_required tasks can be cancelled [15.00ms]
+(pass) approval > approval_required tasks cannot be moved to in_progress [16.00ms]
+(pass) approval > approve + deps: approved then deps complete → unblocks [15.00ms]
+(pass) approval > approve + deps: deps complete then approve → open [32.00ms]
+(pass) parent_task_id > task can reference a parent task [15.00ms]
+(pass) parent_task_id > rejects invalid parent task ID
+(pass) stale release with new statuses > blocked tasks keep status when assignee goes stale [16.00ms]
+(pass) locks > only one active lock can exist per file per scope [16.00ms]
+(pass) batch creation > creates multiple tasks atomically [15.00ms]
+(pass) batch creation > $N references resolve to correct task IDs [16.00ms]
+(pass) batch creation > rejects forward references [15.00ms]
+(pass) batch creation > rejects duplicate idempotency keys within one batch
+(pass) batch creation > rejects self-references [16.00ms]
+(pass) batch creation > rejects out-of-range $N references [16.00ms]
+(pass) batch creation > mixed $N refs and external task IDs [15.00ms]
+(pass) batch creation > new batch task with failed external dependency is auto-cancelled [16.00ms]
+(pass) batch creation > idempotency: existing tasks reused, new tasks created [16.00ms]
+(pass) batch creation > $N parent_task_id resolves correctly [15.00ms]
+(pass) batch creation > rolls back entire batch on validation failure
+(pass) batch creation > priority is respected in batch [16.00ms]
+(pass) batch creation > empty batch returns error [15.00ms]
+(pass) batch creation > diamond DAG from design spec [16.00ms]
+(pass) list_instances label filter > filters by label substring [16.00ms]
+(pass) list_instances label filter > returns all when no filter [15.00ms]
+(pass) kv > keys are namespaced by scope [16.00ms]
+(pass) kv > append creates array from scratch [16.00ms]
+(pass) kv > append pushes to existing array [15.00ms]
+(pass) kv > append wraps non-array existing value
+(pass) kv > append returns new array length [16.00ms]
+(pass) kv > version changes on same-second writes [15.00ms]
+(pass) kv > version changes when deleting a key [16.00ms]
+(pass) planner ownership > first active planner claims owner/planner automatically [16.00ms]
+(pass) planner ownership > owner/planner fails over to the next planner on deregister [15.00ms]
+(pass) planner ownership > owner/planner fails over when the current owner goes stale [32.00ms]
+
+ 65 pass
+ 0 fail
+ 162 expect() calls
+Ran 65 tests across 3 files. [1074.00ms]
