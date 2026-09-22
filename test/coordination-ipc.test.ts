@@ -40,14 +40,16 @@ function spawn(mode?: string) {
   });
   return child;
 }
-async function fixture() {
-  const child = spawn();
+async function fixture(mode?: string) {
+  const child = spawn(mode);
   const reader = child.stdout.getReader();
   const { value } = await reader.read();
   reader.releaseLock();
   if (!value) throw new Error(await new Response(child.stderr).text());
-  const { endpoint } = JSON.parse(new TextDecoder().decode(value));
-  const connect = async (capability = "alice-secret") => {
+  const { endpoint, capability: sessionCapability } = JSON.parse(
+    new TextDecoder().decode(value),
+  );
+  const connect = async (capability = sessionCapability ?? "alice-secret") => {
     const client = await CoordinationClient.connect(endpoint, capability);
     cleanup.push(() => client.close());
     return client;
@@ -59,6 +61,42 @@ const command = {
   type: "task.create" as const,
   payload: { title: "work over local IPC" },
 };
+
+test("session capability fences task ownership over IPC after suspension", async () => {
+  const { client } = await fixture("sessions");
+  const created = (await client.request({ op: "command", command })) as {
+    value: { task: { id: string; version: number } };
+  };
+  const task = created.value.task;
+  const claimed = (await client.request({
+    op: "command",
+    command: {
+      id: "claim",
+      type: "task.claim",
+      payload: { taskId: task.id, expectedVersion: task.version },
+    },
+  })) as { value: { attemptId: string; fence: number } };
+  const attempts = (await client.request({
+    op: "attempts",
+    taskId: task.id,
+  })) as Array<{ state: string }>;
+  expect(attempts[0]!.state).toBe("running");
+  await client.request({
+    op: "command",
+    command: { id: "suspend", type: "session.suspend", payload: {} },
+  });
+  const error = await client
+    .request({
+      op: "command",
+      command: {
+        id: "late",
+        type: "task.finish",
+        payload: { taskId: task.id, ...claimed.value, outcome: "completed" },
+      },
+    })
+    .catch((error) => error);
+  expect(error).toHaveProperty("code", "stale_session");
+});
 
 test("inbox leases and acknowledgments round trip through the authenticated owner", async () => {
   const { client } = await fixture();

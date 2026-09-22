@@ -8,6 +8,7 @@ const MAX_FRAME_BYTES = 65536;
 export type Operation =
   | { op: "command"; command: CoreCommand }
   | { op: "task"; taskId: string }
+  | { op: "attempts"; taskId: string }
   | { op: "inbox"; cursor?: number; limit?: number }
   | { op: "message_status"; messageId: string }
   | { op: "events"; cursor: number; limit?: number }
@@ -96,6 +97,10 @@ export async function serveCoordination(options: {
           case "task":
             requireText(raw.taskId, "task ID");
             result = options.core.task(actor, raw.taskId);
+            break;
+          case "attempts":
+            requireText(raw.taskId, "task ID");
+            result = options.core.attempts(actor, raw.taskId);
             break;
           case "events":
             result = options.core.events(

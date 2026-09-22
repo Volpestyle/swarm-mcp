@@ -3,7 +3,7 @@ import { CoordinationError } from "./errors";
 
 // A separate application identity prevents accidental adoption of legacy swarm.db.
 export const APPLICATION_ID = 0x53574d32;
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 4;
 export type FaultPoint =
   | "before_migration_commit"
   | "before_command_commit"
@@ -49,6 +49,46 @@ const migrations = [
   );
   CREATE INDEX inbox_messages_scope_seq ON inbox_messages(scope,seq);
   CREATE INDEX inbox_recipient_state ON inbox_deliveries(recipient,state,next_attempt_at);`,
+  `CREATE TABLE agents (
+    scope TEXT NOT NULL, id TEXT NOT NULL, resume_hash TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK(generation>0), label TEXT NOT NULL,
+    created_at INTEGER NOT NULL, PRIMARY KEY(scope,id)
+  );
+  CREATE TABLE sessions (
+    id TEXT PRIMARY KEY, scope TEXT NOT NULL, agent_id TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK(generation>0), capability_hash TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL CHECK(state IN ('active','suspended','superseded','closed')),
+    runtime_state TEXT NOT NULL CHECK(runtime_state IN ('available','busy','unavailable')),
+    transport_at INTEGER, runtime_at INTEGER, progress_at INTEGER,
+    created_at INTEGER NOT NULL, ended_at INTEGER,
+    FOREIGN KEY(scope,agent_id) REFERENCES agents(scope,id),
+    UNIQUE(scope,agent_id,generation)
+  );
+  CREATE INDEX sessions_actor ON sessions(scope,agent_id,generation);`,
+  `CREATE TABLE tasks_next (
+    id TEXT PRIMARY KEY, scope TEXT NOT NULL, creator TEXT NOT NULL, title TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('open','blocked','running','cancel_requested','cancelled','failed','completed')),
+    version INTEGER NOT NULL CHECK(version>0), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+    current_attempt TEXT, attempt_counter INTEGER NOT NULL DEFAULT 0, result TEXT, reason TEXT
+  );
+  INSERT INTO tasks_next(id,scope,creator,title,status,version,created_at,updated_at)
+    SELECT id,scope,creator,title,CASE status WHEN 'done' THEN 'completed' ELSE status END,version,created_at,updated_at FROM tasks;
+  DROP TABLE tasks;
+  ALTER TABLE tasks_next RENAME TO tasks;
+  CREATE INDEX tasks_scope_id ON tasks(scope,id);
+  CREATE TABLE task_dependencies (
+    task_id TEXT NOT NULL REFERENCES tasks(id), dependency_id TEXT NOT NULL REFERENCES tasks(id),
+    PRIMARY KEY(task_id,dependency_id), CHECK(task_id<>dependency_id)
+  );
+  CREATE TABLE task_attempts (
+    id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), actor TEXT NOT NULL,
+    session_id TEXT NOT NULL REFERENCES sessions(id), generation INTEGER NOT NULL,
+    fence INTEGER NOT NULL CHECK(fence>0), lease_until INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('running','completed','failed','cancelled','abandoned')),
+    created_at INTEGER NOT NULL, ended_at INTEGER, progress_at INTEGER, result TEXT, reason TEXT,
+    UNIQUE(task_id,fence)
+  );
+  CREATE UNIQUE INDEX task_one_running_attempt ON task_attempts(task_id) WHERE state='running';`,
 ];
 
 function version(db: Sqlite): number {

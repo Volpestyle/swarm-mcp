@@ -1,117 +1,102 @@
-import { randomUUID } from "node:crypto";
-import { CoordinationError, requireText } from "./errors";
+import { CoordinationError } from "./errors";
 import { CoordinationStore, type CommandResult, type Json } from "./store";
 import type { InboxCommand } from "./inbox";
+import type { SessionCommand } from "./sessions";
+import type { TaskCommand } from "./tasks";
 
 // Trusted application context. The local service supplies this after validating
 // its session capability; transports must never treat a caller's label as auth.
 export interface ActorContext {
   scope: string;
   actor: string;
+  sessionId?: string;
+  generation?: number;
 }
-export type CoreCommand =
-  | InboxCommand
-  | { id: string; type: "task.create"; payload: { title: string } }
-  | {
-      id: string;
-      type: "task.cancel";
-      payload: { taskId: string; expectedVersion: number };
-    };
+export type CoreCommand = InboxCommand | SessionCommand | TaskCommand;
 
 export class CoordinationCore {
   constructor(private readonly store: CoordinationStore) {}
 
   command(context: ActorContext, command: CoreCommand): CommandResult<Json> {
-    return this.store.execute({ ...command, ...context }, (tx) => {
-      switch (command.type) {
-        case "message.send":
-          return tx.inbox.send(
-            command.payload,
-            [command.payload.recipient],
-            "direct",
-          );
-        case "message.announce":
-          return tx.inbox.send(
-            command.payload,
-            command.payload.recipients,
-            "announcement",
-          );
-        case "inbox.fetch":
-          return tx.inbox.fetch(command.payload);
-        case "inbox.ack":
-          return tx.inbox.acknowledge(command.payload);
-        case "inbox.reject":
-          return tx.inbox.reject(command.payload);
-        case "inbox.sweep":
-          return tx.inbox.sweep();
-        case "task.create": {
-          requireText(command.payload.title, "title", 1024);
-          const task = {
-            id: randomUUID(),
-            scope: context.scope,
-            creator: context.actor,
-            title: command.payload.title,
-            status: "open" as const,
-            version: 1,
-            created_at: tx.at,
-            updated_at: tx.at,
-          };
-          tx.createTask(task);
-          tx.event("task.created", task.id, {
-            title: task.title,
-            version: task.version,
-          });
-          return { task };
+    return this.store.execute(
+      {
+        id: command.id,
+        type: command.type,
+        payload: command.payload,
+        ...context,
+      },
+      (tx) => {
+        switch (command.type) {
+          case "session.observe":
+            return tx.sessions.observe(command.payload);
+          case "session.suspend":
+            return tx.sessions.end("suspended");
+          case "session.close":
+            return tx.sessions.end("closed");
+          case "message.send":
+            return tx.inbox.send(
+              command.payload,
+              [command.payload.recipient],
+              "direct",
+            );
+          case "message.announce":
+            return tx.inbox.send(
+              command.payload,
+              command.payload.recipients,
+              "announcement",
+            );
+          case "inbox.fetch":
+            return tx.inbox.fetch(command.payload);
+          case "inbox.ack":
+            return tx.inbox.acknowledge(command.payload);
+          case "inbox.reject":
+            return tx.inbox.reject(command.payload);
+          case "inbox.sweep":
+            return tx.inbox.sweep();
+          case "task.create":
+            return tx.tasks.create(command.payload);
+          case "task.claim":
+            return tx.tasks.claim(command.payload);
+          case "task.renew":
+            return tx.tasks.renew(command.payload);
+          case "task.progress":
+            return tx.tasks.progress(command.payload);
+          case "task.finish":
+            return tx.tasks.finish(command.payload);
+          case "task.cancel":
+            return tx.tasks.cancel(command.payload);
+          case "task.retry":
+            return tx.tasks.retry(command.payload);
+          case "task.recover":
+            return tx.tasks.recover(command.payload);
+          default:
+            throw new CoordinationError(
+              "unknown_command",
+              "Unknown coordination command",
+            );
         }
-        case "task.cancel": {
-          const { taskId, expectedVersion } = command.payload;
-          requireText(taskId, "taskId");
-          if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1)
-            throw new CoordinationError(
-              "invalid_input",
-              "expectedVersion must be a positive integer",
-            );
-          const task = tx.task(taskId);
-          if (!task)
-            throw new CoordinationError(
-              "not_found",
-              "Task does not exist in this scope",
-            );
-          if (task.creator !== context.actor)
-            throw new CoordinationError(
-              "forbidden",
-              "Only the task creator may cancel unclaimed work",
-            );
-          tx.cancelTask(taskId, expectedVersion);
-          tx.event("task.cancelled", taskId, { version: expectedVersion + 1 });
-          return {
-            task: {
-              ...task,
-              status: "cancelled",
-              version: expectedVersion + 1,
-              updated_at: tx.at,
-            },
-          };
-        }
-        default:
-          throw new CoordinationError(
-            "unknown_command",
-            "Unknown coordination command",
-          );
-      }
-    });
+      },
+    );
   }
 
   task(context: ActorContext, id: string) {
+    this.store.assertContext(context);
     return this.store.task(context.scope, id);
   }
+  attempts(context: ActorContext, taskId: string) {
+    this.store.assertContext(context);
+    return this.store.attempts(context.scope, taskId);
+  }
   inbox(context: ActorContext, cursor = 0, limit = 50) {
+    this.store.assertContext(context);
     return this.store.inbox(context.scope, context.actor, cursor, limit);
   }
   messageStatus(context: ActorContext, id: string) {
+    this.store.assertContext(context);
     return this.store.messageStatus(context.scope, context.actor, id);
   }
   events(context: ActorContext, cursor = 0, limit = 100) {
+    this.store.assertContext(context);
     return this.store.events(context.scope, cursor, limit);
   }
 

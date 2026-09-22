@@ -1,6 +1,7 @@
 import { CoordinationStore } from "../../src/coordination/store";
 import { CoordinationCore } from "../../src/coordination/core";
 import { CoordinationError } from "../../src/coordination/errors";
+import { randomBytes } from "node:crypto";
 import {
   CoordinationClient,
   localEndpoint,
@@ -9,10 +10,20 @@ import {
 const [path, mode] = process.argv.slice(2);
 if (!path) throw new Error("Missing fixture path");
 const store = await CoordinationStore.open({ path });
+const session =
+  mode === "sessions"
+    ? store.openSession({
+        scope: "test",
+        agentId: "alice",
+        requestId: "fixture-enroll",
+        resumeToken: randomBytes(32).toString("hex"),
+      })
+    : undefined;
 const options = {
   endpoint: localEndpoint(path),
   core: new CoordinationCore(store),
   authorize: (capability: string) => {
+    if (session) return store.authorize(capability);
     if (capability === "alice-secret") return { scope: "test", actor: "alice" };
     if (capability === "bob-secret") return { scope: "other", actor: "bob" };
     throw new CoordinationError("unauthorized", "Invalid capability");
@@ -48,7 +59,12 @@ if (mode === "duplicate") {
   await service.close();
   store.close();
 } else {
-  console.log(JSON.stringify({ endpoint: service.endpoint }));
+  console.log(
+    JSON.stringify({
+      endpoint: service.endpoint,
+      capability: session?.capability,
+    }),
+  );
   process.on("SIGTERM", async () => {
     await service.close();
     store.close();

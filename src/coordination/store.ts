@@ -2,6 +2,18 @@ import { createHash } from "node:crypto";
 import { CoordinationError, requireText } from "./errors";
 import { migrate, type FaultHook } from "./migrations";
 import { openSqlite, type Sqlite } from "./sqlite";
+import { TaskTransaction, readAttempts, type TaskState } from "./tasks";
+import {
+  SessionTransaction,
+  authorizeSession,
+  validateSession,
+  checkEnrollment,
+  enrollmentCapability,
+  secretHash,
+  readSession,
+  type Enrollment,
+  type SessionContext,
+} from "./sessions";
 import {
   InboxTransaction,
   DEFAULT_INBOX_POLICY,
@@ -18,7 +30,7 @@ export type Json =
   | string
   | Json[]
   | { [key: string]: Json };
-export type TaskStatus = "open" | "running" | "done" | "failed" | "cancelled";
+export type TaskStatus = TaskState;
 export interface Task {
   id: string;
   scope: string;
@@ -28,6 +40,10 @@ export interface Task {
   version: number;
   created_at: number;
   updated_at: number;
+  current_attempt: string | null;
+  attempt_counter: number;
+  result: string | null;
+  reason: string | null;
 }
 export interface Event {
   id: number;
@@ -44,6 +60,8 @@ export interface Command {
   id: string;
   type: string;
   payload: Json;
+  sessionId?: string;
+  generation?: number;
 }
 export interface CommandResult<T> {
   value: T;
@@ -82,6 +100,8 @@ function canonical(value: Json, depth = 0): string {
 }
 
 export class WriteTransaction {
+  readonly tasks: TaskTransaction;
+  readonly sessions: SessionTransaction;
   readonly inbox: InboxTransaction;
   writes = 0;
   cursor = 0;
@@ -91,6 +111,19 @@ export class WriteTransaction {
     readonly at: number,
     policy: InboxPolicy = DEFAULT_INBOX_POLICY,
   ) {
+    this.tasks = new TaskTransaction(db, command, at, (type, id, payload) => {
+      this.writes++;
+      this.event(type, id, payload);
+    });
+    this.sessions = new SessionTransaction(
+      db,
+      command,
+      at,
+      (type, id, payload) => {
+        this.writes++;
+        this.event(type, id, payload);
+      },
+    );
     this.inbox = new InboxTransaction(
       db,
       command,
@@ -103,15 +136,12 @@ export class WriteTransaction {
     );
   }
 
-  task(id: string): Task | null {
-    return (
-      (this.db
-        .prepare("SELECT * FROM tasks WHERE id = ? AND scope = ?")
-        .get(id, this.command.scope) as Task | undefined | null) ?? null
-    );
-  }
-
-  createTask(task: Task) {
+  createTask(
+    task: Omit<
+      Task,
+      "current_attempt" | "attempt_counter" | "result" | "reason"
+    >,
+  ) {
     this.db
       .prepare(
         "INSERT INTO tasks(id,scope,creator,title,status,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
@@ -125,26 +155,6 @@ export class WriteTransaction {
         task.version,
         task.created_at,
         task.updated_at,
-      );
-    this.writes++;
-  }
-
-  cancelTask(id: string, expectedVersion: number) {
-    const result = this.db
-      .prepare(
-        "UPDATE tasks SET status='cancelled', version=version+1, updated_at=? WHERE id=? AND scope=? AND creator=? AND version=? AND status='open'",
-      )
-      .run(
-        this.at,
-        id,
-        this.command.scope,
-        this.command.actor,
-        expectedVersion,
-      );
-    if (result.changes !== 1)
-      throw new CoordinationError(
-        "conflict",
-        "Task ownership, version or state changed",
       );
     this.writes++;
   }
@@ -210,6 +220,7 @@ export class CoordinationStore {
   execute<T extends Json>(
     command: Command,
     apply: (transaction: WriteTransaction) => T,
+    before?: () => void,
   ): CommandResult<T> {
     this.ensureOpen();
     if (this.executing)
@@ -238,6 +249,8 @@ export class CoordinationStore {
     try {
       this.db.exec("BEGIN IMMEDIATE");
       began = true;
+      before?.();
+      if (command.type !== "session.open") this.assertContext(command);
       const cached = this.db
         .prepare(
           "SELECT fingerprint,result,cursor FROM commands WHERE scope=? AND actor=? AND command_id=?",
@@ -313,6 +326,64 @@ export class CoordinationStore {
   inbox(scope: string, actor: string, cursor = 0, limit = 50) {
     this.ensureOpen();
     return readInbox(this.db, scope, actor, cursor, limit);
+  }
+
+  openSession(input: Enrollment) {
+    this.ensureOpen();
+    const capability = enrollmentCapability(input);
+    const result = this.execute(
+      {
+        scope: input.scope,
+        actor: input.agentId,
+        id: input.requestId,
+        type: "session.open",
+        payload: {
+          label: input.label ?? null,
+          resumeProof: secretHash(input.resumeToken),
+        },
+      },
+      (tx) => tx.sessions.open(input, capability),
+      () => {
+        checkEnrollment(this.db, input);
+      },
+    );
+    return { ...result.value, capability, replayed: result.replayed };
+  }
+
+  authorize(capability: string) {
+    this.ensureOpen();
+    return authorizeSession(this.db, capability);
+  }
+
+  assertContext(context: {
+    scope: string;
+    actor: string;
+    sessionId?: string;
+    generation?: number;
+  }) {
+    this.ensureOpen();
+    if (context.sessionId !== undefined || context.generation !== undefined) {
+      validateSession(this.db, context as SessionContext);
+    } else if (
+      this.db
+        .prepare("SELECT 1 FROM agents WHERE scope=? AND id=?")
+        .get(context.scope, context.actor)
+    ) {
+      throw new CoordinationError(
+        "session_required",
+        "Enrolled agents require their current session context",
+      );
+    }
+  }
+
+  session(scope: string, id: string) {
+    this.ensureOpen();
+    return readSession(this.db, scope, id);
+  }
+
+  attempts(scope: string, taskId: string) {
+    this.ensureOpen();
+    return readAttempts(this.db, scope, taskId);
   }
 
   messageStatus(scope: string, actor: string, id: string) {
