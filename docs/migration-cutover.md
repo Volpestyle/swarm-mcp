@@ -1,9 +1,9 @@
 # Reversible coordination cutover
 
-VUH-1344 is in progress. The compatibility launch guard and versioned legacy
-backup/restore tooling below are implemented; the coordinator-data importer,
-isolated canary and release packaging are not yet complete. Do not switch a live
-profile using this partial procedure.
+VUH-1344 is in progress. The compatibility launch guard, versioned legacy
+backup/restore and offline coordinator import below are implemented. The isolated
+canary and release packaging are not yet complete. Do not switch a live profile
+using this partial procedure.
 
 ## Database boundary
 
@@ -12,7 +12,7 @@ The coordinator identifies its schema with application ID `0x53574d32`, rejects
 legacy databases and never adopts one implicitly. Cutover must import a consistent
 copy into a new destination; old data remains the rollback source. Active task
 ownership and leases cannot be copied as live authority across these contracts.
-Their import policy and recovery proof remain part of the data-migration work.
+The import retains their history and requires reconciliation before new execution.
 
 The final upstream legacy binary (`b95f607`) checks schema version before
 bootstrap, but April (`b446c18`) does not. Neither knows the redesigned
@@ -87,7 +87,7 @@ does not resolve side effects performed after the snapshot. Before an actual
 rollback, stop candidate writers, retain their audit evidence, reconcile any
 post-cutover effects and deliberately select the restored legacy path through
 the checked launcher. Active legacy ownership is not valid coordinator authority;
-the import policy will explicitly settle that boundary before activation.
+unfinished imported tasks remain blocked on an explicit reconciliation task.
 
 `test/coordination-legacy-snapshot.test.ts` verifies both pinned schema baselines
 with WAL-only committed records, post-snapshot writes, pending messages, active
@@ -95,3 +95,75 @@ tasks and lock context. It checks Node CLI backup plus checksum corruption,
 incomplete manifests, destination collisions and stray sidecars. Current result:
 three tests, 24 assertions. This establishes backup/restore, not a completed
 coordinator migration or live rollback.
+
+## Offline import into a new coordinator profile
+
+Stop legacy writers before the final snapshot. Import never merges into an
+existing profile. Keep the source snapshot for rollback and forensic comparison.
+Supply a versioned plan with an explicit one-to-one scope mapping, direct-recipient
+mapping and broadcast audience. Unresolved pending recipients stop the import;
+old process presence is not evidence of a current recipient identity.
+
+```json
+{
+  "version": 1,
+  "scopes": [{
+    "from": "legacy-scope",
+    "to": "isolated-canary",
+    "recipients": { "old-worker-id": "new-worker-id" },
+    "broadcastRecipients": ["new-worker-id", "new-reviewer-id"]
+  }]
+}
+```
+
+```powershell
+node dist/coordination/migration-cli.js import C:/isolated-cutover/snapshot-001 C:/isolated-cutover/candidate-001 C:/isolated-cutover/plan.json
+```
+
+Choose the target scope/actor IDs from the intended trusted runtime enrollment;
+the importer does not enroll sessions. All scoped source rows need a mapping,
+including historical instances. The schema-11 candidate includes the complete
+source rows in `legacy_records`, linked by `legacy_imports` to the snapshot hash
+and plan. Original SQLite bytes remain in the verified snapshot. Binary values
+in archived JSON use a base64 wrapper.
+
+| Source data | Candidate behavior |
+| --- | --- |
+| Unread direct/broadcast message | Explicit recipients receive pending `legacy.message` deliveries; fresh lease and acknowledgment required |
+| Read message | Archived only; historical read state is not a new processing acknowledgment |
+| Unfinished task | Blocked on a new reconciliation task; no current attempt or owner |
+| Terminal task | Historical terminal state with unverified provenance; original result in `legacy_records` |
+| Existing task dependency | Retained when present and in the same scope; cross-scope edges reject import |
+| Removed dependency | Named in the import report for reconciliation; never guessed complete from a missing row |
+| Annotation / old lock | Historical finding; old locks create no active reservations |
+| Shared key | Namespaced as `legacy/<key>` with provenance; old runtime hints confer no authority |
+| Instance, session, lease | Archived source data only; fresh runtime enrollment and ownership required |
+
+The reconciliation result must establish that old writers stopped, previous side
+effects and missing dependencies were checked, and the new work contract is safe
+to execute. Completing it releases the original task only when its other retained
+dependencies are complete. It is an execution prerequisite, not human acceptance
+or tracker integration. Imported messages can describe old assignments; processing
+them must not bypass the task's reconciliation hold.
+
+Import preserves the accepted pending backlog even if it exceeds the normal
+per-recipient admission quota. New sends remain quota-limited until that backlog
+drains. Use bounded fetches (one item for large messages). Oversized pending
+message bodies and task titles fail with an explicit error instead of creating
+unreadable active records; retain the snapshot and resolve those records before
+retrying. No record is silently dropped to satisfy a limit.
+
+`import.pending` blocks coordinator startup throughout construction. All imported
+rows commit together in `importing.db`; the flushed `import.json` report is written
+before the database is renamed to `coordination.db`, and the pending marker is
+removed last. A failed or interrupted directory is retained for inspection and
+must not be activated or repaired by simply deleting the marker. Retry into a
+fresh directory. This proves process-crash boundaries, not power-loss durability
+of directory operations on every filesystem.
+
+`test/coordination-legacy-import.test.ts` exercises both pinned baselines, normal
+delivery/ack, blocked claims and explicit reconciliation through the real core.
+It also runs a Node importer and abruptly terminates it before transaction commit
+and before publication: neither candidate can start. Combined migration tests
+currently pass 11 tests / 104 assertions. Isolated runtime restart/lease-recovery
+and operational rollback remain the next canary gate.

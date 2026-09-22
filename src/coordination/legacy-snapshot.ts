@@ -90,3 +90,19 @@ export async function restoreLegacy(directory: string, destination: string) {
   durableWrite(destination, bytes);
   return { destination, sha256: manifest.sha256, bytes: bytes.length };
 }
+
+/** Retain every source table while giving the importer one verified read snapshot. */
+export async function readLegacySnapshotRows(directory: string) {
+  const { manifest } = await verifyLegacySnapshot(directory);
+  const db = await readOnly(join(directory, "legacy.db"));
+  try {
+    db.exec("BEGIN");
+    const tables: Record<string, Record<string, unknown>[]> = Object.create(null);
+    for (const name of manifest.inventory.tables as string[])
+      tables[name] = db.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).all() as Record<string, unknown>[];
+    db.exec("COMMIT");
+    if (hash(readFileSync(join(directory, "legacy.db"))) !== manifest.sha256)
+      throw new Error("Snapshot changed during import read");
+    return { manifest, tables };
+  } finally { db.close(); }
+}

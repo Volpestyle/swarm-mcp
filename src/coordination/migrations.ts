@@ -3,7 +3,7 @@ import { CoordinationError } from "./errors";
 
 // A separate application identity prevents accidental adoption of legacy swarm.db.
 export const APPLICATION_ID = 0x53574d32;
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 export type FaultPoint =
   | "before_migration_commit"
   | "before_command_commit"
@@ -152,6 +152,15 @@ const migrations = [
   ALTER TABLE dispatch_intents ADD COLUMN worker_session TEXT;
   ALTER TABLE dispatch_intents ADD COLUMN attempt_id TEXT;
   ALTER TABLE dispatch_intents ADD COLUMN fence INTEGER;`,
+  `CREATE TABLE legacy_imports (
+    id TEXT PRIMARY KEY, snapshot_hash TEXT NOT NULL, plan TEXT NOT NULL,
+    imported_at INTEGER NOT NULL, summary TEXT NOT NULL
+  );
+  CREATE TABLE legacy_records (
+    import_id TEXT NOT NULL REFERENCES legacy_imports(id), source_table TEXT NOT NULL,
+    ordinal INTEGER NOT NULL, record TEXT NOT NULL,
+    PRIMARY KEY(import_id,source_table,ordinal)
+  );`,
 ];
 
 function version(db: Sqlite): number {

@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { inspectCoordination, type DiagnosticFilter } from "./diagnostics";
 import { CoordinationError, requireText } from "./errors";
 import {
@@ -374,6 +376,8 @@ export class CoordinationStore {
     fault?: FaultHook;
     inboxPolicy?: Partial<InboxPolicy>;
   }) {
+    if (existsSync(join(dirname(options.path), "import.pending")))
+      throw new CoordinationError("import_incomplete", "Import did not finish; retain its evidence and import into a fresh directory");
     const db = await openSqlite(options.path);
     try {
       const policy = { ...DEFAULT_INBOX_POLICY, ...options.inboxPolicy };
