@@ -123,7 +123,8 @@ establish busy, never idle; retry is busy. Stream loss and deletion establish
 disconnected. Unknown sessions/statuses are unsupported until verified host
 evidence arrives. Post-tool delivery checks blocked/disconnected both before
 fetch and immediately before admission. Permission/question reconstruction now
-runs before snapshot readiness; authoritative idle admission remains open.
+runs before snapshot readiness; subsequent installed-host wake captures below
+verify authoritative idle admission.
 
 `opencode-recovery.json` stops and recreates the observer while the actual host
 is waiting for read permission. Status, pending permissions and pending questions
@@ -304,15 +305,16 @@ provides events and tool hooks; the
 [loader](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/plugin/index.ts)
 accepts function exports and subscribes to session events. This source contract
 plus the real lifecycle probe establishes a viable plugin entrypoint. It does
-not yet prove write denial, tool-result context delivery or safe idle wakeups.
+not by itself prove write denial, tool-result context delivery or safe idle wakeups.
+The later delivery/wake captures above establish the latter two paths.
 
 OpenCode's [V2 migration guide](https://opencode.ai/v2/docs/build/plugins/migrate-v1)
 describes a different hook registration API. Do not copy V2 `setup` hooks into
 the installed V1 adapter. Pin the tested API and exercise each host hook.
 
-Remaining: validate tool names and deny behavior, safe context injection,
-session status/permission transitions, configured command registration, resume
-enumeration and idle prompt admission. Record capabilities separately: lifecycle
+Remaining: installed-host write denial and configured command registration;
+the current runtime evidence and limits are maintained in
+[`runtime-host-support.md`](../../docs/runtime-host-support.md). Record capabilities separately: lifecycle
 events do not establish an acknowledgment of message processing. Ordinary
 delivery must not spawn agents, and busy sessions must not be interrupted.
 

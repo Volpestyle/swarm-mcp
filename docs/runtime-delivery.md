@@ -1,4 +1,6 @@
-# Runtime delivery contract (implementation in progress)
+# Runtime delivery contract
+
+Acceptance evidence and supported limits: [VUH-1339 audit](runtime-acceptance.md).
 
 The production owner runs as `node dist/coordination/owner-cli.js <config.json>`.
 Its private config contains `databasePath` and a generated `launcherSecret` of at
@@ -46,7 +48,7 @@ hosts have evidence and remaining limits in `docs/runtime-host-support.md`.
 `RuntimeDelivery` consumes an authenticated coordinator request function and a
 trusted host adapter. It has no spawn or terminal-injection API. Enrollment and
 session capabilities belong to the launcher; the adapter is bound to one actor.
-Host-specific integration remains VUH-1339 work. OpenCode and Claude Code have
+OpenCode and Claude Code have
 installed-host evidence; the shared core alone is not proof of host delivery.
 
 Host observations carry a state, source evidence and observation timestamp:
