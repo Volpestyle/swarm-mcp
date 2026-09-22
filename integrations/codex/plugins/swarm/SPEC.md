@@ -65,6 +65,21 @@ Evidence: `docs/verification/2026-09-22-runtime/codex-native-resume.json`.
 This is controlled native resume without inference; it does not establish crash
 recovery, automatic lifecycle observation or model-visible inbox delivery.
 
+`CodexLifecycle`, exported by the launcher module, consumes notifications from
+the trusted app-server connection for exactly one bound thread. Native idle and
+active status map to idle/busy; approval or user-input flags map to blocked;
+unknown flags map to unsupported. `notLoaded`, system errors and transport loss
+mean disconnected and do not revoke the session. Explicit archived, deleted or
+closed events close it once. Observation writes are serialized and failures
+leave local availability disconnected.
+
+The `--resume` probe now routes actual native notifications into this observer.
+Installed Codex emits `thread/archived` when the test archives the resumed thread;
+the observer closes its coordinator session and a subsequent bootstrap fails with
+`stale_session`. Evidence: `docs/verification/2026-09-22-runtime/codex-native-lifecycle.json`.
+Busy/blocked mappings have focused tests; actual model-turn delivery and automatic
+attachment of the observer during initial thread creation remain unverified.
+
 The probe's hooks are reported as untrusted. Listing a hook is not execution:
 live setup must obtain normal hook trust before claiming automatic delivery.
 No live trust/config changes were made. Automatic native-thread enrollment, safe

@@ -8,6 +8,7 @@ import { enrollRuntime } from "../src/coordination/runtime-launcher";
 import { CoordinationClient } from "../src/coordination/ipc";
 import { resumeCodexThread } from "../src/coordination/codex-launcher";
 import { CoordinationError } from "../src/coordination/errors";
+import { CodexLifecycle } from "../src/coordination/codex-lifecycle";
 
 const [capture, executable, mode] = process.argv.slice(2);
 if (!capture || !executable)
@@ -104,6 +105,8 @@ const pending = new Map<
   { resolve: (result: any) => void; reject: (error: Error) => void }
 >();
 const notices: string[] = [];
+let lifecycle: CodexLifecycle | undefined;
+const lifecyclePending: Promise<unknown>[] = [];
 let sequence = 0;
 const send = (message: unknown) =>
   child.stdin.write(JSON.stringify(message) + "\n");
@@ -123,7 +126,13 @@ const read = (async () => {
         if (message.error)
           wait.reject(new Error(JSON.stringify(message.error)));
         else wait.resolve(message.result);
-      } else if (message.method) notices.push(message.method);
+      } else if (message.method) {
+        notices.push(message.method);
+        if (lifecycle)
+          lifecyclePending.push(
+            lifecycle.notify(message.method, message.params),
+          );
+      }
     }
   }
 })();
@@ -370,12 +379,42 @@ try {
       !oldCapabilityRejected
     )
       throw new Error("Codex resume failed identity or generation fencing");
+    const nativeClient = await CoordinationClient.connect(
+      next.environment.SWARM_COORDINATOR_ENDPOINT,
+      next.environment.SWARM_SESSION_CAPABILITY,
+    );
+    try {
+      lifecycle = new CodexLifecycle(threadId, (operation) =>
+        nativeClient.request(operation),
+      );
+      await call("thread/archive", { threadId });
+      await Promise.all(lifecyclePending);
+      const closedCapabilityRejected = await nativeClient
+        .request({ op: "bootstrap" })
+        .then(
+          () => false,
+          (error: unknown) =>
+            error instanceof CoordinationError &&
+            error.code === "stale_session",
+        );
+      if (!closedCapabilityRejected)
+        throw new Error(
+          "Native close did not revoke coordinator session: " +
+            JSON.stringify({
+              notices: [...new Set(notices)],
+              observation: lifecycle.observe(),
+            }),
+        );
+    } finally {
+      nativeClient.close();
+    }
     nativeResume = {
       sameThread: true,
       actorMatched: true,
       generations: [native.generation, next.generation],
       loadedRefused,
       oldCapabilityRejected,
+      nativeCloseRevoked: true,
     };
   }
   const snapshot = await call("thread/read", { threadId }).catch(

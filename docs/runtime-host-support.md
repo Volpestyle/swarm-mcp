@@ -20,6 +20,12 @@ unarchive to unload the disposable host thread, not a crash or automatic recover
 Neither tested native-ID environment variable was present in
 the MCP subprocess; native lifecycle binding must use an explicit host API path.
 
+The Codex lifecycle observer also receives native `thread/archived` in the probe
+and revokes that thread's coordinator capability. Status mapping distinguishes
+busy, blocked, idle, disconnected and unsupported; nonterminal connection loss
+does not revoke identity. Automatic observer attachment and model-turn context
+delivery are still open.
+
 OpenCode and Claude evidence uses scripted localhost model endpoints; it proves
 host execution and context assembly, not model comprehension. Captures live in
 `docs/verification/2026-09-22-runtime/`; integration specs name their reproduction

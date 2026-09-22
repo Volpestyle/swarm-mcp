@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 import { realpathSync, statSync } from "node:fs";
 import { enrollRuntime } from "./runtime-launcher";
+export { CodexLifecycle } from "./codex-lifecycle";
 
 type HostCall = (
   method: string,
