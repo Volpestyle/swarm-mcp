@@ -7,7 +7,9 @@ export const SCHEMA_VERSION = 10;
 export type FaultPoint =
   | "before_migration_commit"
   | "before_command_commit"
-  | "after_command_commit";
+  | "after_command_commit"
+  | "before_batch_commit"
+  | "after_batch_commit";
 export type FaultHook = (point: FaultPoint) => void;
 
 const migrations = [

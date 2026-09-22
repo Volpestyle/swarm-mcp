@@ -270,6 +270,60 @@ export class CoordinationStore {
   private readonly listeners = new Set<(cursor: number) => void>();
   private closed = false;
   private executing = false;
+  private batchState?: { scope: string; cursor: number; commands: number };
+
+  /** Trusted synchronous service batching. Command savepoints isolate rejection;
+   * no receipts or notifications escape until the outer FULL commit succeeds. */
+  batch<T>(scope: string, run: () => T): T {
+    this.ensureOpen();
+    if (this.executing || this.batchState)
+      throw new CoordinationError("nested_command", "Batches cannot nest");
+    const state = { scope, cursor: 0, commands: 0 };
+    let began = false,
+      committed = false;
+    let value: T;
+    try {
+      const start = performance.now();
+      this.db.exec("BEGIN IMMEDIATE");
+      began = true;
+      const elapsed = performance.now() - start,
+        metric = this.metric(scope);
+      metric.writerAcquisitions++;
+      metric.writerAcquireMs += elapsed;
+      metric.maxWriterAcquireMs = Math.max(metric.maxWriterAcquireMs, elapsed);
+      this.batchState = state;
+      value = run();
+      if (value && typeof (value as any).then === "function")
+        throw new CoordinationError(
+          "invalid_input",
+          "Batch must be synchronous",
+        );
+      this.fault?.("before_batch_commit");
+      this.db.exec("COMMIT");
+      committed = true;
+    } catch (error) {
+      this.recordError(scope, error);
+      if (began && !committed) this.db.exec("ROLLBACK");
+      throw error;
+    } finally {
+      this.batchState = undefined;
+    }
+    this.fault?.("after_batch_commit");
+    for (let i = 0; i < state.commands; i++)
+      this.fault?.("after_command_commit");
+    if (state.cursor) this.notify(state.cursor);
+    return value;
+  }
+
+  private notify(cursor: number) {
+    for (const listener of this.listeners) {
+      try {
+        listener(cursor);
+      } catch {
+        /* durable cursor supports replay */
+      }
+    }
+  }
   private readonly metricStart = Date.now();
   private readonly metrics = new Map<
     string,
@@ -347,6 +401,16 @@ export class CoordinationStore {
     this.ensureOpen();
     const report = {
       ...inspectCoordination(this.db, scope, this.clock(), filter),
+      database: {
+        journalMode: (
+          this.db.prepare("PRAGMA journal_mode").get() as {
+            journal_mode: string;
+          }
+        ).journal_mode,
+        synchronous: (
+          this.db.prepare("PRAGMA synchronous").get() as { synchronous: number }
+        ).synchronous,
+      },
       processMetrics: {
         since: this.metricStart,
         ...this.metric(scope),
@@ -397,27 +461,35 @@ export class CoordinationStore {
         "Commands must not nest or await external work",
       );
     const fingerprint = commandFingerprint(command);
+    const batch = this.batchState;
+    if (batch && batch.scope !== command.scope)
+      throw new CoordinationError(
+        "forbidden",
+        "Batch scope does not match command",
+      );
     this.executing = true;
     let committed = false;
     let began = false;
     let result: CommandResult<T>;
     try {
       const acquireStart = performance.now();
-      this.db.exec("BEGIN IMMEDIATE");
+      this.db.exec(batch ? "SAVEPOINT coordinator_command" : "BEGIN IMMEDIATE");
       const elapsed = performance.now() - acquireStart;
       const metrics = this.metric(command.scope);
-      metrics.writerAcquisitions++;
-      metrics.writerAcquireMs += elapsed;
-      metrics.maxWriterAcquireMs = Math.max(
-        metrics.maxWriterAcquireMs,
-        elapsed,
-      );
+      if (!batch) {
+        metrics.writerAcquisitions++;
+        metrics.writerAcquireMs += elapsed;
+        metrics.maxWriterAcquireMs = Math.max(
+          metrics.maxWriterAcquireMs,
+          elapsed,
+        );
+      }
       began = true;
       before?.();
       if (command.type !== "session.open") this.assertContext(command);
       const cached = this.cached(command, fingerprint);
       if (cached) {
-        this.db.exec("COMMIT");
+        this.db.exec(batch ? "RELEASE coordinator_command" : "COMMIT");
         committed = true;
         return cached as CommandResult<T>;
       }
@@ -449,25 +521,29 @@ export class CoordinationStore {
           tx.at,
         );
       this.fault?.("before_command_commit");
-      this.db.exec("COMMIT");
+      this.db.exec(batch ? "RELEASE coordinator_command" : "COMMIT");
       committed = true;
       result = { value, cursor: tx.cursor, replayed: false };
     } catch (error) {
       this.recordError(command.scope, error);
-      if (began && !committed) this.db.exec("ROLLBACK");
+      if (began && !committed) {
+        if (batch) {
+          this.db.exec("ROLLBACK TO coordinator_command");
+          this.db.exec("RELEASE coordinator_command");
+        } else this.db.exec("ROLLBACK");
+      }
       throw error;
     } finally {
       this.executing = false;
     }
     // A notification is only a hint. It can fail or never occur after a crash;
     // the committed cursor remains queryable and a retried command remains safe.
-    this.fault?.("after_command_commit");
-    for (const listener of this.listeners) {
-      try {
-        listener(result.cursor);
-      } catch {
-        /* subscriber reconnects from durable cursor */
-      }
+    if (batch) {
+      batch.cursor = Math.max(batch.cursor, result.cursor);
+      batch.commands++;
+    } else {
+      this.fault?.("after_command_commit");
+      this.notify(result.cursor);
     }
     return result;
   }
@@ -725,7 +801,7 @@ export class CoordinationStore {
   }
 
   close() {
-    if (this.executing)
+    if (this.executing || this.batchState)
       throw new CoordinationError(
         "transaction_active",
         "Cannot close inside a command",

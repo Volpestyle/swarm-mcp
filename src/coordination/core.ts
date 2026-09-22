@@ -57,6 +57,31 @@ export class CoordinationCore {
     private readonly dispatchConfiguration?: DispatchConfiguration,
   ) {}
 
+  commandBatch(
+    items: readonly { context: ActorContext; command: CoreCommand }[],
+  ) {
+    if (!items.length || items.length > 32)
+      throw new CoordinationError(
+        "invalid_input",
+        "Batch requires 1..32 commands",
+      );
+    const scope = items[0]!.context.scope;
+    if (items.some((item) => item.context.scope !== scope))
+      throw new CoordinationError("forbidden", "Batch cannot cross scopes");
+    return this.store.batch(scope, () =>
+      items.map((item) => {
+        try {
+          return {
+            ok: true as const,
+            result: this.command(item.context, item.command),
+          };
+        } catch (error) {
+          return { ok: false as const, error };
+        }
+      }),
+    );
+  }
+
   async dispatch(context: ActorContext, input: DispatchRequest) {
     this.store.assertContext(context);
     if (!context.sessionId || !context.generation)

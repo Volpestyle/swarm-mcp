@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir, cpus, totalmem, platform, release } from "node:os";
 import { join, resolve } from "node:path";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { CoordinationClient, type Operation } from "../src/coordination/ipc";
@@ -221,6 +221,23 @@ if (worker) {
   const root = mkdtempSync(join(tmpdir(), "coordination-bench-")),
     secret = randomBytes(32).toString("hex"),
     config = join(root, "owner.json");
+  const source = {
+    revision: execFileSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+    }).trim(),
+    workingTree: execFileSync("git", ["status", "--porcelain"], {
+      encoding: "utf8",
+    }).trim(),
+    diffSha256: createHash("sha256")
+      .update(execFileSync("git", ["diff", "HEAD", "--"]))
+      .digest("hex"),
+    ownerBundleSha256: createHash("sha256")
+      .update(readFileSync(resolve("dist/coordination/owner-cli.js")))
+      .digest("hex"),
+    harnessSha256: createHash("sha256")
+      .update(readFileSync(import.meta.path))
+      .digest("hex"),
+  };
   writeFileSync(
     config,
     JSON.stringify({ databasePath: join(root, "db"), launcherSecret: secret }),
@@ -228,13 +245,26 @@ if (worker) {
   const owner = Bun.spawn({
     cmd: [
       Bun.which("node")!,
+      ...(process.env.SWARM_BENCH_PROFILE === "1"
+        ? ["--inspect=127.0.0.1:0"]
+        : []),
       resolve("dist/coordination/owner-cli.js"),
       config,
     ],
     stdout: "pipe",
     stderr: "pipe",
   });
-  const ownerError = new Response(owner.stderr).text();
+  let inspectorUrl: string | undefined;
+  const ownerError = (async () => {
+    let text = "";
+    for await (const chunk of owner.stderr) {
+      text += new TextDecoder().decode(chunk);
+      inspectorUrl = text.match(/ws:\/\/127\.0\.0\.1:\d+\/[a-zA-Z0-9-]+/)?.[0];
+    }
+    return text;
+  })();
+  let profiler: WebSocket | undefined;
+  let profileRequest: ((method: string) => Promise<any>) | undefined;
   const children: ReturnType<typeof Bun.spawn>[] = [];
   let launcher: CoordinationClient | undefined,
     observer: CoordinationClient | undefined;
@@ -333,8 +363,44 @@ if (worker) {
       ownerPid,
       ...children.map((child) => child.pid),
     ]);
+    if (process.env.SWARM_BENCH_PROFILE === "1") {
+      await until(() => !!inspectorUrl);
+      profiler = new WebSocket(inspectorUrl!);
+      await new Promise<void>((resolve, reject) => {
+        profiler!.onopen = () => resolve();
+        profiler!.onerror = () =>
+          reject(new Error("Profiler connection failed"));
+      });
+      let seq = 0;
+      const pending = new Map<
+        number,
+        { resolve: (value: any) => void; reject: (error: Error) => void }
+      >();
+      profiler.onmessage = (event) => {
+        const data = JSON.parse(String(event.data));
+        const request = pending.get(data.id);
+        if (!request) return;
+        pending.delete(data.id);
+        if (data.error) request.reject(new Error(JSON.stringify(data.error)));
+        else request.resolve(data.result);
+      };
+      profileRequest = (method) =>
+        new Promise((resolve, reject) => {
+          const id = ++seq;
+          pending.set(id, { resolve, reject });
+          profiler!.send(JSON.stringify({ id, method }));
+        });
+      await profileRequest("Profiler.enable");
+      await profileRequest("Profiler.start");
+    }
     writeFileSync(join(root, "send-go"), "go");
     const workers = await Promise.all(outputs);
+    if (profileRequest) {
+      const data = await profileRequest("Profiler.stop");
+      mkdirSync(resolve(output, ".."), { recursive: true });
+      writeFileSync(output + ".cpuprofile", JSON.stringify(data.profile));
+      profiler?.close();
+    }
     const diagnostics = (await observer.request({
       op: "inspect",
       filter: { limit: 1 },
@@ -351,6 +417,7 @@ if (worker) {
           (endMetrics.at - ownerStart.at)
         : null;
     const result = {
+      source,
       revision: execFileSync("git", ["rev-parse", "HEAD"], {
         encoding: "utf8",
       }).trim(),
@@ -364,6 +431,7 @@ if (worker) {
         node: execFileSync("node", ["--version"], { encoding: "utf8" }).trim(),
       },
       workload: {
+        profiled: !!profileRequest,
         count,
         messagesPerAgent,
         bodyBytes: 256,
@@ -415,6 +483,7 @@ if (worker) {
     writeFileSync(output, JSON.stringify(result, null, 2) + "\n");
     console.log(output);
   } finally {
+    profiler?.close();
     launcher?.close();
     observer?.close();
     for (const child of children) child.kill();

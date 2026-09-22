@@ -76,6 +76,44 @@ export async function serveCoordination(options: {
   const sockets = new Set<Socket>();
   let pending = 0;
   let closing = false;
+  const commandQueue: Array<{
+    context: ActorContext;
+    command: CoreCommand;
+    resolve: (result: unknown) => void;
+    reject: (error: unknown) => void;
+  }> = [];
+  let flushTimer: ReturnType<typeof setImmediate> | undefined;
+  const flush = () => {
+    flushTimer = undefined;
+    const queued = commandQueue.splice(0, 32);
+    const scopes = new Map<string, typeof queued>();
+    for (const item of queued) {
+      const group = scopes.get(item.context.scope) ?? [];
+      group.push(item);
+      scopes.set(item.context.scope, group);
+    }
+    for (const group of scopes.values()) {
+      try {
+        const results = options.core.commandBatch(group);
+        results.forEach((result, index) => {
+          if (result.ok) group[index]!.resolve(result.result);
+          else group[index]!.reject(result.error);
+        });
+      } catch (error) {
+        for (const item of group) item.reject(error);
+      }
+    }
+    if (commandQueue.length) flushTimer = setImmediate(flush);
+  };
+  const enqueue = (context: ActorContext, command: CoreCommand) =>
+    new Promise<unknown>((resolve, reject) => {
+      if (closing) {
+        reject(new CoordinationError("disconnected", "Coordinator is closing"));
+        return;
+      }
+      commandQueue.push({ context, command, resolve, reject });
+      flushTimer ??= setImmediate(flush);
+    });
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.setEncoding("utf8");
@@ -210,7 +248,7 @@ export async function serveCoordination(options: {
           case "command":
             if (!record(raw.command) || !record(raw.command.payload))
               throw new CoordinationError("invalid_input", "Invalid command");
-            result = options.core.command(
+            result = await enqueue(
               actor,
               raw.command as unknown as CoreCommand,
             );
@@ -360,6 +398,14 @@ export async function serveCoordination(options: {
     async close() {
       if (closing) return;
       closing = true;
+      if (flushTimer) clearImmediate(flushTimer);
+      for (const item of commandQueue.splice(0))
+        item.reject(
+          new CoordinationError(
+            "disconnected",
+            "Coordinator closed before command commit",
+          ),
+        );
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

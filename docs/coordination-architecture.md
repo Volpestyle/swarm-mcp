@@ -62,6 +62,17 @@ The 33-tool catalog is 6042 tokens under this explicit encoding. Host deferred d
 - Completed results and referenced artifacts outlive session cleanup. Persist summary, structured evidence, producer attempt, content digest/URI and retention policy. Artifact deletion must account for live references. Large artifacts stay out of message text.
 - Events use monotonically ordered persisted cursors. Notifications are hints that new state may be available; reconnect queries replay from a cursor. If retention overtakes a reader, return an explicit resync requirement and a bounded snapshot.
 - The coordinator serializes domain writes with short transactions and a bounded queue. Do not await network, host wake, model execution or artifact upload while holding a SQLite transaction.
+
+The production IPC service groups at most 32 already-queued ordinary commands per
+event-loop turn, partitioned by authorized scope. Each command has a savepoint;
+rejection rolls back that command without accepting partial writes. The outer
+transaction commits with SQLite `synchronous=FULL` before any successful response
+or notification is published. Receipts and events commit together, so loss of a
+batch response is handled by ordinary stable command-ID replay. External provider
+calls and asynchronous artifact imports remain outside these batches. Shutdown
+rejects commands that have not entered a transaction. This reduces physical
+durable commits without weakening acceptance semantics or waiting for a batch to
+fill. Node/Bun crash fixtures cover exits before and after the outer commit.
 - Coordinator restarts acquire a new persisted authority epoch. All write paths validate that epoch, including an old service process that resumes after replacement. Local singleton IPC ownership and database epoch checks prevent two accepted writers.
 - Use one injected clock authority for expiry decisions and monotonic elapsed time for live timers. Test clock jumps and restart behavior. Model-provided timestamps are metadata, not lease authority.
 
