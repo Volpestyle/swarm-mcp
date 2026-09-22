@@ -3,6 +3,7 @@ import { CoordinationError, requireText } from "./errors";
 import { validateSession, type SessionContext } from "./sessions";
 import type { Sqlite } from "./sqlite";
 import type { Command, Json, Task } from "./store";
+import { validateTaskContract, type TaskContract } from "./task-contract";
 
 export type TaskState =
   | "open"
@@ -17,7 +18,11 @@ export type TaskCommand =
   | {
       id: string;
       type: "task.create";
-      payload: { title: string; dependencies?: string[] };
+      payload: {
+        title: string;
+        dependencies?: string[];
+        contract?: TaskContract;
+      };
     }
   | {
       id: string;
@@ -166,8 +171,16 @@ export class TaskTransaction {
       this.change("task.dependencies_changed", row.id, { status, reason });
     }
   }
-  create(payload: { title: string; dependencies?: string[] }) {
+  create(payload: {
+    title: string;
+    dependencies?: string[];
+    contract?: TaskContract;
+  }) {
     requireText(payload.title, "title", 1024);
+    const contract =
+      payload.contract === undefined
+        ? null
+        : JSON.stringify(validateTaskContract(payload.contract));
     if (
       payload.dependencies !== undefined &&
       (!Array.isArray(payload.dependencies) ||
@@ -183,7 +196,7 @@ export class TaskTransaction {
     const blocked = deps.some((dep) => this.task(dep).status !== "completed");
     this.db
       .prepare(
-        "INSERT INTO tasks(id,scope,creator,title,status,version,created_at,updated_at,reason) VALUES(?,?,?,?,?,1,?,?,?)",
+        "INSERT INTO tasks(id,scope,creator,title,status,version,created_at,updated_at,reason,contract) VALUES(?,?,?,?,?,1,?,?,?,?)",
       )
       .run(
         id,
@@ -194,6 +207,7 @@ export class TaskTransaction {
         this.at,
         this.at,
         blocked ? "dependencies_pending" : null,
+        contract,
       );
     for (const dep of deps)
       this.db

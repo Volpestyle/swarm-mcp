@@ -80,6 +80,60 @@ async function fixture() {
     },
   };
 }
+test("task contracts survive restart and invalid creation rolls back for retry", async () => {
+  const env = await fixture();
+  const contract = {
+    objective: "Make delivery survive restart",
+    worktree: "C:/work/repo",
+    acceptanceCriteria: ["Restart after commit retains accepted work"],
+    expectedArtifacts: ["test report"],
+    constraints: ["Keep the live database unchanged"],
+  };
+  const command = {
+    id: "contract",
+    type: "task.create" as const,
+    payload: { title: "delivery", contract },
+  };
+  expect(() =>
+    env.core.command(env.alice, {
+      ...command,
+      payload: {
+        ...command.payload,
+        contract: { ...contract, acceptanceCriteria: [] },
+      },
+    }),
+  ).toThrow("acceptanceCriteria");
+  const created = env.core.command(env.alice, command);
+  const task = (created.value as unknown as { task: Task }).task;
+  expect(JSON.parse(task.contract!)).toEqual(contract);
+  env.claim(task);
+  env.store.close();
+  const reopened = await CoordinationStore.open({
+    path: env.path,
+    clock: () => 1000,
+  });
+  stores.push(reopened);
+  const core = new CoordinationCore(reopened);
+  expect(JSON.parse(core.task(env.alice, task.id)!.contract!)).toEqual(
+    contract,
+  );
+  expect(core.attempts(env.alice, task.id)[0]!.actor).toBe("bob");
+  expect(core.command(env.alice, command).replayed).toBe(true);
+  expect(() =>
+    core.command(env.alice, {
+      ...command,
+      id: "oversize",
+      payload: {
+        ...command.payload,
+        contract: {
+          ...contract,
+          constraints: Array(20).fill("x".repeat(1000)),
+        },
+      },
+    }),
+  ).toThrow("8 KiB");
+});
+
 test("expired ownership is recovered once and stale completion cannot overwrite its replacement", async () => {
   const env = await fixture();
   const task = env.create(),

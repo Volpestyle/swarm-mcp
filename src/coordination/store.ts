@@ -61,6 +61,7 @@ export interface Task {
   reason: string | null;
   expires_at?: number | null;
   retentionState?: "retained" | "expired";
+  contract?: string | null;
 }
 export interface Event {
   id: number;
