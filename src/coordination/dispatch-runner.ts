@@ -23,6 +23,31 @@ export interface DispatchProvider {
   stop?(token: string, signal: AbortSignal): Promise<{ stopped: boolean }>;
 }
 
+/** An already-enrolled independent peer needs assignment, not another process.
+ * The trusted route pins one session incarnation; recovery resolves that same
+ * identity. Binding rejects it if the session has since been superseded. */
+export function existingPeerProvider(options: {
+  routeId: string;
+  worker: SessionContext;
+  authorized: () => boolean;
+}): DispatchProvider {
+  const worker = { ...options.worker };
+  const binding = () => ({
+    externalId: worker.sessionId,
+    worker: { ...worker },
+  });
+  return {
+    routeId: options.routeId,
+    authorized: options.authorized,
+    async start() {
+      return binding();
+    },
+    async find() {
+      return binding();
+    },
+  };
+}
+
 /** Creator cancellation commits before provider effects. Termination is scoped to
  * the dispatch token, not necessarily the lifetime of a shared worker process. */
 export async function cancelDispatchIntent(options: {
@@ -197,7 +222,25 @@ export async function runDispatchIntent(options: {
   };
   const bound = store.execute(
     { ...requester, id: randomUUID(), type: "dispatch.bind", payload: binding },
-    (tx) => tx.dispatch.bind(binding),
+    (tx) => {
+      const accepted = tx.dispatch.bind(binding);
+      if (!accepted.existing)
+        tx.inbox.send(
+          {
+            kind: "task.assigned",
+            taskId: accepted.taskId,
+            body: JSON.stringify({
+              taskId: accepted.taskId,
+              attemptId: accepted.attemptId,
+              fence: accepted.fence,
+              contract: intent.contract,
+            }),
+          },
+          [external.worker.actor],
+          "direct",
+        );
+      return accepted;
+    },
   ).value;
   return { status: "bound", ...bound };
 }

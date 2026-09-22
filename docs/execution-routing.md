@@ -72,6 +72,25 @@ start, one task and one attempt. This is not installed-host provisioning evidenc
 Concrete native/peer provider adapters, resource release/cancellation orchestration
 and the agent API surface remain unfinished.
 
+`existingPeerProvider` binds a trusted, already-enrolled session incarnation; it
+does not spawn or enroll another process. Recovery resolves that same configured
+identity, and binding rejects a superseded session. Its route still goes through
+the normal capability, availability and capacity checks. Stop support for this
+provider remains unavailable rather than treating a live peer as terminated.
+
+The runner now queues one `task.assigned` envelope in the binding transaction,
+containing the contract and task/attempt/fence references. Inbox backpressure
+rolls back ownership too, so an accepted attempt cannot lose its assignment.
+Reconciliation of an existing binding does not queue a second message. Workers
+must check current ownership before executing a delayed assignment; receipt alone
+is not proof the attempt is still active.
+
+The existing-peer regression fills the inbox and proves binding rolls back, then
+drains it and retries. A separate Node worker fetches the durable assignment,
+completes the referenced attempt and explicitly acknowledges it. Repeated runner
+calls retain one assignment and one attempt. This is actual peer-process/store
+delivery, not evidence of model-host launch or native MCP delivery.
+
 The trusted `dispatch.release` transaction frees capacity only after the task is
 terminal. A reservation cancelled before provisioning needs no external proof;
 once provisioning begins, the launcher must supply confirmed termination for the
