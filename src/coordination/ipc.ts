@@ -1,5 +1,4 @@
 import { createServer, createConnection, type Socket } from "node:net";
-import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/server";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -140,7 +139,8 @@ export async function serveCoordination(options: {
               ),
               protocol: {
                 modern: "2026-07-28",
-                legacy: SUPPORTED_PROTOCOL_VERSIONS,
+                legacy: (await import("@modelcontextprotocol/server"))
+                  .SUPPORTED_PROTOCOL_VERSIONS,
               },
             };
             break;

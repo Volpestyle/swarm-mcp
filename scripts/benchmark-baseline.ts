@@ -10,7 +10,7 @@ const percentile = (values: number[], fraction: number) => {
   return sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)] ?? 0;
 };
 const count = Number(process.argv[2]);
-if (![2, 8, 32].includes(count)) throw new Error("Expected agent count 2, 8, or 32");
+if (![1, 2, 8, 32].includes(count)) throw new Error("Expected agent count 1, 2, 8, or 32");
 const worker = process.argv[3] === "--worker";
 const fixture = worker ? process.argv[4]! : mkdtempSync(join(tmpdir(), "swarm-bench-"));
 process.env.SWARM_DB_PATH = join(fixture, "swarm.db");
@@ -18,7 +18,9 @@ const mode = process.env.SWARM_BENCH_MODE ?? "baseline";
 if (!["baseline", "no-cleanup", "atomic"].includes(mode)) throw new Error("Unknown experiment mode");
 const pollMs = Number(process.env.SWARM_BENCH_POLL_MS ?? 2000);
 if (!Number.isFinite(pollMs) || pollMs < 20) throw new Error("Invalid poll interval");
-const messagesPerAgent = 12;
+const messagesPerAgent = Number(process.env.SWARM_BENCH_MESSAGES ?? 12);
+const idleMs = Number(process.env.SWARM_BENCH_IDLE_MS ?? 4200);
+if (![messagesPerAgent, idleMs].every(n => Number.isSafeInteger(n) && n >= 0)) throw new Error("Invalid benchmark duration or message count");
 
 if (worker) {
   const index = Number(process.argv[5]);
@@ -88,7 +90,7 @@ if (worker) {
   const heartbeat = setInterval(() => timed(() => registry.heartbeat(agent.id)), 10000);
   const idleCpuStart = process.cpuUsage();
   const idleStart = performance.now();
-  await sleep(4200);
+  await sleep(idleMs);
   const idleCpu = process.cpuUsage(idleCpuStart);
   const idleWallMs = performance.now() - idleStart;
   const rssBytes = process.memoryUsage().rss;
@@ -143,7 +145,7 @@ if (worker) {
   inspection.close();
   console.log(JSON.stringify({
     hardware: { cpu: cpus()[0]?.model, logicalCpus: cpus().length, physicalMemoryBytes: totalmem(), platform: platform(), release: release(), bun: Bun.version },
-    workload: { count, mode, pollMs, messagesPerAgent, bodyBytes: 256, idleMs: 4200, fixture },
+    workload: { count, mode, pollMs, messagesPerAgent, bodyBytes: 256, idleMs, fixture },
     accepted: sum("accepted"), received: sum("received"), unread, duplicateDeliveries: sum("duplicateDeliveries"),
     deliveryMs: { p50: percentile(latencies, .5), p95: percentile(latencies, .95) },
     deliveredPerSecond: sum("received") / (durationMs / 1000),
