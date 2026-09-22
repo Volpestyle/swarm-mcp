@@ -4,17 +4,24 @@ import { CoordinationError } from "./errors";
 import { createCoordinatorMcp, notifyCoordinatorResource } from "./mcp";
 import { changedResources } from "./notifications";
 import type { Event } from "./store";
+import { assertCompatibleOwner, inspectSkill } from "./compatibility";
 
 async function main() {
   const endpoint = process.env.SWARM_COORDINATOR_ENDPOINT;
   const capability = process.env.SWARM_SESSION_CAPABILITY;
   if (!endpoint || !capability)
     throw new Error("Coordinator endpoint and session capability are required");
+  inspectSkill(process.env.SWARM_SKILL_PATH);
   const client = await CoordinationClient.connect(endpoint, capability);
-  const bootstrap = (await client.request({ op: "bootstrap" })) as {
+  let bootstrap: {
     eventCursor: number;
     actor: string;
   };
+  try {
+    const state = await client.request({ op: "bootstrap" }) as typeof bootstrap & { compatibility?: unknown };
+    assertCompatibleOwner(state.compatibility);
+    bootstrap = state;
+  } catch (error) { client.close(); throw error; }
   const observer = await CoordinationClient.connect(endpoint, capability);
   const waits = new Set<CoordinationClient>();
   let closing = false,

@@ -12,9 +12,11 @@ import type { ArtifactImport, FindingFilter } from "./evidence";
 import type { PeerFilter, TaskFilter } from "./queries";
 import type { Enrollment } from "./sessions";
 import type { DiagnosticFilter } from "./diagnostics";
+import { compatibility, MODERN_PROTOCOL } from "./compatibility";
 
 const MAX_FRAME_BYTES = 65536;
 export type Operation =
+  | { op: "compatibility" }
   | { op: "enroll"; input: Enrollment }
   | { op: "bootstrap" }
   | { op: "inspect"; filter?: DiagnosticFilter }
@@ -65,6 +67,8 @@ export async function serveCoordination(options: {
   /** Optional launcher-only authority. This callback must authenticate a
    * distinct launcher credential before accepting any enrollment fields. */
   enroll?: (capability: string, input: unknown) => unknown;
+  /** Optional launcher-or-session authentication for metadata discovery. */
+  authorizeProbe?: (capability: string) => void;
   maxPending?: number;
 }) {
   if (process.platform === "win32" && typeof Bun !== "undefined") {
@@ -149,6 +153,11 @@ export async function serveCoordination(options: {
         inflight.add(id);
         pending++;
         counted = true;
+        if (raw.op === "compatibility") {
+          (options.authorizeProbe ?? options.authorize)(raw.capability);
+          respond({ id, result: compatibility });
+          return;
+        }
         if (raw.op === "enroll") {
           if (!options.enroll)
             throw new CoordinationError(
@@ -176,7 +185,7 @@ export async function serveCoordination(options: {
                 raw.filter as DiagnosticFilter | undefined,
               ),
               protocol: {
-                modern: "2026-07-28",
+                modern: MODERN_PROTOCOL,
                 legacy: (await import("@modelcontextprotocol/server"))
                   .SUPPORTED_PROTOCOL_VERSIONS,
               },

@@ -1,14 +1,22 @@
 # swarm-mcp
 
-MCP server that lets multiple coding-agent sessions on the same machine discover each other and collaborate through a shared SQLite database.
+Local coordination for coding agents. This branch contains the compact redesign
+candidate: one Node owner, durable acknowledged inboxes, fenced task attempts and
+nine MCP tools, with thin per-session adapters. Start with
+[candidate installation](docs/install-skill.md),
+[runtime support](docs/runtime-acceptance.md) and
+[reversible migration](docs/migration-cutover.md).
 
-Each session spawns its own swarm-mcp server process via stdio. They all share one SQLite file at `~/.swarm-mcp/swarm.db` by default. No daemon needed.
+The legacy entrypoints remain available during rollout. They launch one stdio
+server per session and share `~/.swarm-mcp/swarm.db`. The quickstart below describes
+that legacy interface; it does not install the compact owner. Candidate packaging
+and tests do not change an existing installation automatically.
 
 [GitHub](https://github.com/Volpestyle/swarm-mcp)
 
 ---
 
-## Quick start
+## Legacy checkout quick start
 
 **New here? Read [`docs/quickstart.md`](./docs/quickstart.md) first.** It walks you from zero to two Claude Code sessions seeing each other in about five minutes, with the expected output at each step.
 
@@ -21,7 +29,9 @@ cd /path/to/swarm-mcp
 bun install
 ```
 
-Add the server to your coding agent using that host's MCP config format. Bun is the simplest dev/runtime path because the examples use `bun run`, but the built `dist/*.js` entrypoints also run under Node 20+ with `better-sqlite3`.
+Add the server to your coding agent using that host's MCP config format. These
+legacy examples use Bun. The candidate's built `dist/*.js` entrypoints target
+Node 22 with `better-sqlite3`; see the runtime support matrix before changing hosts.
 
 ### Codex (`~/.codex/config.toml`)
 

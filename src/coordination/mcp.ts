@@ -5,6 +5,7 @@ import type { Operation } from "./ipc";
 import type { Json } from "./store";
 import { boundedJson, MCP_DATA_BYTES } from "./payload-limits";
 import { outputSchema, type CompactToolName } from "./mcp-output";
+import { SERVER_VERSION, MODERN_PROTOCOL } from "./compatibility";
 const subscriptions = new WeakMap<McpServer, Set<string>>();
 const observableResources = new Set([
   "swarm://inbox",
@@ -18,7 +19,7 @@ export async function notifyCoordinatorResource(
   uri: string,
 ) {
   if (
-    server.server.getNegotiatedProtocolVersion() !== "2026-07-28" &&
+    server.server.getNegotiatedProtocolVersion() !== MODERN_PROTOCOL &&
     !subscriptions.get(server)?.has(uri)
   )
     return;
@@ -86,7 +87,7 @@ function compactSchema<T extends z.ZodType>(schema: T) {
 
 export function createCoordinatorMcp(request: CoordinatorRequest) {
   const server = new McpServer(
-    { name: "swarm", version: "2.0.0" },
+    { name: "swarm", version: SERVER_VERSION },
     {
       capabilities: { resources: { subscribe: true } },
       instructions:

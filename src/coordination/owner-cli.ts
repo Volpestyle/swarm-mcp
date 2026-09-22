@@ -1,7 +1,7 @@
 import { CoordinationStore } from "./store";
 import { CoordinationCore } from "./core";
 import { localEndpoint, serveCoordination } from "./ipc";
-import { launcherEnrollment } from "./enrollment";
+import { launcherEnrollment, launcherCredential } from "./enrollment";
 import { readOwnerConfig } from "./owner-config";
 import { ownerDispatch } from "./owner-dispatch";
 
@@ -11,6 +11,7 @@ async function main() {
     throw new Error("Usage: swarm-coordinator-owner <private-config.json>");
   const config = readOwnerConfig(path);
   const store = await CoordinationStore.open({ path: config.databasePath });
+  const isLauncher = launcherCredential(config.launcherSecret);
   try {
     const service = await serveCoordination({
       endpoint: localEndpoint(config.databasePath),
@@ -20,6 +21,7 @@ async function main() {
       ),
       authorize: (capability) => store.authorize(capability),
       enroll: launcherEnrollment(store, config.launcherSecret),
+      authorizeProbe: capability => { if (!isLauncher(capability)) store.authorize(capability); },
     });
     let closing = false;
     const close = async () => {

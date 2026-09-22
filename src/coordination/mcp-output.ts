@@ -44,6 +44,7 @@ const dataSchemas = {
     z.object({
       scope: z.string(),
       actor: z.string(),
+      compatibility: object,
       eventCursor: z.number(),
       tasks: page,
       inbox: z.array(z.object({ state: z.string(), count: z.number() })),

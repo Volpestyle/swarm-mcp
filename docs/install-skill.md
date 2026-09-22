@@ -1,5 +1,66 @@
 # Install The Packaged Skill
 
+## Compact candidate installation
+
+The candidate skill starts by discovering the mounted interface. `swarm_sync`
+and `swarm_inbox` select the compact workflow; legacy `register`/`poll_messages`
+select the retained legacy reference. Role arguments describe offered work; they
+do not enroll a compact session or grant authority.
+
+Build one pinned candidate and keep its owner, adapters and skill together:
+
+```powershell
+bun install --frozen-lockfile
+bun run build
+npm run verify:package
+```
+
+For an isolated packed install, pack the built checkout locally with
+`npm pack --ignore-scripts`, extract the tarball into a new directory, then run
+`bun install --production --frozen-lockfile` inside its `package` directory.
+The tarball carries `bun.lock`; it needs neither source nor development tools to
+run. The repository build scripts are not shipped, so build from the checkout,
+not from the extracted runtime package. This prepares an artifact; it does not
+publish it or switch an installed MCP configuration.
+
+Copy/link the entire `skills/swarm-mcp` directory into the intended host's skill
+location, keeping its references. Set `SWARM_SKILL_PATH` to the absolute path of
+that actual installed copy's `SKILL.md` in the trusted launcher environment, or
+pass `skillPath` to its runtime-launcher options. Startup checks the
+`swarm-coordination/1` frontmatter stamp. A checked file is not proof the host
+loaded it; restart/reload the host according to its native skill discovery.
+
+Compact MCP configuration is supplied per session by the trusted runtime adapter,
+not by putting a shared capability into a global `.mcp.json`. The Node owner uses
+a separate profile's `coordination.db`. Do not point it at a legacy `swarm.db`;
+follow [migration/canary guidance](migration-cutover.md) before activating old data.
+
+The built modules expose the tested launcher/plugin compositions:
+
+- Claude: `dist/coordination/claude-launcher.js` exports `prepareClaudeLaunch`.
+  Supply the absolute Node, owner and hook paths, private state directory, validated
+  identity/worktree roots, native session UUID and incarnation. Launch Claude with
+  the returned arguments and environment; retain native approval/sandbox settings.
+- OpenCode: `dist/coordination/opencode-plugin.js` exports `opencodeLifecycle`.
+  Use the trusted options and native plugin wiring in the
+  [OpenCode integration specification](../integrations/opencode/SPEC.md).
+- Codex: `dist/coordination/codex-launcher.js` composes the verified existing-thread
+  resume path. It is not an automatic initial-enrollment or autonomous-delivery
+  installer. Hermes actual-host rollout remains unverified.
+
+Use [runtime acceptance](runtime-acceptance.md) for the exact supported versions
+and limitations. Runtime-owned credentials are generated automatically and are not
+part of skill content. Run `node dist/coordination/client-cli.js doctor` inside the
+enrolled environment to inspect owner/client build, API/schema/skill contract and
+configured skill status. [Startup diagnostics](startup-compatibility.md) explain
+mismatches and recovery without rotating identities.
+
+## Legacy setup and host skill locations
+
+The `swarm-mcp init` instructions below configure the legacy entrypoint. They do
+not install the compact owner or its automatic session lifecycle. Host skill-copy
+locations apply to either workflow; select the actual MCP surface first.
+
 This repo ships one consumer installable skill:
 
 | Skill | Purpose |
@@ -26,7 +87,7 @@ Important boundary:
 - the skill does not install or mount the MCP server for you
 - configure the `swarm` MCP server first, then install the skill
 
-## Automated Project Setup
+## Automated Legacy Project Setup
 
 When using the packaged CLI, `swarm-mcp init` can write a project-local MCP config and copy the packaged skill:
 

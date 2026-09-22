@@ -3,7 +3,9 @@
 Run `node dist/coordination/mcp-cli.js` with a trusted launcher's
 `SWARM_COORDINATOR_ENDPOINT` and `SWARM_SESSION_CAPABILITY`. The adapter opens no
 database and cannot choose an actor or scope from model-supplied arguments. The
-Node owner authorizes every operation. Automatic launch/enrollment is VUH-1339.
+Node owner authorizes every operation. Trusted runtime launchers supply automatic
+enrollment; see [runtime delivery](runtime-delivery.md) and
+[startup compatibility](startup-compatibility.md).
 The legacy `swarm-mcp` entry remains available while migration is completed.
 See the [complete legacy tool mapping and migration boundaries](compact-api-migration.md)
 before changing a client configuration.
@@ -33,7 +35,8 @@ task ownership, shared-key status and bounded wait outcomes/references. Variable
 command values and page entries remain extensible objects. Wait references can
 be read directly as task resources. Identifier and text length bounds are stated
 once in server instructions and enforced by runtime validation. The nine-tool
-catalog measures 2,925 tokens, or 2,998 including those instructions.
+catalog is covered by the retained [context budget evidence](coordination-benchmarks.md).
+Bootstrap also carries the owner API/schema/skill contract and build descriptor.
 
 Payload budgets use UTF-8 JSON bytes. Command result values and event payloads
 are limited to 64 KiB inside the write transaction; excess rolls back state,
@@ -83,7 +86,5 @@ fetch and explicit acknowledgment, shared context, capture/source removal,
 multi-page artifact reconstruction, annotation freshness, resource opt-in,
 unsubscribe and prompt shutdown with a held observer. Fixtures use disposable databases.
 
-Still required for VUH-1338: richer output schemas,
-compatibility/deprecation mapping,
-bounded response sizing, and measured context/call reduction. The installed
-legacy runtime remains unchanged.
+The installed legacy runtime remains unchanged; package preparation and migration
+do not switch its profile or tool surface automatically.

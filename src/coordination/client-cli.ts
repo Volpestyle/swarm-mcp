@@ -1,4 +1,5 @@
 import { CoordinationClient, type Operation } from "./ipc";
+import { compatibility, inspectSkill } from "./compatibility";
 const endpoint = process.env.SWARM_COORDINATOR_ENDPOINT;
 const capability = process.env.SWARM_SESSION_CAPABILITY;
 async function main() {
@@ -25,7 +26,9 @@ async function main() {
   }
   const client = await CoordinationClient.connect(endpoint, capability);
   try {
-    console.log(JSON.stringify(await client.request(operation)));
+    const result = await client.request(operation);
+    console.log(JSON.stringify(action === "doctor" ? { ...(result as object), clientCompatibility: compatibility,
+      configuredSkill: inspectSkill(process.env.SWARM_SKILL_PATH) } : result));
   } finally {
     client.close();
   }

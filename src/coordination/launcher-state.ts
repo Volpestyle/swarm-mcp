@@ -134,6 +134,7 @@ function lstatExists(path: string) {
 export async function ownerState(directory: string) {
   await prepareLauncherDirectory(directory);
   await record(directory, "owner.json", () => ({
+    version: 1,
     databasePath: join(directory, "coordination.db"),
     launcherSecret: randomBytes(32).toString("hex"),
   }));

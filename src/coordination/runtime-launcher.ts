@@ -3,6 +3,7 @@ import { launcherIdentity } from "./sessions";
 import { ensureCoordinator } from "./owner-launcher";
 import { CoordinationClient, localEndpoint } from "./ipc";
 import { requireText } from "./errors";
+import { inspectSkill } from "./compatibility";
 
 /** Trusted launcher configuration only. Reuse incarnation when retrying an
  * uncertain launch; supply a new one for a real host restart/resume. */
@@ -15,7 +16,10 @@ export async function enrollRuntime(options: {
   hostSessionId: string;
   incarnation: string;
   label?: string;
+  skillPath?: string;
 }) {
+  const skillPath = options.skillPath ?? process.env.SWARM_SKILL_PATH;
+  const skill = inspectSkill(skillPath);
   requireText(options.incarnation, "incarnation");
   requireText(options.hostSessionId, "hostSessionId", 4096);
   if (!["codex", "claude-code", "hermes", "opencode"].includes(options.host))
@@ -70,9 +74,11 @@ export async function enrollRuntime(options: {
       sessionId: session.sessionId,
       generation: session.generation,
       replayed: session.replayed,
+      skill,
       environment: {
         SWARM_COORDINATOR_ENDPOINT: endpoint,
         SWARM_SESSION_CAPABILITY: session.capability,
+        ...(skillPath ? { SWARM_SKILL_PATH: skillPath } : {}),
       },
       launchedOwner: connected.launched,
     };

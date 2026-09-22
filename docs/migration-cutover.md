@@ -3,8 +3,9 @@
 VUH-1344 is in progress. The compatibility launch guard, versioned legacy
 backup/restore and offline coordinator import below are implemented. An isolated
 Node-owner canary passed restart, reconnect, lease recovery and reconciled rollback.
-Release packaging, installation/skill guidance and release authorization remain
-open. Do not switch a live profile using this partial procedure.
+Production packaging, installation/skill guidance and startup diagnostics are
+prepared. Hosted CI, release version/destination and publication authorization
+remain open. Do not switch a live profile merely because the isolated canary passed.
 
 ## Database boundary
 

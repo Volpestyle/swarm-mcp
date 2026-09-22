@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { CoordinationClient, localEndpoint } from "./ipc";
 import { readOwnerConfig } from "./owner-config";
+import { assertCompatibleOwner } from "./compatibility";
+import { CoordinationError } from "./errors";
 
 /** Connect before starting anything. The pipe is the ownership arbiter: racing
  * Node owners may start, but only one binds and survives. Existing owners are
@@ -31,6 +33,16 @@ export async function ensureCoordinator(options: {
           endpoint,
           config.launcherSecret,
         );
+        try {
+          let descriptor;
+          try { descriptor = await client.request({ op: "compatibility" }); }
+          catch (error) {
+            if ((error as { code?: string }).code === "invalid_input")
+              throw new CoordinationError("coordinator_version_mismatch", "Owner predates compatibility discovery; explicitly restart it from the selected candidate");
+            throw error;
+          }
+          assertCompatibleOwner(descriptor);
+        } catch (error) { client.close(); throw error; }
         launched?.unref();
         return { client, launched };
       } catch (error) {

@@ -14,7 +14,7 @@ const [pack] = JSON.parse(execFileSync(process.execPath,
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 const paths = new Set(pack.files.map(file => file.path));
 for (const path of paths) {
-  assert.ok(path === "package.json" || path === "README.md" || path === "LICENSE" || path === "skills/README.md" ||
+  assert.ok(path === "package.json" || path === "README.md" || path === "LICENSE" || path === "skills/README.md" || path === "bun.lock" ||
     path.startsWith("sql/") || path.startsWith("skills/swarm-mcp/") ||
     (path.startsWith("dist/") && pkg.files.includes(path)), `Unexpected packaged path: ${path}`);
 }
@@ -22,6 +22,7 @@ for (const path of pkg.files.filter(path => path.startsWith("dist/")))
   assert.ok(paths.has(path), `Missing production build: ${path}`);
 for (const path of Object.values(pkg.bin)) assert.ok(paths.has(path.replace(/^\.\//, "")), `Missing bin: ${path}`);
 assert.ok(paths.has("skills/swarm-mcp/SKILL.md"), "Missing consumer skill");
+assert.ok(paths.has("bun.lock"), "Missing frozen-install lockfile");
 assert.ok(![...paths].some(path => path.includes("must-not-ship")), "Generated state leaked into package");
 console.log(JSON.stringify({ name: pack.name, version: pack.version, files: paths.size, unpackedBytes: pack.unpackedSize,
   generatedFilesExcluded: true, productionEntriesPresent: true }, null, 2));

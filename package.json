@@ -1,7 +1,8 @@
 {
   "name": "swarm-mcp",
-  "version": "1.0.0",
+  "version": "2.0.0-rc.1",
   "type": "module",
+  "engines": { "node": ">=22" },
   "bin": {
     "swarm-mcp": "./dist/cli.js",
     "swarm-legacy-guard": "./dist/legacy-guard-cli.js",
@@ -27,6 +28,7 @@
     "sql",
     "skills/swarm-mcp",
     "skills/README.md",
+    "bun.lock",
     "README.md",
     "LICENSE"
   ],
@@ -37,7 +39,7 @@
     "dev:ui:managed": "cd apps/swarm-ui && bunx tauri dev",
     "diagrams": "node scripts/render-mermaid.mjs",
     "generate:protocol": "node scripts/generate-protocol-types.mjs",
-    "build": "node scripts/generate-protocol-types.mjs && esbuild src/cli.ts src/index.ts src/legacy-guard-cli.ts src/coordination/client-cli.ts src/coordination/migration-cli.ts src/coordination/mcp-cli.ts src/coordination/owner-cli.ts src/coordination/claude-hook-cli.ts src/coordination/claude-launcher.ts src/coordination/codex-launcher.ts src/coordination/dispatch-runner.ts src/coordination/opencode-dispatch.ts src/coordination/opencode-plugin.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --packages=external --loader:.sql=text --banner:js='#!/usr/bin/env node'",
+    "build": "node scripts/build.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "check:ui": "cd apps/swarm-ui && bun run check && bun run build",
     "test:server": "cargo test --manifest-path apps/swarm-server/Cargo.toml",

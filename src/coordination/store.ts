@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { compatibility } from "./compatibility";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { inspectCoordination, type DiagnosticFilter } from "./diagnostics";
@@ -404,6 +405,7 @@ export class CoordinationStore {
   inspect(scope: string, filter?: DiagnosticFilter) {
     this.ensureOpen();
     const report = {
+      compatibility,
       ...inspectCoordination(this.db, scope, this.clock(), filter),
       database: {
         journalMode: (
@@ -709,7 +711,7 @@ export class CoordinationStore {
     this.ensureOpen();
     this.db.exec("BEGIN");
     try {
-      const result = bootstrap(this.db, scope, actor);
+      const result = { ...bootstrap(this.db, scope, actor), compatibility };
       this.db.exec("COMMIT");
       return result;
     } catch (error) {
