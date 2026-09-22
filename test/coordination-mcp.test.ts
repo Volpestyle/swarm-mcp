@@ -68,6 +68,27 @@ for (const mode of ["modern", "legacy"] as const)
         }),
       );
       const catalog = await client.listTools();
+      expect(client.getInstructions()).toContain("1..128");
+      expect(client.getInstructions()).toContain("1..1024");
+      for (const arguments_ of [
+        { commandId: "x".repeat(129), title: "valid" },
+        { commandId: "valid", title: "x".repeat(1025) },
+      ]) {
+        const invalid = await client.callTool({
+          name: "swarm_assign",
+          arguments: {
+            ...arguments_,
+            contract: {
+              objective: "validate bounds",
+              worktree: root,
+              acceptanceCriteria: ["reject"],
+              expectedArtifacts: [],
+              constraints: [],
+            },
+          },
+        });
+        expect(invalid.isError).toBe(true);
+      }
       const notifications: string[] = [];
       client.setNotificationHandler("notifications/resources/updated", (n) => {
         notifications.push(n.params.uri);
@@ -152,7 +173,6 @@ for (const mode of ["modern", "legacy"] as const)
       });
       expect(stale.isError).toBe(true);
       expect(stale.structuredContent).toMatchObject({
-        ok: false,
         error: { code: "conflict", retryable: false },
       });
       await call("swarm_task", {

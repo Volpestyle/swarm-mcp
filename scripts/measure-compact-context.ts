@@ -128,6 +128,7 @@ try {
         count,
         fixture,
         server: clients[0]!.getServerVersion(),
+        instructions: clients[0]!.getInstructions(),
         toolSchema,
         toolCalls: transcript.length,
         transcript,

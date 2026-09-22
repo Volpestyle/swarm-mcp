@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { outputSchema } from "../src/coordination/mcp-output";
 
-test("receipt schemas reject lost replay/cursor metadata and allow typed failures", () => {
+test("success schemas require receipt metadata and reject error-only results", () => {
   const schema = outputSchema("swarm_assign");
   expect(
     schema.safeParse({
@@ -23,7 +23,7 @@ test("receipt schemas reject lost replay/cursor metadata and allow typed failure
       data: null,
       error: { code: "conflict", message: "Claim lost", retryable: false },
     }).success,
-  ).toBe(true);
+  ).toBe(false);
 });
 
 test("wait schema requires a resumable reference and a recognized outcome", () => {

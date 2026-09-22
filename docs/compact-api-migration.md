@@ -50,7 +50,9 @@ trusted launcher/host integration, not model-selected identity.
 | `swarm_status` | `swarm_sync` and targeted queries; diagnostics are VUH-1341 |
 | `wait_for_activity` | `swarm_sync` cursor/waitMs or resource subscriptions |
 
-Compact tools return `{ok,data,error}` as structuredContent and JSON text. Legacy
+Compact tools return `{data}` on success and `{error}` on failure as
+structuredContent and JSON text. MCP `isError` determines success. The earlier
+candidate's redundant `ok` field and null placeholders have been removed. Legacy
 parsers must change; do not parse English success text or assume snake_case
 fields. Task detail is normalized; command receipts currently retain core
 result shapes `{value,cursor,replayed}`.

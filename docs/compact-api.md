@@ -1,4 +1,4 @@
-# Compact coordinator API (in progress)
+# Compact coordinator API
 
 Run `node dist/coordination/mcp-cli.js` with a trusted launcher's
 `SWARM_COORDINATOR_ENDPOINT` and `SWARM_SESSION_CAPABILITY`. The adapter opens no
@@ -25,14 +25,15 @@ ID and payload. A new logical fetch needs a new ID: replaying an earlier fetch
 returns that earlier receipt, not a new delivery. Completion reports require a
 summary, evidence and explicit limitations (an empty limitations list is allowed).
 
-Tools return a structured envelope `{ok,data,error}` and JSON text for compatible
-hosts. Tool failures set `isError`; errors carry a code, message and retryable
+Successful tools return `{data}` and matching JSON text for compatible hosts.
+Failures set MCP `isError` and return `{error}` with code, message and retryable
 flag. Fetch/ack and task mutations are not marked read-only. Output schemas cover
 receipt cursor/replay metadata, paginated results, bootstrap state, normalized
 task ownership, shared-key status and bounded wait outcomes/references. Variable
 command values and page entries remain extensible objects. Wait references can
-be read directly as task resources. The richer catalog currently exceeds its
-3,000-token target; further surface simplification remains open.
+be read directly as task resources. Identifier and text length bounds are stated
+once in server instructions and enforced by runtime validation. The nine-tool
+catalog measures 2,925 tokens, or 2,998 including those instructions.
 
 Payload budgets use UTF-8 JSON bytes. Command result values and event payloads
 are limited to 64 KiB inside the write transaction; excess rolls back state,

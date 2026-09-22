@@ -65,11 +65,6 @@ const dataSchemas = {
 
 export type CompactToolName = keyof typeof dataSchemas;
 export function outputSchema(name: CompactToolName) {
-  return z.object({
-    ok: z.boolean(),
-    data: dataSchemas[name].nullable(),
-    error: z
-      .object({ code: z.string(), message: z.string(), retryable: z.boolean() })
-      .nullable(),
-  });
+  // MCP isError is authoritative; this schema describes successful results.
+  return z.object({ data: dataSchemas[name] });
 }

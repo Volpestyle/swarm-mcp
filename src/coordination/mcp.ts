@@ -29,8 +29,20 @@ export type CoordinatorRequest = (
   operation: Operation,
   signal?: AbortSignal,
 ) => Promise<unknown>;
-const text = z.string().min(1).max(1024);
-const id = z.string().min(1).max(128);
+const text = z
+  .string()
+  .refine(
+    (value) => value.length >= 1 && value.length <= 1024,
+    "Text fields must contain 1..1024 characters",
+  );
+// Publish identifier bounds once in the stable server instructions. Keep the
+// same runtime validation without repeating those keywords on every ID field.
+const id = z
+  .string()
+  .refine(
+    (value) => value.length >= 1 && value.length <= 128,
+    "Identifiers must contain 1..128 characters",
+  );
 const count = z.number().int().min(1).max(20).default(10);
 const cursor = z.number().int().min(0).default(0);
 const contract = z
@@ -57,7 +69,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
     {
       capabilities: { resources: { subscribe: true } },
       instructions:
-        "Use swarm_sync to resume. Assign work with a stable command ID; retry uncertain mutations with the same ID. Fetch leases messages; acknowledge only after processing. Task ownership requires the returned attempt ID and fence. Wait timeouts never cancel work.",
+        "Identifiers contain 1..128 characters. Other text fields contain 1..1024 unless their schema specifies a different bound. Use swarm_sync to resume. Assign work with a stable command ID; retry uncertain mutations with the same ID. Fetch leases messages; acknowledge only after processing. Task ownership requires the returned attempt ID and fence. Wait timeouts never cancel work.",
       cacheHints: {
         "tools/list": { ttlMs: 60000, cacheScope: "private" },
         "resources/read": { ttlMs: 0, cacheScope: "private" },
@@ -111,9 +123,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
           const data = await run(args, ctx.mcpReq.signal);
           boundedJson(data ?? null, MCP_DATA_BYTES, "Tool result");
           const structuredContent = {
-            ok: true,
             data: data ?? null,
-            error: null,
           };
           return {
             structuredContent,
@@ -129,8 +139,6 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
           const code =
             error instanceof CoordinationError ? error.code : "internal_error";
           const structuredContent = {
-            ok: false,
-            data: null,
             error: {
               code,
               message:
@@ -213,7 +221,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
   );
   tool(
     "swarm_assign",
-    "Create durable work asynchronously. Reuse commandId on retry; wait separately with the returned task ID.",
+    "Create durable work asynchronously; wait separately by task ID.",
     {
       commandId: id,
       title: text,
@@ -237,7 +245,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
   );
   tool(
     "swarm_task",
-    "Claim, renew, report progress, finish, cancel or recover work. Finish requires evidence and limitations.",
+    "Manage task ownership and progress. Finish requires evidence and limitations.",
     {
       commandId: id,
       action: z.enum([
@@ -319,7 +327,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
   );
   tool(
     "swarm_send",
-    "Send a question, blocker, decision request or completion notice. Work assignment uses swarm_assign.",
+    "Send a typed peer message; assign work with swarm_assign.",
     {
       commandId: id,
       recipient: id,
@@ -391,7 +399,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
   );
   tool(
     "swarm_wait",
-    "Wait for a task's terminal state. Timeout returns the same resumable reference without cancelling work.",
+    "Wait for completion; timeout returns a resumable reference.",
     {
       taskId: id,
       timeoutMs: z.number().int().min(0).max(30000).default(30000),
@@ -405,7 +413,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
   );
   tool(
     "swarm_context",
-    "Versioned shared state: get, set with expectedVersion, atomic append, or delete. Keep values small; link artifacts.",
+    "Read or mutate versioned shared state; set/delete require expectedVersion.",
     {
       action: z.enum(["get", "set", "append", "delete"]),
       key: text,
@@ -460,7 +468,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
   );
   tool(
     "swarm_evidence",
-    "Capture a completed worktree file or record a result, decision or annotation with provenance. Read bytes through the returned artifact URI.",
+    "Capture worktree files or record findings with provenance; read bytes via artifact URI.",
     {
       commandId: id,
       action: z.enum(["capture", "record"]),
