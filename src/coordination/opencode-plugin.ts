@@ -277,6 +277,35 @@ export function opencodeLifecycle(
     return session;
   };
 
+  const publishAvailability = (id: string) =>
+    serialize(id, async () => {
+      const session = sessions.get(id);
+      if (!session) return;
+      const observed = availability.observe(id);
+      const runtime =
+        observed.state === "idle"
+          ? "available"
+          : ["busy", "blocked"].includes(observed.state)
+            ? "busy"
+            : "unavailable";
+      const client = await CoordinationClient.connect(
+        session.environment.SWARM_COORDINATOR_ENDPOINT,
+        session.environment.SWARM_SESSION_CAPABILITY,
+      );
+      try {
+        await client.request({
+          op: "command",
+          command: {
+            id: randomUUID(),
+            type: "session.observe",
+            payload: { runtime },
+          },
+        });
+      } finally {
+        client.close();
+      }
+    }).catch((error) => reportError(id, error));
+
   const admit = async (
     id: string,
     key: string,
@@ -380,6 +409,26 @@ export function opencodeLifecycle(
     // rejection here; tool hooks below remain fail-closed and are awaited.
     async event({ event }: { event: HostEvent }) {
       availability.event(event);
+      const globalState = [
+        "server.connected",
+        "swarm.snapshot.ready",
+        "server.instance.disposed",
+        "swarm.stream.disconnected",
+      ].includes(event.type);
+      const sessionState = [
+        "session.status",
+        "permission.asked",
+        "permission.replied",
+        "question.asked",
+        "question.replied",
+        "question.rejected",
+      ].includes(event.type);
+      const observedIds = globalState
+        ? [...sessions.keys()]
+        : sessionState && event.properties?.sessionID
+          ? [event.properties.sessionID]
+          : [];
+      await Promise.all(observedIds.map(publishAvailability));
       if (event.type === "server.instance.disposed") {
         for (const observer of observers.values()) observer.stop();
         observers.clear();

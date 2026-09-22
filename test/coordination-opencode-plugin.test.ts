@@ -78,6 +78,13 @@ test("OpenCode post-tool admission preserves explicit ack and suppresses repeate
       env.SWARM_COORDINATOR_ENDPOINT,
       env.SWARM_SESSION_CAPABILITY,
     );
+    const runtimeState = async () => {
+      const peers = (await client.request({ op: "peers" })) as {
+        items: Array<{ agentId: string; runtimeState: string }>;
+      };
+      return peers.items.find((peer) => peer.agentId === actor)?.runtimeState;
+    };
+    expect(await runtimeState()).toBe("unavailable");
     for (const id of ["one", "two"])
       await client.request({
         op: "command",
@@ -122,6 +129,7 @@ test("OpenCode post-tool admission preserves explicit ack and suppresses repeate
     });
     await hooks["tool.execute.after"](input, output);
     expect(output.output).toBe("original tool output");
+    expect(await runtimeState()).toBe("busy");
     const blocked = (await recipient.request({ op: "bootstrap" })) as {
       inbox: Array<{ state: string; count: number }>;
     };
@@ -183,8 +191,21 @@ test("OpenCode post-tool admission preserves explicit ack and suppresses repeate
       JSON.parse(chat.parts[0].text.split("\n").at(-1)!).message.body,
     ).toBe("three");
     const admitted = chat.parts[0].text;
+    expect(await runtimeState()).toBe("available");
     await hooks["chat.message"]({ sessionID: "recipient" }, chat);
     expect(chat.parts[0].text).toBe(admitted);
+    await hooks.event({ event: { type: "swarm.stream.disconnected" } });
+    expect(await runtimeState()).toBe("unavailable");
+    await hooks.event({ event: { type: "server.connected" } });
+    await hooks.event({
+      event: {
+        type: "session.status",
+        properties: { sessionID: "recipient", status: { type: "idle" } },
+      },
+    });
+    expect(await runtimeState()).toBe("unavailable");
+    await hooks.event({ event: { type: "swarm.snapshot.ready" } });
+    expect(await runtimeState()).toBe("available");
   } finally {
     await hooks?.event({ event: { type: "server.instance.disposed" } });
     recipient?.close();

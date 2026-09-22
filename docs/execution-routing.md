@@ -171,6 +171,14 @@ authority for capabilities and budgets; model labels do not modify it. The
 production-owner regression verifies configured dispatch after restart, no
 assignment before availability, completion/release and superseded-route rejection.
 
+OpenCode lifecycle events publish coordinator availability for those routes:
+idle maps to available, busy/permission-blocked maps to busy, and unknown,
+disconnected or snapshot-recovering states map to unavailable. Publication uses
+the enrolled session capability and per-session serialization. The integration
+test reads this state from the real owner, including withholding idle during
+reconnect until snapshot reconciliation completes. This closes the gap between
+plugin-local delivery state and coordinator routing evidence.
+
 ## Reassignment and fallback
 
 The trusted `dispatch.reassign` transaction is an explicit creator retry, with a
