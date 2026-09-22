@@ -38,11 +38,14 @@ if (worker) {
     messagesPerAgent,
     slowMs,
     disconnectMs,
+    physicalDisconnectMs,
+    spacingMs,
+    senderIndex,
   } = config;
   const clients = await Promise.all(
     [0, 1, 2].map(() => CoordinationClient.connect(endpoint, capability)),
   );
-  const [reader, writer, watcher] = clients as [
+  let [reader, writer, watcher] = clients as [
     CoordinationClient,
     CoordinationClient,
     CoordinationClient,
@@ -52,6 +55,7 @@ if (worker) {
     requests = 0,
     stopped = false,
     accepted = 0;
+  let quotaRejections = 0;
   const errors: string[] = [],
     samples: any[] = [],
     operations: number[] = [];
@@ -70,43 +74,50 @@ if (worker) {
   const snapshot = await request(reader, { op: "bootstrap" });
   let cursor = snapshot.eventCursor;
   let resumeAt = 0;
+  let disconnected = false;
+  const recovery: Record<string, number> = {};
   const consume = async () => {
     if (resumeAt > Date.now()) await delay(resumeAt - Date.now());
-    const fetched = await request(reader, {
-      op: "command",
-      command: {
-        id: randomUUID(),
-        type: "inbox.fetch",
-        payload: { consumer: actor, limit: 50, leaseMs: 30000 },
-      },
-    });
-    for (const lease of fetched.value.deliveries) {
-      const receivedAt = Date.now(),
-        body = JSON.parse(lease.message.body);
-      if (slowMs) await delay(slowMs);
-      await request(reader, {
+    while (!stopped && !disconnected) {
+      const fetched = await request(reader, {
         op: "command",
         command: {
-          id: `ack-${lease.message.id}`,
-          type: "inbox.ack",
-          payload: {
-            messageId: lease.message.id,
-            leaseToken: lease.leaseToken,
-          },
+          id: randomUUID(),
+          type: "inbox.fetch",
+          payload: { consumer: actor, limit: 50, leaseMs: 30000 },
         },
       });
-      samples.push({
-        messageId: lease.message.id,
-        sequence: body.sequence,
-        sentAt: body.sentAt,
-        createdAt: lease.message.createdAt,
-        receivedAt,
-        ackResponseAt: Date.now(),
-      });
+      for (const lease of fetched.value.deliveries) {
+        const receivedAt = Date.now(),
+          body = JSON.parse(lease.message.body);
+        if (recovery.reconnectedAt && !recovery.firstDeliveryAt)
+          recovery.firstDeliveryAt = receivedAt;
+        if (slowMs) await delay(slowMs);
+        await request(reader, {
+          op: "command",
+          command: {
+            id: `ack-${lease.message.id}`,
+            type: "inbox.ack",
+            payload: {
+              messageId: lease.message.id,
+              leaseToken: lease.leaseToken,
+            },
+          },
+        });
+        samples.push({
+          messageId: lease.message.id,
+          sequence: body.sequence,
+          sentAt: body.sentAt,
+          createdAt: lease.message.createdAt,
+          receivedAt,
+          ackResponseAt: Date.now(),
+        });
+      }
+      if (fetched.value.deliveries.length < 50) break;
     }
   };
-  const reading = (async () => {
-    while (!stopped) {
+  const readLoop = async () => {
+    while (!stopped && !disconnected) {
       const page = await request(watcher, {
         op: "watch",
         cursor,
@@ -123,9 +134,11 @@ if (worker) {
       )
         await consume();
     }
-  })().catch((error) => {
-    if (!stopped) errors.push(String(error));
+  };
+  const startReading = () => readLoop().catch((error) => {
+    if (!stopped && !disconnected) errors.push(String(error));
   });
+  let reading = startReading();
   writeFileSync(
     join(root, `ready-${index}`),
     JSON.stringify({ pid: process.pid }),
@@ -144,10 +157,32 @@ if (worker) {
       idleRequests: requests - idleRequests,
       rssBytes: process.memoryUsage().rss,
     };
+    if (physicalDisconnectMs) {
+      disconnected = true;
+      reader.close();
+      watcher.close();
+      await reading;
+      recovery.disconnectedAt = Date.now();
+    }
     writeFileSync(join(root, `idle-${index}`), JSON.stringify(idle));
     await until(() => existsSync(join(root, "send-go")));
     const sendStart = Date.now();
     resumeAt = sendStart + disconnectMs;
+    const reconnecting = physicalDisconnectMs ? (async () => {
+      await delay(physicalDisconnectMs);
+      [reader, watcher] = await Promise.all([
+        CoordinationClient.connect(endpoint, capability),
+        CoordinationClient.connect(endpoint, capability),
+      ]);
+      clients.push(reader, watcher);
+      recovery.reconnectedAt = Date.now();
+      const state = await request(reader, { op: "inspect", filter: { limit: 1 } });
+      recovery.scopePendingAtReconnect = state.summary.pending;
+      disconnected = false;
+      await consume();
+      recovery.initialDrainCompletedAt = Date.now();
+      reading = startReading();
+    })().catch(error => errors.push(String(error))) : Promise.resolve();
     for (let sequence = 0; sequence < messagesPerAgent; sequence++) {
       try {
         await request(writer, {
@@ -168,13 +203,18 @@ if (worker) {
         });
         accepted++;
       } catch (error) {
-        errors.push(String(error));
+        if ((error as { code?: string }).code === "inbox_full") quotaRejections++;
+        else errors.push(String(error));
       }
-      await delay(73);
+      if (spacingMs) await delay(spacingMs);
     }
+    writeFileSync(join(root, `sent-${index}`), JSON.stringify({ accepted, quotaRejections }));
+    await until(() => existsSync(join(root, `sent-${senderIndex}`)), 120000);
+    const expected = JSON.parse(readFileSync(join(root, `sent-${senderIndex}`), "utf8")).accepted;
+    await reconnecting;
     await until(
-      () => samples.length === messagesPerAgent,
-      Math.max(15000, disconnectMs + 10000),
+      () => samples.length === expected,
+      Math.max(15000, disconnectMs + physicalDisconnectMs + messagesPerAgent * slowMs + 10000),
     ).catch((error) => errors.push(String(error)));
     const finished = Date.now();
     stopped = true;
@@ -185,6 +225,8 @@ if (worker) {
         index,
         pid: process.pid,
         accepted,
+        expected,
+        quotaRejections,
         received: samples.length,
         sendStart,
         finished,
@@ -195,6 +237,7 @@ if (worker) {
         operations,
         errors,
         samples,
+        recovery,
       }),
     );
   } finally {
@@ -208,10 +251,12 @@ if (worker) {
   const messagesPerAgent = Number(process.env.SWARM_BENCH_MESSAGES ?? 12);
   const slowMs = Number(process.env.SWARM_BENCH_SLOW_MS ?? 0);
   const disconnectMs = Number(process.env.SWARM_BENCH_DEFER_MS ?? 0);
+  const physicalDisconnectMs = Number(process.env.SWARM_BENCH_DISCONNECT_MS ?? 0);
+  const spacingMs = Number(process.env.SWARM_BENCH_SPACING_MS ?? 73);
   if (
     ![0, 1, 2, 8, 32].includes(count) ||
     !output ||
-    ![idleMs, messagesPerAgent, slowMs, disconnectMs].every(
+    ![idleMs, messagesPerAgent, slowMs, disconnectMs, physicalDisconnectMs, spacingMs].every(
       (n) => Number.isSafeInteger(n) && n >= 0,
     )
   )
@@ -329,6 +374,9 @@ if (worker) {
           messagesPerAgent,
           slowMs: index === 0 ? slowMs : 0,
           disconnectMs: index === 0 ? disconnectMs : 0,
+          physicalDisconnectMs: index === 0 ? physicalDisconnectMs : 0,
+          spacingMs,
+          senderIndex: (index + count - 1) % count,
         }),
       );
       const child = Bun.spawn({
@@ -435,14 +483,16 @@ if (worker) {
         count,
         messagesPerAgent,
         bodyBytes: 256,
-        spacingMs: 73,
+        spacingMs,
         idleMs,
         warmupMs: 2000,
         slowMs,
         deferredConsumerMs: disconnectMs,
+        physicalDisconnectMs,
         root,
       },
       accepted: sum("accepted"),
+      quotaRejections: sum("quotaRejections"),
       received: sum("received"),
       deliveryMs: {
         p50: percentile(delivery, 0.5),
@@ -477,11 +527,20 @@ if (worker) {
       diagnostics,
       workers,
       limitations:
-        "Production Node owner and independent Bun IPC clients; no model inference or MCP serialization. JSON volumes omit transport framing. First-delivery timestamp is transaction timestamp (includes commit time); acknowledgment is measured through response. Windows memory includes shared working-set pages. Deferred consumer stays connected; not a process-disconnect/restart proof. No processing side effects beyond fixture acknowledgment.",
+        "Production Node owner and independent Bun IPC clients; no model inference or MCP serialization. JSON volumes omit transport framing. First-delivery timestamp is transaction timestamp (includes commit time); acknowledgment is measured through response. Windows memory includes shared working-set pages. Deferred consumer stays connected. Physical disconnect closes worker-0 reader/watch sockets, retaining its independent sender and process; this is not a process crash. Reconnect pending count is scope-wide. No processing side effects beyond fixture acknowledgment.",
     };
     mkdirSync(resolve(output, ".."), { recursive: true });
     writeFileSync(output, JSON.stringify(result, null, 2) + "\n");
     console.log(output);
+    // Preserve failed evidence, but never make an incomplete run look green.
+    if (
+      result.errors.length ||
+      result.accepted + result.quotaRejections !== count * messagesPerAgent ||
+      result.received !== result.accepted ||
+      new Set(samples.map((sample) => sample.messageId)).size !== result.received ||
+      diagnostics.summary.acknowledged !== result.accepted ||
+      diagnostics.summary.pending || diagnostics.summary.leased
+    ) process.exitCode = 1;
   } finally {
     profiler?.close();
     launcher?.close();
