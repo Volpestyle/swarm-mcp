@@ -1,6 +1,28 @@
 import { expect, test } from "bun:test";
 import { OpenCodeAvailability } from "../src/coordination/opencode-state";
 
+test("new sessions can wake without a first prompt, but creation cannot erase newer state", () => {
+  const state = new OpenCodeAvailability();
+  const created = {
+    type: "session.created",
+    properties: { info: { id: "child" } },
+  };
+  state.event(created);
+  expect(state.observe("child").state).toBe("idle");
+  state.event({
+    type: "permission.asked",
+    properties: { sessionID: "child", id: "wait" },
+  });
+  state.event(created);
+  expect(state.observe("child").state).toBe("blocked");
+  state.event({ type: "swarm.stream.disconnected" });
+  state.event(created);
+  expect(state.observe("child").state).toBe("disconnected");
+  state.event({ type: "server.connected" });
+  state.event(created);
+  expect(state.observe("child").state).toBe("unsupported");
+});
+
 test("multiple host waits override status and a reply never authorizes idle wake", () => {
   const state = new OpenCodeAvailability();
   expect(state.observe("one").state).toBe("unsupported");

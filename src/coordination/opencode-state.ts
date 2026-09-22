@@ -66,7 +66,11 @@ export class OpenCodeAvailability {
     const p = event.properties;
     const id = p?.sessionID ?? p?.info?.id;
     if (!id) return;
-    if (event.type === "session.deleted") {
+    if (event.type === "session.created") {
+      // New sessions have no running prompt. Do not overwrite a newer status
+      // or permission event if creation is delivered again or out of order.
+      if (!this.observations.has(id)) this.set(id, "idle", event.type);
+    } else if (event.type === "session.deleted") {
       this.waiting.delete(id);
       this.set(id, "disconnected", event.type);
     } else if (

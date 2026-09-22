@@ -17,7 +17,10 @@ external evidence. Cooperative stop uses the enrolled worker's fenced result.
 
 SDK transport-fixture tests cover inherited permission rules, delayed enrollment,
 coordinator reopen, wrong-parent rejection, single assignment and response loss
-without another create. Installed-host provisioning still requires proof.
+without another create. The installed OpenCode 1.4.3 probe now verifies native
+creation, plugin enrollment, autonomous delivery, a fenced result, explicit
+acknowledgment and capacity release. See the retained
+[capture and reproduction](verification/2026-09-22-dispatch/README.md).
 
 Owner `dispatch.opencode` entries configure native routes with `id`, a pinned
 coordinator `parent` identity, native `parentSessionId`, `baseUrl`, private
@@ -46,8 +49,8 @@ neither capabilities nor authority. A missing capability remains an explicit
 blocker; selection never creates an agent or changes the task contract.
 
 Selection alone is advisory. The trusted runner below composes atomic intent and
-capacity reservation, provisioning reconciliation and task binding. Concrete host
-adapters and native completion integration remain unfinished. Only the
+capacity reservation, provisioning reconciliation and task binding. OpenCode
+native children and already-enrolled independent peers have concrete adapters. Only the
 coordinator's fenced task attempt establishes an accepted owner.
 
 Schema 9 adds `dispatch_intents`. The trusted write transaction reserves an
@@ -55,12 +58,11 @@ intent and creates its task atomically. Scope-wide intent identity spans request
 agents; changed work under the same intent is rejected. Capacity includes all
 unreleased intents, so another gateway or a reopened coordinator cannot reserve
 the same slot. The policy comes from trusted adapter configuration, outside the
-model command payload. This primitive is not yet exposed through the agent API.
+model command payload. The authenticated dispatch API composes this primitive.
 
 Reservations do not expire into permission to provision again. A crash may leave
 an unresolved intent; later provisioning reconciliation must prove the external
-outcome before releasing or retrying it. External provisioning adapters and
-cancellation orchestration still need implementation. The reservation itself never launches
+outcome before releasing or retrying it. The reservation itself never launches
 a process or reports a worker as accepted.
 
 Schema 10 records a provisioning token before external effects. `begin` advances
@@ -102,8 +104,7 @@ The runner tests use a real coordinator store and a controlled provider fixture:
 external acceptance followed by response loss or timeout, coordinator reopen,
 temporarily invisible external state, then reconciliation. Both finish with one
 start, one task and one attempt. This is not installed-host provisioning evidence.
-Concrete native/peer provider adapters, resource release/cancellation orchestration
-and the agent API surface remain unfinished.
+The concrete adapters and authenticated API are described below and above.
 
 `existingPeerProvider` binds a trusted, already-enrolled session incarnation; it
 does not spawn or enroll another process. Recovery resolves that same configured
@@ -227,7 +228,9 @@ Old provider bindings and late completion cannot take ownership or overwrite the
 replacement result. A controlled native-to-peer test verifies one task/contract,
 cancelled native attempt, completed peer attempt, changed-token rejection, late
 native-result rejection and idempotent reassignment/completion. This proves the
-coordinator contract; actual native and peer provider integrations remain open.
+coordinator contract. Separate installed-native and peer-process probes establish
+each provider's delivery path; an installed-host cross-provider handoff is not
+claimed by the controlled handoff test.
 
 ## Legacy implementation audit
 

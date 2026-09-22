@@ -476,6 +476,10 @@ export function opencodeLifecycle(
           client.close();
         }
       }).catch((error) => reportError(id, error));
+      if (event.type === "session.created") {
+        await publishAvailability(id);
+        observers.get(id)?.kick();
+      }
     },
     async "shell.env"(
       input: { sessionID?: string },
