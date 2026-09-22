@@ -3,6 +3,25 @@ import { z } from "zod";
 import { CoordinationError } from "./errors";
 import type { Operation } from "./ipc";
 import type { Json } from "./store";
+const subscriptions = new WeakMap<McpServer, Set<string>>();
+const observableResources = new Set([
+  "swarm://inbox",
+  "swarm://tasks",
+  "swarm://context",
+  "swarm://findings",
+]);
+
+export async function notifyCoordinatorResource(
+  server: McpServer,
+  uri: string,
+) {
+  if (
+    server.server.getNegotiatedProtocolVersion() !== "2026-07-28" &&
+    !subscriptions.get(server)?.has(uri)
+  )
+    return;
+  await server.server.sendResourceUpdated({ uri });
+}
 
 export type CoordinatorRequest = (
   operation: Operation,
@@ -41,12 +60,28 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
   const server = new McpServer(
     { name: "swarm", version: "2.0.0" },
     {
+      capabilities: { resources: { subscribe: true } },
       instructions:
         "Use swarm_sync to resume. Assign work with a stable command ID; retry uncertain mutations with the same ID. Fetch leases messages; acknowledge only after processing. Task ownership requires the returned attempt ID and fence. Wait timeouts never cancel work.",
       cacheHints: {
         "tools/list": { ttlMs: 60000, cacheScope: "private" },
         "resources/read": { ttlMs: 0, cacheScope: "private" },
       },
+    },
+  );
+  const subscribed = new Set<string>();
+  subscriptions.set(server, subscribed);
+  server.server.setRequestHandler("resources/subscribe", async ({ params }) => {
+    if (!observableResources.has(params.uri))
+      throw new CoordinationError("not_found", "Unknown subscribable resource");
+    subscribed.add(params.uri);
+    return {};
+  });
+  server.server.setRequestHandler(
+    "resources/unsubscribe",
+    async ({ params }) => {
+      subscribed.delete(params.uri);
+      return {};
     },
   );
   function tool<S extends z.ZodRawShape>(
@@ -489,6 +524,21 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
       throw new CoordinationError("invalid_input", `Invalid ${name}`);
     return Number(value);
   };
+  server.registerResource(
+    "inbox",
+    "swarm://inbox",
+    {
+      description:
+        "Delivery summaries; reading does not acknowledge processing.",
+    },
+    (uri) => jsonResource(uri, { op: "inbox", limit: 1 }),
+  );
+  server.registerResource(
+    "tasks",
+    "swarm://tasks",
+    { description: "First page of scoped task summaries." },
+    (uri) => jsonResource(uri, { op: "tasks", filter: { limit: 10 } }),
+  );
   server.registerResource(
     "shared-context",
     new ResourceTemplate("swarm://context{?key}", {

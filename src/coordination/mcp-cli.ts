@@ -1,7 +1,9 @@
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { CoordinationClient } from "./ipc";
 import { CoordinationError } from "./errors";
-import { createCoordinatorMcp } from "./mcp";
+import { createCoordinatorMcp, notifyCoordinatorResource } from "./mcp";
+import { changedResources } from "./notifications";
+import type { Event } from "./store";
 
 async function main() {
   const endpoint = process.env.SWARM_COORDINATOR_ENDPOINT;
@@ -9,6 +11,11 @@ async function main() {
   if (!endpoint || !capability)
     throw new Error("Coordinator endpoint and session capability are required");
   const client = await CoordinationClient.connect(endpoint, capability);
+  const bootstrap = (await client.request({ op: "bootstrap" })) as {
+    eventCursor: number;
+    actor: string;
+  };
+  const observer = await CoordinationClient.connect(endpoint, capability);
   const waits = new Set<CoordinationClient>();
   let closing = false,
     activeWaits = 0;
@@ -42,14 +49,46 @@ async function main() {
       activeWaits--;
     }
   });
-  const handle = serveStdio(() => server, {
-    legacy: "serve",
-    maxSubscriptions: 16,
-  });
+  let observing = false;
+  const observe = async () => {
+    let cursor = bootstrap.eventCursor;
+    while (!closing) {
+      const page = (await observer.request({
+        op: "watch",
+        cursor,
+        timeoutMs: 30000,
+      })) as { items: Event[]; cursor: number };
+      if (closing) return;
+      for (const uri of changedResources(page.items, bootstrap.actor))
+        await notifyCoordinatorResource(server, uri);
+      cursor = page.cursor;
+    }
+  };
+  const handle = serveStdio(
+    () => {
+      if (!observing) {
+        observing = true;
+        setTimeout(() => {
+          void observe().catch((error) => {
+            if (!closing) {
+              console.error("swarm event observer:", error.message);
+              close();
+            }
+          });
+        }, 0);
+      }
+      return server;
+    },
+    {
+      legacy: "serve",
+      maxSubscriptions: 16,
+    },
+  );
   const close = () => {
     if (closing) return;
     closing = true;
     client.close();
+    observer.close();
     for (const waiter of waits) waiter.close();
     void handle.close();
   };

@@ -44,18 +44,28 @@ file needs to remain after capture. Unavailable artifacts return status metadata
 The paginated artifact template is registered before the base template because
 SDK v2's base matcher otherwise consumes the query suffix as part of the ID.
 
+Subscribe to the base resources `swarm://inbox`, `swarm://tasks`,
+`swarm://context` or `swarm://findings`. Modern connections use
+`subscriptions/listen`; legacy connections use subscribe/unsubscribe. A dedicated
+authenticated observer holds 30-second event waits, coalesces each batch into
+resource-change hints, and filters inbox activity to the session's recipient.
+Hints contain no message or result bodies. Read the resource or resume from your
+event cursor for data. Disconnect closes the observer; an observer failure closes
+the adapter so the host can reconnect rather than silently miss notifications.
+
 The adapter caps concurrent waits at eight. Each wait uses its own authenticated
 IPC connection so cancelling it tears down that owner-side wait without disrupting
 other calls. Normal requests share a connection. A disconnected adapter currently
 requires reconnection by its launcher; automatic recovery is not claimed.
 
 `test/coordination-mcp.test.ts` exercises the actual bundled Node adapter through
-a modern MCP client and separate Node owner, covering nine-tool discovery,
+modern and legacy MCP clients and a separate Node owner, covering nine-tool discovery,
 bootstrap, durable create/replay, claim/conflict, timeout/finish, typed messaging,
 fetch and explicit acknowledgment, shared context, capture/source removal,
-multi-page artifact reconstruction and annotation freshness. Fixtures use disposable databases.
+multi-page artifact reconstruction, annotation freshness, resource opt-in,
+unsubscribe and prompt shutdown with a held observer. Fixtures use disposable databases.
 
 Still required for VUH-1338: richer output schemas,
-subscriptions on this new surface, compatibility/deprecation mapping,
+compatibility/deprecation mapping,
 bounded response sizing, and measured context/call reduction. The installed
 legacy runtime remains unchanged.
