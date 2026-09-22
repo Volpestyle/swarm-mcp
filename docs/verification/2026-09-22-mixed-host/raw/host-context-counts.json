@@ -1,0 +1,161 @@
+﻿{
+  "tokenizer": "tiktoken 0.12.0 / o200k_base",
+  "runs": [
+    {
+      "capture": "dist/test/mixed-host-final.json",
+      "hosts": {
+        "opencode": {
+          "requests": 4,
+          "perRequest": [
+            {
+              "messages": {
+                "utf8Bytes": 11801,
+                "tokens": 2720
+              },
+              "system": {
+                "utf8Bytes": 2,
+                "tokens": 1
+              },
+              "tools": {
+                "utf8Bytes": 49511,
+                "tokens": 10930
+              }
+            },
+            {
+              "messages": {
+                "utf8Bytes": 12391,
+                "tokens": 2927
+              },
+              "system": {
+                "utf8Bytes": 2,
+                "tokens": 1
+              },
+              "tools": {
+                "utf8Bytes": 49511,
+                "tokens": 10930
+              }
+            },
+            {
+              "messages": {
+                "utf8Bytes": 13384,
+                "tokens": 3281
+              },
+              "system": {
+                "utf8Bytes": 2,
+                "tokens": 1
+              },
+              "tools": {
+                "utf8Bytes": 49511,
+                "tokens": 10930
+              }
+            },
+            {
+              "messages": {
+                "utf8Bytes": 13945,
+                "tokens": 3459
+              },
+              "system": {
+                "utf8Bytes": 2,
+                "tokens": 1
+              },
+              "tools": {
+                "utf8Bytes": 49511,
+                "tokens": 10930
+              }
+            }
+          ]
+        },
+        "claude": {
+          "requests": 3,
+          "perRequest": [
+            {
+              "messages": {
+                "utf8Bytes": 2956,
+                "tokens": 854
+              },
+              "system": {
+                "utf8Bytes": 27074,
+                "tokens": 5774
+              },
+              "tools": {
+                "utf8Bytes": 17177,
+                "tokens": 4014
+              }
+            },
+            {
+              "messages": {
+                "utf8Bytes": 3869,
+                "tokens": 1224
+              },
+              "system": {
+                "utf8Bytes": 27074,
+                "tokens": 5774
+              },
+              "tools": {
+                "utf8Bytes": 17177,
+                "tokens": 4014
+              }
+            },
+            {
+              "messages": {
+                "utf8Bytes": 4500,
+                "tokens": 1446
+              },
+              "system": {
+                "utf8Bytes": 27074,
+                "tokens": 5774
+              },
+              "tools": {
+                "utf8Bytes": 17177,
+                "tokens": 4014
+              }
+            }
+          ]
+        }
+      },
+      "emittedToolCalls": 4,
+      "explicitClaudeUserTurns": 1
+    },
+    {
+      "capture": "dist/test/native-dispatch-comparison.json",
+      "hosts": {
+        "opencode": {
+          "requests": 2,
+          "perRequest": [
+            {
+              "messages": {
+                "utf8Bytes": 11688,
+                "tokens": 2703
+              },
+              "system": {
+                "utf8Bytes": 2,
+                "tokens": 1
+              },
+              "tools": {
+                "utf8Bytes": 49511,
+                "tokens": 10930
+              }
+            },
+            {
+              "messages": {
+                "utf8Bytes": 12249,
+                "tokens": 2881
+              },
+              "system": {
+                "utf8Bytes": 2,
+                "tokens": 1
+              },
+              "tools": {
+                "utf8Bytes": 49511,
+                "tokens": 10930
+              }
+            }
+          ]
+        }
+      },
+      "emittedToolCalls": 1,
+      "explicitClaudeUserTurns": 0
+    }
+  ],
+  "limitations": "Counts archived JSON with lease tokens redacted; not exact original-provider tokens. Repeated context counted per request; tools and system separate. No hidden framing, inference, caching adjustment or billing. Provider usage/cost fields in fixture host output are synthetic and must not be used as measurements."
+}
