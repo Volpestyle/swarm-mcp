@@ -6,7 +6,7 @@ permanent claims about capabilities missing from a host.
 | Host | Evidence | Current limitation |
 | --- | --- | --- |
 | OpenCode 1.4.3 | Installed-host lifecycle/restart, busy/blocked gating, post-tool and autonomous idle-turn delivery, explicit ack | Durable context deduplication, uncertain wake recovery, lease replay and large-history enrollment remain open |
-| Claude Code 2.1.278 | Installed-host turn-start/post-tool delivery, explicit ack, session-end capability closure | Launcher/plugin integration and resume recovery remain open; delivery only at native boundaries, no idle wake implementation |
+| Claude Code 2.1.278 | Installed-host turn-start/post-tool delivery, explicit ack, session-end closure, transcript-based deduplication and metadata-only lease refresh after real expiry | Launcher/plugin integration and killed/resumed-host recovery remain open; delivery only at native boundaries, no idle wake implementation |
 | Codex 0.155.1 | Isolated app-server initialization, actual plugin event configuration parsing, idle thread and rejected idle steering | Fixture hooks are untrusted; automatic coordinator delivery is unverified. Treat this as a degraded integration until execution evidence exists |
 | Hermes | Existing in-process lifecycle implementation inspected; 23 Python lifecycle tests pass | No `hermes` executable on this PATH or `hermes_cli` module in the inspected Python. Actual-host delivery is unverified |
 

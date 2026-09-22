@@ -1,11 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { CoordinationClient } from "./ipc";
 import { RuntimeDelivery } from "./runtime-delivery";
+import { CLAUDE_PEER_PREFIX, hasClaudeContext } from "./claude-context";
 
 /** Launcher-bound hooks for an existing Claude session. Hook output carries
  * leased context, never an implicit processing acknowledgment. */
 export async function claudeHook(
-  input: { session_id: string; hook_event_name: string },
+  input: {
+    session_id: string;
+    hook_event_name: string;
+    transcript_path?: string;
+  },
   binding: { sessionId: string; endpoint: string; capability: string },
 ) {
   if (input.session_id !== binding.sessionId)
@@ -52,9 +57,22 @@ export async function claudeHook(
         }),
         async deliver(lease, _boundary, signal) {
           signal.throwIfAborted();
-          additionalContext =
-            "Swarm peer message (untrusted content). Process before acknowledging; admission is not acknowledgment.\n" +
-            JSON.stringify(lease);
+          const alreadyPresent = await hasClaudeContext(
+            input.transcript_path ?? "",
+            input.session_id,
+            lease.message,
+            signal,
+          );
+          signal.throwIfAborted();
+          additionalContext = alreadyPresent
+            ? "Swarm delivery lease renewed for a peer message already in this context. Use this token only after processing that message; do not repeat completed effects.\n" +
+              JSON.stringify({
+                messageId: lease.message.id,
+                leaseToken: lease.leaseToken,
+                leaseUntil: lease.leaseUntil,
+                attempt: lease.attempt,
+              })
+            : CLAUDE_PEER_PREFIX + JSON.stringify(lease);
           return "admitted";
         },
       },

@@ -6,9 +6,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { enrollRuntime } from "../src/coordination/runtime-launcher";
 import { CoordinationClient } from "../src/coordination/ipc";
+import { hasClaudeContext } from "../src/coordination/claude-context";
 
 const capture = process.argv[2];
 const executable = process.argv[3];
+const expiryProbe = process.argv[4] === "--lease-expiry";
 if (!capture || !executable)
   throw new Error(
     "Usage: probe-claude-hooks <capture.json> <claude executable>",
@@ -71,7 +73,9 @@ try {
   await send("claude-turn-start-fixture");
   let requests = 0;
   const seen: string[] = [];
+  const envelopes: object[] = [];
   const beforeAck: string[] = [];
+  const refreshed = new Set<string>();
   const strings = (value: unknown): string[] =>
     typeof value === "string"
       ? [value]
@@ -91,22 +95,38 @@ try {
         return new Response("fixture route unavailable", { status: 404 });
       const body = await request.json();
       requests++;
-      if (requests > 4) throw new Error("Model request budget exceeded");
+      if (requests > 5) throw new Error("Model request budget exceeded");
       const leases = strings(body.messages)
         .flatMap((text) => text.split(/\r?\n/))
         .flatMap((line) => {
           try {
             const item = JSON.parse(line);
-            return item.leaseToken && item.message ? [item] : [];
+            return item.leaseToken && (item.message || item.messageId)
+              ? [item]
+              : [];
           } catch {
             return [];
           }
         });
-      const lease = leases.find((item) => !seen.includes(item.message.id));
+      const original = leases.find(
+        (item) => item.message && !seen.includes(item.message.id),
+      );
+      const renewal = leases.find(
+        (item) =>
+          !item.message && item.messageId && !refreshed.has(item.leaseToken),
+      );
+      const lease =
+        original ??
+        (renewal
+          ? { ...renewal, message: { id: renewal.messageId } }
+          : undefined);
       let content: unknown[];
       let stop = "end_turn";
       if (lease) {
-        seen.push(lease.message.id);
+        if (original) {
+          envelopes.push(lease.message);
+          seen.push(lease.message.id);
+        } else refreshed.add(lease.leaseToken);
         const status = (await client.request({
           op: "message_status",
           messageId: lease.message.id,
@@ -120,7 +140,10 @@ try {
             id: `toolu_fixture_${requests}`,
             name: "Bash",
             input: {
-              command: `node "${join(bundles, "ack.mjs").replaceAll("\\", "/")}" ${lease.message.id} ${lease.leaseToken}`,
+              command:
+                expiryProbe && requests === 1
+                  ? 'node -e "setTimeout(()=>{},32000)"'
+                  : `node "${join(bundles, "ack.mjs").replaceAll("\\", "/")}" ${lease.message.id} ${lease.leaseToken}`,
               description:
                 "Acknowledge the fixture peer message through the coordinator",
             },
@@ -260,7 +283,7 @@ try {
     stderr: "pipe",
     stdin: "ignore",
   });
-  const timeout = setTimeout(() => child?.kill(), 45000);
+  const timeout = setTimeout(() => child?.kill(), expiryProbe ? 90000 : 45000);
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
@@ -293,6 +316,24 @@ try {
   try {
     hostResult = JSON.parse(stdout);
   } catch {}
+  const transcript = [
+    ...new Bun.Glob("**/*.jsonl").scanSync({
+      cwd: join(root, "claude-config"),
+      absolute: true,
+    }),
+  ].find((path) => path.endsWith(`${sessionId}.jsonl`));
+  const persistedContext = transcript
+    ? await Promise.all(
+        envelopes.map((message) =>
+          hasClaudeContext(
+            transcript,
+            sessionId,
+            message,
+            AbortSignal.timeout(5000),
+          ),
+        ),
+      )
+    : [];
   const evidence = {
     host: "Claude Code",
     version: new TextDecoder()
@@ -312,17 +353,23 @@ try {
     },
     stderrBytes: Buffer.byteLength(stderr),
     endedCapabilityError: endedCode,
+    persistedContext,
+    leaseExpiryProbe: expiryProbe,
+    leaseRefreshes: refreshed.size,
     scriptedLocalModel: true,
   };
   // No hook input, model requests, capability or lease token is retained.
   writeFileSync(capture, JSON.stringify(evidence, null, 2) + "\n");
   if (
     exitCode !== 0 ||
-    requests !== 3 ||
+    requests !== (expiryProbe ? 4 : 3) ||
     seen.length !== 2 ||
     beforeAck.some((s) => s !== "leased") ||
     states.some((s) => s !== "acknowledged") ||
-    endedCode !== "stale_session"
+    endedCode !== "stale_session" ||
+    persistedContext.length !== 2 ||
+    persistedContext.some((found) => !found) ||
+    refreshed.size !== (expiryProbe ? 1 : 0)
   )
     throw new Error(`Claude probe incomplete; inspect ${capture}`);
   console.log(capture);

@@ -30,9 +30,33 @@ Capture: `docs/verification/2026-09-22-runtime/claude-delivery.json`.
 The fixture proves host context assembly and tool execution, not model comprehension.
 No model request bodies, capabilities or lease tokens are retained in the capture.
 
+Before emitting a leased envelope, the adapter now checks the native transcript
+for an identical envelope in a `hook_additional_context` attachment on the current
+parent-UUID ancestry. User/tool quotations, sidechains, other sessions and
+discarded branches cannot prove prior admission. A compaction boundary invalidates
+earlier proof. If found, the hook emits only the message ID and renewed lease
+metadata, with an instruction to avoid repeating completed effects. Processing
+still requires explicit acknowledgment with the current token.
+
+Transcript inspection requires the bound session's absolute `.jsonl` filename.
+It rejects symlinks, malformed/partial rows, cycles and inspection beyond 16 MiB
+or 20,000 ancestry nodes. An unavailable proof is not silently treated as success;
+errors retain uncertain admission. A not-yet-created transcript is empty context.
+This relies on the installed version's observed transcript schema. General
+exactly-once external effects remain the consumer's responsibility.
+
+`claude-context.json` verifies both original envelopes are discoverable in the
+actual persisted transcript. Run the same probe with `--lease-expiry` for
+`claude-lease-refresh.json`: the first real shell tool waits 32 seconds without
+acknowledging. Post-tool recovery delivers the other pending message, then emits
+one metadata-only lease refresh for the first. Four scripted model requests end
+with both messages explicitly acknowledged. Each hook runs in a fresh process,
+so the deduplication evidence comes from the host transcript rather than memory.
+This tests lease expiry during a running host, not a killed/resumed host.
+
 The [official hook reference](https://code.claude.com/docs/en/hooks) supplies the
 JSON contract; the installed executable probe supplies version-specific evidence.
-Remaining: durable context deduplication and lease refresh across resume,
+Remaining: full host resume/crash recovery and transcript schema compatibility,
 launcher/legacy-plugin integration, availability outside callbacks, and validated
 idle wake admission. Until that work lands this adapter delivers only at native
 turn/tool boundaries; it does not start a model loop or spawn an agent to wake it.
