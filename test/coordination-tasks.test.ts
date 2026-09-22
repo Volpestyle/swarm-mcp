@@ -134,6 +134,79 @@ test("task contracts survive restart and invalid creation rolls back for retry",
   ).toThrow("8 KiB");
 });
 
+test("bounded waits resume the same task without cancellation or duplicated attempts", async () => {
+  const env = await fixture();
+  const task = env.create(),
+    claim = env.claim(task);
+  const timedOut = await env.core.waitForTask(env.alice, task.id, 1);
+  expect(timedOut).toMatchObject({
+    taskId: task.id,
+    waitState: "timeout",
+    task: { status: "running", current_attempt: claim.attemptId },
+  });
+  const abort = new AbortController();
+  const waiting = env.core.waitForTask(env.alice, task.id, 30000, abort.signal);
+  abort.abort();
+  expect(await waiting).toMatchObject({
+    taskId: task.id,
+    waitState: "interrupted",
+  });
+  expect(env.core.attempts(env.alice, task.id)).toHaveLength(1);
+  const resumed = env.core.waitForTask(env.alice, task.id, 30000);
+  env.core.command(env.bob, {
+    id: "finish-waited",
+    type: "task.finish",
+    payload: {
+      taskId: task.id,
+      attemptId: claim.attemptId,
+      fence: claim.fence,
+      outcome: "completed",
+      result: { summary: "verified", evidence: ["test log"], limitations: [] },
+    },
+  });
+  expect(await resumed).toMatchObject({
+    taskId: task.id,
+    waitState: "terminal",
+    task: { status: "completed" },
+  });
+  expect(await env.core.waitForTask(env.alice, task.id, 0)).toMatchObject({
+    waitState: "terminal",
+  });
+  expect(env.core.attempts(env.alice, task.id)).toHaveLength(1);
+  expect(() => env.core.waitForTask(env.alice, "absent", 10)).toThrow(
+    "does not exist",
+  );
+});
+
+test("completion racing with a wait timeout is observed without another mutation", async () => {
+  const env = await fixture();
+  const task = env.create(),
+    claim = env.claim(task);
+  const finished = new Promise<void>((resolve) =>
+    setTimeout(() => {
+      env.core.command(env.bob, {
+        id: "finish-at-deadline",
+        type: "task.finish",
+        payload: {
+          taskId: task.id,
+          attemptId: claim.attemptId,
+          fence: claim.fence,
+          outcome: "completed",
+        },
+      });
+      resolve();
+    }, 1),
+  );
+  const first = await env.core.waitForTask(env.alice, task.id, 1);
+  await finished;
+  // Either ordering is valid; the resumed read must always observe the commit.
+  expect(["terminal", "timeout"]).toContain(first.waitState);
+  expect((await env.core.waitForTask(env.alice, task.id, 0)).waitState).toBe(
+    "terminal",
+  );
+  expect(env.core.attempts(env.alice, task.id)).toHaveLength(1);
+});
+
 test("expired ownership is recovered once and stale completion cannot overwrite its replacement", async () => {
   const env = await fixture();
   const task = env.create(),

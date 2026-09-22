@@ -366,4 +366,73 @@ export class CoordinationCore {
       },
     );
   }
+
+  /** Read-only wait: the caller already holds the durable task ID. Neither
+   * timeout nor cancellation changes ownership or creates another attempt. */
+  waitForTask(
+    context: ActorContext,
+    taskId: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ) {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 30000)
+      throw new CoordinationError(
+        "invalid_input",
+        "Task wait must be 0..30000 milliseconds",
+      );
+    const read = () => {
+      const task = this.task(context, taskId);
+      if (!task)
+        throw new CoordinationError(
+          "not_found",
+          "Task does not exist in this scope",
+        );
+      return task;
+    };
+    type Result = {
+      taskId: string;
+      uri: string;
+      waitState: "terminal" | "timeout" | "interrupted";
+      task: NonNullable<ReturnType<typeof read>>;
+    };
+    read();
+    return new Promise<Result>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let unsubscribe = () => {};
+      const finish = (reason?: "timeout" | "interrupted") => {
+        if (settled) return;
+        try {
+          const task = read();
+          const terminal = ["completed", "failed", "cancelled"].includes(
+            task.status,
+          );
+          if (!terminal && !reason) return;
+          settled = true;
+          clean();
+          resolve({
+            taskId,
+            uri: `swarm://tasks/${taskId}`,
+            waitState: terminal ? "terminal" : reason!,
+            task,
+          });
+        } catch (error) {
+          settled = true;
+          clean();
+          reject(error);
+        }
+      };
+      const abort = () => finish("interrupted");
+      const clean = () => {
+        if (timer) clearTimeout(timer);
+        unsubscribe();
+        signal?.removeEventListener("abort", abort);
+      };
+      unsubscribe = this.store.subscribe(() => finish());
+      signal?.addEventListener("abort", abort, { once: true });
+      timer = setTimeout(() => finish("timeout"), timeoutMs);
+      if (signal?.aborted) abort();
+      else finish(timeoutMs === 0 ? "timeout" : undefined);
+    });
+  }
 }

@@ -18,6 +18,7 @@ export type Operation =
   | { op: "artifacts"; cursor?: number; limit?: number }
   | { op: "findings"; filter?: FindingFilter }
   | { op: "task"; taskId: string }
+  | { op: "task_wait"; taskId: string; timeoutMs: number }
   | { op: "attempts"; taskId: string }
   | { op: "reservations"; limit?: number }
   | { op: "kv"; key: string }
@@ -169,6 +170,15 @@ export async function serveCoordination(options: {
             result = options.core.command(
               actor,
               raw.command as unknown as CoreCommand,
+            );
+            break;
+          case "task_wait":
+            requireText(raw.taskId, "taskId");
+            result = await options.core.waitForTask(
+              actor,
+              raw.taskId,
+              raw.timeoutMs as number,
+              disconnected.signal,
             );
             break;
           case "task":
@@ -391,7 +401,7 @@ export class CoordinationClient {
       );
     return new Promise((resolve, reject) => {
       const timeout =
-        operation.op === "watch"
+        operation.op === "watch" || operation.op === "task_wait"
           ? Math.min(operation.timeoutMs, 30000) + 1000
           : 10000;
       const timer = setTimeout(() => {

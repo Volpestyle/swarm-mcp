@@ -68,6 +68,38 @@ const command = {
   payload: { title: "work over local IPC" },
 };
 
+test("task waits survive client disconnect without creating or cancelling work", async () => {
+  const { client, connect } = await fixture("sessions");
+  const created = (await client.request({ op: "command", command })) as {
+    value: { task: { id: string } };
+  };
+  const taskId = created.value.task.id;
+  const first = await client.request({ op: "task_wait", taskId, timeoutMs: 1 });
+  expect(first).toMatchObject({
+    taskId,
+    waitState: "timeout",
+    task: { status: "open" },
+  });
+  const pending = client
+    .request({ op: "task_wait", taskId, timeoutMs: 30000 })
+    .catch((error) => error);
+  client.close();
+  expect(await pending).toMatchObject({ code: "disconnected" });
+  const resumed = await connect();
+  try {
+    expect(
+      await resumed.request({ op: "task_wait", taskId, timeoutMs: 0 }),
+    ).toMatchObject({ taskId, waitState: "timeout", task: { status: "open" } });
+    expect(await resumed.request({ op: "attempts", taskId })).toEqual([]);
+    expect(await resumed.request({ op: "command", command })).toMatchObject({
+      replayed: true,
+      value: { task: { id: taskId } },
+    });
+  } finally {
+    resumed.close();
+  }
+});
+
 test("artifact bytes, evidence links and shared context round trip through the owner", async () => {
   const { client, worktreeRoot } = await fixture("sessions");
   const initial = (await client.request({ op: "bootstrap" })) as {
