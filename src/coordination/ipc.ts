@@ -28,7 +28,7 @@ export type Operation =
   | { op: "inbox"; cursor?: number; limit?: number }
   | { op: "message_status"; messageId: string }
   | { op: "events"; cursor: number; limit?: number }
-  | { op: "watch"; cursor: number; timeoutMs: number };
+  | { op: "watch"; cursor: number; timeoutMs: number; limit?: number };
 
 export function localEndpoint(databasePath: string): string {
   const path = resolve(databasePath);
@@ -245,6 +245,7 @@ export async function serveCoordination(options: {
               raw.cursor as number,
               raw.timeoutMs as number,
               disconnected.signal,
+              raw.limit as number | undefined,
             );
             break;
           default:

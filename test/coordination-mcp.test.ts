@@ -81,6 +81,11 @@ for (const mode of ["modern", "legacy"] as const)
       const taskSubscription = await listen("swarm://tasks");
       expect(catalog.tools).toHaveLength(9);
       expect(catalog.tools.every((t) => t.outputSchema)).toBe(true);
+      for (const name of ["swarm_task", "swarm_context", "swarm_inbox"])
+        expect(
+          catalog.tools.find((t) => t.name === name)!.annotations!
+            .destructiveHint,
+        ).toBe(true);
       expect(
         catalog.tools.find((t) => t.name === "swarm_inbox")!.annotations!
           .readOnlyHint,

@@ -68,6 +68,45 @@ const command = {
   payload: { title: "work over local IPC" },
 };
 
+test("held event pages obey their limit without skipping the remaining events", async () => {
+  const { client } = await fixture();
+  for (let index = 0; index < 25; index++)
+    await client.request({
+      op: "command",
+      command: { ...command, id: `page-${index}` },
+    });
+  const first = (await client.request({
+    op: "watch",
+    cursor: 0,
+    timeoutMs: 1,
+    limit: 20,
+  })) as { items: Array<{ id: number }>; cursor: number };
+  expect(first.items).toHaveLength(20);
+  expect(first.cursor).toBe(first.items.at(-1)!.id);
+  const second = (await client.request({
+    op: "watch",
+    cursor: first.cursor,
+    timeoutMs: 1,
+    limit: 20,
+  })) as { items: Array<{ id: number }>; cursor: number };
+  expect(second.items).toHaveLength(5);
+  expect(
+    new Set([...first.items, ...second.items].map((event) => event.id)).size,
+  ).toBe(25);
+  expect(
+    await client.request({
+      op: "watch",
+      cursor: second.cursor,
+      timeoutMs: 1,
+      limit: 20,
+    }),
+  ).toEqual({ items: [], cursor: second.cursor });
+  const invalid = await client
+    .request({ op: "watch", cursor: 0, timeoutMs: 1, limit: 0 })
+    .catch((error) => error);
+  expect(invalid).toMatchObject({ code: "invalid_input" });
+});
+
 test("task waits survive client disconnect without creating or cancelling work", async () => {
   const { client, connect } = await fixture("sessions");
   const created = (await client.request({ op: "command", command })) as {

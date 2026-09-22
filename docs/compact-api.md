@@ -5,6 +5,8 @@ Run `node dist/coordination/mcp-cli.js` with a trusted launcher's
 database and cannot choose an actor or scope from model-supplied arguments. The
 Node owner authorizes every operation. Automatic launch/enrollment is VUH-1339.
 The legacy `swarm-mcp` entry remains available while migration is completed.
+See the [complete legacy tool mapping and migration boundaries](compact-api-migration.md)
+before changing a client configuration.
 
 | Tool | Common path |
 | --- | --- |

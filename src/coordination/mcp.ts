@@ -103,7 +103,11 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
         annotations: {
           readOnlyHint: readOnly,
           idempotentHint: true,
-          destructiveHint: false,
+          destructiveHint: [
+            "swarm_task",
+            "swarm_context",
+            "swarm_inbox",
+          ].includes(name),
           openWorldHint: false,
         },
       },
@@ -169,7 +173,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
         a.cursor === undefined
           ? { op: "bootstrap" }
           : a.waitMs
-            ? { op: "watch", cursor: a.cursor, timeoutMs: a.waitMs }
+            ? { op: "watch", cursor: a.cursor, timeoutMs: a.waitMs, limit: 20 }
             : { op: "events", cursor: a.cursor, limit: 20 },
         signal,
       ),

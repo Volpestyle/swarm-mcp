@@ -327,13 +327,15 @@ export class CoordinationCore {
     cursor: number,
     timeoutMs: number,
     signal?: AbortSignal,
+    limit = 100,
   ) {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000)
       throw new CoordinationError(
         "invalid_input",
         "Wait must be between 1 and 30000 milliseconds",
       );
-    this.events(context, cursor); // Validate before installing any listener.
+    const read = () => this.events(context, cursor, limit);
+    read(); // Validate before installing any listener.
     return new Promise<ReturnType<CoordinationCore["events"]>>(
       (resolve, reject) => {
         let settled = false;
@@ -348,7 +350,7 @@ export class CoordinationCore {
           if (error) reject(error);
           else {
             try {
-              resolve(this.events(context, cursor));
+              resolve(read());
             } catch (failure) {
               reject(failure);
             }
@@ -358,7 +360,7 @@ export class CoordinationCore {
           finish(new CoordinationError("aborted", "Event wait cancelled"));
         unsubscribe = this.store.subscribe(() => {
           try {
-            if (this.events(context, cursor).items.length) finish();
+            if (read().items.length) finish();
           } catch (error) {
             finish(error as Error);
           }
@@ -366,7 +368,7 @@ export class CoordinationCore {
         signal?.addEventListener("abort", abort, { once: true });
         timer = setTimeout(() => finish(), timeoutMs);
         if (signal?.aborted) abort();
-        else if (this.events(context, cursor).items.length) finish();
+        else if (read().items.length) finish();
       },
     );
   }
