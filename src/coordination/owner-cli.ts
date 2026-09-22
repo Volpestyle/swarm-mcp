@@ -1,19 +1,14 @@
-import { readFileSync } from "node:fs";
 import { CoordinationStore } from "./store";
 import { CoordinationCore } from "./core";
 import { localEndpoint, serveCoordination } from "./ipc";
 import { launcherEnrollment } from "./enrollment";
-import { requireText } from "./errors";
+import { readOwnerConfig } from "./owner-config";
 
 async function main() {
   const path = process.argv[2];
   if (!path)
     throw new Error("Usage: swarm-coordinator-owner <private-config.json>");
-  const bytes = readFileSync(path);
-  if (bytes.byteLength > 8192) throw new Error("Owner config exceeds 8 KiB");
-  const config = JSON.parse(bytes.toString("utf8"));
-  requireText(config.databasePath, "databasePath", 4096);
-  requireText(config.launcherSecret, "launcherSecret", 512);
+  const config = readOwnerConfig(path);
   const store = await CoordinationStore.open({ path: config.databasePath });
   try {
     const service = await serveCoordination({

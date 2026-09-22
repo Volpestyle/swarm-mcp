@@ -5,6 +5,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CoordinationClient } from "../src/coordination/ipc";
+import { ensureCoordinator } from "../src/coordination/owner-launcher";
+import { once } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
 
 test("production Node owner resumes durable launcher enrollment after restart", async () => {
   mkdirSync(resolve("dist/test"), { recursive: true });
@@ -87,4 +90,110 @@ test("production Node owner resumes durable launcher enrollment after restart", 
       await child.exited;
     }
   }
+});
+
+test("simultaneous launchers converge on one owner and reuse it without spawning", async () => {
+  mkdirSync(resolve("dist/test"), { recursive: true });
+  const output = join(
+    mkdtempSync(resolve("dist/test/owner-launch-")),
+    "owner.mjs",
+  );
+  await build({
+    entryPoints: ["src/coordination/owner-cli.ts"],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node22",
+    packages: "external",
+    outfile: output,
+  });
+  const root = mkdtempSync(join(tmpdir(), "swarm-owner-launch-"));
+  const configPath = join(root, "owner.json");
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      databasePath: join(root, "db"),
+      launcherSecret: randomBytes(32).toString("hex"),
+    }),
+    { mode: 0o600 },
+  );
+  const options = {
+    configPath,
+    nodePath: Bun.which("node")!,
+    ownerPath: output,
+  };
+  const started: Awaited<ReturnType<typeof ensureCoordinator>>[] = [];
+  try {
+    const results = await Promise.allSettled(
+      Array.from({ length: 4 }, async () => {
+        const result = await ensureCoordinator(options);
+        started.push(result);
+        return result;
+      }),
+    );
+    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+    const input = {
+      scope: "test",
+      agentId: "alice",
+      requestId: "shared-launch",
+      resumeToken: randomBytes(32).toString("hex"),
+    };
+    const receipts = (await Promise.all(
+      started.map(({ client }) => client.request({ op: "enroll", input })),
+    )) as Array<{ capability: string; replayed: boolean }>;
+    expect(new Set(receipts.map((receipt) => receipt.capability)).size).toBe(1);
+    expect(receipts.filter((receipt) => !receipt.replayed)).toHaveLength(1);
+    const reused = await ensureCoordinator({
+      ...options,
+      nodePath: join(root, "missing-node"),
+    });
+    started.push(reused);
+    expect(reused.launched).toBeUndefined();
+    const deadline = Date.now() + 2000;
+    const living = () =>
+      started.filter(
+        (result) =>
+          result.launched &&
+          result.launched.exitCode === null &&
+          result.launched.signalCode === null,
+      );
+    while (living().length > 1 && Date.now() < deadline) await delay(20);
+    expect(living()).toHaveLength(1);
+  } finally {
+    for (const { client } of started) client.close();
+    await Promise.all(
+      started.map(async ({ launched }) => {
+        if (
+          !launched ||
+          launched.exitCode !== null ||
+          launched.signalCode !== null
+        )
+          return;
+        // Re-reference the detached handle before explicitly awaiting its exit.
+        launched.ref();
+        const exited = once(launched, "exit");
+        launched.kill();
+        await exited;
+      }),
+    );
+  }
+});
+
+test("owner startup reports a missing runtime without an endless retry loop", async () => {
+  const root = mkdtempSync(join(tmpdir(), "swarm-owner-failed-"));
+  const configPath = join(root, "owner.json");
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      databasePath: join(root, "db"),
+      launcherSecret: randomBytes(32).toString("hex"),
+    }),
+  );
+  const result = await ensureCoordinator({
+    configPath,
+    nodePath: join(root, "missing-node"),
+    ownerPath: join(root, "owner.js"),
+    timeoutMs: 1000,
+  }).catch((error) => error);
+  expect(result).toMatchObject({ code: "ENOENT" });
 });

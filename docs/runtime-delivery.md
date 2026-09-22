@@ -12,7 +12,13 @@ stable agent ID, worktree, resume secret and request ID. Identical enrollment
 replay returns the original capability; a new request ID advances the session
 generation and fences the older capability. Owner restart preserves this state.
 Enrollment is disabled unless the owner explicitly installs the callback.
-Automatic owner startup and host-hook wiring remain to be completed.
+`ensureCoordinator` first tries the configured endpoint. Only missing/refused
+local endpoints trigger a hidden detached Node owner. Startup uses bounded
+backoff (five seconds by default), and simultaneous launchers converge through
+exclusive pipe binding. Errors clean up only the child that invocation launched;
+an existing owner is never killed from a PID file. Config requires an absolute
+database path, and launcher clients still authenticate enrollment before use.
+Protected launcher state creation and host-hook wiring remain to be completed.
 
 `RuntimeDelivery` consumes an authenticated coordinator request function and a
 trusted host adapter. It has no spawn or terminal-injection API. Enrollment and
