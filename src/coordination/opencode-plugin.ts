@@ -9,6 +9,109 @@ type Options = Omit<
 type Enrollment = Awaited<ReturnType<typeof enrollRuntime>>;
 type HostEvent = { type: string; properties?: { info?: { id?: string } } };
 
+/** Subscribe before taking the startup snapshot. The host's connected event is
+ * emitted after its subscription is installed, so later mutations are queued.
+ * Call without awaiting done from plugin initialization (host APIs need init). */
+export function observeOpenCode(
+  host: {
+    subscribe(
+      signal: AbortSignal,
+    ): Promise<{ stream: AsyncIterable<HostEvent> }>;
+    list(signal: AbortSignal): Promise<Array<{ id: string }>>;
+  },
+  hooks: { event(input: { event: HostEvent }): Promise<void> },
+  report: (state: "reconciled" | "disconnected") => void,
+) {
+  const controller = new AbortController();
+  const startup = setTimeout(() => controller.abort(), 10000);
+  startup.unref();
+  const done = (async () => {
+    const { stream } = await host.subscribe(controller.signal);
+    for await (const event of stream) {
+      if (controller.signal.aborted) break;
+      if (event.type === "server.connected") {
+        clearTimeout(startup);
+        const sessions = await host.list(
+          AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
+        );
+        for (const info of sessions) {
+          if (controller.signal.aborted) break;
+          await hooks.event({
+            event: { type: "session.updated", properties: { info } },
+          });
+        }
+        report("reconciled");
+      } else if (event.type === "server.instance.disposed") {
+        break;
+      } else {
+        await hooks.event({ event });
+      }
+    }
+  })()
+    .catch(() => {})
+    .finally(() => {
+      clearTimeout(startup);
+      controller.abort();
+      report("disconnected");
+    });
+  return { done, stop: () => controller.abort() };
+}
+
+type OpenCodeClient = {
+  event: {
+    subscribe(
+      options: Record<string, unknown>,
+    ): Promise<{ stream: AsyncIterable<HostEvent> }>;
+  };
+  session: {
+    list(
+      options: Record<string, unknown>,
+    ): Promise<{
+      data?: Array<{
+        id: string;
+        directory: string;
+        time: { archived?: number };
+      }>;
+    }>;
+  };
+};
+
+/** Supply the V1 plugin input directly. In particular, use the actual server
+ * URL: the injected SDK's default URL may still name localhost:4096. */
+export function connectOpenCodeLifecycle(
+  input: { client: OpenCodeClient; directory: string; serverUrl: URL },
+  hooks: { event(input: { event: HostEvent }): Promise<void> },
+  report: (state: "reconciled" | "disconnected") => void,
+) {
+  return observeOpenCode(
+    {
+      subscribe: (signal) =>
+        input.client.event.subscribe({
+          baseUrl: input.serverUrl.href,
+          query: { directory: input.directory },
+          signal,
+          sseMaxRetryAttempts: 1,
+        }),
+      list: async (signal) => {
+        const result = await input.client.session.list({
+          query: { directory: input.directory, limit: 1001 },
+          signal,
+          throwOnError: true,
+        });
+        // V1 has no cursor on this endpoint. Refuse a truncated snapshot instead
+        // of silently reporting a reconciled directory with omitted sessions.
+        if (!Array.isArray(result.data) || result.data.length >= 1001)
+          throw new Error("Session reconciliation needs pagination");
+        return result.data.filter(
+          (s) => s.directory === input.directory && !s.time.archived,
+        );
+      },
+    },
+    hooks,
+    report,
+  );
+}
+
 /** Installed OpenCode V1 hooks. Configuration belongs to a trusted plugin
  * wrapper, never event payloads or tool arguments. Lifecycle only for now. */
 export function opencodeLifecycle(

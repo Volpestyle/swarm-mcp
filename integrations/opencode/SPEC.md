@@ -16,8 +16,29 @@ The extended probe captures `opencode-lifecycle.json`: two real host sessions
 produce exactly two coordinator sessions, each generation 1 and durably closed
 after deletion. The first is adopted through an explicit native title update
 after its creation event was missed. Repeated update events do not reenroll it.
-Startup enumeration/reconciliation remains necessary for sessions that produce
-no subsequent event. The probe starts and stops its own isolated coordinator.
+That initial capture predates subscription-first reconciliation. The probe starts
+and stops its own isolated coordinator.
+
+`connectOpenCodeLifecycle` now starts a directory-scoped SSE subscription and
+lists retained, unarchived sessions after `server.connected`. The tagged
+[event route](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/server/routes/event.ts)
+installs its bus subscription before writing the connected event. Mutations
+during the snapshot remain queued on the stream. The wrapper starts this worker
+without awaiting its lifetime from plugin initialization. It uses the actual
+server URL, preserves the injected SDK authentication, and stops on instance
+disposal. Startup and snapshot requests have ten-second limits; transport loss
+reports disconnected with no hidden infinite retry loop.
+
+`opencode-reconciliation.json` verifies first-session enrollment without a title
+update, then actual instance disposal/reinitialization. The retained session
+keeps its actor and advances to generation 2; SQLite shows generation 1
+superseded and generation 2 closed after deletion. A second native session
+enrolls once and closes. This proves lifecycle restart, not message admission.
+
+The V1 list endpoint has no cursor. Snapshots at the 1,001-row detection limit
+fail explicitly rather than silently reconcile a truncated history. Larger
+histories and automatic recovery from an unexpected stream failure still need
+a supported recovery path. Shell-environment admission remains unverified.
 
 ## Actual host evidence
 

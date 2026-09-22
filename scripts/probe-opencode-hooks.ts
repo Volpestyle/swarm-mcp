@@ -60,11 +60,12 @@ const observer = await enrollRuntime({
 writeFileSync(
   plugin,
   `import { appendFileSync } from 'node:fs';
-import { opencodeLifecycle } from ${JSON.stringify(pathToFileURL(lifecyclePath).href)};
-export const Probe = async ({directory}) => {
+import { opencodeLifecycle, connectOpenCodeLifecycle } from ${JSON.stringify(pathToFileURL(lifecyclePath).href)};
+export const Probe = async ({directory, client, serverUrl}) => {
   const record = event => appendFileSync(process.env.SWARM_PROBE_EVENTS, JSON.stringify(event)+'\\n');
   record({type:'plugin.loaded',directory});
   const hooks = opencodeLifecycle(${JSON.stringify(launcherOptions)}, event => record({ ...event, type: 'coordination.' + event.type }));
+  connectOpenCodeLifecycle({directory, client, serverUrl}, hooks, state => record({type: 'observer.' + state}));
   return {...hooks, event: async (input) => { await hooks.event(input); record(input.event); }};
 };`,
 );
@@ -124,7 +125,7 @@ try {
   });
   assert.equal(created.status, 200, await created.clone().text());
   const session = (await created.json()) as { id: string };
-  const waitFor = async (type: string, hostSessionId: string) => {
+  const waitFor = async (type: string, hostSessionId: string, count = 1) => {
     for (let i = 0; i < 150; i++) {
       const records = existsSync(events)
         ? readFileSync(events, "utf8")
@@ -136,25 +137,26 @@ try {
       if (records.some((e) => e.type === "coordination.error"))
         throw new Error("Lifecycle adapter reported an error");
       if (
-        records.some(
+        records.filter(
           (e) => e.type === type && e.hostSessionId === hostSessionId,
-        )
+        ).length >= count
       )
         return;
       await delay(100);
     }
     throw new Error(`Missing ${type} for ${hostSessionId}`);
   };
-  // The initial create can precede the host event subscription. A native
-  // update is an adoption opportunity, without fabricating plugin callbacks.
-  const updated = await fetch(base + "/session/" + session.id, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title: "adopt pre-subscription session" }),
+  await waitFor("coordination.enrolled", session.id);
+  const disposed = await fetch(base + "/instance/dispose", {
+    method: "POST",
     signal: AbortSignal.timeout(10000),
   });
-  assert.equal(updated.status, 200, await updated.clone().text());
-  await waitFor("coordination.enrolled", session.id);
+  assert.equal(disposed.status, 200);
+  const restored = await fetch(base + "/session", {
+    signal: AbortSignal.timeout(20000),
+  });
+  assert.equal(restored.status, 200);
+  await waitFor("coordination.enrolled", session.id, 2);
   const removed = await fetch(base + "/session/" + session.id, {
     method: "DELETE",
     signal: AbortSignal.timeout(10000),
@@ -195,6 +197,14 @@ try {
       recorded.some((event) => event.type === type),
       `Missing real host event: ${type}`,
     );
+  assert.equal(
+    recorded.filter((event) => event.type === "observer.reconciled").length,
+    2,
+  );
+  assert.equal(
+    recorded.filter((event) => event.type === "observer.disconnected").length,
+    1,
+  );
   const db = new Database(join(root, "private", "coordination.db"), {
     readonly: true,
   });
@@ -207,20 +217,23 @@ try {
       .all(observer.actor);
     assert.equal(
       coordinatorSessions.length,
-      2,
-      "Exactly one enrollment per native session",
+      3,
+      "One additional incarnation after host instance restart",
     );
-    for (const entry of coordinatorSessions as Array<{
+    const rows = coordinatorSessions as Array<{
+      agent_id: string;
       state: string;
       generation: number;
-    }>) {
-      assert.equal(entry.state, "closed");
-      assert.equal(
-        entry.generation,
-        1,
-        "Repeated host updates must not supersede the session",
-      );
-    }
+    }>;
+    assert.equal(
+      new Set(rows.map((row) => row.agent_id)).size,
+      2,
+      "Stable actors across restart",
+    );
+    assert.deepEqual(
+      rows.map((row) => `${row.generation}:${row.state}`).sort(),
+      ["1:closed", "1:superseded", "2:closed"],
+    );
   } finally {
     db.close();
   }
@@ -238,7 +251,7 @@ try {
         ).length,
         recorded,
         limitations:
-          "Actual host plugin load, automatic enrollment and coordinator session close for two native sessions. Missing session.created is recorded, not assumed supported. No model invocation, tool-boundary delivery, reservation denial or wakeup proven.",
+          "Actual host plugin load, Subscription-first enrollment, instance restart reconciliation with stable actor and fenced generation, and close for two native sessions. Missing session.created is recorded, not assumed supported. No model invocation, tool-boundary delivery, reservation denial or wakeup proven.",
       },
       null,
       2,
