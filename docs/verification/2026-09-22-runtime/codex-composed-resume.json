@@ -1,0 +1,196 @@
+{
+  "version": "codex-cli 0.155.1",
+  "initialized": {
+    "userAgent": "swarm_lifecycle_probe/0.155.1 (Windows 10.0.26200; x86_64) dumb (swarm_lifecycle_probe; 1)",
+    "codexHome": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-codex-probe-6tNj8C\\codex",
+    "platformFamily": "windows",
+    "platformOs": "windows"
+  },
+  "hooks": {
+    "data": [
+      {
+        "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-codex-probe-6tNj8C",
+        "hooks": [
+          {
+            "key": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-codex-probe-6tNj8C\\codex\\hooks.json:pre_tool_use:0:0",
+            "eventName": "preToolUse",
+            "handlerType": "command",
+            "command": "node -e \"process.stdout.write('{}')\"",
+            "async": false,
+            "matcher": "apply_patch",
+            "timeoutSec": 600,
+            "statusMessage": null,
+            "additionalContextLimit": null,
+            "sourcePath": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-codex-probe-6tNj8C\\codex\\hooks.json",
+            "source": "user",
+            "pluginId": null,
+            "displayOrder": 0,
+            "enabled": true,
+            "isManaged": false,
+            "currentHash": "sha256:9e4976efe207758474d100e4c796dc1da616d804a20202bd1791a169e401a42b",
+            "trustStatus": "untrusted"
+          },
+          {
+            "key": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-codex-probe-6tNj8C\\codex\\hooks.json:post_tool_use:0:0",
+            "eventName": "postToolUse",
+            "handlerType": "command",
+            "command": "node -e \"process.stdout.write('{}')\"",
+            "async": false,
+            "matcher": "apply_patch",
+            "timeoutSec": 600,
+            "statusMessage": null,
+            "additionalContextLimit": null,
+            "sourcePath": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-codex-probe-6tNj8C\\codex\\hooks.json",
+            "source": "user",
+            "pluginId": null,
+            "displayOrder": 1,
+            "enabled": true,
+            "isManaged": false,
+            "currentHash": "sha256:37829071a6fe5ddf385effbcd58cb516e6dc7a65b6301985c26efd6f73b3970e",
+            "trustStatus": "untrusted"
+          },
+          {
+            "key": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-codex-probe-6tNj8C\\codex\\hooks.json:session_start:0:0",
+            "eventName": "sessionStart",
+            "handlerType": "command",
+            "command": "node -e \"process.stdout.write('{}')\"",
+            "async": false,
+            "matcher": "startup|resume",
+            "timeoutSec": 600,
+            "statusMessage": null,
+            "additionalContextLimit": null,
+            "sourcePath": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-codex-probe-6tNj8C\\codex\\hooks.json",
+            "source": "user",
+            "pluginId": null,
+            "displayOrder": 2,
+            "enabled": true,
+            "isManaged": false,
+            "currentHash": "sha256:1d68e5618927a9d25beacf798e2b2b68717bd9cb411a7f5184158d54638b06fe",
+            "trustStatus": "untrusted"
+          },
+          {
+            "key": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-codex-probe-6tNj8C\\codex\\hooks.json:session_end:0:0",
+            "eventName": "sessionEnd",
+            "handlerType": "command",
+            "command": "node -e \"process.stdout.write('{}')\"",
+            "async": false,
+            "matcher": null,
+            "timeoutSec": 3,
+            "statusMessage": null,
+            "additionalContextLimit": null,
+            "sourcePath": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-codex-probe-6tNj8C\\codex\\hooks.json",
+            "source": "user",
+            "pluginId": null,
+            "displayOrder": 3,
+            "enabled": true,
+            "isManaged": false,
+            "currentHash": "sha256:fb03d90ca5cd34f3f397d5319e1f045736a052d24c8c473580ad92d3451721dc",
+            "trustStatus": "untrusted"
+          }
+        ],
+        "warnings": [],
+        "errors": []
+      }
+    ]
+  },
+  "threadId": "01a0c89c-6d36-7d51-b575-670459a70ba0",
+  "status": {
+    "type": "idle"
+  },
+  "readBeforeFirstTurn": {
+    "thread": {
+      "id": "01a0c89c-6d36-7d51-b575-670459a70ba0",
+      "environments": null,
+      "extra": null,
+      "sessionId": "01a0c89c-6d36-7d51-b575-670459a70ba0",
+      "forkedFromId": null,
+      "parentThreadId": null,
+      "preview": "",
+      "ephemeral": false,
+      "section": null,
+      "sectionEnteredAt": null,
+      "projectId": null,
+      "historyMode": "paginated",
+      "modelProvider": "fixture",
+      "model": "fixture",
+      "reasoningEffort": null,
+      "createdAt": 1790072089,
+      "updatedAt": 1790072097,
+      "recencyAt": 1790072089,
+      "status": {
+        "type": "notLoaded"
+      },
+      "path": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-codex-probe-6tNj8C\\codex\\archived_sessions\\rollout-2026-09-22T05-14-49-01a0c89c-6d36-7d51-b575-670459a70ba0.jsonl",
+      "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-codex-probe-6tNj8C",
+      "cliVersion": "0.155.1",
+      "originator": "swarm_lifecycle_probe",
+      "source": "vscode",
+      "canAcceptDirectInput": null,
+      "threadSource": null,
+      "agentNickname": null,
+      "agentRole": null,
+      "gitInfo": null,
+      "name": null,
+      "daybreakEnabled": null,
+      "turns": []
+    }
+  },
+  "idleSteer": "{\"code\":-32600,\"message\":\"thread not found: 01a0c89c-6d36-7d51-b575-670459a70ba0\"}",
+  "unsubscribe": {
+    "status": "notLoaded"
+  },
+  "notifications": [
+    "remoteControl/status/changed",
+    "thread/started",
+    "mcpServer/startupStatus/updated",
+    "warning",
+    "thread/status/changed",
+    "thread/archived",
+    "thread/unarchived",
+    "deprecationNotice",
+    "thread/goal/cleared"
+  ],
+  "inferenceRequested": false,
+  "nativeResume": {
+    "sameThread": true,
+    "actorMatched": true,
+    "generations": [
+      1,
+      2
+    ],
+    "loadedRefused": true,
+    "oldCapabilityRejected": true,
+    "nativeCloseRevoked": true,
+    "automaticAttachment": true,
+    "initialAvailability": "idle",
+    "listenersReleased": true
+  },
+  "mcp": {
+    "tools": [
+      "swarm_assign",
+      "swarm_context",
+      "swarm_evidence",
+      "swarm_find",
+      "swarm_inbox",
+      "swarm_send",
+      "swarm_sync",
+      "swarm_task",
+      "swarm_wait"
+    ],
+    "actorMatched": true,
+    "stateBeforeExplicitAck": "leased",
+    "stateAfterExplicitAck": "acknowledged",
+    "identityBinding": "fixture enrollment; not automatic native-thread lifecycle",
+    "nativeMcpContext": {
+      "threadId": null,
+      "sessionId": null
+    },
+    "perThreadConfiguration": {
+      "distinctActors": true,
+      "originalBindingPreserved": true,
+      "peerInboxEmpty": true,
+      "originalMessageState": "pending"
+    },
+    "driver": "thread-scoped app-server MCP call; no model turn"
+  }
+}

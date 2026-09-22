@@ -80,6 +80,19 @@ the observer closes its coordinator session and a subsequent bootstrap fails wit
 Busy/blocked mappings have focused tests; actual model-turn delivery and automatic
 attachment of the observer during initial thread creation remain unverified.
 
+`resumeCodexRuntime` composes enrollment, native resume and observer attachment.
+The owner provides `call` and `subscribe` for its trusted app-server connection.
+Subscription starts before resume; a bounded queue retains early lifecycle events.
+After binding, the helper reads native status and applies the snapshot only if no
+newer notification arrived during the read. It returns `lifecycle`, `settle()` for
+observation completion and `dispose()` to detach listeners, report disconnection
+and release the coordinator connection. Disposal does not end a native session.
+
+The actual-host `--resume` probe now uses this composed helper. It verifies initial
+idle availability, native archive revocation and listener cleanup. Evidence:
+`docs/verification/2026-09-22-runtime/codex-composed-resume.json`. Initial thread
+creation and model-visible inbox delivery remain separate unfinished paths.
+
 The probe's hooks are reported as untrusted. Listing a hook is not execution:
 live setup must obtain normal hook trust before claiming automatic delivery.
 No live trust/config changes were made. Automatic native-thread enrollment, safe

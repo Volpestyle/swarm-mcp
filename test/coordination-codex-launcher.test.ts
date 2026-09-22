@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { resumeCodexThread } from "../src/coordination/codex-launcher";
+import {
+  resumeCodexThread,
+  resumeCodexRuntime,
+} from "../src/coordination/codex-launcher";
 
 test("Codex resume rejects mismatched workspaces and loaded threads before enrollment", async () => {
   const root = mkdtempSync(join(tmpdir(), "codex-resume-guards-"));
@@ -42,6 +45,24 @@ test("Codex resume rejects mismatched workspaces and loaded threads before enrol
     "thread/loaded/list",
     "thread/loaded/list",
   ]);
+  expect(existsSync(options.stateDirectory)).toBe(false);
+  let subscribed = false;
+  let detached = false;
+  await expect(
+    resumeCodexRuntime(options, {
+      subscribe() {
+        subscribed = true;
+        return () => {
+          detached = true;
+        };
+      },
+      async call() {
+        expect(subscribed).toBe(true);
+        throw new Error("Native host unavailable");
+      },
+    }),
+  ).rejects.toThrow("Native host unavailable");
+  expect(detached).toBe(true);
   expect(existsSync(options.stateDirectory)).toBe(false);
   await expect(
     resumeCodexThread(options, async (method) =>

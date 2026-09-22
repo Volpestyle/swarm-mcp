@@ -23,8 +23,10 @@ the MCP subprocess; native lifecycle binding must use an explicit host API path.
 The Codex lifecycle observer also receives native `thread/archived` in the probe
 and revokes that thread's coordinator capability. Status mapping distinguishes
 busy, blocked, idle, disconnected and unsupported; nonterminal connection loss
-does not revoke identity. Automatic observer attachment and model-turn context
-delivery are still open.
+does not revoke identity. `resumeCodexRuntime` now attaches the observer before
+resume, reconciles initial status and releases listeners on disposal; the installed
+host probe verifies idle status and archive revocation through that composition.
+Initial thread creation and model-turn context delivery are still open.
 
 OpenCode and Claude evidence uses scripted localhost model endpoints; it proves
 host execution and context assembly, not model comprehension. Captures live in

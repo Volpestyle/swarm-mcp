@@ -1,6 +1,8 @@
 import { isAbsolute } from "node:path";
 import { realpathSync, statSync } from "node:fs";
 import { enrollRuntime } from "./runtime-launcher";
+import { CoordinationClient } from "./ipc";
+import { CodexLifecycle } from "./codex-lifecycle";
 export { CodexLifecycle } from "./codex-lifecycle";
 
 type HostCall = (
@@ -82,4 +84,114 @@ export async function resumeCodexThread(
   if (sync.isError || sync.structuredContent?.data?.actor !== enrolled.actor)
     throw new Error("Codex resumed without the expected coordinator actor");
   return { ...enrolled, threadId };
+}
+
+/** Subscribe before resume so early native lifecycle events cannot be missed.
+ * The app-server owner supplies its trusted notification and disconnect source.
+ * Dispose this handle before resuming the same native thread again. */
+export async function resumeCodexRuntime(
+  options: Parameters<typeof resumeCodexThread>[0],
+  host: {
+    call: HostCall;
+    subscribe: (
+      notify: (method: string, params: unknown) => void,
+      disconnected: () => void,
+    ) => () => void;
+  },
+) {
+  let client: CoordinationClient | undefined;
+  let lifecycle: CodexLifecycle | undefined;
+  let revision = 0;
+  let lost = false;
+  let failure: unknown;
+  const buffered: Array<[string, unknown]> = [];
+  const pending = new Set<Promise<unknown>>();
+  const track = (work: Promise<unknown>) => {
+    const handled = work
+      .catch((error) => {
+        failure = error;
+      })
+      .finally(() => pending.delete(handled));
+    pending.add(handled);
+  };
+  const settle = async () => {
+    while (pending.size) await Promise.all([...pending]);
+    if (failure) throw failure;
+  };
+  const unsubscribe = host.subscribe(
+    (method, params) => {
+      if (
+        !params ||
+        typeof params !== "object" ||
+        (params as { threadId?: unknown }).threadId !== options.hostSessionId ||
+        ![
+          "thread/status/changed",
+          "thread/closed",
+          "thread/archived",
+          "thread/deleted",
+        ].includes(method)
+      )
+        return;
+      revision++;
+      if (lifecycle) track(lifecycle.notify(method, params));
+      else if (buffered.length < 128) buffered.push([method, params]);
+      else failure = new Error("Codex lifecycle buffer exceeded its bound");
+    },
+    () => {
+      lost = true;
+      revision++;
+      if (lifecycle) track(lifecycle.disconnected());
+    },
+  );
+  try {
+    const binding = await resumeCodexThread(options, host.call);
+    client = await CoordinationClient.connect(
+      binding.environment.SWARM_COORDINATOR_ENDPOINT,
+      binding.environment.SWARM_SESSION_CAPABILITY,
+    );
+    lifecycle = new CodexLifecycle(binding.threadId, (operation) =>
+      client!.request(operation),
+    );
+    for (const [method, params] of buffered)
+      track(lifecycle.notify(method, params));
+    buffered.length = 0;
+    if (lost) throw new Error("Codex transport disconnected during resume");
+    const snapshotRevision = revision;
+    const snapshot = await host.call("thread/read", {
+      threadId: binding.threadId,
+    });
+    if (snapshot.thread.id !== binding.threadId)
+      throw new Error("Codex lifecycle snapshot identity mismatch");
+    // A notification arriving during the read is newer than its snapshot.
+    if (revision === snapshotRevision)
+      track(
+        lifecycle.notify("thread/status/changed", {
+          threadId: binding.threadId,
+          status: snapshot.thread.status,
+        }),
+      );
+    await settle();
+    let disposed = false;
+    return {
+      ...binding,
+      lifecycle,
+      settle,
+      async dispose() {
+        if (disposed) return;
+        disposed = true;
+        unsubscribe();
+        try {
+          await settle();
+          await lifecycle!.disconnected();
+        } finally {
+          client!.close();
+        }
+      },
+    };
+  } catch (error) {
+    unsubscribe();
+    await Promise.all([...pending]);
+    client?.close();
+    throw error;
+  }
 }

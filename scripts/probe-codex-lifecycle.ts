@@ -6,9 +6,11 @@ import { once } from "node:events";
 import { pathToFileURL } from "node:url";
 import { enrollRuntime } from "../src/coordination/runtime-launcher";
 import { CoordinationClient } from "../src/coordination/ipc";
-import { resumeCodexThread } from "../src/coordination/codex-launcher";
+import {
+  resumeCodexThread,
+  resumeCodexRuntime,
+} from "../src/coordination/codex-launcher";
 import { CoordinationError } from "../src/coordination/errors";
-import { CodexLifecycle } from "../src/coordination/codex-lifecycle";
 
 const [capture, executable, mode] = process.argv.slice(2);
 if (!capture || !executable)
@@ -105,8 +107,8 @@ const pending = new Map<
   { resolve: (result: any) => void; reject: (error: Error) => void }
 >();
 const notices: string[] = [];
-let lifecycle: CodexLifecycle | undefined;
-const lifecyclePending: Promise<unknown>[] = [];
+const nativeListeners = new Set<(method: string, params: unknown) => void>();
+const disconnectListeners = new Set<() => void>();
 let sequence = 0;
 const send = (message: unknown) =>
   child.stdin.write(JSON.stringify(message) + "\n");
@@ -128,13 +130,12 @@ const read = (async () => {
         else wait.resolve(message.result);
       } else if (message.method) {
         notices.push(message.method);
-        if (lifecycle)
-          lifecyclePending.push(
-            lifecycle.notify(message.method, message.params),
-          );
+        for (const listener of nativeListeners)
+          listener(message.method, message.params);
       }
     }
   }
+  for (const listener of disconnectListeners) listener();
 })();
 const stderr = new Response(child.stderr).text();
 const call = (method: string, params: unknown) => {
@@ -355,10 +356,25 @@ try {
       throw new Error("Loaded Codex thread was not protected");
     await call("thread/archive", { threadId });
     await call("thread/unarchive", { threadId });
-    const next = await resumeCodexThread(
+    const next = await resumeCodexRuntime(
       { ...nativeOptions, incarnation: "native-second" },
-      call,
+      {
+        call,
+        subscribe(notify, disconnected) {
+          nativeListeners.add(notify);
+          disconnectListeners.add(disconnected);
+          return () => {
+            nativeListeners.delete(notify);
+            disconnectListeners.delete(disconnected);
+          };
+        },
+      },
     );
+    const initialAvailability = next.lifecycle.observe().state;
+    if (initialAvailability !== "idle")
+      throw new Error(
+        "Codex composed resume did not observe native idle state",
+      );
     const oldClient = await CoordinationClient.connect(
       native.environment.SWARM_COORDINATOR_ENDPOINT,
       native.environment.SWARM_SESSION_CAPABILITY,
@@ -384,11 +400,8 @@ try {
       next.environment.SWARM_SESSION_CAPABILITY,
     );
     try {
-      lifecycle = new CodexLifecycle(threadId, (operation) =>
-        nativeClient.request(operation),
-      );
       await call("thread/archive", { threadId });
-      await Promise.all(lifecyclePending);
+      await next.settle();
       const closedCapabilityRejected = await nativeClient
         .request({ op: "bootstrap" })
         .then(
@@ -402,11 +415,12 @@ try {
           "Native close did not revoke coordinator session: " +
             JSON.stringify({
               notices: [...new Set(notices)],
-              observation: lifecycle.observe(),
+              observation: next.lifecycle.observe(),
             }),
         );
     } finally {
       nativeClient.close();
+      await next.dispose();
     }
     nativeResume = {
       sameThread: true,
@@ -415,6 +429,10 @@ try {
       loadedRefused,
       oldCapabilityRejected,
       nativeCloseRevoked: true,
+      automaticAttachment: true,
+      initialAvailability,
+      listenersReleased:
+        nativeListeners.size === 0 && disconnectListeners.size === 0,
     };
   }
   const snapshot = await call("thread/read", { threadId }).catch(
