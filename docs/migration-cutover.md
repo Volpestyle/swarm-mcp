@@ -1,9 +1,10 @@
 # Reversible coordination cutover
 
 VUH-1344 is in progress. The compatibility launch guard, versioned legacy
-backup/restore and offline coordinator import below are implemented. The isolated
-canary and release packaging are not yet complete. Do not switch a live profile
-using this partial procedure.
+backup/restore and offline coordinator import below are implemented. An isolated
+Node-owner canary passed restart, reconnect, lease recovery and reconciled rollback.
+Release packaging, installation/skill guidance and release authorization remain
+open. Do not switch a live profile using this partial procedure.
 
 ## Database boundary
 
@@ -169,5 +170,7 @@ of directory operations on every filesystem.
 delivery/ack, blocked claims and explicit reconciliation through the real core.
 It also runs a Node importer and abruptly terminates it before transaction commit
 and before publication: neither candidate can start. Combined migration tests
-currently cover both scheduling authority and lease ownership. Isolated runtime restart/lease-recovery
-and operational rollback remain the next canary gate.
+cover both scheduling authority and lease ownership. The
+[isolated canary evidence](verification/2026-09-22-migration/README.md) verifies
+runtime restart/lease recovery and explicit rollback reconciliation over the
+production Node owner. It does not establish an installed-host or live cutover.

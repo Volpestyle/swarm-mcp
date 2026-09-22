@@ -1,0 +1,74 @@
+{
+  "revision": "8a1a0b525ee80de0eec670bfb7190aface58d256",
+  "sourceDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "workingTree": "M src/generated/protocol.ts",
+  "harnessSha256": "14fc17f4f3a87434eb77ef3b4c398d06b807fd64bb04a0b993352d28b7ba45ef",
+  "ownerBundleSha256": "63004437ff369b5279cf91324b6963f20bc1832bf4021e236841c3193f3dd4b3",
+  "startedAt": "2026-09-22T13:30:29.494Z",
+  "platform": "win32",
+  "node": "v22.14.0",
+  "bun": "1.3.11",
+  "root": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-migration-canary-boN0UA",
+  "method": "isolated imported fixture over production Node owner IPC",
+  "delivery": {
+    "messages": 2,
+    "acknowledged": 2,
+    "staleLeaseRejected": true,
+    "reconnectAcknowledged": true,
+    "acknowledgmentReplay": true
+  },
+  "execution": {
+    "oldFence": 1,
+    "newFence": 2,
+    "staleFinishRejected": true,
+    "finishReplay": true,
+    "attempts": [
+      {
+        "id": "8ba9c175-62f7-46e9-8ed4-1c368d40d3fa",
+        "task_id": "legacy-b88ae2a4c2c8c56b886957e255996bfd",
+        "actor": "worker",
+        "session_id": "261441c2-b562-4e84-8912-34fa11e8bab3",
+        "generation": 1,
+        "fence": 1,
+        "lease_until": 1790083829859,
+        "state": "abandoned",
+        "created_at": 1790083829809,
+        "ended_at": 1790083831132,
+        "progress_at": null,
+        "result": null,
+        "reason": "lease_expired",
+        "retentionState": "retained"
+      },
+      {
+        "id": "9f013d2a-0706-4ea8-bd69-f7dfe9777ec1",
+        "task_id": "legacy-b88ae2a4c2c8c56b886957e255996bfd",
+        "actor": "worker",
+        "session_id": "261441c2-b562-4e84-8912-34fa11e8bab3",
+        "generation": 1,
+        "fence": 2,
+        "lease_until": 1790083891136,
+        "state": "completed",
+        "created_at": 1790083831136,
+        "ended_at": 1790083831138,
+        "progress_at": null,
+        "result": {
+          "artifact": "result.txt",
+          "evidence": "exclusive creation after reconciliation",
+          "limitations": [
+            "fixture effect"
+          ]
+        },
+        "reason": null,
+        "retentionState": "retained"
+      }
+    ]
+  },
+  "rollback": {
+    "freshRestore": true,
+    "postSnapshotEffectExplicitlyReconciled": true,
+    "checkedLegacyLaunch": true,
+    "snapshotUnchanged": true
+  },
+  "ok": true,
+  "finishedAt": "2026-09-22T13:30:31.284Z"
+}
