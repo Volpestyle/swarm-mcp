@@ -104,6 +104,52 @@ export class DispatchTransaction {
     };
   }
 
+  provisioned(input: {
+    intentId: string;
+    token: string;
+    routeId: string;
+    externalId: string;
+  }) {
+    const row = this.intent(input.intentId);
+    requireText(input.externalId, "externalId", 1024);
+    if (
+      !["provisioning", "bound"].includes(row.state) ||
+      row.provision_token !== input.token ||
+      row.route_id !== input.routeId ||
+      (row.external_id !== null && row.external_id !== input.externalId)
+    )
+      throw new CoordinationError(
+        "conflict",
+        "External identity does not match provisioning intent",
+      );
+    if (row.external_id === null) {
+      this.db
+        .prepare(
+          "UPDATE dispatch_intents SET external_id=? WHERE scope=? AND intent_id=?",
+        )
+        .run(input.externalId, this.command.scope, input.intentId);
+      this.change("dispatch.provisioned", input.intentId, {
+        taskId: row.task_id,
+        externalId: input.externalId,
+      });
+    }
+    return { externalId: input.externalId };
+  }
+
+  provisionLookup(token: string, routeId: string) {
+    validateSession(this.db, this.command as SessionContext);
+    requireText(token, "token");
+    requireText(routeId, "routeId");
+    const row = this.db
+      .prepare(
+        "SELECT * FROM dispatch_intents WHERE scope=? AND provision_token=? AND route_id=?",
+      )
+      .get(this.command.scope, token, routeId) as Row | undefined;
+    return row
+      ? { taskId: row.task_id, externalId: row.external_id, status: row.state }
+      : null;
+  }
+
   /** Trusted launcher only: stopped must come from terminal provider evidence,
    * never from a timeout, missing lookup, or an agent's claim of completion. */
   release(input: {
@@ -222,7 +268,8 @@ export class DispatchTransaction {
     if (
       input.worker.scope !== this.command.scope ||
       row.route_id !== input.routeId ||
-      row.provision_token !== input.token
+      row.provision_token !== input.token ||
+      (row.external_id !== null && row.external_id !== input.externalId)
     )
       throw new CoordinationError(
         "conflict",

@@ -1,5 +1,25 @@
 # Execution routing (VUH-1340, implementation in progress)
 
+## OpenCode native provider
+
+`openCodeDispatchProvider`, built in `dist/coordination/opencode-dispatch.js`,
+creates an empty child under a trusted configured OpenCode parent and workspace.
+It copies the parent's session permission rules and submits no prompt. The returned
+host ID is persisted against the dispatch token before resolving plugin enrollment;
+normal atomic binding and inbox delivery then admit the work.
+
+Recovery uses that retained host ID and rechecks parent, directory and archive
+state. It never searches titles/labels to establish identity and never repeats an
+uncertain create. If the create response is lost before the ID is persisted,
+capacity remains reserved with an uncertain outcome. OpenCode's inspected create
+API has no caller-supplied session ID; resolving that case needs authoritative
+external evidence. Cooperative stop uses the enrolled worker's fenced result.
+
+SDK transport-fixture tests cover inherited permission rules, delayed enrollment,
+coordinator reopen, wrong-parent rejection, single assignment and response loss
+without another create. Installed-host provisioning and production native-route
+configuration/enrollment resolution still require integration and proof.
+
 Use the lowest-overhead authorized execution path that satisfies the task's
 requirements. Native runtime messaging is sufficient when its host, workspace,
 lifetime and capabilities fit. Use an independent peer when those requirements
