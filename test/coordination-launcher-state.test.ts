@@ -12,6 +12,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { agentState, ownerState } from "../src/coordination/launcher-state";
+import { setTimeout as delay } from "node:timers/promises";
 
 test("concurrent private-state writers publish one complete owner and resume identity", async () => {
   const root = join(mkdtempSync(join(tmpdir(), "swarm-private-")), "state");
@@ -41,25 +42,25 @@ test("concurrent private-state writers publish one complete owner and resume ide
   expect(
     readdirSync(root).filter((name) => name.startsWith(".pending")),
   ).toEqual([]);
-  const first = agentState(root, "scope", "host", "session");
-  expect(agentState(root, "scope", "host", "session")).toEqual(first);
-  expect(agentState(root, "different", "host", "session").agentId).not.toBe(
-    first.agentId,
-  );
+  const first = await agentState(root, "scope", "host", "session");
+  expect(await agentState(root, "scope", "host", "session")).toEqual(first);
+  expect(
+    (await agentState(root, "different", "host", "session")).agentId,
+  ).not.toBe(first.agentId);
 }, 20000);
 
-test("malformed owner state is rejected without rotating credentials", () => {
+test("malformed owner state is rejected without rotating credentials", async () => {
   const root = join(
     mkdtempSync(join(tmpdir(), "swarm-private-corrupt-")),
     "state",
   );
-  const initial = ownerState(root);
+  const initial = await ownerState(root);
   writeFileSync(initial.configPath, "{partial");
-  expect(() => ownerState(root)).toThrow();
+  await expect(ownerState(root)).rejects.toThrow();
   expect(readFileSync(initial.configPath, "utf8")).toBe("{partial");
 }, 10000);
 
-test("existing insecure state directories are refused without writing credentials", () => {
+test("existing insecure state directories are refused without writing credentials", async () => {
   const root = join(
     mkdtempSync(join(tmpdir(), "swarm-private-insecure-")),
     "state",
@@ -71,6 +72,16 @@ test("existing insecure state directories are refused without writing credential
       stdio: "ignore",
     });
   else chmodSync(root, 0o755);
-  expect(() => ownerState(root)).toThrow();
+  await expect(ownerState(root)).rejects.toThrow();
   expect(existsSync(join(root, "owner.json"))).toBe(false);
 }, 10000);
+
+test("private state remains readable after an idle interval longer than the ACL subprocess deadline", async () => {
+  const root = join(
+    mkdtempSync(join(tmpdir(), "swarm-private-idle-")),
+    "state",
+  );
+  const initial = await ownerState(root);
+  await delay(11000);
+  expect(await ownerState(root)).toEqual(initial);
+}, 25000);

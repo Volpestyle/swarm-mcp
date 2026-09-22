@@ -9,6 +9,7 @@ import { opencodeLifecycle } from "../src/coordination/opencode-plugin";
 import { CoordinationClient } from "../src/coordination/ipc";
 import { observeInbox } from "../src/coordination/inbox-observer";
 import { setTimeout as delay } from "node:timers/promises";
+import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 test("OpenCode post-tool admission preserves explicit ack and suppresses repeated callbacks", async () => {
   mkdirSync(resolve("dist/test"), { recursive: true });
@@ -48,11 +49,29 @@ test("OpenCode post-tool admission preserves explicit ack and suppresses repeate
     sender.environment.SWARM_SESSION_CAPABILITY,
   );
   let recipient: CoordinationClient | undefined;
+  let hooks: ReturnType<typeof opencodeLifecycle> | undefined;
   try {
     let actor = "";
-    const hooks = opencodeLifecycle(options, (event) => {
+    hooks = opencodeLifecycle(options, (event) => {
       if (event.actor) actor = event.actor;
     });
+    hooks.configureWake(
+      createOpencodeClient({
+        baseUrl: "http://fixture",
+        fetch: (async (request: Request) => {
+          const path = new URL(request.url).pathname;
+          return Response.json(
+            path.endsWith("/message") ||
+              path === "/permission" ||
+              path === "/question"
+              ? []
+              : path === "/session/status"
+                ? { recipient: { type: "busy" } }
+                : { time: {} },
+          );
+        }) as typeof fetch,
+      }),
+    );
     const env: Record<string, string> = {};
     await hooks["shell.env"]({ sessionID: "recipient" }, { env });
     recipient = await CoordinationClient.connect(
@@ -167,6 +186,7 @@ test("OpenCode post-tool admission preserves explicit ack and suppresses repeate
     await hooks["chat.message"]({ sessionID: "recipient" }, chat);
     expect(chat.parts[0].text).toBe(admitted);
   } finally {
+    await hooks?.event({ event: { type: "server.instance.disposed" } });
     recipient?.close();
     client.close();
     if (sender.launchedOwner) {

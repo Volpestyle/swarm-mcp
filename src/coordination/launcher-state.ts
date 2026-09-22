@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID, createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   mkdirSync,
   lstatSync,
@@ -14,7 +15,9 @@ import {
 import { isAbsolute, join } from "node:path";
 import { readOwnerConfig } from "./owner-config";
 
-function privatePath(path: string, initialize = false) {
+const runFile = promisify(execFile);
+
+async function privatePath(path: string, initialize = false) {
   const stat = lstatExists(path) ? lstatSync(path) : undefined;
   if (stat?.isSymbolicLink())
     throw new Error("Launcher state cannot be a symbolic link");
@@ -27,7 +30,7 @@ function privatePath(path: string, initialize = false) {
     return;
   }
   // Pass paths as environment data, never executable PowerShell interpolation.
-  execFileSync(
+  await runFile(
     "powershell.exe",
     [
       "-NoProfile",
@@ -58,7 +61,6 @@ foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.S
     {
       windowsHide: true,
       timeout: 10000,
-      stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
         SWARM_PRIVATE_STATE_PATH: path,
@@ -70,11 +72,11 @@ foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.S
 
 /** Caller creates the parent under its own profile directory. Existing insecure
  * directories are rejected, never silently re-permissioned or rotated. */
-export function prepareLauncherDirectory(path: string) {
+export async function prepareLauncherDirectory(path: string) {
   if (!isAbsolute(path))
     throw new Error("Launcher state directory must be absolute");
   if (process.platform === "win32") {
-    privatePath(path, true);
+    await privatePath(path, true);
     if (!lstatSync(path).isDirectory())
       throw new Error("Launcher state path must be a directory");
     return;
@@ -88,10 +90,14 @@ export function prepareLauncherDirectory(path: string) {
   }
   if (!lstatSync(path).isDirectory())
     throw new Error("Launcher state path must be a directory");
-  privatePath(path, created);
+  await privatePath(path, created);
 }
 
-function record<T>(directory: string, name: string, create: () => T): T {
+async function record<T>(
+  directory: string,
+  name: string,
+  create: () => T,
+): Promise<T> {
   const target = join(directory, name);
   if (!lstatExists(target)) {
     const temporary = join(directory, `.pending-${randomUUID()}`);
@@ -110,7 +116,7 @@ function record<T>(directory: string, name: string, create: () => T): T {
       unlinkSync(temporary);
     }
   }
-  privatePath(target);
+  await privatePath(target);
   const bytes = readFileSync(target);
   if (bytes.byteLength > 8192) throw new Error("Launcher state exceeds 8 KiB");
   return JSON.parse(bytes.toString("utf8")) as T;
@@ -125,9 +131,9 @@ function lstatExists(path: string) {
   }
 }
 
-export function ownerState(directory: string) {
-  prepareLauncherDirectory(directory);
-  record(directory, "owner.json", () => ({
+export async function ownerState(directory: string) {
+  await prepareLauncherDirectory(directory);
+  await record(directory, "owner.json", () => ({
     databasePath: join(directory, "coordination.db"),
     launcherSecret: randomBytes(32).toString("hex"),
   }));
@@ -137,13 +143,13 @@ export function ownerState(directory: string) {
   };
 }
 
-export function agentState(
+export async function agentState(
   directory: string,
   scope: string,
   host: string,
   hostSessionId: string,
 ) {
-  prepareLauncherDirectory(directory);
+  await prepareLauncherDirectory(directory);
   if (
     ![scope, host, hostSessionId].every(
       (value) =>
@@ -154,7 +160,7 @@ export function agentState(
   const key = createHash("sha256")
     .update(JSON.stringify([scope, host, hostSessionId]))
     .digest("hex");
-  const result = record(directory, `agent-${key}.json`, () => ({
+  const result = await record(directory, `agent-${key}.json`, () => ({
     agentId: randomUUID(),
     resumeToken: randomBytes(32).toString("hex"),
   }));
@@ -170,13 +176,13 @@ export function agentState(
 
 /** A single owner publishes an intent before contacting the host. A later
  * process reconciles the same IDs rather than blindly injecting another turn. */
-export function wakeState(
+export async function wakeState(
   directory: string,
   scope: string,
   session: string,
   message: string,
 ) {
-  prepareLauncherDirectory(directory);
+  await prepareLauncherDirectory(directory);
   if (
     ![scope, session, message].every(
       (value) =>
@@ -196,7 +202,7 @@ export function wakeState(
     messageId: `msg_${time}${randomBytes(7).toString("hex")}`,
     partId: `prt_${time}${randomBytes(7).toString("hex")}`,
   };
-  const saved = record(directory, `wake-${key}.json`, () => candidate);
+  const saved = await record(directory, `wake-${key}.json`, () => candidate);
   if (
     !/^msg_[a-f0-9]{26}$/.test(saved.messageId) ||
     !/^prt_[a-f0-9]{26}$/.test(saved.partId)

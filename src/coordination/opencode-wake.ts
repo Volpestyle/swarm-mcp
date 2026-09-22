@@ -76,7 +76,7 @@ export class OpenCodeWake {
     )
       return { status: "deferred" };
     signal.throwIfAborted();
-    const intent = wakeState(
+    const intent = await wakeState(
       o.stateDirectory,
       o.scope,
       o.hostSessionId,

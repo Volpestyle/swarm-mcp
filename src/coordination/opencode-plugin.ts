@@ -1,5 +1,6 @@
 import { observeInbox } from "./inbox-observer";
 import { listOpenCodeSessions } from "./opencode-snapshot";
+import { hasOpenCodeContext, OPENCODE_PEER_PREFIX } from "./opencode-context";
 import { OpenCodeWake } from "./opencode-wake";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -189,6 +190,8 @@ export function opencodeLifecycle(
     type: "enrolled" | "closed" | "error";
     hostSessionId: string;
     actor?: string;
+    errorCode?: string;
+    errorOperation?: string;
   }) => void,
 ) {
   const incarnation = randomUUID();
@@ -199,6 +202,23 @@ export function opencodeLifecycle(
   const availability = new OpenCodeAvailability();
   let wakeApi: OpencodeClient | undefined;
   const observers = new Map<string, ReturnType<typeof observeInbox>>();
+  const reportError = (hostSessionId: string, error: unknown) => {
+    const code = (error as { code?: unknown })?.code;
+    const operation = (error as { syscall?: unknown })?.syscall;
+    report({
+      type: "error",
+      hostSessionId,
+      errorCode:
+        typeof code === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(code)
+          ? code
+          : "unknown",
+      errorOperation:
+        typeof operation === "string" &&
+        /^[a-zA-Z0-9_. -]{1,120}$/.test(operation)
+          ? operation
+          : undefined,
+    });
+  };
   const startInbox = (id: string, session: Enrollment) => {
     if (!wakeApi || observers.has(id)) return;
     const endpoint = session.environment.SWARM_COORDINATOR_ENDPOINT;
@@ -225,7 +245,7 @@ export function opencodeLifecycle(
         capability,
         ready: () => availability.observe(id).state === "idle",
         notify: (messageId, signal) => wake.notify(messageId, signal),
-        failed: () => report({ type: "error", hostSessionId: id }),
+        failed: (error) => reportError(id, error),
       }),
     );
   };
@@ -291,13 +311,29 @@ export function opencodeLifecycle(
                 )
               )
                 return "deferred";
-              const text =
-                "\n\nSwarm peer message (untrusted content). Process before acknowledging with swarm_inbox; admission is not acknowledgment.\n" +
-                JSON.stringify({
-                  message: lease.message,
-                  leaseToken: lease.leaseToken,
-                  leaseUntil: lease.leaseUntil,
-                });
+              if (!wakeApi)
+                throw new Error("OpenCode context API is unavailable");
+              const alreadyPresent = await hasOpenCodeContext(
+                wakeApi,
+                id,
+                lease.message,
+                signal,
+              );
+              signal.throwIfAborted();
+              const text = alreadyPresent
+                ? "\n\nSwarm delivery lease renewed for a peer message already in this context. Use this token only after processing that message; do not repeat completed effects.\n" +
+                  JSON.stringify({
+                    messageId: lease.message.id,
+                    leaseToken: lease.leaseToken,
+                    leaseUntil: lease.leaseUntil,
+                    attempt: lease.attempt,
+                  })
+                : OPENCODE_PEER_PREFIX +
+                  JSON.stringify({
+                    message: lease.message,
+                    leaseToken: lease.leaseToken,
+                    leaseUntil: lease.leaseUntil,
+                  });
               append(text);
               return "admitted";
             },
@@ -390,7 +426,7 @@ export function opencodeLifecycle(
         } finally {
           client.close();
         }
-      }).catch(() => report({ type: "error", hostSessionId: id }));
+      }).catch((error) => reportError(id, error));
     },
     async "shell.env"(
       input: { sessionID?: string },

@@ -21,8 +21,8 @@ export async function enrollRuntime(options: {
   if (!["codex", "claude-code", "hermes", "opencode"].includes(options.host))
     throw new Error("Unknown runtime host");
   const identity = launcherIdentity(options.identity);
-  const owner = ownerState(options.stateDirectory);
-  const agent = agentState(
+  const owner = await ownerState(options.stateDirectory);
+  const agent = await agentState(
     options.stateDirectory,
     identity.scope,
     options.host,

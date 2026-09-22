@@ -1,5 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { OpenCodeWake } from "../src/coordination/opencode-wake";
+import { hasOpenCodeContext } from "../src/coordination/opencode-context";
 import { CoordinationClient } from "../src/coordination/ipc";
 import { Database } from "bun:sqlite";
 import { build } from "esbuild";
@@ -28,6 +29,7 @@ if (!binary)
     "Pass the native OpenCode binary as the second argument (Windows package shims spawn an unowned child)",
   );
 const output = process.argv[2];
+const expiryProbe = process.argv[4] === "--lease-expiry";
 if (!output)
   throw new Error("Usage: bun scripts/probe-opencode-hooks.ts output.json");
 const root = mkdtempSync(join(tmpdir(), "swarm-opencode-probe-"));
@@ -38,6 +40,8 @@ const readTarget = join(root, "fixture.txt");
 writeFileSync(readTarget, "harmless tool fixture\n");
 const ackProbe = resolve("dist/test/runtime-ack-probe.mjs");
 let observedLeaseState: string | undefined;
+let originalEnvelope: object | undefined;
+let refreshedLease: string | undefined;
 const leaseTokens = new Set<string>();
 const modelRequests: Array<{
   messages: Array<{ role: string; content?: unknown }>;
@@ -65,7 +69,43 @@ const modelServer = Bun.serve({
         JSON.stringify(message.content).includes("swarm-fixture-acknowledged"),
     );
     let toolCall;
-    if (hasResult && !acknowledged) {
+    const strings = (value: unknown): string[] =>
+      typeof value === "string"
+        ? [value]
+        : Array.isArray(value)
+          ? value.flatMap(strings)
+          : value && typeof value === "object"
+            ? Object.values(value).flatMap(strings)
+            : [];
+    const renewal = strings(body.messages)
+      .flatMap((text) => text.split("\n"))
+      .flatMap((line) => {
+        try {
+          const value = JSON.parse(line);
+          return value.messageId && value.leaseToken && !value.message
+            ? [value]
+            : [];
+        } catch {
+          return [];
+        }
+      })
+      .at(-1);
+    if (renewal && refreshedLease !== renewal.leaseToken) {
+      refreshedLease = renewal.leaseToken;
+      leaseTokens.add(renewal.leaseToken);
+      assert.ok(
+        [renewal.messageId, renewal.leaseToken].every((value) =>
+          /^[a-zA-Z0-9-]+$/.test(value),
+        ),
+      );
+      toolCall = {
+        name: "bash",
+        arguments: JSON.stringify({
+          command: `node "${ackProbe.replaceAll("\\", "/")}" ${renewal.messageId} ${renewal.leaseToken}`,
+          description: "Acknowledge the refreshed fixture delivery lease",
+        }),
+      };
+    } else if (hasResult && !acknowledged) {
       const received = body.messages.find(
         (message) =>
           message.role === "tool" &&
@@ -74,6 +114,7 @@ const modelServer = Bun.serve({
       if (!received || typeof received.content !== "string")
         throw new Error("Missing peer envelope");
       const lease = JSON.parse(received.content.split("\n").at(-1)!);
+      originalEnvelope = lease.message;
       leaseTokens.add(lease.leaseToken);
       assert.ok(
         [lease.message.id, lease.leaseToken].every((value) =>
@@ -610,7 +651,50 @@ try {
       wakePayloadReachedModel,
       "Idle wake must carry payload at turn start",
     );
+    const wakeEnvelope = JSON.parse(
+      wakePart.properties.part.text.split("\n").at(-1)!,
+    ).message;
+    const persistedContext = await Promise.all(
+      [originalEnvelope!, wakeEnvelope].map((message) =>
+        hasOpenCodeContext(api, session.id, message, AbortSignal.timeout(5000)),
+      ),
+    );
+    assert.deepEqual(persistedContext, [true, true]);
+    let leaseRefreshState: string | undefined;
+    if (expiryProbe) {
+      await delay(32000);
+      const recovery = await fetch(
+        base + "/session/" + session.id + "/message",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            agent: "build",
+            model: { providerID: "fixture", modelID: "probe" },
+            parts: [
+              {
+                type: "text",
+                text: "Continue the retained peer-message fixture.",
+              },
+            ],
+          }),
+          signal: AbortSignal.timeout(30000),
+        },
+      );
+      assert.equal(recovery.status, 200, await recovery.clone().text());
+      assert.ok(refreshedLease);
+      assert.equal(modelRequests.length, 6);
+      const recoveredDelivery = (await coordinator.request({
+        op: "message_status",
+        messageId: next.value.messageId,
+      })) as { deliveries: Array<{ state: string }> };
+      leaseRefreshState = recoveredDelivery.deliveries[0].state;
+      assert.equal(leaseRefreshState, "acknowledged");
+    }
     deliveryEvidence = {
+      persistedContext,
+      leaseExpiryProbe: expiryProbe,
+      leaseRefreshState,
       wake: {
         busyDeferred: true,
         autonomousFromInboxEvent: true,

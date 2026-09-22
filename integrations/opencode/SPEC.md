@@ -3,7 +3,8 @@
 VUH-1339 includes OpenCode. Target the installed **1.4.3** V1 plugin API; V2
 support is not claimed. Archived VUH-56/57 supply requirements, not dependencies.
 Lifecycle, post-tool delivery/acknowledgment, and autonomous idle delivery have
-installed-host evidence below. Durable context deduplication and recovery gaps remain open.
+installed-host evidence below. Retained-context deduplication and lease refresh
+also have installed-host evidence; killed/resumed-host recovery remains open.
 
 `src/coordination/opencode-plugin.ts` supplies V1 event and shell-environment
 hooks to a trusted plugin wrapper. Creation/update events enroll once per native
@@ -77,8 +78,32 @@ result and completes. SQLite confirms `leased` before that explicit action and
 the coordinator confirms `acknowledged` afterward. The fixture is deterministic:
 this proves host tool execution and context assembly, not model comprehension.
 It uses no external model service. Retained evidence redacts lease tokens.
-Durable context deduplication across restart/lease expiry and idle wakeups remain
-unproven.
+Later captures below extend this evidence to idle wakeups and lease expiry.
+
+`opencode-lease-refresh.json` verifies both delivered envelopes remain in the
+host's retained context. After a real 32-second wait, an explicit native prompt
+reaches the expired lease. The adapter appends only the new lease metadata,
+and the fixture acknowledges with that token. Six model requests complete the
+probe, including lifecycle deletion and enrollment of a final session. This
+does not establish autonomous waking for expired leases or killed-host recovery.
+
+Context inspection uses the installed HTTP SDK's opaque message cursor, checks
+session/part identity, and excludes ignored text, pruned tool results and
+reverted context. Compaction boundaries stop the search. Inspection is bounded
+by the delivery deadline, 100 pages and 16 MiB; failure retains the uncertain
+lease. Unit fixtures cover cursor failure, scope mismatch and context pruning.
+
+The retained failure capture records the earlier final-enrollment timeout.
+A reduced Windows Bun 1.3.11 reproduction showed a timed synchronous child
+command succeeding once, then spuriously timing out after an idle interval;
+the equivalent Node sequence succeeded. Launcher ACL validation now uses
+asynchronous `execFile`, preserving every ACL check and the 10-second timeout.
+The real-host probe passes, and a private-state regression test rereads the
+same owner identity after an 11-second idle interval. Existing tests still
+reject insecure directories and malformed credentials.
+
+Reproduce the extended lease-expiry run by adding `--lease-expiry` after the
+native executable argument in the probe command below.
 
 `opencode-availability.json` adds a real `read` permission wait to that agent
 loop. The adapter observes `blocked` and the coordinator delivery remains
