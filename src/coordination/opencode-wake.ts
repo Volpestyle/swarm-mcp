@@ -22,9 +22,9 @@ export class OpenCodeWake {
     },
   ) {}
 
-  notify(messageId: string): Promise<Result> {
+  notify(messageId: string, lifetime?: AbortSignal): Promise<Result> {
     if (this.pending) return this.pending;
-    this.pending = this.admit(messageId)
+    this.pending = this.admit(messageId, lifetime)
       .catch((): Result => ({ status: "uncertain" }))
       .finally(() => {
         this.pending = undefined;
@@ -32,18 +32,34 @@ export class OpenCodeWake {
     return this.pending;
   }
 
-  private async admit(messageId: string): Promise<Result> {
+  private async admit(
+    messageId: string,
+    lifetime?: AbortSignal,
+  ): Promise<Result> {
     const o = this.options;
     const delivery = (await o.request({ op: "message_status", messageId })) as {
-      deliveries: Array<{ recipient: string; state: string }>;
+      deliveries: Array<{
+        recipient: string;
+        state: string;
+        nextAttemptAt?: number;
+        expiresAt?: number | null;
+      }>;
     };
     if (
       !delivery.deliveries.some(
-        (d) => d.recipient === o.actor && d.state === "pending",
+        (d) =>
+          d.recipient === o.actor &&
+          d.state === "pending" &&
+          (d.nextAttemptAt ?? 0) <= Date.now() &&
+          (d.expiresAt == null || d.expiresAt > Date.now()),
       )
     )
       return { status: "deferred" };
-    const signal = AbortSignal.timeout(5000);
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(5000),
+      ...(lifetime ? [lifetime] : []),
+    ]);
+    signal.throwIfAborted();
     const request = { signal, throwOnError: true as const };
     const [session, status, permissions, questions] = await Promise.all([
       o.api.session.get({ sessionID: o.hostSessionId }, request),
@@ -59,6 +75,7 @@ export class OpenCodeWake {
       )
     )
       return { status: "deferred" };
+    signal.throwIfAborted();
     const intent = wakeState(
       o.stateDirectory,
       o.scope,
@@ -73,6 +90,7 @@ export class OpenCodeWake {
       return { status: "accepted", messageId: intent.messageId };
     if (existing.response.status !== 404 || !intent.fresh)
       return { status: "uncertain", messageId: intent.messageId };
+    signal.throwIfAborted();
     await o.api.session.promptAsync(
       {
         sessionID: o.hostSessionId,

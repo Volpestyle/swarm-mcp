@@ -552,12 +552,6 @@ try {
         },
       },
     })) as { value: { messageId: string } };
-    const [wakeA, wakeB] = await Promise.all([
-      wake.notify(next.value.messageId),
-      wake.notify(next.value.messageId),
-    ]);
-    assert.equal(wakeA.status, "accepted");
-    assert.deepEqual(wakeA, wakeB);
     for (let i = 0; i < 100; i++) {
       const status = await api.session.status(
         {},
@@ -569,17 +563,33 @@ try {
     assert.equal(
       modelRequests.length,
       4,
-      "Coalesced wake starts one additional model request",
+      "Committed inbox event starts one additional model request",
     );
     const replay = await new OpenCodeWake(wakeOptions).notify(
       next.value.messageId,
     );
     assert.equal(replay.status, "deferred");
+    const wakePart = readFileSync(events, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find(
+        (event) =>
+          event.type === "message.part.updated" &&
+          event.properties.part?.text?.startsWith(
+            "Swarm inbox has pending work.",
+          ) &&
+          event.properties.part.text.includes("wake-only-fixture"),
+      );
+    assert.ok(
+      wakePart,
+      "Automatic wake must persist its payload-bearing host part",
+    );
     const retained = await api.session.message(
-      { sessionID: session.id, messageID: wakeA.messageId! },
+      { sessionID: session.id, messageID: wakePart.properties.part.messageID },
       { throwOnError: true },
     );
-    assert.equal(retained.data.info.id, wakeA.messageId);
+    assert.equal(retained.data.info.id, wakePart.properties.part.messageID);
     const pendingWake = (await coordinator.request({
       op: "message_status",
       messageId: next.value.messageId,
@@ -603,9 +613,9 @@ try {
     deliveryEvidence = {
       wake: {
         busyDeferred: true,
-        coalescedRequests: 2,
+        autonomousFromInboxEvent: true,
         modelRequests: 1,
-        wakeMessageId: wakeA.messageId,
+        wakeMessageId: retained.data.info.id,
         inboxState: pendingWake.deliveries[0].state,
         payloadReachedModelAtTurnStart: wakePayloadReachedModel,
       },

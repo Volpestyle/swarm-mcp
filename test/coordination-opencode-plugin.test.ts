@@ -7,6 +7,8 @@ import { once } from "node:events";
 import { enrollRuntime } from "../src/coordination/runtime-launcher";
 import { opencodeLifecycle } from "../src/coordination/opencode-plugin";
 import { CoordinationClient } from "../src/coordination/ipc";
+import { observeInbox } from "../src/coordination/inbox-observer";
+import { setTimeout as delay } from "node:timers/promises";
 
 test("OpenCode post-tool admission preserves explicit ack and suppresses repeated callbacks", async () => {
   mkdirSync(resolve("dist/test"), { recursive: true });
@@ -67,6 +69,31 @@ test("OpenCode post-tool admission preserves explicit ack and suppresses repeate
         },
       });
     const output = { output: "original tool output" };
+    const hints: string[] = [];
+    const errors: string[] = [];
+    const observer = observeInbox({
+      endpoint: env.SWARM_COORDINATOR_ENDPOINT,
+      capability: env.SWARM_SESSION_CAPABILITY,
+      ready: () => true,
+      notify: async (id) => {
+        hints.push(id);
+      },
+      failed: () => {
+        errors.push("failed");
+      },
+    });
+    try {
+      for (let i = 0; i < 100 && !hints.length; i++) await delay(10);
+      expect(hints.length).toBeGreaterThan(0);
+      expect(errors).toEqual([]);
+      const untouched = (await recipient.request({ op: "bootstrap" })) as {
+        inbox: Array<{ state: string; count: number }>;
+      };
+      expect(untouched.inbox).toEqual([{ state: "pending", count: 2 }]);
+    } finally {
+      observer.stop();
+      await observer.done;
+    }
     const input = { sessionID: "recipient", callID: "first" };
     await hooks.event({
       event: {

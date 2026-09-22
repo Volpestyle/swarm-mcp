@@ -146,9 +146,8 @@ policy. HTTP 204 means request admission, not persistence or processing.
 additional native model request, and a new helper reusing the retained message.
 The peer delivery stays pending. Lost-response tests cover both a host that
 persisted the prompt and one that did not, with exactly one POST in either case.
-This wake helper is not yet connected to the coordinator event observer.
-End-to-end autonomous idle delivery therefore remains open, as do
-message-context deduplication and the second host.
+The wake helper is now connected to the coordinator event observer as described
+below. Message-context deduplication and the second host remain open.
 
 `opencode-turn-start.json` verifies `chat.message` delivery on the idle wake:
 the first subsequent model request contains the peer envelope without choosing
@@ -159,6 +158,22 @@ and repeated callbacks for the same native message are suppressed in-process.
 Snapshot status maps absent entries to idle only for sessions enumerated from
 the same host directory, matching the installed host's status API semantics.
 The capture verifies the new delivery is leased and a repeated wake defers.
+
+`opencode-autonomous.json` removes the fixture's explicit wake call. Committing
+the peer message alone drives coordinator event wait → pending inbox read →
+verified idle wake → native turn-start payload admission → model request. Each
+enrolled actor has separate event/read IPC connections so held waits do not
+block reads. Bootstrap captures the event cursor before scanning the backlog;
+host idle/snapshot-ready events also recheck pending work. Reads never lease or
+acknowledge messages. Expired work is ignored, and pending backoff uses a timer
+at its next attempt time rather than model polling.
+
+Host disposal and session deletion stop their observers, close IPC connections
+and abort an in-flight wake request before any later POST. This cannot undo a
+POST already admitted by the host. Startup-backlog tests verify notification
+leaves deliveries pending. Coordinator-transport recovery, efficient traversal
+of large retained inbox histories and expired-lease recovery still need work;
+the observer currently reports a transport failure instead of silently resuming.
 
 ## Actual host evidence
 

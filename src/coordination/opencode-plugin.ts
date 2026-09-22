@@ -1,10 +1,15 @@
+import { observeInbox } from "./inbox-observer";
+import { OpenCodeWake } from "./opencode-wake";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { enrollRuntime } from "./runtime-launcher";
 import { CoordinationClient } from "./ipc";
 import { RuntimeDelivery, type DeliveryBoundary } from "./runtime-delivery";
 import { OpenCodeAvailability, type OpenCodeEvent } from "./opencode-state";
-import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import {
+  createOpencodeClient,
+  type OpencodeClient,
+} from "@opencode-ai/sdk/v2/client";
 
 type Options = Omit<
   Parameters<typeof enrollRuntime>[0],
@@ -63,6 +68,7 @@ export function observeOpenCode(
             report("reconciled");
           } else if (event.type === "server.instance.disposed") {
             disposed = true;
+            await hooks.event({ event });
             break;
           } else await hooks.event({ event });
         }
@@ -106,7 +112,10 @@ type OpenCodeClient = {
  * URL: the injected SDK's default URL may still name localhost:4096. */
 export function connectOpenCodeLifecycle(
   input: { client: OpenCodeClient; directory: string; serverUrl: URL },
-  hooks: { event(input: { event: HostEvent }): Promise<void> },
+  hooks: {
+    event(input: { event: HostEvent }): Promise<void>;
+    configureWake?(api: OpencodeClient): void;
+  },
   report: (state: "reconciled" | "disconnected") => void,
 ) {
   // The installed host's injected V1 SDK lacks permission/question listing.
@@ -120,6 +129,7 @@ export function connectOpenCodeLifecycle(
         }
       : undefined,
   });
+  hooks.configureWake?.(api);
   let listedSessionIds: string[] = [];
   return observeOpenCode(
     {
@@ -193,6 +203,38 @@ export function opencodeLifecycle(
   const deleted = new Set<string>();
   const deliveredCalls = new Map<string, Set<string>>();
   const availability = new OpenCodeAvailability();
+  let wakeApi: OpencodeClient | undefined;
+  const observers = new Map<string, ReturnType<typeof observeInbox>>();
+  const startInbox = (id: string, session: Enrollment) => {
+    if (!wakeApi || observers.has(id)) return;
+    const endpoint = session.environment.SWARM_COORDINATOR_ENDPOINT;
+    const capability = session.environment.SWARM_SESSION_CAPABILITY;
+    const wake = new OpenCodeWake({
+      api: wakeApi,
+      actor: session.actor,
+      scope: session.scope,
+      hostSessionId: id,
+      stateDirectory: options.stateDirectory,
+      request: async (operation) => {
+        const client = await CoordinationClient.connect(endpoint, capability);
+        try {
+          return await client.request(operation);
+        } finally {
+          client.close();
+        }
+      },
+    });
+    observers.set(
+      id,
+      observeInbox({
+        endpoint,
+        capability,
+        ready: () => availability.observe(id).state === "idle",
+        notify: (messageId, signal) => wake.notify(messageId, signal),
+        failed: () => report({ type: "error", hostSessionId: id }),
+      }),
+    );
+  };
 
   const serialize = (id: string, action: () => Promise<void>) => {
     const next = (pending.get(id) ?? Promise.resolve()).then(action);
@@ -215,6 +257,7 @@ export function opencodeLifecycle(
         incarnation,
       });
       sessions.set(id, session);
+      startInbox(id, session);
       report({ type: "enrolled", hostSessionId: id, actor: session.actor });
     }
     return session;
@@ -278,6 +321,10 @@ export function opencodeLifecycle(
   };
 
   return {
+    configureWake(api: OpencodeClient) {
+      wakeApi = api;
+      for (const [id, session] of sessions) startInbox(id, session);
+    },
     async "chat.message"(
       input: { sessionID: string; messageID?: string },
       output: {
@@ -303,6 +350,17 @@ export function opencodeLifecycle(
     // rejection here; tool hooks below remain fail-closed and are awaited.
     async event({ event }: { event: HostEvent }) {
       availability.event(event);
+      if (event.type === "server.instance.disposed") {
+        for (const observer of observers.values()) observer.stop();
+        observers.clear();
+      } else if (event.type === "swarm.snapshot.ready") {
+        for (const observer of observers.values()) observer.kick();
+      } else if (
+        event.type === "session.status" &&
+        event.properties?.sessionID
+      ) {
+        observers.get(event.properties.sessionID)?.kick();
+      }
       const id = event.properties?.info?.id;
       if (
         !id ||
@@ -311,7 +369,11 @@ export function opencodeLifecycle(
         )
       )
         return;
-      if (event.type === "session.deleted") deleted.add(id);
+      if (event.type === "session.deleted") {
+        deleted.add(id);
+        observers.get(id)?.stop();
+        observers.delete(id);
+      }
       await serialize(id, async () => {
         if (event.type !== "session.deleted") {
           if (!deleted.has(id)) await adopt(id);
