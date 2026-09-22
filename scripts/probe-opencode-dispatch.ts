@@ -16,11 +16,17 @@ import { strict as assert } from "node:assert";
 import { enrollRuntime } from "../src/coordination/runtime-launcher";
 import { CoordinationClient } from "../src/coordination/ipc";
 import { canonicalPath } from "../src/coordination/worktrees";
+import { mixedClaude } from "./fixtures/mixed-claude";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
-const [output, binary] = process.argv.slice(2);
+const [output, binary, claudeBinary] = process.argv.slice(2);
+let mixed: Awaited<ReturnType<typeof mixedClaude>> | undefined;
+let mixedRun: Promise<any> | undefined;
+let mixedError: unknown;
 if (!output || !binary)
   throw new Error(
-    "Usage: bun scripts/probe-opencode-dispatch.ts output.json native-opencode-binary",
+    "Usage: bun scripts/probe-opencode-dispatch.ts output.json native-opencode-binary [claude-binary]",
   );
 const root = mkdtempSync(join(tmpdir(), "swarm-native-dispatch-"));
 mkdirSync(resolve("dist/test"), { recursive: true });
@@ -29,6 +35,7 @@ await build({
   entryPoints: [
     "src/coordination/opencode-plugin.ts",
     "scripts/fixtures/runtime-dispatch-result.ts",
+    "scripts/fixtures/runtime-mixed-question.ts",
   ],
   outdir: bundle,
   outbase: ".",
@@ -42,6 +49,7 @@ const resultScript = join(
   "scripts/fixtures/runtime-dispatch-result.js",
 ).replaceAll("\\", "/");
 const modelRequests: unknown[] = [];
+const toolCalls: unknown[] = [];
 const tokens = new Set<string>();
 const strings = (value: unknown): string[] =>
   typeof value === "string"
@@ -57,30 +65,33 @@ const model = Bun.serve({
   async fetch(request) {
     const body = await request.json();
     modelRequests.push(body);
-    if (modelRequests.length > 6)
+    if (modelRequests.length > (claudeBinary ? 10 : 6))
       return new Response("Fixture model budget exceeded", { status: 400 });
     const texts = strings(body.messages);
     const done = texts.some((text) =>
       text.includes("swarm-dispatch-completed"),
     );
-    const lease = texts
+    const leases = texts
       .flatMap((text) => text.split("\n"))
       .flatMap((line) => {
         try {
           const value = JSON.parse(line);
-          return value.message?.kind === "task.assigned" && value.leaseToken
+          return ["task.assigned", "completion_notice"].includes(value.message?.kind) && value.leaseToken
             ? [value]
             : [];
         } catch {
           return [];
         }
-      })
-      .at(-1);
+      });
+    const reply = leases.find(value => value.message.kind === "completion_notice");
+    const lease = reply ?? leases.at(-1);
     let toolCall;
-    if (!done && lease) {
+    const questionSent = texts.some(text => text.includes("swarm-mixed-question-sent"));
+    if (!done && lease && (!mixed || reply || !questionSent)) {
       tokens.add(lease.leaseToken);
       const assignment = JSON.parse(lease.message.body);
       const args = [
+        ...(mixed && !reply ? [mixed.actor] : []),
         assignment.taskId,
         assignment.attemptId,
         String(assignment.fence),
@@ -91,11 +102,13 @@ const model = Bun.serve({
       toolCall = {
         name: "bash",
         arguments: JSON.stringify({
-          command: `node "${resultScript}" ${args.join(" ")}`,
+          command: `node "${mixed && !reply ? join(bundle, "scripts/fixtures/runtime-mixed-question.js").replaceAll("\\", "/") : resultScript}" ${args.join(" ")}`,
           description:
-            "Publish the fenced fixture result and acknowledge delivery",
+            mixed && !reply ? "Ask the Claude peer and acknowledge the assignment"
+              : "Publish the fenced fixture result and acknowledge delivery",
         }),
       };
+      toolCalls.push({ at: Date.now(), ...toolCall });
     }
     const chunks = toolCall
       ? [
@@ -210,7 +223,7 @@ const waitFor = async <T>(
   check: () => Promise<T | undefined>,
   label: string,
 ) => {
-  for (let i = 0; i < 150; i++) {
+  for (let i = 0; i < (claudeBinary ? 900 : 150); i++) {
     const result = await check();
     if (result !== undefined) return result;
     await delay(100);
@@ -322,16 +335,19 @@ try {
       capabilities: ["code"],
       durable: false,
       contract: {
-        objective: "Publish a fenced fixture result",
+        objective: claudeBinary ? "Ask the Claude peer, receive its reply and publish a fenced result" : "Publish a fenced fixture result",
         worktree: canonicalPath(root),
         acceptanceCriteria: [
           "One completed attempt and explicit delivery acknowledgment",
+          ...(claudeBinary ? ["Actual Claude peer reply received and both peer messages acknowledged"] : []),
         ],
         expectedArtifacts: [],
         constraints: ["Local fixture only"],
       },
     },
   };
+  if (claudeBinary) mixed = await mixedClaude(options, claudeBinary, tokens);
+  const taskSubmittedAt = Date.now();
   const results: unknown[] = [];
   const bound = await waitFor(async () => {
     const result = (await client!.request({ op: "dispatch", input })) as any;
@@ -339,12 +355,40 @@ try {
     return result.status === "bound" ? result : undefined;
   }, "native binding");
   const completed = await waitFor(async () => {
+    if (mixed && !mixedRun) {
+      const db = new Database(join(options.stateDirectory, "coordination.db"), { readonly: true });
+      try {
+        const pending = db.query("SELECT count(*) AS n FROM inbox_deliveries WHERE recipient=? AND state='pending'").get(mixed.actor) as { n: number };
+        // Claude has no idle wake: this is an explicit fixture user-turn invocation.
+        if (pending.n) mixedRun = mixed.launch().catch(error => { mixedError = error; });
+      } finally { db.close(); }
+    }
+    if (mixedError) throw mixedError;
     const task = (await client!.request({
       op: "task_detail",
       taskId: bound.taskId,
     })) as any;
     return task.status === "completed" ? task : undefined;
   }, "native result");
+  const taskCompletedAt = Date.now();
+  const claudeResult = mixedRun ? await mixedRun : undefined;
+  if (mixedError) throw mixedError;
+  let mixedDeliveries: unknown;
+  if (mixed) {
+    assert.ok(claudeResult, "Claude was never invoked");
+    const db = new Database(join(options.stateDirectory, "coordination.db"), { readonly: true });
+    try {
+      const rows = db.query("SELECT m.kind,m.sender,d.recipient,d.state,d.attempts,m.created_at,d.acknowledged_at FROM inbox_deliveries d JOIN inbox_messages m ON m.id=d.message_id WHERE m.kind IN ('question','completion_notice') ORDER BY m.seq").all() as any[];
+      assert.equal(rows.length, 2);
+      assert.ok(rows.every(row => row.state === "acknowledged"));
+      assert.equal(rows[0].recipient, mixed.actor);
+      assert.equal(rows[1].sender, mixed.actor);
+      assert.equal(rows[0].sender, rows[1].recipient);
+      assert.equal(mixed.calls.length, 2);
+      assert.equal(toolCalls.length, 2);
+      mixedDeliveries = rows;
+    } finally { db.close(); }
+  }
   const attempts = (await client.request({
     op: "attempts",
     taskId: bound.taskId,
@@ -405,9 +449,19 @@ try {
         release,
         diagnostics,
         modelRequests,
+        toolCalls,
+        mixedHost: mixed ? { claudeBinary, requests: mixed.requests, calls: mixed.calls, result: claudeResult, deliveries: mixedDeliveries,
+          taskSubmittedAt, taskCompletedAt, durationMs: taskCompletedAt - taskSubmittedAt,
+          userPromptInvocations: 1, automaticOpenCodeWakes: true,
+          limitation: "One explicit Claude user turn after question persisted; no Claude idle-wake claim. Scripted model endpoints exercise actual hosts, not reasoning quality." } : undefined,
+        source: { revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+          diffSha256: createHash("sha256").update(execFileSync("git", ["diff", "HEAD", "--"])).digest("hex"),
+          hashes: Object.fromEntries(["scripts/probe-opencode-dispatch.ts", "scripts/fixtures/mixed-claude.ts", "scripts/fixtures/runtime-mixed-question.ts", "dist/coordination/owner-cli.js"].map(path => [path, createHash("sha256").update(readFileSync(path)).digest("hex")])),
+          opencodeVersion: execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(),
+          claudeVersion: claudeBinary ? execFileSync(claudeBinary, ["--version"], { encoding: "utf8" }).trim() : undefined },
         recorded,
         limitations:
-          "Installed OpenCode native child creation, plugin enrollment, autonomous inbox wake/context, shell.env-authenticated fenced result and release. Local scripted model endpoint; no external model inference or semantic reasoning claim.",
+          "Installed OpenCode native child creation, plugin enrollment, autonomous inbox wake/context, shell.env-authenticated fenced result and release. Optional actual Claude peer uses one explicit user-turn invocation and native MCP tools. Local scripted model endpoints; no external inference or semantic reasoning claim. Provider usage and cost fields are fixture-derived placeholders, not measured tokens or billing.",
       },
       (_key, value) => {
         if (typeof value !== "string") return value;
@@ -428,6 +482,7 @@ try {
         root,
         error: String(error),
         modelRequests,
+        claude: mixed ? { requests: mixed.requests, calls: mixed.calls, error: String(mixedError) } : undefined,
         events: existsSync(eventsPath) ? readFileSync(eventsPath, "utf8") : "",
       },
       (_key, value) => {
@@ -441,6 +496,7 @@ try {
   );
   throw error;
 } finally {
+  await mixed?.close();
   client?.close();
   model.stop(true);
   host.kill();
