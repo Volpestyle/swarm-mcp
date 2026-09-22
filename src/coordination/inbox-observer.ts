@@ -148,10 +148,27 @@ function observeConnection(options: Options) {
             return true;
           });
           if (pending && !wakeAccepted) {
-            const result = await options.notify(
-              pending.message.id,
-              controller.signal,
-            );
+            let failure: unknown;
+            const result = await options
+              .notify(pending.message.id, controller.signal)
+              .catch((error) => {
+                failure = error;
+                return { status: "uncertain" as const };
+              });
+            // Diagnostic self-report only; it never leases or acknowledges work.
+            // Awaiting the same connection retains correlation with this session.
+            await reads!.request({
+              op: "command",
+              command: {
+                id: randomUUID(),
+                type: "inbox.wake_observed",
+                payload: {
+                  messageId: pending.message.id,
+                  status: result?.status ?? "uncertain",
+                },
+              },
+            });
+            if (failure) throw failure;
             // An uncertain hint must not starve unrelated work. Once a wake is
             // accepted (or the host defers), continue deadline maintenance but
             // do not request more turns in this scan. Recheck readiness above.
@@ -198,9 +215,10 @@ function observeConnection(options: Options) {
         cursor,
         timeoutMs: 30000,
         limit: 20,
-      })) as { items: unknown[]; cursor: number };
+      })) as { items: Array<{ type?: string }>; cursor: number };
       cursor = page.cursor;
-      if (page.items.length) kick();
+      // Our own telemetry must not form an endless wake/watch feedback loop.
+      if (page.items.some((item) => item.type !== "runtime.wake")) kick();
     }
   })()
     .catch((error) => {

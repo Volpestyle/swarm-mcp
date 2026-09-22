@@ -1,4 +1,5 @@
 import { CoordinationError, requireText } from "./errors";
+import type { DiagnosticFilter } from "./diagnostics";
 import { CoordinationStore, type CommandResult, type Json } from "./store";
 import type { InboxCommand } from "./inbox";
 import type { SessionCommand, SessionContext } from "./sessions";
@@ -121,6 +122,10 @@ export class CoordinationCore {
     this.store.assertContext(context);
     return this.store.bootstrap(context.scope, context.actor);
   }
+  inspect(context: ActorContext, filter?: DiagnosticFilter) {
+    this.store.assertContext(context);
+    return this.store.inspect(context.scope, filter);
+  }
   peers(context: ActorContext, filter?: PeerFilter) {
     this.store.assertContext(context);
     return this.store.peers(context.scope, filter);
@@ -219,6 +224,8 @@ export class CoordinationCore {
             return tx.inbox.fetch(command.payload);
           case "inbox.ack":
             return tx.inbox.acknowledge(command.payload);
+          case "inbox.wake_observed":
+            return tx.inbox.wakeObserved(command.payload);
           case "inbox.reject":
             return tx.inbox.reject(command.payload);
           case "inbox.sweep":

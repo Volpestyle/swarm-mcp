@@ -376,6 +376,10 @@ try {
     input: { action: "cancel", intentId: "native-probe" },
   })) as any;
   assert.equal(release.status, "released");
+  const diagnostics = await client.request({
+    op: "inspect",
+    filter: { taskId: bound.taskId },
+  });
   await waitFor(
     async () => (modelRequests.length >= 2 ? true : undefined),
     "model tool result",
@@ -399,6 +403,7 @@ try {
         attempts,
         acknowledged,
         release,
+        diagnostics,
         modelRequests,
         recorded,
         limitations:

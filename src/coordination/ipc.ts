@@ -11,11 +11,13 @@ import { CoordinationError, requireText } from "./errors";
 import type { ArtifactImport, FindingFilter } from "./evidence";
 import type { PeerFilter, TaskFilter } from "./queries";
 import type { Enrollment } from "./sessions";
+import type { DiagnosticFilter } from "./diagnostics";
 
 const MAX_FRAME_BYTES = 65536;
 export type Operation =
   | { op: "enroll"; input: Enrollment }
   | { op: "bootstrap" }
+  | { op: "inspect"; filter?: DiagnosticFilter }
   | { op: "peers"; filter?: PeerFilter }
   | { op: "tasks"; filter?: TaskFilter }
   | { op: "command"; command: CoreCommand }
@@ -124,6 +126,17 @@ export async function serveCoordination(options: {
         requireText(actor.actor, "authorized actor");
         let result: unknown;
         switch (raw.op) {
+          case "inspect":
+            if (raw.filter !== undefined && !record(raw.filter))
+              throw new CoordinationError(
+                "invalid_input",
+                "Filter must be an object",
+              );
+            result = options.core.inspect(
+              actor,
+              raw.filter as DiagnosticFilter | undefined,
+            );
+            break;
           case "bootstrap":
             result = options.core.bootstrap(actor);
             break;

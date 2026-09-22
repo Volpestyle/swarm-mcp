@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { inspectCoordination, type DiagnosticFilter } from "./diagnostics";
 import { CoordinationError, requireText } from "./errors";
 import {
   boundedJson,
@@ -54,12 +55,7 @@ import {
 } from "./inbox";
 
 export type Json =
-  | null
-  | boolean
-  | number
-  | string
-  | Json[]
-  | { [key: string]: Json };
+  null | boolean | number | string | Json[] | { [key: string]: Json };
 export type TaskStatus = TaskState;
 export interface Task {
   id: string;
@@ -274,6 +270,42 @@ export class CoordinationStore {
   private readonly listeners = new Set<(cursor: number) => void>();
   private closed = false;
   private executing = false;
+  private readonly metricStart = Date.now();
+  private readonly metrics = new Map<
+    string,
+    {
+      staleOwnerRejections: number;
+      databaseBusyErrors: number;
+      writerAcquisitions: number;
+      writerAcquireMs: number;
+      maxWriterAcquireMs: number;
+    }
+  >();
+  private readonly countedErrors = new WeakSet<object>();
+  private metric(scope: string) {
+    let value = this.metrics.get(scope);
+    if (!value) {
+      value = {
+        staleOwnerRejections: 0,
+        databaseBusyErrors: 0,
+        writerAcquisitions: 0,
+        writerAcquireMs: 0,
+        maxWriterAcquireMs: 0,
+      };
+      this.metrics.set(scope, value);
+    }
+    return value;
+  }
+  private recordError(scope: string, error: unknown) {
+    if (!error || typeof error !== "object" || this.countedErrors.has(error))
+      return;
+    this.countedErrors.add(error);
+    const code = (error as { code?: string }).code;
+    if (code === "stale_session" || code === "stale_attempt")
+      this.metric(scope).staleOwnerRejections++;
+    if (code?.startsWith("SQLITE_BUSY") || code?.startsWith("SQLITE_LOCKED"))
+      this.metric(scope).databaseBusyErrors++;
+  }
   private constructor(
     private readonly db: Sqlite,
     private readonly clock: () => number,
@@ -311,6 +343,21 @@ export class CoordinationStore {
       throw new CoordinationError("closed", "Coordinator store is closed");
   }
 
+  inspect(scope: string, filter?: DiagnosticFilter) {
+    this.ensureOpen();
+    const report = {
+      ...inspectCoordination(this.db, scope, this.clock(), filter),
+      processMetrics: {
+        since: this.metricStart,
+        ...this.metric(scope),
+        retention:
+          "this owner process only; writer acquisition time includes uncontended overhead",
+      },
+    };
+    boundedJson(report, 48 * 1024, "Diagnostics; narrow the filter or limit");
+    return report;
+  }
+
   private cached(
     command: Command,
     fingerprint: string,
@@ -320,8 +367,7 @@ export class CoordinationStore {
         "SELECT fingerprint,result,cursor FROM commands WHERE scope=? AND actor=? AND command_id=?",
       )
       .get(command.scope, command.actor, command.id) as
-      | { fingerprint: string; result: string; cursor: number }
-      | undefined;
+      { fingerprint: string; result: string; cursor: number } | undefined;
     if (!cached) return undefined;
     if (cached.fingerprint !== fingerprint)
       throw new CoordinationError(
@@ -356,7 +402,16 @@ export class CoordinationStore {
     let began = false;
     let result: CommandResult<T>;
     try {
+      const acquireStart = performance.now();
       this.db.exec("BEGIN IMMEDIATE");
+      const elapsed = performance.now() - acquireStart;
+      const metrics = this.metric(command.scope);
+      metrics.writerAcquisitions++;
+      metrics.writerAcquireMs += elapsed;
+      metrics.maxWriterAcquireMs = Math.max(
+        metrics.maxWriterAcquireMs,
+        elapsed,
+      );
       began = true;
       before?.();
       if (command.type !== "session.open") this.assertContext(command);
@@ -398,6 +453,7 @@ export class CoordinationStore {
       committed = true;
       result = { value, cursor: tx.cursor, replayed: false };
     } catch (error) {
+      this.recordError(command.scope, error);
       if (began && !committed) this.db.exec("ROLLBACK");
       throw error;
     } finally {
@@ -452,7 +508,17 @@ export class CoordinationStore {
 
   authorize(capability: string) {
     this.ensureOpen();
-    return authorizeSession(this.db, capability);
+    try {
+      return authorizeSession(this.db, capability);
+    } catch (error) {
+      if ((error as { code?: string }).code === "stale_session") {
+        const row = this.db
+          .prepare("SELECT scope FROM sessions WHERE capability_hash=?")
+          .get(secretHash(capability)) as { scope: string } | undefined;
+        if (row) this.recordError(row.scope, error);
+      }
+      throw error;
+    }
   }
 
   worktree(context: {
@@ -485,7 +551,12 @@ export class CoordinationStore {
   }) {
     this.ensureOpen();
     if (context.sessionId !== undefined || context.generation !== undefined) {
-      validateSession(this.db, context as SessionContext);
+      try {
+        validateSession(this.db, context as SessionContext);
+      } catch (error) {
+        this.recordError(context.scope, error);
+        throw error;
+      }
     } else if (
       this.db
         .prepare("SELECT 1 FROM agents WHERE scope=? AND id=?")

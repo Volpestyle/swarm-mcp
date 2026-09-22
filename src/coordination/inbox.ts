@@ -13,6 +13,14 @@ export type SendPayload = {
 export type InboxCommand =
   | {
       id: string;
+      type: "inbox.wake_observed";
+      payload: {
+        messageId: string;
+        status: "accepted" | "deferred" | "uncertain";
+      };
+    }
+  | {
+      id: string;
       type: "message.send";
       payload: SendPayload & { recipient: string };
     }
@@ -325,6 +333,8 @@ export class InboxTransaction {
           "Delivery was claimed concurrently",
         );
       this.change("delivery.leased", row.id, {
+        sessionId: this.command.sessionId ?? null,
+        generation: this.command.generation ?? null,
         recipient: row.recipient,
         consumer: payload.consumer,
         attempt: row.attempts + 1,
@@ -338,6 +348,32 @@ export class InboxTransaction {
       };
     });
     return { deliveries };
+  }
+
+  wakeObserved(payload: {
+    messageId: string;
+    status: "accepted" | "deferred" | "uncertain";
+  }) {
+    requireText(payload.messageId, "messageId");
+    if (!["accepted", "deferred", "uncertain"].includes(payload.status))
+      throw new CoordinationError("invalid_input", "Unknown wake observation");
+    const row = this.own(payload.messageId);
+    const task = row.task_id
+      ? (this.db
+          .prepare("SELECT current_attempt FROM tasks WHERE scope=? AND id=?")
+          .get(this.command.scope, row.task_id) as
+          { current_attempt: string | null } | undefined)
+      : undefined;
+    this.change("runtime.wake", row.id, {
+      status: payload.status,
+      recipient: this.command.actor,
+      sessionId: this.command.sessionId ?? null,
+      generation: this.command.generation ?? null,
+      taskId: row.task_id,
+      attemptId: task?.current_attempt ?? null,
+      deliveryAttempt: row.attempts,
+    });
+    return { status: payload.status };
   }
 
   acknowledge(payload: { messageId: string; leaseToken: string }) {
@@ -357,6 +393,8 @@ export class InboxTransaction {
       )
       .run(this.at, row.id, row.recipient, payload.leaseToken);
     this.change("delivery.acknowledged", row.id, {
+      sessionId: this.command.sessionId ?? null,
+      generation: this.command.generation ?? null,
       recipient: row.recipient,
       attempt: row.attempts,
     });

@@ -1,4 +1,4 @@
-# Execution routing (VUH-1340, implementation in progress)
+# Execution routing (VUH-1340)
 
 ## OpenCode native provider
 

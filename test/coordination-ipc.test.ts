@@ -7,6 +7,7 @@ import { CoordinationClient } from "../src/coordination/ipc";
 
 const cleanup: Array<() => Promise<void> | void> = [];
 let fixtureScript: string;
+let clientScript: string;
 beforeAll(async () => {
   mkdirSync(resolve("dist/test"), { recursive: true });
   fixtureScript = join(mkdtempSync(resolve("dist/test/ipc-")), "service.mjs");
@@ -18,6 +19,15 @@ beforeAll(async () => {
     target: "node22",
     packages: "external",
     outfile: fixtureScript,
+  });
+  clientScript = fixtureScript.replace("service.mjs", "client.mjs");
+  await build({
+    entryPoints: ["src/coordination/client-cli.ts"],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    packages: "external",
+    outfile: clientScript,
   });
 });
 afterEach(async () => {
@@ -57,6 +67,8 @@ async function fixture(mode?: string) {
     return client;
   };
   return {
+    endpoint,
+    sessionCapability: sessionCapability ?? "alice-secret",
     client: await connect(),
     connect,
     worktreeRoot: worktreeRoot as string,
@@ -67,6 +79,42 @@ const command = {
   type: "task.create" as const,
   payload: { title: "work over local IPC" },
 };
+
+test("inspect over IPC is bounded and derives scope from authorization", async () => {
+  const { client, endpoint, sessionCapability } = await fixture();
+  await client.request({ op: "command", command });
+  const report = (await client.request({
+    op: "inspect",
+    scope: "forged",
+    filter: { limit: 1 },
+  } as any)) as any;
+  expect(report.scope).not.toBe("forged");
+  expect(report.tasks.items).toHaveLength(1);
+  expect(report.tasks.items[0].status).toBe("open");
+  const error = await client
+    .request({ op: "inspect", filter: { limit: 21 } })
+    .catch((error) => error);
+  expect(error).toMatchObject({ code: "invalid_input" });
+  const cli = Bun.spawn({
+    cmd: [Bun.which("node")!, clientScript, "doctor"],
+    env: {
+      ...process.env,
+      SWARM_COORDINATOR_ENDPOINT: endpoint,
+      SWARM_SESSION_CAPABILITY: sessionCapability,
+    },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [code, output, stderr] = await Promise.all([
+    cli.exited,
+    new Response(cli.stdout).text(),
+    new Response(cli.stderr).text(),
+  ]);
+  expect(stderr).toBe("");
+  expect(code).toBe(0);
+  expect(JSON.parse(output).tasks.items).toHaveLength(1);
+});
 
 test("dispatch over authenticated IPC uses owner routes and deduplicates assignment", async () => {
   const { client, worktreeRoot } = await fixture("dispatch");
