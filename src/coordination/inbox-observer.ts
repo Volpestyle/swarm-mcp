@@ -1,14 +1,64 @@
 import { CoordinationClient } from "./ipc";
+import { setTimeout as delay } from "node:timers/promises";
 
-/** Runtime-side observer: held event waits consume no model calls. The inbox
- * remains authoritative; notifications only cause a fresh read and wake check. */
-export function observeInbox(options: {
+type Options = {
   endpoint: string;
   capability: string;
   ready: () => boolean;
   notify: (messageId: string, signal: AbortSignal) => Promise<unknown>;
-  failed: () => void;
-}) {
+  failed: (error?: unknown) => void;
+};
+
+/** Reconnect transports with the existing capability; never reenroll, start an
+ * owner, or replace a fenced session. Each attempt snapshots the durable inbox. */
+export function observeInbox(options: Options) {
+  const lifetime = new AbortController();
+  const backoff = [150, 500, 1500];
+  let current: ReturnType<typeof observeConnection> | undefined;
+  const done = (async () => {
+    for (let attempt = 0; !lifetime.signal.aborted; attempt++) {
+      let failure: unknown;
+      current = observeConnection({
+        ...options,
+        failed(error) {
+          failure = error;
+          options.failed(error);
+        },
+      });
+      await current.done;
+      const code = (failure as { code?: string } | undefined)?.code;
+      if (
+        lifetime.signal.aborted ||
+        attempt >= backoff.length ||
+        !code ||
+        ![
+          "disconnected",
+          "timeout",
+          "ECONNRESET",
+          "EPIPE",
+          "ENOENT",
+          "ECONNREFUSED",
+        ].includes(code)
+      )
+        return;
+      await delay(backoff[attempt], undefined, { signal: lifetime.signal });
+    }
+  })().catch((error) => {
+    if (!lifetime.signal.aborted) options.failed(error);
+  });
+  return {
+    done,
+    kick: () => current?.kick(),
+    stop() {
+      lifetime.abort();
+      current?.stop();
+    },
+  };
+}
+
+/** Runtime-side observer: held event waits consume no model calls. The inbox
+ * remains authoritative; notifications only cause a fresh read and wake check. */
+function observeConnection(options: Options) {
   let stopped = false;
   const controller = new AbortController();
   let events: CoordinationClient | undefined;
@@ -77,8 +127,14 @@ export function observeInbox(options: {
         }
       }
     })()
-      .catch(() => {
-        if (!stopped) options.failed();
+      .catch((error) => {
+        if (!stopped) {
+          options.failed(error);
+          stopped = true;
+          controller.abort();
+          events?.close();
+          reads?.close();
+        }
       })
       .finally(() => {
         scanning = undefined;
@@ -94,6 +150,7 @@ export function observeInbox(options: {
       options.endpoint,
       options.capability,
     );
+    if (stopped) return;
     const snapshot = (await reads.request({ op: "bootstrap" })) as {
       eventCursor: number;
     };
@@ -110,15 +167,16 @@ export function observeInbox(options: {
       if (page.items.length) kick();
     }
   })()
-    .catch(() => {
-      if (!stopped) options.failed();
+    .catch((error) => {
+      if (!stopped) options.failed(error);
     })
-    .finally(() => {
+    .finally(async () => {
       stopped = true;
       controller.abort();
       if (retryTimer) clearTimeout(retryTimer);
       events?.close();
       reads?.close();
+      await scanning;
     });
   return {
     done,

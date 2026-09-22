@@ -186,9 +186,21 @@ at its next attempt time rather than model polling.
 Host disposal and session deletion stop their observers, close IPC connections
 and abort an in-flight wake request before any later POST. This cannot undo a
 POST already admitted by the host. Startup-backlog tests verify notification
-leaves deliveries pending. Coordinator-transport recovery, efficient traversal
-of large retained inbox histories and expired-lease recovery still need work;
-the observer currently reports a transport failure instead of silently resuming.
+leaves deliveries pending. Coordinator transport errors trigger bounded retries
+after 150, 500 and 1,500 ms, up to four connections per observer lifetime.
+Each attempt uses the existing capability and repeats bootstrap/backlog discovery;
+the observer never reenrolls a session or starts an owner. Invalid credentials,
+fenced sessions and protocol errors are terminal. Stop cancels backoff, aborts
+wakes and waits for the old scan to settle before allowing another attempt.
+
+`coordination-inbox-observer.test.ts` kills and restarts the production Node owner
+against its retained database. The same observer finds the same pending message
+with the original capability. It also verifies retry exhaustion, explicit stop
+and terminal authentication failure. The test supplies the owner restart.
+`opencode-inbox-retry.json` verifies the installed-host delivery flow remains
+working with this observer; it does not inject a coordinator crash into that host
+run. Efficient traversal of retained inbox history and expired-lease recovery
+remain open. Exhausted observers require lifecycle reinitialization.
 
 ## Actual host evidence
 
