@@ -7,6 +7,11 @@ const receipt = z.object({
   replayed: z.boolean(),
 });
 const page = z.object({ items: z.array(object), cursor: z.number() });
+const dispatch = z.looseObject({
+  status: z.string(),
+  taskId: z.string().optional(),
+  reasons: z.array(z.string()).optional(),
+});
 const task = z.looseObject({
   taskId: z.string(),
   scope: z.string(),
@@ -45,8 +50,8 @@ const dataSchemas = {
     }),
   ]),
   swarm_find: z.union([page, task]),
-  swarm_assign: receipt,
-  swarm_task: receipt,
+  swarm_assign: z.union([receipt, dispatch]),
+  swarm_task: z.union([receipt, dispatch]),
   swarm_send: receipt,
   swarm_inbox: receipt,
   swarm_wait: z.object({

@@ -33,7 +33,7 @@ for (const mode of ["modern", "legacy"] as const)
         Bun.which("node")!,
         join(dir, "test/fixtures/coordination-service.js"),
         join(root, "db"),
-        "sessions",
+        "dispatch",
       ],
       stdout: "pipe",
       stderr: "pipe",
@@ -309,6 +309,26 @@ for (const mode of ["modern", "legacy"] as const)
         await delay(10);
       expect(notifications).toEqual(["swarm://tasks", "swarm://context"]);
       await contextSubscription.close();
+      const routed = {
+        ...assignment,
+        commandId: "routed",
+        routing: { capabilities: ["code"], durable: true },
+      };
+      const dispatched = await call("swarm_assign", routed);
+      expect(dispatched.status).toBe("bound");
+      expect((await call("swarm_assign", routed)).attemptId).toBe(
+        dispatched.attemptId,
+      );
+      expect(
+        (
+          await call("swarm_task", {
+            action: "cancel",
+            commandId: "cancel-routed",
+            taskId: dispatched.taskId,
+            intentId: "routed",
+          })
+        ).status,
+      ).toBe("uncertain");
     } finally {
       const closingAt = Date.now();
       await client.close();

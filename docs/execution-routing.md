@@ -139,8 +139,21 @@ task version across retries, while assignment retains the intent identity.
 
 The Node-owner IPC regression verifies assignment/retry, conflicting work,
 capacity exhaustion and the unconfigured case. Forged top-level actor, scope and
-policy fields do not change the accepted worker or configured limit. The MCP
-tool surface remains pending.
+policy fields do not change the accepted worker or configured limit.
+
+MCP `swarm_assign` accepts optional `routing` requirements: capabilities, durable
+lifetime, optional host and intent ID (defaulting to commandId). Supplying an
+expected task version plus the original intent ID requests explicit reassignment;
+use a stable commandId for that retry. Without routing, assignment still creates
+dependency-capable work for later claiming. Routed dependency lists are rejected
+rather than ignored. `swarm_task` cancellation with intentId invokes dispatch
+cancellation. Results distinguish bound, blocked, uncertain and released states.
+
+Modern and legacy stdio tests execute routed assignment, retry and cancellation
+through a real Node owner. The nine-tool catalog omits repeated schema-dialect
+metadata through the SDK's Standard Schema conversion interface; the original
+runtime validators and constraints are retained. The dispatch context capture
+under `verification/2026-09-22-dispatch` records the measured catalog budget.
 
 The private owner JSON accepts optional `dispatch` configuration: `maximum`,
 `observationMaxAgeMs` (1..60000), and `peers`. Each peer declares `id`, a pinned

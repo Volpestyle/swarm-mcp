@@ -63,6 +63,27 @@ function required<T>(value: T | undefined, name: string): T {
   return value;
 }
 
+// MCP already supplies the schema context. Omit repeated dialect declarations
+// while preserving the original Standard Schema validator and every constraint.
+function compactSchema<T extends z.ZodType>(schema: T) {
+  const standard = schema["~standard"];
+  const compact =
+    (convert: typeof standard.jsonSchema.input) =>
+    (options: Parameters<typeof convert>[0]) => {
+      const { $schema, ...shape } = convert(options);
+      return shape;
+    };
+  return {
+    "~standard": {
+      ...standard,
+      jsonSchema: {
+        input: compact(standard.jsonSchema.input),
+        output: compact(standard.jsonSchema.output),
+      },
+    },
+  };
+}
+
 export function createCoordinatorMcp(request: CoordinatorRequest) {
   const server = new McpServer(
     { name: "swarm", version: "2.0.0" },
@@ -105,8 +126,8 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
       name,
       {
         description,
-        inputSchema: z.object(shape).strict(),
-        outputSchema: outputSchema(name),
+        inputSchema: compactSchema(z.object(shape).strict()),
+        outputSchema: compactSchema(outputSchema(name)),
         annotations: {
           readOnlyHint: readOnly,
           idempotentHint: true,
@@ -221,16 +242,56 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
   );
   tool(
     "swarm_assign",
-    "Create durable work asynchronously; wait separately by task ID.",
+    "Create work; routing dispatches via owner policy. Reassign with intentId and expectedVersion.",
     {
       commandId: id,
       title: text,
       contract,
       dependencies: z.array(id).max(100).default([]),
+      routing: z
+        .object({
+          intentId: id.optional(),
+          capabilities: z.array(id).max(64),
+          durable: z.boolean(),
+          host: id.optional(),
+          expectedVersion: z.number().int().positive().optional(),
+        })
+        .strict()
+        .optional(),
     },
     false,
-    (a) =>
-      request({
+    (a) => {
+      if (a.routing) {
+        if (a.dependencies.length)
+          throw new CoordinationError(
+            "invalid_input",
+            "Dispatch dependencies are not supported; create dependency work separately",
+          );
+        const intent = {
+          intentId: a.routing.intentId ?? a.commandId,
+          title: a.title,
+          contract: a.contract,
+          capabilities: a.routing.capabilities,
+          durable: a.routing.durable,
+          host: a.routing.host,
+        };
+        return request({
+          op: "dispatch",
+          input:
+            a.routing.expectedVersion === undefined
+              ? { action: "assign", intent }
+              : {
+                  action: "reassign",
+                  commandId: a.commandId,
+                  expectedVersion: a.routing.expectedVersion,
+                  intent: {
+                    ...intent,
+                    intentId: required(a.routing.intentId, "routing.intentId"),
+                  },
+                },
+        });
+      }
+      return request({
         op: "command",
         command: {
           id: a.commandId,
@@ -241,11 +302,12 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
             dependencies: a.dependencies,
           },
         },
-      }),
+      });
+    },
   );
   tool(
     "swarm_task",
-    "Manage task ownership and progress. Finish requires evidence and limitations.",
+    "Manage ownership/progress; finish with evidence/limitations. Cancel dispatch with intentId.",
     {
       commandId: id,
       action: z.enum([
@@ -258,6 +320,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
         "recover",
       ]),
       taskId: id,
+      intentId: id.optional(),
       expectedVersion: z.number().int().positive().optional(),
       attemptId: id.optional(),
       fence: z.number().int().positive().optional(),
@@ -273,6 +336,17 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
     },
     false,
     (a) => {
+      if (a.intentId !== undefined) {
+        if (a.action !== "cancel")
+          throw new CoordinationError(
+            "invalid_input",
+            "intentId is only used for dispatch cancellation",
+          );
+        return request({
+          op: "dispatch",
+          input: { action: "cancel", intentId: a.intentId },
+        });
+      }
       const base = { id: a.commandId, payload: { taskId: a.taskId } };
       if (a.action === "recover")
         return request({
