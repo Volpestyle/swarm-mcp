@@ -14,7 +14,10 @@ if (![2, 8, 32].includes(count)) throw new Error("Expected agent count 2, 8, or 
 const worker = process.argv[3] === "--worker";
 const fixture = worker ? process.argv[4]! : mkdtempSync(join(tmpdir(), "swarm-bench-"));
 process.env.SWARM_DB_PATH = join(fixture, "swarm.db");
-const pollMs = 2000;
+const mode = process.env.SWARM_BENCH_MODE ?? "baseline";
+if (!["baseline", "no-cleanup", "atomic"].includes(mode)) throw new Error("Unknown experiment mode");
+const pollMs = Number(process.env.SWARM_BENCH_POLL_MS ?? 2000);
+if (!Number.isFinite(pollMs) || pollMs < 20) throw new Error("Invalid poll interval");
 const messagesPerAgent = 12;
 
 if (worker) {
@@ -22,6 +25,7 @@ if (worker) {
   const { db } = await import("../src/db");
   const registry = await import("../src/registry");
   const messages = await import("../src/messages");
+  const events = await import("../src/events");
   const scope = "baseline-benchmark";
   const agent = registry.register(fixture, `identity:benchmark worker:${index}`, scope);
   writeFileSync(join(fixture, `ready-${index}`), agent.id);
@@ -40,6 +44,29 @@ if (worker) {
   let polls = 0;
   let accepted = 0;
   let duplicateDeliveries = 0;
+  // Experimental paths only. Production remains unchanged. 'no-cleanup' keeps
+  // separate mutation/event statements; 'atomic' also makes each transition atomic.
+  const atomic = <T>(fn: () => T): T => {
+    if (mode !== "atomic") return fn();
+    db.exec("BEGIN IMMEDIATE");
+    try { const value = fn(); db.exec("COMMIT"); return value; }
+    catch (error) { db.exec("ROLLBACK"); throw error; }
+  };
+  const send = (content: string) => {
+    if (mode === "baseline") return messages.send(agent.id, scope, peer, content);
+    return atomic(() => {
+      db.run("INSERT INTO messages (scope, sender, recipient, content) VALUES (?, ?, ?, ?)", [scope, agent.id, peer, content]);
+      events.emit({ scope, type: "message.sent", actor: agent.id, subject: peer, payload: { content, length: content.length } });
+    });
+  };
+  const poll = () => {
+    if (mode === "baseline") return messages.poll(agent.id, scope);
+    return atomic(() => {
+      const rows = db.query("SELECT id, sender, content, created_at FROM messages WHERE scope = ? AND recipient = ? AND read = 0 ORDER BY created_at, id LIMIT 50").all(scope, agent.id) as Array<{id:number;content:string}>;
+      if (rows.length) db.run(`UPDATE messages SET read = 1 WHERE id IN (${rows.map(() => "?").join(",")})`, rows.map(row => row.id));
+      return rows;
+    });
+  };
   const timed = <T>(fn: () => T): T | undefined => {
     const start = performance.now();
     try { return fn(); }
@@ -49,7 +76,7 @@ if (worker) {
   const read = () => {
     polls++;
     requestBytes += Buffer.byteLength(JSON.stringify({ name: "poll_messages", arguments: {} }));
-    const rows = timed(() => messages.poll(agent.id, scope)) as Array<{id:number;content:string}> | undefined;
+    const rows = timed(poll) as Array<{id:number;content:string}> | undefined;
     responseBytes += Buffer.byteLength(JSON.stringify(rows ?? []));
     for (const row of rows ?? []) {
       if (receivedIds.has(row.id)) duplicateDeliveries++;
@@ -71,7 +98,7 @@ if (worker) {
     const content = JSON.stringify({ sentAt: Date.now(), sequence: n, body: "x".repeat(256) });
     payloadBytes += Buffer.byteLength(content);
     requestBytes += Buffer.byteLength(JSON.stringify({ name: "send_message", arguments: { recipient: peer, content } }));
-    timed(() => { messages.send(agent.id, scope, peer, content); accepted++; });
+    timed(() => { send(content); accepted++; });
     await sleep(73);
   }
   while (latencies.length < messagesPerAgent && Date.now() - sendStart < 8000) await sleep(30);
@@ -116,7 +143,7 @@ if (worker) {
   inspection.close();
   console.log(JSON.stringify({
     hardware: { cpu: cpus()[0]?.model, logicalCpus: cpus().length, physicalMemoryBytes: totalmem(), platform: platform(), release: release(), bun: Bun.version },
-    workload: { count, pollMs, messagesPerAgent, bodyBytes: 256, idleMs: 4200, fixture },
+    workload: { count, mode, pollMs, messagesPerAgent, bodyBytes: 256, idleMs: 4200, fixture },
     accepted: sum("accepted"), received: sum("received"), unread, duplicateDeliveries: sum("duplicateDeliveries"),
     deliveryMs: { p50: percentile(latencies, .5), p95: percentile(latencies, .95) },
     deliveredPerSecond: sum("received") / (durationMs / 1000),

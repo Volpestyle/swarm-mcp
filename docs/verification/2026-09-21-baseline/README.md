@@ -46,8 +46,49 @@ notification timer, JSON-RPC serialization, adapter wake, host context injection
 and model tokenization are excluded. Startup schema initialization runs before
 the barrier. No crash faults were injected.
 
-The next experiment should attribute the 32-process contention (including
-opportunistic cleanup) and compare a lean transaction path with coalesced wake
-notifications. These results do not by themselves prove that a daemon is needed.
-VUH-1331 stays open pending that comparison, actual host/API costs, the supported
-host matrix and the final design decision.
+## Follow-up architecture experiments
+
+The [selected architecture](../../coordination-architecture.md) records the
+comparison, supported matrix, guarantees and budgets. No production behavior was
+changed by these experiments.
+
+- `SWARM_BENCH_MODE=no-cleanup` with `benchmark-baseline.ts 32` excludes incidental
+  cleanup but retains separate message/event statements. Result: 376 accepted,
+  361 read, eight operation errors, p95 3218 ms.
+- `SWARM_BENCH_MODE=atomic` additionally puts each message/event mutation in an
+  immediate transaction. Result: 381 accepted, 372 read, nine operation errors,
+  p95 3521 ms. Errors include reads; do not call all nine failed sends.
+- `benchmark-broker.ts` runs a disposable single writer over loopback HTTP with
+  separate client processes. It deliberately retains destructive reads for
+  comparability; it is not the reliable inbox implementation.
+- `experiment-broker-32.json` is the first cold sample with one-second waits.
+  `experiment-broker-warm-{2,8,32}.json` adds two seconds of connection warmup and
+  retains one-second waits (`SWARM_BENCH_HOLD_MS=1000`). At 32 agents, p95 was
+  44 ms with no errors, but idle CPU was 16.7% of one core.
+- `experiment-broker-held-32.json` and `experiment-broker-held-repeat-32.json`
+  use 30-second held waits (the current default). Both delivered 384/384 with
+  no errors. Use the clean repeat: p95 36 ms, 286 delivered/sec, idle CPU 0.74%
+  of one core. The first held-wait sample overlapped tokenizer installation;
+  the repeat did not.
+
+Real MCP text captures use `bun run scripts/measure-mcp-context.ts 2` (also 8
+and 32). These spawn actual stdio MCP servers using isolated databases and drive
+register/bootstrap/send/poll. They assert that every ring message is returned.
+The recorded catalog has 33 tools.
+
+Token counts use `python scripts/count-context-tokens.py <capture> ...` with
+`tiktoken==0.12.0` installed in an isolated environment. This campaign installed
+it under the temporary `swarm-benchmark-tokenizer` directory and set `PYTHONPATH`
+for the count command; no production dependency was added. Results use
+`o200k_base`, count explicit JSON arguments and text results, and separately
+report schema text. They do not estimate hidden host framing or provider bills.
+
+| Agents | Calls | Argument + result tokens | Bootstrap result tokens |
+|---|---|---|---|
+| 2 | 8 | 2534 | 1306 |
+| 8 | 32 | 20288 | 15440 |
+| 32 | 128 | 246300 | 226816 |
+
+Each full catalog is 6042 tokens; deferred tool discovery can change actual host
+exposure. The full transcripts and counts are retained in `mcp-context-*.json`
+and `mcp-token-counts.json`.
