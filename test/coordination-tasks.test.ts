@@ -295,6 +295,60 @@ test("suspended owner is recoverable and cannot resume its old task attempt", as
   expect(env.claim(env.core.task(env.alice, task.id)!, resumed).fence).toBe(2);
 });
 
+for (const runtime of ["bun", "node"] as const)
+  for (const fault of [
+    "before_command_commit",
+    "after_command_commit",
+  ] as const)
+    test(`lease renewal survives process exit ${fault} (${runtime})`, async () => {
+      const env = await fixture();
+      const task = env.create(),
+        attempt = env.claim(task);
+      const command: CoreCommand = {
+        id: "crashed-renew",
+        type: "task.renew",
+        payload: {
+          taskId: task.id,
+          attemptId: attempt.attemptId,
+          fence: attempt.fence,
+          leaseMs: 500,
+        },
+      };
+      const child = Bun.spawn({
+        cmd: [
+          runtime === "bun" ? process.execPath : Bun.which("node")!,
+          runtime === "bun"
+            ? resolve("test/fixtures/task-worker.ts")
+            : nodeFixture,
+          env.path,
+          env.bob.capability,
+          JSON.stringify(command),
+          fault,
+        ],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [code, , stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect(stderr).toBe("");
+      expect(code).toBe(73);
+      expect(env.core.attempts(env.alice, task.id)[0]!.lease_until).toBe(
+        fault === "before_command_commit" ? 1100 : 1500,
+      );
+      expect(env.core.command(env.bob, command).replayed).toBe(
+        fault === "after_command_commit",
+      );
+      expect(env.core.attempts(env.alice, task.id)[0]!.lease_until).toBe(1500);
+      expect(
+        env.store
+          .events("test")
+          .items.filter((e) => e.type === "task.lease_renewed"),
+      ).toHaveLength(1);
+    });
+
 test("long tool lease renewal is independent of heartbeat and model progress", async () => {
   const env = await fixture();
   const task = env.create(),
