@@ -3,7 +3,10 @@ import { resolve, join } from "node:path";
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
-const output = resolve(process.argv[2] ?? "dist/verification/coordination");
+const output = join(
+  resolve(process.argv[2] ?? "dist/verification/coordination"),
+  new Date().toISOString().replaceAll(":", "-"),
+);
 mkdirSync(output, { recursive: true });
 const git = (...args: string[]) =>
   execFileSync("git", args, { encoding: "utf8" }).trim();
@@ -51,7 +54,11 @@ for (const [index, command] of commands.entries()) {
     path = join(output, log),
     started = Date.now();
   writeFileSync(path, "");
-  const child = spawn(command[0]!, command.slice(1), {
+  const executable =
+    command[0] === "bun"
+      ? process.execPath
+      : (Bun.which(command[0]!) ?? command[0]!);
+  const child = spawn(executable, command.slice(1), {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
