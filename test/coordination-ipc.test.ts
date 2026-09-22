@@ -89,6 +89,8 @@ test("inspect over IPC is bounded and derives scope from authorization", async (
     filter: { limit: 1 },
   } as any)) as any;
   expect(report.scope).not.toBe("forged");
+  expect(report.protocol.modern).toBe("2026-07-28");
+  expect(report.protocol.legacy).toContain("2025-11-25");
   expect(report.tasks.items).toHaveLength(1);
   expect(report.tasks.items[0].status).toBe("open");
   const error = await client

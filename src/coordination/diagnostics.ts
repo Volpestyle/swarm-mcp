@@ -1,6 +1,5 @@
 import type { Sqlite } from "./sqlite";
 import { CoordinationError, requireText } from "./errors";
-import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/server";
 
 export type DiagnosticFilter = {
   taskId?: string;
@@ -121,7 +120,6 @@ export function inspectCoordination(
   });
   return {
     observedAt: now,
-    protocol: { modern: "2026-07-28", legacy: SUPPORTED_PROTOCOL_VERSIONS },
     adapterCoverage: {
       evidenceDate: "2026-09-22",
       meaning: "Candidate support, not host discovery or a liveness claim",
