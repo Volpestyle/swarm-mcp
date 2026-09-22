@@ -68,6 +68,77 @@ const command = {
   payload: { title: "work over local IPC" },
 };
 
+test("launcher enrollment is separate from agent authority and resume fences old transports", async () => {
+  const { client, connect, worktreeRoot } = await fixture("sessions");
+  const input = {
+    scope: "test",
+    agentId: "bob",
+    requestId: "launch-bob",
+    resumeToken: "fixture-resume-secret-at-least-32-characters",
+    worktree: { root: worktreeRoot, repository: worktreeRoot },
+  };
+  const denied = await client
+    .request({ op: "enroll", input })
+    .catch((error) => error);
+  expect(denied).toMatchObject({ code: "forbidden" });
+  const launcher = await connect("fixture-launcher-secret-32-characters");
+  const notAgent = await launcher
+    .request({ op: "bootstrap" })
+    .catch((error) => error);
+  expect(notAgent).toMatchObject({ code: "unauthorized" });
+  const enrolled = (await launcher.request({ op: "enroll", input })) as {
+    capability: string;
+    generation: number;
+    replayed: boolean;
+  };
+  expect(enrolled.generation).toBe(1);
+  const replay = await launcher.request({ op: "enroll", input });
+  expect(replay).toEqual({ ...enrolled, replayed: true });
+  const bob = await connect(enrolled.capability);
+  expect(await bob.request({ op: "bootstrap" })).toMatchObject({
+    actor: "bob",
+    scope: "test",
+  });
+  const resumed = (await launcher.request({
+    op: "enroll",
+    input: { ...input, requestId: "resume-bob" },
+  })) as { capability: string; generation: number };
+  expect(resumed.generation).toBe(2);
+  const stale = await bob.request({ op: "bootstrap" }).catch((error) => error);
+  expect(stale).toMatchObject({ code: "stale_session" });
+  const current = await connect(resumed.capability);
+  expect(await current.request({ op: "bootstrap" })).toMatchObject({
+    actor: "bob",
+  });
+  const impersonated = await launcher
+    .request({
+      op: "enroll",
+      input: {
+        ...input,
+        requestId: "wrong-secret",
+        resumeToken: "different-resume-secret-32-characters",
+      },
+    })
+    .catch((error) => error);
+  expect(impersonated).toMatchObject({ code: "forbidden" });
+});
+
+test("enrollment is unavailable unless the owner explicitly configures it", async () => {
+  const { client } = await fixture();
+  const result = await client
+    .request({
+      op: "enroll",
+      input: {
+        scope: "test",
+        agentId: "x",
+        requestId: "x",
+        resumeToken: "fixture-resume-secret-at-least-32-characters",
+      },
+    })
+    .catch((error) => error);
+  expect(result).toMatchObject({ code: "forbidden" });
+});
+
 test("held event pages obey their limit without skipping the remaining events", async () => {
   const { client } = await fixture();
   for (let index = 0; index < 25; index++)

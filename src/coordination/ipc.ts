@@ -5,9 +5,11 @@ import { CoordinationCore, type ActorContext, type CoreCommand } from "./core";
 import { CoordinationError, requireText } from "./errors";
 import type { ArtifactImport, FindingFilter } from "./evidence";
 import type { PeerFilter, TaskFilter } from "./queries";
+import type { Enrollment } from "./sessions";
 
 const MAX_FRAME_BYTES = 65536;
 export type Operation =
+  | { op: "enroll"; input: Enrollment }
   | { op: "bootstrap" }
   | { op: "peers"; filter?: PeerFilter }
   | { op: "tasks"; filter?: TaskFilter }
@@ -45,12 +47,16 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-/** The owner supplies capability validation. Caller-supplied actor/scope fields
- * are never accepted from the wire. No default allow-all policy exists. */
+/** The owner supplies capability validation. Ordinary operations never accept
+ * actor/scope overrides. Enrollment requires separately configured launcher
+ * authority; no default allow-all policy exists. */
 export async function serveCoordination(options: {
   endpoint: string;
   core: CoordinationCore;
   authorize: (capability: string) => ActorContext;
+  /** Optional launcher-only authority. This callback must authenticate a
+   * distinct launcher credential before accepting any enrollment fields. */
+  enroll?: (capability: string, input: unknown) => unknown;
   maxPending?: number;
 }) {
   if (process.platform === "win32" && typeof Bun !== "undefined") {
@@ -94,12 +100,22 @@ export async function serveCoordination(options: {
             "overloaded",
             "Coordinator request capacity reached; retry with the same command ID",
           );
-        const actor = options.authorize(raw.capability);
-        requireText(actor.scope, "authorized scope");
-        requireText(actor.actor, "authorized actor");
         inflight.add(id);
         pending++;
         counted = true;
+        if (raw.op === "enroll") {
+          if (!options.enroll)
+            throw new CoordinationError(
+              "forbidden",
+              "Launcher enrollment is not configured",
+            );
+          const result = await options.enroll(raw.capability, raw.input);
+          respond({ id, result });
+          return;
+        }
+        const actor = options.authorize(raw.capability);
+        requireText(actor.scope, "authorized scope");
+        requireText(actor.actor, "authorized actor");
         let result: unknown;
         switch (raw.op) {
           case "bootstrap":

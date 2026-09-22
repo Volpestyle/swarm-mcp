@@ -1,5 +1,19 @@
 # Runtime delivery contract (implementation in progress)
 
+The production owner runs as `node dist/coordination/owner-cli.js <config.json>`.
+Its private config contains `databasePath` and a generated `launcherSecret` of at
+least 32 characters. The launcher must protect that file and must not export the
+secret to agent environments. Readiness prints only the endpoint and PID.
+
+`launcherEnrollment` enables the IPC `enroll` operation using that separate
+credential. Ordinary agent capabilities cannot enroll, and the launcher secret
+is not an agent capability. The authenticated launcher supplies validated scope,
+stable agent ID, worktree, resume secret and request ID. Identical enrollment
+replay returns the original capability; a new request ID advances the session
+generation and fences the older capability. Owner restart preserves this state.
+Enrollment is disabled unless the owner explicitly installs the callback.
+Automatic owner startup and host-hook wiring remain to be completed.
+
 `RuntimeDelivery` consumes an authenticated coordinator request function and a
 trusted host adapter. It has no spawn or terminal-injection API. Enrollment and
 session capabilities belong to the launcher; the adapter is bound to one actor.

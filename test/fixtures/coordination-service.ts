@@ -2,6 +2,7 @@ import { CoordinationStore } from "../../src/coordination/store";
 import { CoordinationCore } from "../../src/coordination/core";
 import { CoordinationError } from "../../src/coordination/errors";
 import { randomBytes } from "node:crypto";
+import { launcherEnrollment } from "../../src/coordination/enrollment";
 import { dirname } from "node:path";
 import {
   CoordinationClient,
@@ -22,6 +23,10 @@ const session =
       })
     : undefined;
 const options = {
+  enroll:
+    mode === "sessions"
+      ? launcherEnrollment(store, "fixture-launcher-secret-32-characters")
+      : undefined,
   endpoint: localEndpoint(path),
   core: new CoordinationCore(store),
   authorize: (capability: string) => {
