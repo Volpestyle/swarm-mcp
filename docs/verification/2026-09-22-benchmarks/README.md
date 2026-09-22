@@ -1,11 +1,13 @@
 # Production coordination benchmark campaign
 
-VUH-1343 remains in progress. This archive establishes the short ring workload,
+This archive establishes the short ring workload,
 60-second idle comparison, small/no-work cases and explicit MCP token counts.
 This campaign does not establish the mixed-host, disconnected/slow consumer,
 saturated backlog, fairness or recovery budgets. The subsequent
 [consumer campaign](../2026-09-22-consumers/README.md) adds measured transport
-reconnect, saturation and slow-consumer evidence; mixed-host work remains open.
+reconnect, saturation and slow-consumer evidence. The subsequent
+[acceptance index](../../coordination-benchmarks.md) links the completed
+mixed-host, native-only and actual adapter-memory campaigns.
 
 ## Environment and provenance
 

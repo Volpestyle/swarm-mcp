@@ -76,6 +76,8 @@ elsewhere. The final two runs exited zero. The initial capture is retained as
 trying to parse Claude's empty `HEAD /api/hello` request as JSON. Restricting the
 fixture endpoint to `/messages` corrected that harness error before final proof.
 
-Still unproven: native-only comparison, full adapter/host memory comparison,
-general workloads beyond this deterministic exchange and complete automated
-budget enforcement. VUH-1343 remains open; this capture is not a release gate.
+The subsequent [native/memory campaign](../2026-09-22-native-memory/README.md)
+supplies the native-only and actual adapter/host memory comparison. The
+[acceptance index](../../coordination-benchmarks.md) maps all selected budgets
+to evidence and executable checks. General workloads beyond these deterministic
+fixtures remain unproven; this capture is not a release gate.

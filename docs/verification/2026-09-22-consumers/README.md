@@ -57,6 +57,7 @@ python scripts/verify-consumer-benchmarks.py --disconnect dist/test/disconnect.j
 Remove-Item Env:SWARM_BENCH_DISCONNECT_MS, Env:SWARM_BENCH_MESSAGES, Env:SWARM_BENCH_SPACING_MS, Env:SWARM_BENCH_SLOW_MS
 ```
 
-VUH-1343 remains open for the actual mixed-host/native comparison, representative
-task/user-prompt accounting, full adapter memory comparison and remaining budget
-enforcement. The consumer verifier is deliberately not a complete release gate.
+The subsequent [acceptance index](../../coordination-benchmarks.md) links the
+mixed-host/native comparison, representative-task prompt accounting, actual
+adapter memory comparison and remaining budget verifiers. The consumer verifier
+is deliberately not a complete release gate.
