@@ -111,6 +111,55 @@ for (const failure of ["lost-response", "timeout"] as const)
         throw new Error("Missing task");
       expect(store.attempts("scope", bound.taskId)).toHaveLength(1);
       expect(store.taskSummaries("scope").items).toHaveLength(1);
+      const release = (stopped?: { token: string; routeId: string }) =>
+        store.execute(
+          {
+            ...requester,
+            id: crypto.randomUUID(),
+            type: "dispatch.release",
+            payload: {},
+          },
+          (tx) => tx.dispatch.release({ intentId: intent.intentId, stopped }),
+        ).value;
+      const stopped = { token: [...external.keys()][0]!, routeId: "peer" };
+      expect(() => release(stopped)).toThrow("not terminal");
+      if (!("attemptId" in bound)) throw new Error("Missing attempt");
+      store.execute(
+        { ...worker, id: "finish", type: "task.finish", payload: {} },
+        (tx) =>
+          tx.tasks.finish({
+            taskId: bound.taskId,
+            attemptId: bound.attemptId,
+            fence: bound.fence,
+            outcome: "completed",
+          }),
+      );
+      expect(() => release()).toThrow("confirmed provider termination");
+      expect(
+        store.execute(
+          {
+            ...requester,
+            id: "capacity-still-held",
+            type: "dispatch.reserve",
+            payload: {},
+          },
+          (tx) =>
+            tx.dispatch.reserve({ ...intent, intentId: "next-action" }, policy),
+        ).value.status,
+      ).toBe("blocked");
+      expect(() => release({ ...stopped, token: "wrong" })).toThrow(
+        "confirmed provider termination",
+      );
+      expect(release(stopped).existing).toBe(false);
+      expect(release(stopped).existing).toBe(true);
+      expect((await run()).status).toBe("released");
+      expect(starts).toBe(1);
+      const next = store.execute(
+        { ...requester, id: "next", type: "dispatch.reserve", payload: {} },
+        (tx) =>
+          tx.dispatch.reserve({ ...intent, intentId: "next-action" }, policy),
+      ).value;
+      expect(next.status).toBe("reserved");
     } finally {
       store.close();
     }

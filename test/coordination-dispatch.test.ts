@@ -229,6 +229,17 @@ test("concurrent Node dispatch reservations share one task and retain capacity a
           (tx) => tx.dispatch.begin("cancel-before-start"),
         ),
       ).toThrow("no longer open");
+      expect(
+        reopened.execute(
+          {
+            ...alice,
+            id: "release-before-start",
+            type: "dispatch.release",
+            payload: {},
+          },
+          (tx) => tx.dispatch.release({ intentId: "cancel-before-start" }),
+        ).value.status,
+      ).toBe("released");
     } finally {
       reopened.close();
     }

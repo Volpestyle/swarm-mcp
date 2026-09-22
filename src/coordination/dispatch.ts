@@ -104,6 +104,39 @@ export class DispatchTransaction {
     };
   }
 
+  /** Trusted launcher only: stopped must come from terminal provider evidence,
+   * never from a timeout, missing lookup, or an agent's claim of completion. */
+  release(input: {
+    intentId: string;
+    stopped?: { token: string; routeId: string };
+  }) {
+    const row = this.intent(input.intentId);
+    if (row.state === "released")
+      return { status: "released", taskId: row.task_id, existing: true };
+    const task = this.db
+      .prepare("SELECT status FROM tasks WHERE scope=? AND id=?")
+      .get(this.command.scope, row.task_id) as { status: string };
+    if (!["completed", "failed", "cancelled"].includes(task.status))
+      throw new CoordinationError("conflict", "Dispatch task is not terminal");
+    if (
+      row.state !== "reserved" &&
+      (!input.stopped ||
+        input.stopped.token !== row.provision_token ||
+        input.stopped.routeId !== row.route_id)
+    )
+      throw new CoordinationError(
+        "conflict",
+        "Dispatch requires confirmed provider termination",
+      );
+    this.db
+      .prepare(
+        "UPDATE dispatch_intents SET state='released' WHERE scope=? AND intent_id=?",
+      )
+      .run(this.command.scope, input.intentId);
+    this.change("dispatch.released", input.intentId, { taskId: row.task_id });
+    return { status: "released", taskId: row.task_id, existing: false };
+  }
+
   /** Launcher-verified provisioning result only; never model-supplied identity. */
   bind(input: {
     intentId: string;

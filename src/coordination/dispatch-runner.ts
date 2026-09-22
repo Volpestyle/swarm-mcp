@@ -65,6 +65,7 @@ export async function runDispatchIntent(options: {
     (tx) => tx.dispatch.reserve(intent, policy),
   ).value;
   if (reserved.status === "blocked") return reserved;
+  if (reserved.status === "released") return reserved;
   if (!("routeId" in reserved))
     throw new Error("Dispatch reservation has no route");
   const matches = options.providers.filter(

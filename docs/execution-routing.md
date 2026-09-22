@@ -26,8 +26,8 @@ model command payload. This primitive is not yet exposed through the agent API.
 
 Reservations do not expire into permission to provision again. A crash may leave
 an unresolved intent; later provisioning reconciliation must prove the external
-outcome before releasing or retrying it. External provisioning adapters, release
-and cancellation still need implementation. The reservation itself never launches
+outcome before releasing or retrying it. External provisioning adapters and
+cancellation orchestration still need implementation. The reservation itself never launches
 a process or reports a worker as accepted.
 
 Schema 10 records a provisioning token before external effects. `begin` advances
@@ -71,6 +71,16 @@ temporarily invisible external state, then reconciliation. Both finish with one
 start, one task and one attempt. This is not installed-host provisioning evidence.
 Concrete native/peer provider adapters, resource release/cancellation orchestration
 and the agent API surface remain unfinished.
+
+The trusted `dispatch.release` transaction frees capacity only after the task is
+terminal. A reservation cancelled before provisioning needs no external proof;
+once provisioning begins, the launcher must supply confirmed termination for the
+recorded token and route. A timeout, missing lookup or task completion alone does
+not establish that external work stopped. Provider adapters must obtain this
+evidence; this internal method is not an agent tool. Release is idempotent, and
+retrying a released intent returns its existing task without another launch.
+Regression tests reject early release and mismatched tokens, retain capacity
+until confirmation, and allow the next reservation after release.
 
 ## Legacy implementation audit
 
