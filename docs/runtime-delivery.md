@@ -18,7 +18,22 @@ backoff (five seconds by default), and simultaneous launchers converge through
 exclusive pipe binding. Errors clean up only the child that invocation launched;
 an existing owner is never killed from a PID file. Config requires an absolute
 database path, and launcher clients still authenticate enrollment before use.
-Protected launcher state creation and host-hook wiring remain to be completed.
+`ownerState` and `agentState` create private launcher state under an absolute
+directory whose parent the launcher owns. Windows creates the directory with a
+restrictive ACL atomically and verifies owner/access rules on directories and
+retained files. Unix requires current-user ownership and private mode bits.
+Existing insecure state is refused rather than silently changing permissions.
+
+Records are written and file-synced under a temporary name, then published with
+an exclusive hard link. Racing writers read the same winning complete record.
+The owner secret is stable; agent IDs/resume secrets are keyed by scope, host and
+native host-session ID. Corrupt retained records fail rather than rotating an
+identity and losing access to its work. A process crash may leave an unused
+private temporary file. Directory fsync on Windows and hard-power-loss survival
+of newly published secrets are not claimed. These protections do not isolate
+malicious processes running as the same OS user.
+
+Host-hook wiring and composition of these primitives remain to be completed.
 
 `RuntimeDelivery` consumes an authenticated coordinator request function and a
 trusted host adapter. It has no spawn or terminal-injection API. Enrollment and
