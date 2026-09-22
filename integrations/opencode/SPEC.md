@@ -37,8 +37,8 @@ enrolls once and closes. This proves lifecycle restart, not message admission.
 
 The V1 list endpoint has no cursor. Snapshots at the 1,001-row detection limit
 fail explicitly rather than silently reconcile a truncated history. Larger
-histories and automatic recovery from an unexpected stream failure still need
-a supported recovery path.
+histories still need a supported recovery path. Bounded recovery from stream
+failure is verified below.
 
 `opencode-shell.json` additionally exercises the actual session shell endpoint.
 Its child process uses the injected capability to bootstrap from the coordinator;
@@ -91,8 +91,22 @@ the snapshot is incomplete. The real-host probe restores blocked from the
 snapshot, verifies pending inbox state, then grants that one fixture permission
 and completes delivery/acknowledgment. Unit tests additionally check that stale
 idle cannot survive reconnection. The probe explicitly recreates the observer;
-automatic reconnect/backoff policy is still open. Snapshot failure reports
+that historical capture predates automatic reconnect. Snapshot failure reports
 disconnected and never declares readiness.
+
+`opencode-reconnect.json` ends the real SDK event iterator during a permission
+wait and verifies recovery by the same observer, without fixture recreation.
+The observer retries at 150, 500 and 1,500 ms (at most four connections per
+observer lifetime), rebuilding the full snapshot after each connection. The
+fixture leaves the actual host and pending permission alive; it does not claim
+to simulate a host crash. Explicit stop cancels backoff and host instance
+disposal is terminal. Exhaustion stays disconnected for operator/runtime
+recovery. This loop invokes no model and never starts another host.
+
+Observer tests cover repeated snapshot failure without false readiness,
+disposal after reconciliation and explicit stop before retry. Each attempt
+aborts its own connection on exit; snapshot timeout also covers enrollment work
+between the list and state reads.
 
 The wrapper feeds operational events from the SSE observer only. Its native
 event hook may record diagnostics, but must not feed the same events back into

@@ -204,22 +204,29 @@ export const Probe = async ({directory, client, serverUrl}) => {
   const record = event => appendFileSync(process.env.SWARM_PROBE_EVENTS, JSON.stringify(event)+'\\n');
   record({type:'plugin.loaded',directory});
   const hooks = opencodeLifecycle(${JSON.stringify(launcherOptions)}, event => record({ ...event, type: 'coordination.' + event.type }));
-  let connection;
-  let restarted = false;
+  let interrupted = false;
   let blockedSession;
-  const startObserver = () => connectOpenCodeLifecycle({directory, client, serverUrl}, observedHooks, state => record({type: 'observer.' + state}));
+  const faultClient = {session: client.session, event: {subscribe: async options => {
+    const source = await client.event.subscribe(options);
+    return {stream: (async function* () {
+      for await (const event of source.stream) {
+        yield event;
+        if (event.type === 'permission.asked' && !interrupted) {
+          interrupted = true;
+          blockedSession = event.properties.sessionID;
+          record({type: 'fixture.stream.ended'});
+          return;
+        }
+      }
+    })()};
+  }}};
   const observedHooks = {...hooks, event: async input => {
     await hooks.event(input);
     if (input.event.type === 'swarm.snapshot.ready' && blockedSession) record({type: 'availability.recovered', hostSessionId: blockedSession, state: hooks.observe(blockedSession).state});
-    if (input.event.type === 'permission.asked' && !restarted) {
-      restarted = true;
-      blockedSession = input.event.properties.sessionID;
-      queueMicrotask(() => { connection.stop(); void connection.done.then(() => { connection = startObserver(); }); });
-    }
     const id = input.event.properties?.sessionID;
     if (id && (input.event.type === 'session.status' || input.event.type.startsWith('permission.'))) record({type: 'availability.' + hooks.observe(id).state, hostSessionId: id, evidence: hooks.observe(id).evidence});
   }};
-  connection = startObserver();
+  connectOpenCodeLifecycle({directory, client: faultClient, serverUrl}, observedHooks, state => record({type: 'observer.' + state}));
   return {...hooks, event: async (input) => { record(input.event); }};
 };`,
 );
@@ -473,7 +480,7 @@ try {
       requests: modelRequests.length,
       toolResultReachedModel: true,
       messageId: sent.value.messageId,
-      stateRecoveredAfterStreamRestart: recovered.state,
+      stateRecoveredAfterAutomaticReconnect: recovered.state,
       stateWhilePermissionBlocked: blockedStatus.deliveries[0].state,
       stateAfterAdmission: observedLeaseState,
       stateAfterExplicitAck: status.deliveries[0].state,

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { enrollRuntime } from "./runtime-launcher";
 import { CoordinationClient } from "./ipc";
 import { RuntimeDelivery } from "./runtime-delivery";
@@ -27,45 +28,60 @@ export function observeOpenCode(
   report: (state: "reconciled" | "disconnected") => void,
 ) {
   const controller = new AbortController();
-  const startup = setTimeout(() => controller.abort(), 10000);
-  startup.unref();
+  const backoff = [150, 500, 1500];
   const done = (async () => {
-    const { stream } = await host.subscribe(controller.signal);
-    for await (const event of stream) {
-      if (controller.signal.aborted) break;
-      if (event.type === "server.connected") {
+    for (let attempt = 0; !controller.signal.aborted; attempt++) {
+      const connection = new AbortController();
+      const signal = AbortSignal.any([controller.signal, connection.signal]);
+      const startup = setTimeout(() => connection.abort(), 10000);
+      startup.unref();
+      let disposed = false;
+      try {
+        const { stream } = await host.subscribe(signal);
+        for await (const event of stream) {
+          if (signal.aborted) break;
+          if (event.type === "server.connected") {
+            clearTimeout(startup);
+            await hooks.event({ event });
+            const snapshotSignal = AbortSignal.any([
+              signal,
+              AbortSignal.timeout(10000),
+            ]);
+            const sessions = await host.list(snapshotSignal);
+            for (const info of sessions) {
+              snapshotSignal.throwIfAborted();
+              await hooks.event({
+                event: { type: "session.updated", properties: { info } },
+              });
+            }
+            for (const event of await host.states(snapshotSignal)) {
+              snapshotSignal.throwIfAborted();
+              await hooks.event({ event });
+            }
+            snapshotSignal.throwIfAborted();
+            await hooks.event({ event: { type: "swarm.snapshot.ready" } });
+            report("reconciled");
+          } else if (event.type === "server.instance.disposed") {
+            disposed = true;
+            break;
+          } else await hooks.event({ event });
+        }
+      } catch {
+        // Unknown connection/snapshot state defers delivery. Retry below is
+        // bounded and never invokes a model or starts a replacement host.
+      } finally {
         clearTimeout(startup);
-        await hooks.event({ event });
-        const sessions = await host.list(
-          AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
-        );
-        for (const info of sessions) {
-          if (controller.signal.aborted) break;
-          await hooks.event({
-            event: { type: "session.updated", properties: { info } },
-          });
-        }
-        for (const event of await host.states(
-          AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]),
-        )) {
-          await hooks.event({ event });
-        }
-        await hooks.event({ event: { type: "swarm.snapshot.ready" } });
-        report("reconciled");
-      } else if (event.type === "server.instance.disposed") {
-        break;
-      } else {
-        await hooks.event({ event });
+        connection.abort();
+        await hooks.event({ event: { type: "swarm.stream.disconnected" } });
+        report("disconnected");
       }
+      if (disposed || controller.signal.aborted || attempt >= backoff.length)
+        return;
+      await delay(backoff[attempt], undefined, { signal: controller.signal });
     }
-  })()
-    .catch(() => {})
-    .finally(async () => {
-      clearTimeout(startup);
-      controller.abort();
-      await hooks.event({ event: { type: "swarm.stream.disconnected" } });
-      report("disconnected");
-    });
+  })().catch(() => {
+    // Explicit stop aborts a pending backoff; state was already disconnected.
+  });
   return { done, stop: () => controller.abort() };
 }
 
