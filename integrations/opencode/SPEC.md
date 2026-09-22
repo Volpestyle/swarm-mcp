@@ -226,6 +226,22 @@ or adapter replacement reconcile the same prompt for the same attempt. A lost
 POST response with an absent prompt still remains uncertain; this change does
 not authorize blind resubmission.
 
+The pinned host's [prompt implementation](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/session/prompt.ts)
+runs `chat.message` before persisting the user message. The
+[asynchronous route](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/server/routes/session.ts)
+returns before prompt execution completes. A missing prompt therefore cannot
+prove the earlier request had no effect, even with a repeated message ID.
+
+An uncertain wake no longer ends the inbox scan: later pending messages can
+offer another delivery opportunity. After an accepted/deferred wake, the scan
+continues deadline maintenance without requesting more turns in that scan,
+and stops if host readiness changes. `coordination-inbox-backlog.test.ts` uses
+the real Node IPC/store to reproduce a stuck first hint hiding both later work
+and TTL expiry. It failed before this change and now verifies later notification,
+expiry without notification, and preservation of the two pending messages.
+`opencode-backlog-scan.json` separately covers the installed-host regression;
+the backlog failure is injected in the IPC test, not that host capture.
+
 Host disposal and session deletion stop their observers, close IPC connections
 and abort an in-flight wake request before any later POST. This cannot undo a
 POST already admitted by the host. Startup-backlog tests verify notification

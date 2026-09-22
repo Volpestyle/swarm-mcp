@@ -6,7 +6,10 @@ type Options = {
   endpoint: string;
   capability: string;
   ready: () => boolean;
-  notify: (messageId: string, signal: AbortSignal) => Promise<unknown>;
+  notify: (
+    messageId: string,
+    signal: AbortSignal,
+  ) => Promise<{ status: "accepted" | "deferred" | "uncertain" } | void>;
   failed: (error?: unknown) => void;
 };
 
@@ -89,6 +92,7 @@ function observeConnection(options: Options) {
         dirty = false;
         if (!options.ready()) continue;
         let cursor = 0;
+        let wakeAccepted = false;
         for (;;) {
           if (stopped || !options.ready()) break;
           // One bounded envelope per frame; terminal history stays in SQLite.
@@ -143,9 +147,15 @@ function observeConnection(options: Options) {
             }
             return true;
           });
-          if (pending) {
-            await options.notify(pending.message.id, controller.signal);
-            break;
+          if (pending && !wakeAccepted) {
+            const result = await options.notify(
+              pending.message.id,
+              controller.signal,
+            );
+            // An uncertain hint must not starve unrelated work. Once a wake is
+            // accepted (or the host defers), continue deadline maintenance but
+            // do not request more turns in this scan. Recheck readiness above.
+            wakeAccepted = result?.status !== "uncertain";
           }
           if (page.cursor <= cursor)
             throw new Error("Inbox cursor did not advance");
