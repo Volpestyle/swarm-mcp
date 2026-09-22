@@ -157,11 +157,55 @@ export class DispatchTransaction {
       );
     if (["open", "blocked", "running"].includes(task.status))
       this.tasks.cancel({ taskId: task.id, expectedVersion: task.version });
+    const attempt = row.attempt_id
+      ? (this.db
+          .prepare("SELECT actor,state FROM task_attempts WHERE id=?")
+          .get(row.attempt_id) as { actor: string; state: string } | undefined)
+      : undefined;
     return {
       status: row.state,
       taskId: row.task_id,
       routeId: row.route_id,
       token: row.provision_token,
+      notifyActor: attempt?.state === "running" ? attempt.actor : null,
+      attemptId: row.attempt_id,
+      fence: row.fence,
+    };
+  }
+
+  /** Cooperative existing-peer stop proof. Abandoned leases are not proof that
+   * physical work ended; only a fenced worker finish or no admitted work is. */
+  peerStopped(input: {
+    token: string;
+    routeId: string;
+    worker: SessionContext;
+  }) {
+    validateSession(this.db, this.command as SessionContext);
+    const row = this.db
+      .prepare(
+        "SELECT * FROM dispatch_intents WHERE scope=? AND provision_token=? AND route_id=?",
+      )
+      .get(this.command.scope, input.token, input.routeId) as Row | undefined;
+    if (!row || input.worker.scope !== this.command.scope)
+      return { stopped: false };
+    const task = this.db
+      .prepare("SELECT status FROM tasks WHERE id=?")
+      .get(row.task_id) as { status: string };
+    if (row.state === "provisioning" && task.status === "cancelled")
+      return { stopped: true };
+    if (row.worker_session !== input.worker.sessionId || !row.attempt_id)
+      return { stopped: false };
+    const attempt = this.db
+      .prepare(
+        "SELECT state FROM task_attempts WHERE id=? AND session_id=? AND fence=?",
+      )
+      .get(row.attempt_id, input.worker.sessionId, row.fence) as
+      | { state: string }
+      | undefined;
+    return {
+      stopped:
+        !!attempt &&
+        ["completed", "failed", "cancelled"].includes(attempt.state),
     };
   }
 

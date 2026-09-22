@@ -1,5 +1,5 @@
 import { CoordinationStore } from "../../src/coordination/store";
-const [path, encoded] = process.argv.slice(2);
+const [path, encoded, outcome = "completed"] = process.argv.slice(2);
 const context = JSON.parse(encoded!);
 const store = await CoordinationStore.open({ path: path! });
 try {
@@ -10,7 +10,10 @@ try {
   if (fetched.deliveries.length !== 1)
     throw new Error("Expected one assignment");
   const delivery = fetched.deliveries[0]!;
-  if (delivery.message.kind !== "task.assigned")
+  if (
+    delivery.message.kind !==
+    (outcome === "cancelled" ? "task.cancel_requested" : "task.assigned")
+  )
     throw new Error("Expected task assignment");
   const assignment = JSON.parse(delivery.message.body);
   store.execute(
@@ -25,8 +28,11 @@ try {
         taskId: assignment.taskId,
         attemptId: assignment.attemptId,
         fence: assignment.fence,
-        outcome: "completed",
-        result: { objective: assignment.contract.objective },
+        outcome: outcome === "cancelled" ? "cancelled" : "completed",
+        result:
+          outcome === "cancelled"
+            ? undefined
+            : { objective: assignment.contract.objective },
       }),
   );
   store.execute(

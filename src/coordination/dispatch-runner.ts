@@ -27,6 +27,8 @@ export interface DispatchProvider {
  * The trusted route pins one session incarnation; recovery resolves that same
  * identity. Binding rejects it if the session has since been superseded. */
 export function existingPeerProvider(options: {
+  store: CoordinationStore;
+  requester: SessionContext;
   routeId: string;
   worker: SessionContext;
   authorized: () => boolean;
@@ -44,6 +46,18 @@ export function existingPeerProvider(options: {
     },
     async find() {
       return binding();
+    },
+    async stop(token) {
+      return options.store.execute(
+        {
+          ...options.requester,
+          id: randomUUID(),
+          type: "dispatch.peerStopped",
+          payload: { token },
+        },
+        (tx) =>
+          tx.dispatch.peerStopped({ token, routeId: options.routeId, worker }),
+      ).value;
     },
   };
 }
@@ -71,6 +85,31 @@ export async function cancelDispatchIntent(options: {
     (tx) => tx.dispatch.requestCancellation(intentId),
   ).value;
   if (cancellation.status === "released") return cancellation;
+  if (cancellation.notifyActor && cancellation.token) {
+    const notice = {
+      taskId: cancellation.taskId,
+      attemptId: cancellation.attemptId,
+      fence: cancellation.fence,
+    };
+    store.execute(
+      {
+        ...requester,
+        id: `dispatch-cancel-${cancellation.token}`,
+        type: "message.send",
+        payload: notice,
+      },
+      (tx) =>
+        tx.inbox.send(
+          {
+            kind: "task.cancel_requested",
+            taskId: cancellation.taskId,
+            body: JSON.stringify(notice),
+          },
+          [cancellation.notifyActor!],
+          "direct",
+        ),
+    );
+  }
   const release = (stopped?: { token: string; routeId: string }) =>
     store.execute(
       {

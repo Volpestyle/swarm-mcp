@@ -75,8 +75,11 @@ and the agent API surface remain unfinished.
 `existingPeerProvider` binds a trusted, already-enrolled session incarnation; it
 does not spawn or enroll another process. Recovery resolves that same configured
 identity, and binding rejects a superseded session. Its route still goes through
-the normal capability, availability and capacity checks. Stop support for this
-provider remains unavailable rather than treating a live peer as terminated.
+the normal capability, availability and capacity checks. Cooperative stop checks
+the persisted token, route, worker session and attempt. A fenced completed, failed
+or cancelled attempt establishes that dispatch work ended; an abandoned lease
+does not. Cancellation before binding is also safe because binding cannot claim
+the cancelled task. The shared peer process itself remains running.
 
 The runner now queues one `task.assigned` envelope in the binding transaction,
 containing the contract and task/attempt/fence references. Inbox backpressure
@@ -90,6 +93,15 @@ drains it and retries. A separate Node worker fetches the durable assignment,
 completes the referenced attempt and explicitly acknowledges it. Repeated runner
 calls retain one assignment and one attempt. This is actual peer-process/store
 delivery, not evidence of model-host launch or native MCP delivery.
+
+Cancellation queues a `task.cancel_requested` notice with a stable command ID per
+provisioning token. Its task, attempt and fence identify the work to stop. The
+cancellation state commits first; if the inbox is full, retries recover notice
+delivery without undoing cancellation or releasing capacity. Notice retries do
+not duplicate it. The peer must finish the fenced attempt as cancelled after
+stopping work; message acknowledgment alone never releases capacity. A separate
+Node-process regression verifies both completion and cooperative cancellation,
+including full-inbox recovery and release after the worker's terminal result.
 
 The trusted `dispatch.release` transaction frees capacity only after the task is
 terminal. A reservation cancelled before provisioning needs no external proof;
