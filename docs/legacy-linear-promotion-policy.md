@@ -1,5 +1,9 @@
 # Linear promotion policy
 
+Historical legacy design only. The compact candidate uses the
+[current packaged policy](../skills/swarm-mcp/references/work-trackers.md);
+the automatic closure/backstop rules below do not apply to it.
+
 **Status:** v0 — adopted; cross-references [VUH-35](https://linear.app/vuhlp/issue/VUH-35).
 **Audience:** gateway/planner authors, the Linear bridge in `integrations/*/` (VUH-36/37/38), and anyone
 deciding whether a swarm task should also exist as a Linear issue.

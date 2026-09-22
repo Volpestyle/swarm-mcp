@@ -2,8 +2,10 @@
 
 VUH-1343 evidence is complete for the selected Windows fixtures. This is a
 benchmark result, not publication, migration acceptance or hosted CI evidence.
-The production implementation is unchanged from the full local failure gate at
-`074b1ef`; subsequent commits add harnesses, verifiers and retained evidence.
+The selected benchmark implementation matched the full local failure gate at
+`074b1ef`; its acceptance archive was completed at `71e3dd3`. Later rollout work
+adds migration and startup compatibility. The context recheck below covers the
+resulting bootstrap metadata change without relabeling earlier measurements.
 
 | Requirement | Inspected evidence |
 |---|---|
@@ -41,3 +43,12 @@ Archived captures pass; negative checks reject missing acknowledgments, excessiv
 latency and excessive adapter memory. The separate failure gate covers crashes,
 stale ownership and protocol semantics. None of these local results claims a
 hosted CI execution or replaces VUH-1344's isolated canary and rollback proof.
+## Release-candidate context recheck
+
+The rollout adds compatibility metadata to bootstrap. At runtime revision
+`4621877`, real stdio captures for 2 and 32 agents measured 2,870 schema tokens
+plus 73 instruction tokens, maximum sync text 103 tokens, and three manual
+handoff calls after sync. The catalog remains below its 3,000-token budget.
+See the [rollout capture and provenance](verification/2026-09-22-rollout/README.md).
+The earlier latency/CPU/host measurements below remain historical evidence at
+their stated revisions; this is a context recheck, not a rerun of those campaigns.

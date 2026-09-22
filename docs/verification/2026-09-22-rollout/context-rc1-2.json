@@ -1,0 +1,1462 @@
+{
+  "count": 2,
+  "fixture": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-compact-context-KAnU2s",
+  "server": {
+    "name": "swarm",
+    "version": "2.0.0-rc.1"
+  },
+  "instructions": "Identifiers contain 1..128 characters. Other text fields contain 1..1024 unless their schema specifies a different bound. Use swarm_sync to resume. Assign work with a stable command ID; retry uncertain mutations with the same ID. Fetch leases messages; acknowledge only after processing. Task ownership requires the returned attempt ID and fence. Wait timeouts never cancel work.",
+  "toolSchema": {
+    "tools": [
+      {
+        "name": "swarm_sync",
+        "description": "Bootstrap once; resume with an event cursor for targeted deltas.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "waitMs": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 30000
+            }
+          },
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      }
+                    },
+                    "cursor": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "cursor"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "scope": {
+                      "type": "string"
+                    },
+                    "actor": {
+                      "type": "string"
+                    },
+                    "compatibility": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    },
+                    "eventCursor": {
+                      "type": "number"
+                    },
+                    "tasks": {
+                      "type": "object",
+                      "properties": {
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          }
+                        },
+                        "cursor": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "items",
+                        "cursor"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "inbox": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "state": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "state",
+                          "count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "scope",
+                    "actor",
+                    "compatibility",
+                    "eventCursor",
+                    "tasks",
+                    "inbox"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_find",
+        "description": "Find scoped peers or task summaries; use taskId for details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "peers",
+                "tasks",
+                "task"
+              ]
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            },
+            "owner": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "cursor": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "limit": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      }
+                    },
+                    "cursor": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "cursor"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "number"
+                    },
+                    "contract": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "dependencies": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "owner": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "actor": {
+                              "type": "string"
+                            },
+                            "attemptId": {
+                              "type": "string"
+                            },
+                            "fence": {
+                              "type": "number"
+                            },
+                            "leaseUntil": {
+                              "type": "number"
+                            },
+                            "active": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "actor",
+                            "attemptId",
+                            "fence",
+                            "leaseUntil",
+                            "active"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "result": {},
+                    "retention": {
+                      "type": "string",
+                      "enum": [
+                        "retained",
+                        "expired"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "taskId",
+                    "scope",
+                    "title",
+                    "status",
+                    "version",
+                    "contract",
+                    "dependencies",
+                    "owner",
+                    "result",
+                    "retention"
+                  ],
+                  "additionalProperties": {}
+                }
+              ]
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_assign",
+        "description": "Create work; routing dispatches via owner policy. Reassign with intentId and expectedVersion.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "contract": {
+              "type": "object",
+              "properties": {
+                "objective": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "worktree": {
+                  "type": "string"
+                },
+                "acceptanceCriteria": {
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expectedArtifacts": {
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "constraints": {
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "objective",
+                "worktree",
+                "acceptanceCriteria",
+                "expectedArtifacts",
+                "constraints"
+              ],
+              "additionalProperties": false
+            },
+            "dependencies": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "routing": {
+              "type": "object",
+              "properties": {
+                "intentId": {
+                  "type": "string"
+                },
+                "capabilities": {
+                  "maxItems": 64,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "durable": {
+                  "type": "boolean"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "expectedVersion": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "capabilities",
+                "durable"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "commandId",
+            "title",
+            "contract"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    },
+                    "cursor": {
+                      "type": "number"
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "cursor",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "reasons": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ],
+                  "additionalProperties": {}
+                }
+              ]
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_task",
+        "description": "Manage ownership/progress; finish with evidence/limitations. Cancel dispatch with intentId.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "claim",
+                "renew",
+                "progress",
+                "finish",
+                "cancel",
+                "retry",
+                "recover"
+              ]
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "intentId": {
+              "type": "string"
+            },
+            "expectedVersion": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "attemptId": {
+              "type": "string"
+            },
+            "fence": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "note": {
+              "type": "string"
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "completed",
+                "failed",
+                "cancelled"
+              ]
+            },
+            "report": {
+              "type": "object",
+              "properties": {
+                "summary": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "limitations": {
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "summary",
+                "evidence",
+                "limitations"
+              ]
+            }
+          },
+          "required": [
+            "commandId",
+            "action",
+            "taskId"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    },
+                    "cursor": {
+                      "type": "number"
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "cursor",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "reasons": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ],
+                  "additionalProperties": {}
+                }
+              ]
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_send",
+        "description": "Send a typed peer message; assign work with swarm_assign.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string"
+            },
+            "recipient": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "question",
+                "blocker",
+                "decision_request",
+                "completion_notice"
+              ]
+            },
+            "body": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "taskId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "commandId",
+            "recipient",
+            "kind",
+            "body",
+            "threadId"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                "cursor": {
+                  "type": "number"
+                },
+                "replayed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "value",
+                "cursor",
+                "replayed"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_inbox",
+        "description": "Fetch leases one message. Ack only after processing; reject with a reason for retry.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "fetch",
+                "ack",
+                "reject"
+              ]
+            },
+            "consumer": {
+              "type": "string"
+            },
+            "messageId": {
+              "type": "string"
+            },
+            "leaseToken": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "commandId",
+            "action"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                "cursor": {
+                  "type": "number"
+                },
+                "replayed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "value",
+                "cursor",
+                "replayed"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_wait",
+        "description": "Wait for completion; timeout returns a resumable reference.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string"
+            },
+            "timeoutMs": {
+              "default": 30000,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 30000
+            }
+          },
+          "required": [
+            "taskId"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "taskId": {
+                  "type": "string"
+                },
+                "uri": {
+                  "type": "string"
+                },
+                "waitState": {
+                  "type": "string",
+                  "enum": [
+                    "terminal",
+                    "timeout",
+                    "interrupted"
+                  ]
+                },
+                "task": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "status",
+                    "version"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "required": [
+                "taskId",
+                "uri",
+                "waitState",
+                "task"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_context",
+        "description": "Read or mutate versioned shared state; set/delete require expectedVersion.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "get",
+                "set",
+                "append",
+                "delete"
+              ]
+            },
+            "key": {
+              "type": "string"
+            },
+            "commandId": {
+              "type": "string"
+            },
+            "expectedVersion": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "value": {}
+          },
+          "required": [
+            "action",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    },
+                    "cursor": {
+                      "type": "number"
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "cursor",
+                    "replayed"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "number"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "live",
+                        "missing",
+                        "expired",
+                        "deleted"
+                      ]
+                    },
+                    "value": {}
+                  },
+                  "required": [
+                    "key",
+                    "version",
+                    "status",
+                    "value"
+                  ],
+                  "additionalProperties": {}
+                }
+              ]
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_evidence",
+        "description": "Capture worktree files or record findings with provenance; read bytes via artifact URI.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "capture",
+                "record"
+              ]
+            },
+            "summary": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "mediaType": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "result",
+                "decision",
+                "annotation"
+              ]
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+            },
+            "files": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "verification": {
+              "type": "string"
+            },
+            "artifactIds": {
+              "default": [],
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "taskId": {
+              "type": "string"
+            },
+            "attemptId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "commandId",
+            "action",
+            "summary"
+          ],
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "data": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                },
+                "cursor": {
+                  "type": "number"
+                },
+                "replayed": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "value",
+                "cursor",
+                "replayed"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      }
+    ]
+  },
+  "toolCalls": 8,
+  "transcript": [
+    {
+      "agent": 0,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-0\",\"eventCursor\":2,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[],\"compatibility\":{\"apiVersion\":1,\"skillContract\":\"swarm-coordination/1\",\"schemaVersion\":11,\"serverVersion\":\"2.0.0-rc.1\",\"modernProtocol\":\"2026-07-28\",\"build\":{\"revision\":null,\"sourceDigest\":null,\"packageVersion\":\"development-unidentified\",\"sdkVersion\":\"development-unidentified\"}}}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-0",
+            "eventCursor": 2,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": [],
+            "compatibility": {
+              "apiVersion": 1,
+              "skillContract": "swarm-coordination/1",
+              "schemaVersion": 11,
+              "serverVersion": "2.0.0-rc.1",
+              "modernProtocol": "2026-07-28",
+              "build": {
+                "revision": null,
+                "sourceDigest": null,
+                "packageVersion": "development-unidentified",
+                "sdkVersion": "development-unidentified"
+              }
+            }
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 27.579600000000028
+    },
+    {
+      "agent": 1,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-1\",\"eventCursor\":2,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[],\"compatibility\":{\"apiVersion\":1,\"skillContract\":\"swarm-coordination/1\",\"schemaVersion\":11,\"serverVersion\":\"2.0.0-rc.1\",\"modernProtocol\":\"2026-07-28\",\"build\":{\"revision\":null,\"sourceDigest\":null,\"packageVersion\":\"development-unidentified\",\"sdkVersion\":\"development-unidentified\"}}}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-1",
+            "eventCursor": 2,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": [],
+            "compatibility": {
+              "apiVersion": 1,
+              "skillContract": "swarm-coordination/1",
+              "schemaVersion": 11,
+              "serverVersion": "2.0.0-rc.1",
+              "modernProtocol": "2026-07-28",
+              "build": {
+                "revision": null,
+                "sourceDigest": null,
+                "packageVersion": "development-unidentified",
+                "sdkVersion": "development-unidentified"
+              }
+            }
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.584799999999973
+    },
+    {
+      "agent": 0,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-0",
+        "recipient": "agent-1",
+        "kind": "question",
+        "threadId": "thread-0",
+        "body": "fixture handoff 0: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"f5c34431-2712-4102-b734-5f996e3ce122\",\"recipients\":[\"agent-1\"],\"idempotencyKey\":\"send-0\"},\"cursor\":3,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "f5c34431-2712-4102-b734-5f996e3ce122",
+              "recipients": [
+                "agent-1"
+              ],
+              "idempotencyKey": "send-0"
+            },
+            "cursor": 3,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 5.752399999999966
+    },
+    {
+      "agent": 1,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-1",
+        "recipient": "agent-0",
+        "kind": "question",
+        "threadId": "thread-1",
+        "body": "fixture handoff 1: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"3f9ec629-ae77-4a90-a5ff-a3cf4e4b471d\",\"recipients\":[\"agent-0\"],\"idempotencyKey\":\"send-1\"},\"cursor\":4,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "3f9ec629-ae77-4a90-a5ff-a3cf4e4b471d",
+              "recipients": [
+                "agent-0"
+              ],
+              "idempotencyKey": "send-1"
+            },
+            "cursor": 4,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.4938000000000784
+    },
+    {
+      "agent": 0,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-0",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"3f9ec629-ae77-4a90-a5ff-a3cf4e4b471d\",\"sender\":\"agent-1\",\"recipient\":\"agent-0\",\"kind\":\"question\",\"body\":\"fixture handoff 1: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-1\",\"createdAt\":1790085489222,\"expiresAt\":null,\"idempotencyKey\":\"send-1\",\"audience\":\"direct\"},\"leaseToken\":\"9d918748-8741-4351-bd56-e09ed1afaff6\",\"leaseUntil\":1790085519225,\"attempt\":1}]},\"cursor\":5,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "3f9ec629-ae77-4a90-a5ff-a3cf4e4b471d",
+                    "sender": "agent-1",
+                    "recipient": "agent-0",
+                    "kind": "question",
+                    "body": "fixture handoff 1: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-1",
+                    "createdAt": 1790085489222,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-1",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "9d918748-8741-4351-bd56-e09ed1afaff6",
+                  "leaseUntil": 1790085519225,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 5,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.7180000000000746
+    },
+    {
+      "agent": 0,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-0",
+        "action": "ack",
+        "messageId": "3f9ec629-ae77-4a90-a5ff-a3cf4e4b471d",
+        "leaseToken": "9d918748-8741-4351-bd56-e09ed1afaff6"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"3f9ec629-ae77-4a90-a5ff-a3cf4e4b471d\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790085489229},\"cursor\":6,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "3f9ec629-ae77-4a90-a5ff-a3cf4e4b471d",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790085489229
+            },
+            "cursor": 6,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.851099999999974
+    },
+    {
+      "agent": 1,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-1",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"f5c34431-2712-4102-b734-5f996e3ce122\",\"sender\":\"agent-0\",\"recipient\":\"agent-1\",\"kind\":\"question\",\"body\":\"fixture handoff 0: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-0\",\"createdAt\":1790085489217,\"expiresAt\":null,\"idempotencyKey\":\"send-0\",\"audience\":\"direct\"},\"leaseToken\":\"14bdf034-82e1-41dc-b486-7546ff77dd11\",\"leaseUntil\":1790085519233,\"attempt\":1}]},\"cursor\":7,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "f5c34431-2712-4102-b734-5f996e3ce122",
+                    "sender": "agent-0",
+                    "recipient": "agent-1",
+                    "kind": "question",
+                    "body": "fixture handoff 0: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-0",
+                    "createdAt": 1790085489217,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-0",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "14bdf034-82e1-41dc-b486-7546ff77dd11",
+                  "leaseUntil": 1790085519233,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 7,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.3759000000000015
+    },
+    {
+      "agent": 1,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-1",
+        "action": "ack",
+        "messageId": "f5c34431-2712-4102-b734-5f996e3ce122",
+        "leaseToken": "14bdf034-82e1-41dc-b486-7546ff77dd11"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"data\":{\"value\":{\"messageId\":\"f5c34431-2712-4102-b734-5f996e3ce122\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790085489236},\"cursor\":8,\"replayed\":false}}"
+          }
+        ],
+        "structuredContent": {
+          "data": {
+            "value": {
+              "messageId": "f5c34431-2712-4102-b734-5f996e3ce122",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790085489236
+            },
+            "cursor": 8,
+            "replayed": false
+          }
+        },
+        "isError": false
+      },
+      "elapsedMs": 2.5354999999999563
+    }
+  ],
+  "memory": {
+    "supported": true,
+    "platform": "win32",
+    "observedAt": 1790085491595,
+    "processes": [
+      {
+        "Id": 5352,
+        "WorkingSet64": 71327744,
+        "PrivateMemorySize64": 87314432,
+        "PeakWorkingSet64": 71405568
+      },
+      {
+        "Id": 13084,
+        "WorkingSet64": 72331264,
+        "PrivateMemorySize64": 103489536,
+        "PeakWorkingSet64": 72331264
+      },
+      {
+        "Id": 40592,
+        "WorkingSet64": 45735936,
+        "PrivateMemorySize64": 56127488,
+        "PeakWorkingSet64": 45735936
+      }
+    ],
+    "environment": {
+      "cpu": "Intel(R) Core(TM) i9-14900KF",
+      "logicalCpus": 32,
+      "physicalMemoryBytes": 34034339840,
+      "release": "10.0.26200"
+    },
+    "source": {
+      "revision": "4621877878ee9cb0dad0b4aaccf453cb3c3756ff",
+      "diffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "totalWorkingSetBytes": 189394944,
+    "totalPrivateBytes": 246931456,
+    "limitation": "Point-in-time Windows working/private memory, not unique physical memory. Peaks belong to each process lifetime, not necessarily this workload."
+  },
+  "memoryRoles": {
+    "owner": 40592,
+    "adapters": [
+      13084,
+      5352
+    ]
+  },
+  "limitations": "Real stdio catalog/bootstrap/send/fetch/ack. Trusted enrollment excluded from model calls. Explicit processing acknowledgment adds a call compared with legacy poll; no claim of reduced handoff calls. No inference or hidden host framing measured. Text results counted once; hosts may additionally include structuredContent."
+}
