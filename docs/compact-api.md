@@ -15,6 +15,8 @@ The legacy `swarm-mcp` entry remains available while migration is completed.
 | `swarm_send` | Send a typed question, blocker, decision request or completion notice with a threadId |
 | `swarm_inbox` | Fetch a delivery lease; explicitly ack processing or reject with a reason |
 | `swarm_wait` | Resume waiting for an existing task; timeout never cancels or recreates it |
+| `swarm_context` | Read, compare-and-set, append or tombstone small shared values |
+| `swarm_evidence` | Capture completed files or record results, decisions and annotations with provenance |
 
 All mutations require a stable commandId. Retry uncertain acceptance with the same
 ID and payload. A new logical fetch needs a new ID: replaying an earlier fetch
@@ -32,17 +34,28 @@ An owner is marked active only while its attempt, session and lease are active;
 terminal tasks have no current owner. Historical attribution remains in the
 attempt records. Expired result values are omitted while control history remains.
 
+Resources expose shared context (`swarm://context`, `?key=…`, or `?cursor=…`),
+retained findings (`swarm://findings` or `?filter=<URL-encoded JSON>`), and artifact
+bytes (`swarm://artifacts/<id>`). Finding filters accept taskId, file,
+currentRevision and cursor. Findings return one record per page; shared lists
+return five. Artifact reads return at most 16 KiB of base64 blob content plus a
+JSON metadata item with status and nextUri. Follow nextUri until null; no source
+file needs to remain after capture. Unavailable artifacts return status metadata.
+The paginated artifact template is registered before the base template because
+SDK v2's base matcher otherwise consumes the query suffix as part of the ID.
+
 The adapter caps concurrent waits at eight. Each wait uses its own authenticated
 IPC connection so cancelling it tears down that owner-side wait without disrupting
 other calls. Normal requests share a connection. A disconnected adapter currently
 requires reconnection by its launcher; automatic recovery is not claimed.
 
 `test/coordination-mcp.test.ts` exercises the actual bundled Node adapter through
-a modern MCP client and separate Node owner, covering seven-tool discovery,
+a modern MCP client and separate Node owner, covering nine-tool discovery,
 bootstrap, durable create/replay, claim/conflict, timeout/finish, typed messaging,
-fetch and explicit acknowledgment. Fixtures use disposable databases.
+fetch and explicit acknowledgment, shared context, capture/source removal,
+multi-page artifact reconstruction and annotation freshness. Fixtures use disposable databases.
 
-Still required for VUH-1338: richer normalized outputs, artifact/shared-context
-access, subscriptions on this new surface, compatibility/deprecation mapping,
+Still required for VUH-1338: richer output schemas,
+subscriptions on this new surface, compatibility/deprecation mapping,
 bounded response sizing, and measured context/call reduction. The installed
 legacy runtime remains unchanged.

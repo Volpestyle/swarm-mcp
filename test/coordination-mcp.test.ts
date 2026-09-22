@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { build } from "esbuild";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
@@ -61,7 +61,7 @@ test("compact MCP executes durable task and inbox workflows through the Node own
       }),
     );
     const catalog = await client.listTools();
-    expect(catalog.tools).toHaveLength(7);
+    expect(catalog.tools).toHaveLength(9);
     expect(catalog.tools.every((t) => t.outputSchema)).toBe(true);
     expect(
       catalog.tools.find((t) => t.name === "swarm_inbox")!.annotations!
@@ -175,6 +175,66 @@ test("compact MCP executes durable task and inbox workflows through the Node own
         })
       ).value.deliveries,
     ).toEqual([]);
+    await call("swarm_context", {
+      action: "set",
+      commandId: "context",
+      key: "report",
+      expectedVersion: 0,
+      value: { taskId },
+    });
+    expect(
+      await call("swarm_context", { action: "get", key: "report" }),
+    ).toMatchObject({ version: 1, value: { taskId } });
+    const shared = await client.readResource({
+      uri: "swarm://context?key=report",
+    });
+    expect(
+      JSON.parse((shared.contents[0] as { text: string }).text),
+    ).toMatchObject({ version: 1, value: { taskId } });
+    const report = "artifact verification\n".repeat(2000);
+    writeFileSync(join(root, "report.txt"), report);
+    const capture = await call("swarm_evidence", {
+      action: "capture",
+      commandId: "capture",
+      path: "report.txt",
+      summary: "test report",
+      mediaType: "text/plain",
+    });
+    unlinkSync(join(root, "report.txt"));
+    const chunks: Buffer[] = [];
+    let uri: string | null = capture.value.uri;
+    while (uri) {
+      const resource = await client.readResource({ uri });
+      const blob = resource.contents.find((item) => "blob" in item) as {
+        blob: string;
+      };
+      chunks.push(Buffer.from(blob.blob, "base64"));
+      const page = resource.contents.find((item) => "text" in item) as {
+        text: string;
+      };
+      uri = JSON.parse(page.text).nextUri;
+    }
+    expect(Buffer.concat(chunks).toString()).toBe(report);
+    const revision = "a".repeat(40);
+    await call("swarm_evidence", {
+      action: "record",
+      commandId: "record",
+      kind: "annotation",
+      summary: "verified implementation",
+      revision,
+      files: ["src/main.ts"],
+      verification: "integration test",
+      artifactIds: [capture.value.artifactId],
+    });
+    const findings = await client.readResource({
+      uri: `swarm://findings?filter=${encodeURIComponent(JSON.stringify({ file: "src/main.ts", currentRevision: revision }))}`,
+    });
+    expect(
+      JSON.parse((findings.contents[0] as { text: string }).text).items[0],
+    ).toMatchObject({
+      freshness: "current",
+      artifactIds: [capture.value.artifactId],
+    });
   } finally {
     await client.close();
     owner.kill();

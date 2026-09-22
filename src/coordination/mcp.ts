@@ -1,7 +1,8 @@
-import { McpServer } from "@modelcontextprotocol/server";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { CoordinationError } from "./errors";
 import type { Operation } from "./ipc";
+import type { Json } from "./store";
 
 export type CoordinatorRequest = (
   operation: Operation,
@@ -366,6 +367,264 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
         { op: "task_wait", taskId: a.taskId, timeoutMs: a.timeoutMs },
         signal,
       ),
+  );
+  tool(
+    "swarm_context",
+    "Versioned shared state: get, set with expectedVersion, atomic append, or delete. Keep values small; link artifacts.",
+    {
+      action: z.enum(["get", "set", "append", "delete"]),
+      key: text,
+      commandId: id.optional(),
+      expectedVersion: z.number().int().min(0).optional(),
+      value: z.unknown().optional(),
+    },
+    false,
+    (a) => {
+      if (a.action === "get") return request({ op: "kv", key: a.key });
+      const commandId = required(a.commandId, "commandId");
+      if (a.action === "delete")
+        return request({
+          op: "command",
+          command: {
+            id: commandId,
+            type: "kv.delete",
+            payload: {
+              key: a.key,
+              expectedVersion: required(a.expectedVersion, "expectedVersion"),
+            },
+          },
+        });
+      const value = required(a.value, "value") as Json;
+      return request({
+        op: "command",
+        command:
+          a.action === "set"
+            ? {
+                id: commandId,
+                type: "kv.set",
+                payload: {
+                  key: a.key,
+                  value,
+                  expectedVersion: required(
+                    a.expectedVersion,
+                    "expectedVersion",
+                  ),
+                },
+              }
+            : {
+                id: commandId,
+                type: "kv.append",
+                payload: {
+                  key: a.key,
+                  value,
+                  expectedVersion: a.expectedVersion,
+                },
+              },
+      });
+    },
+  );
+  tool(
+    "swarm_evidence",
+    "Capture a completed worktree file or record a result, decision or annotation with provenance. Read bytes through the returned artifact URI.",
+    {
+      commandId: id,
+      action: z.enum(["capture", "record"]),
+      summary: text,
+      path: text.optional(),
+      mediaType: text.optional(),
+      kind: z.enum(["result", "decision", "annotation"]).optional(),
+      revision: z
+        .string()
+        .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i)
+        .optional(),
+      files: z.array(text).max(100).default([]),
+      verification: text.optional(),
+      artifactIds: z.array(id).max(20).default([]),
+      taskId: id.optional(),
+      attemptId: id.optional(),
+    },
+    false,
+    (a) =>
+      a.action === "capture"
+        ? request({
+            op: "artifact_import",
+            input: {
+              id: a.commandId,
+              path: required(a.path, "path"),
+              summary: a.summary,
+              mediaType: a.mediaType,
+            },
+          })
+        : request({
+            op: "command",
+            command: {
+              id: a.commandId,
+              type: "finding.record",
+              payload: {
+                kind: required(a.kind, "kind"),
+                summary: a.summary,
+                revision: required(a.revision, "revision"),
+                files: a.files,
+                verification: required(a.verification, "verification"),
+                artifactIds: a.artifactIds,
+                taskId: a.taskId,
+                attemptId: a.attemptId,
+              },
+            },
+          }),
+  );
+  const jsonResource = async (uri: URL, operation: Operation) => ({
+    contents: [
+      {
+        uri: uri.href,
+        mimeType: "application/json",
+        text: JSON.stringify(await request(operation)),
+      },
+    ],
+  });
+  const numeric = (uri: URL, name: string) => {
+    const value = uri.searchParams.get(name);
+    if (value === null) return 0;
+    if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value)))
+      throw new CoordinationError("invalid_input", `Invalid ${name}`);
+    return Number(value);
+  };
+  server.registerResource(
+    "shared-context",
+    new ResourceTemplate("swarm://context{?key}", {
+      list: undefined,
+    }),
+    {
+      description:
+        "Read a shared key or page key summaries; values retain versions.",
+    },
+    (uri) => {
+      const key = uri.searchParams.get("key");
+      return jsonResource(
+        uri,
+        key !== null
+          ? { op: "kv", key }
+          : {
+              op: "kv_list",
+              prefix: uri.searchParams.get("prefix") ?? "",
+              cursor: uri.searchParams.get("cursor") ?? "",
+              limit: 5,
+            },
+      );
+    },
+  );
+  server.registerResource(
+    "findings",
+    new ResourceTemplate("swarm://findings{?filter}", {
+      list: undefined,
+    }),
+    {
+      description:
+        "Page retained findings with provenance, annotation freshness and artifact references.",
+    },
+    (uri) => {
+      const filter = z
+        .object({
+          taskId: id.optional(),
+          file: text.optional(),
+          currentRevision: text.optional(),
+          cursor: cursor.optional(),
+        })
+        .strict()
+        .parse(JSON.parse(uri.searchParams.get("filter") ?? "{}"));
+      return jsonResource(uri, {
+        op: "findings",
+        filter: {
+          ...filter,
+          limit: 1,
+        },
+      });
+    },
+  );
+  const readArtifact = async (
+    uri: URL,
+    variables: Record<string, string | string[]>,
+  ) => {
+    const artifactId = String(variables.artifactId);
+    const metadata = (await request({ op: "artifact", artifactId })) as {
+      mediaType?: string;
+      bytes?: number;
+    };
+    const page = (await request({
+      op: "artifact_read",
+      artifactId,
+      offset: numeric(uri, "offset"),
+      limit: 16384,
+    })) as { status: string; data: string | null; nextOffset?: number };
+    const nextUri =
+      page.nextOffset !== undefined &&
+      metadata.bytes !== undefined &&
+      page.nextOffset < metadata.bytes &&
+      page.status === "available"
+        ? `swarm://artifacts/${artifactId}?offset=${page.nextOffset}`
+        : null;
+    return {
+      contents: [
+        ...(page.data === null
+          ? []
+          : [
+              {
+                uri: uri.href,
+                mimeType: metadata.mediaType ?? "application/octet-stream",
+                blob: page.data,
+              },
+            ]),
+        {
+          uri: uri.href + "#page",
+          mimeType: "application/json",
+          text: JSON.stringify({
+            ...metadata,
+            status: page.status,
+            nextOffset: page.nextOffset,
+            nextUri,
+          }),
+        },
+      ],
+    };
+  };
+  for (const [name, template] of [
+    ["artifact-page", "swarm://artifacts/{artifactId}{?offset}"],
+    ["artifact", "swarm://artifacts/{artifactId}"],
+  ])
+    server.registerResource(
+      name!,
+      new ResourceTemplate(template!, { list: undefined }),
+      {
+        description:
+          "Read 16 KiB of verified artifact bytes; metadata gives nextUri or unavailable status.",
+      },
+      readArtifact,
+    );
+  server.registerResource(
+    "context-list",
+    "swarm://context",
+    { description: "First page of shared context." },
+    (uri) => jsonResource(uri, { op: "kv_list", limit: 5 }),
+  );
+  server.registerResource(
+    "context-page",
+    new ResourceTemplate("swarm://context{?cursor}", { list: undefined }),
+    { description: "Next page using the previous key cursor." },
+    (uri) =>
+      jsonResource(uri, {
+        op: "kv_list",
+        cursor: uri.searchParams.get("cursor") ?? "",
+        limit: 5,
+      }),
+  );
+  server.registerResource(
+    "finding-list",
+    "swarm://findings",
+    {
+      description:
+        "First retained finding. Filtered pages use a JSON-encoded filter parameter.",
+    },
+    (uri) => jsonResource(uri, { op: "findings", filter: { limit: 1 } }),
   );
   return server;
 }
