@@ -174,6 +174,32 @@ export async function agentState(
   return result;
 }
 
+/** Read-only discovery for the owner: never create an identity or rotate the
+ * plugin's enrollment while resolving a newly created native child. */
+export async function retainedAgentId(
+  directory: string,
+  scope: string,
+  host: string,
+  hostSessionId: string,
+) {
+  if (!isAbsolute(directory))
+    throw new Error("Launcher state directory must be absolute");
+  if (!lstatExists(directory)) return null;
+  await privatePath(directory);
+  const key = createHash("sha256")
+    .update(JSON.stringify([scope, host, hostSessionId]))
+    .digest("hex");
+  const path = join(directory, `agent-${key}.json`);
+  if (!lstatExists(path)) return null;
+  await privatePath(path);
+  const bytes = readFileSync(path);
+  if (bytes.byteLength > 8192) throw new Error("Launcher state exceeds 8 KiB");
+  const record = JSON.parse(bytes.toString("utf8"));
+  if (!/^[a-f0-9-]{36}$/.test(record.agentId))
+    throw new Error("Invalid retained agent identity");
+  return record.agentId as string;
+}
+
 /** A single owner publishes an intent before contacting the host. A later
  * process reconciles the same IDs rather than blindly injecting another turn. */
 export async function wakeState(

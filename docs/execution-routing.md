@@ -17,8 +17,21 @@ external evidence. Cooperative stop uses the enrolled worker's fenced result.
 
 SDK transport-fixture tests cover inherited permission rules, delayed enrollment,
 coordinator reopen, wrong-parent rejection, single assignment and response loss
-without another create. Installed-host provisioning and production native-route
-configuration/enrollment resolution still require integration and proof.
+without another create. Installed-host provisioning still requires proof.
+
+Owner `dispatch.opencode` entries configure native routes with `id`, a pinned
+coordinator `parent` identity, native `parentSessionId`, `baseUrl`, private
+`stateDirectory`, capabilities, durability, capacity and overhead. The parent
+enrollment supplies workspace and recent connected runtime evidence. A busy
+parent can create independent child work; unavailable/stale parents cannot.
+The host API rechecks the native parent before creation.
+
+Child resolution reads the plugin's private retained agent identity and its
+current enrolled session, verifying the workspace. It never creates the identity
+file or rotates enrollment. If the plugin has not enrolled yet, dispatch remains
+uncertain and retries the retained child ID. A real local HTTP/SDK integration
+test supplies delayed plugin enrollment and verifies one create, one assignment
+and unchanged generation; this is not an installed OpenCode execution claim.
 
 Use the lowest-overhead authorized execution path that satisfies the task's
 requirements. Native runtime messaging is sufficient when its host, workspace,

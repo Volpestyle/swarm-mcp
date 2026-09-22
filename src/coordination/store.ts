@@ -503,6 +503,17 @@ export class CoordinationStore {
     return readSession(this.db, scope, id);
   }
 
+  currentSession(scope: string, actor: string): SessionContext | null {
+    this.ensureOpen();
+    return (
+      (this.db
+        .prepare(
+          "SELECT s.scope,s.agent_id AS actor,s.id AS sessionId,s.generation FROM sessions s JOIN agents a ON a.scope=s.scope AND a.id=s.agent_id AND a.generation=s.generation WHERE s.scope=? AND s.agent_id=? AND s.state='active'",
+        )
+        .get(scope, actor) as SessionContext | undefined) ?? null
+    );
+  }
+
   shared(scope: string, key: string) {
     this.ensureOpen();
     return readShared(this.db, scope, key, this.clock());
