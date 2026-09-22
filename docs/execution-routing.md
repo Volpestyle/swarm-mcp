@@ -12,10 +12,10 @@ fresh idle evidence and per-route/global concurrency budgets. Role labels confer
 neither capabilities nor authority. A missing capability remains an explicit
 blocker; selection never creates an agent or changes the task contract.
 
-Selection is currently advisory. Atomic dispatch intent/capacity reservation,
-task binding, provisioning reconciliation and native completion integration are
-still required before this can execute work. Do not treat a selected candidate
-as an accepted owner; only the coordinator's fenced task attempt establishes that.
+Selection alone is advisory. The trusted runner below composes atomic intent and
+capacity reservation, provisioning reconciliation and task binding. Concrete host
+adapters and native completion integration remain unfinished. Only the
+coordinator's fenced task attempt establishes an accepted owner.
 
 Schema 9 adds `dispatch_intents`. The trusted write transaction reserves an
 intent and creates its task atomically. Scope-wide intent identity spans requesting
@@ -50,6 +50,27 @@ same intent, and blocks an additional intent at the configured concurrency limit
 The same processes race provisioning start: one wins, both see one token, and a
 reopened caller reconciles. Binding/finish tests prove one attempt, reject another
 worker's completion and replay the accepted result without a second completion.
+
+## Trusted provider runner
+
+`runDispatchIntent` (built as `dist/coordination/dispatch-runner.js`) composes
+reservation, committed provisioning start, external reconciliation and binding.
+The launcher supplies exactly one authorized provider for the selected route.
+The provider receives the stable token, existing task ID and unchanged contract.
+External calls are bounded and run outside the database transaction.
+
+Only a fresh, non-replayed start receipt calls the provider's `start`. All later
+calls use `find(token)`. Missing results, errors and timeouts return uncertainty
+without another start or released capacity. The runner copies only the external
+ID and worker session from the verified provider result; it does not accept
+replacement dispatch intent, token or route fields.
+
+The runner tests use a real coordinator store and a controlled provider fixture:
+external acceptance followed by response loss or timeout, coordinator reopen,
+temporarily invisible external state, then reconciliation. Both finish with one
+start, one task and one attempt. This is not installed-host provisioning evidence.
+Concrete native/peer provider adapters, resource release/cancellation orchestration
+and the agent API surface remain unfinished.
 
 ## Legacy implementation audit
 
