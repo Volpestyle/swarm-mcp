@@ -3,6 +3,7 @@ import { CoordinationCore } from "./core";
 import { localEndpoint, serveCoordination } from "./ipc";
 import { launcherEnrollment } from "./enrollment";
 import { readOwnerConfig } from "./owner-config";
+import { ownerDispatch } from "./owner-dispatch";
 
 async function main() {
   const path = process.argv[2];
@@ -13,7 +14,10 @@ async function main() {
   try {
     const service = await serveCoordination({
       endpoint: localEndpoint(config.databasePath),
-      core: new CoordinationCore(store),
+      core: new CoordinationCore(
+        store,
+        config.dispatch ? ownerDispatch(store, config.dispatch) : undefined,
+      ),
       authorize: (capability) => store.authorize(capability),
       enroll: launcherEnrollment(store, config.launcherSecret),
     });

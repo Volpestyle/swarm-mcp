@@ -8,6 +8,8 @@ import { CoordinationClient } from "../src/coordination/ipc";
 import { ensureCoordinator } from "../src/coordination/owner-launcher";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
+import { canonicalPath } from "../src/coordination/worktrees";
+import { ownerDispatchSchema } from "../src/coordination/owner-dispatch";
 
 test("production Node owner resumes durable launcher enrollment after restart", async () => {
   mkdirSync(resolve("dist/test"), { recursive: true });
@@ -59,6 +61,9 @@ test("production Node owner resumes durable launcher enrollment after restart", 
         capability: string;
         replayed: boolean;
         generation: number;
+        sessionId: string;
+        actor: string;
+        scope: string;
       };
       expect(result.replayed).toBe(Boolean(restart));
       expect(result.generation).toBe(1);
@@ -74,6 +79,68 @@ test("production Node owner resumes durable launcher enrollment after restart", 
         scope: "test",
       });
       if (restart) {
+        const intent = {
+          intentId: "owner-dispatch",
+          title: "Configured work",
+          capabilities: ["code"],
+          durable: true,
+          contract: {
+            objective: "Configured work",
+            worktree: canonicalPath(root),
+            acceptanceCriteria: ["Verified"],
+            expectedArtifacts: [],
+            constraints: [],
+          },
+        };
+        expect(
+          await agent.request({
+            op: "dispatch",
+            input: { action: "assign", intent },
+          }),
+        ).toMatchObject({ status: "blocked" });
+        await agent.request({
+          op: "command",
+          command: {
+            id: "available",
+            type: "session.observe",
+            payload: { runtime: "available" },
+          },
+        });
+        const assigned = (await agent.request({
+          op: "dispatch",
+          input: { action: "assign", intent },
+        })) as {
+          status: string;
+          taskId: string;
+          attemptId: string;
+          fence: number;
+        };
+        expect(assigned.status).toBe("bound");
+        const inbox = (await agent.request({ op: "inbox" })) as {
+          items: Array<{ message: { kind: string } }>;
+        };
+        expect(inbox.items.map((i) => i.message.kind)).toEqual([
+          "task.assigned",
+        ]);
+        await agent.request({
+          op: "command",
+          command: {
+            id: "done",
+            type: "task.finish",
+            payload: {
+              taskId: assigned.taskId,
+              attemptId: assigned.attemptId,
+              fence: assigned.fence,
+              outcome: "completed",
+            },
+          },
+        });
+        expect(
+          await agent.request({
+            op: "dispatch",
+            input: { action: "cancel", intentId: intent.intentId },
+          }),
+        ).toMatchObject({ status: "released" });
         const resumed = (await launcher.request({
           op: "enroll",
           input: { ...input, requestId: "resume" },
@@ -83,6 +150,56 @@ test("production Node owner resumes durable launcher enrollment after restart", 
           .request({ op: "bootstrap" })
           .catch((error) => error);
         expect(stale).toMatchObject({ code: "stale_session" });
+        const current = await CoordinationClient.connect(
+          endpoint,
+          (resumed as unknown as { capability: string }).capability,
+        );
+        clients.push(current);
+        expect(
+          await current.request({
+            op: "dispatch",
+            input: {
+              action: "assign",
+              intent: { ...intent, intentId: "after-resume" },
+            },
+          }),
+        ).toMatchObject({ status: "blocked" });
+      } else {
+        const dispatch = {
+          maximum: 1,
+          observationMaxAgeMs: 60000,
+          peers: [
+            {
+              id: "configured-peer",
+              worker: {
+                scope: result.scope,
+                actor: result.actor,
+                sessionId: result.sessionId,
+                generation: result.generation,
+              },
+              host: "node",
+              capabilities: ["code"],
+              durable: true,
+              capacity: 1,
+              overhead: 0,
+            },
+          ],
+        };
+        expect(() =>
+          ownerDispatchSchema.parse({
+            ...dispatch,
+            peers: [dispatch.peers[0], dispatch.peers[0]],
+          }),
+        ).toThrow();
+        writeFileSync(
+          config,
+          JSON.stringify({
+            databasePath: join(root, "db"),
+            launcherSecret: secret,
+            dispatch,
+          }),
+          { mode: 0o600 },
+        );
       }
     } finally {
       for (const client of clients) client.close();

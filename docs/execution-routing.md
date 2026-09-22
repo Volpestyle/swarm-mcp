@@ -139,8 +139,24 @@ task version across retries, while assignment retains the intent identity.
 
 The Node-owner IPC regression verifies assignment/retry, conflicting work,
 capacity exhaustion and the unconfigured case. Forged top-level actor, scope and
-policy fields do not change the accepted worker or configured limit. Production
-owner configuration and the MCP tool surface are still pending.
+policy fields do not change the accepted worker or configured limit. The MCP
+tool surface remains pending.
+
+The private owner JSON accepts optional `dispatch` configuration: `maximum`,
+`observationMaxAgeMs` (1..60000), and `peers`. Each peer declares `id`, a pinned
+`worker` (`scope`, `actor`, `sessionId`, `generation`), `host`, `capabilities`,
+`durable`, `capacity`, and `overhead`. Route IDs and worker sessions are unique;
+unknown dispatch fields are rejected. The existing 8 KiB private-config bound
+still applies. Configuration loads at owner startup; changing the file requires
+an owner restart.
+
+The resolver derives canonical worktree and current availability/timestamp from
+the enrolled session. Missing, stale, unavailable or superseded sessions cannot
+be selected. A route pins its incarnation rather than silently redirecting an
+uncertain old dispatch to a replacement worker. Owner configuration is the
+authority for capabilities and budgets; model labels do not modify it. The
+production-owner regression verifies configured dispatch after restart, no
+assignment before availability, completion/release and superseded-route rejection.
 
 ## Reassignment and fallback
 
