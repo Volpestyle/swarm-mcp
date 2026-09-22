@@ -1,9 +1,9 @@
 # Reversible coordination cutover
 
-VUH-1344 is in progress. The compatibility launch guard below is implemented;
-the versioned legacy-data import, backup/restore tooling, isolated canary and
-release packaging are not yet complete. Do not switch a live profile using this
-partial procedure.
+VUH-1344 is in progress. The compatibility launch guard and versioned legacy
+backup/restore tooling below are implemented; the coordinator-data importer,
+isolated canary and release packaging are not yet complete. Do not switch a live
+profile using this partial procedure.
 
 ## Database boundary
 
@@ -58,3 +58,40 @@ Historical source fixtures and their hashes/revisions live under
 `test/fixtures/legacy-baselines/`; tests do not depend on a full Git history in CI.
 Run `bun test test/coordination-legacy-guard.test.ts`. This is compatibility
 evidence, not yet a migration, rollback or publication claim.
+
+## Consistent legacy snapshot and restore
+
+The migration command's `backup` action opens the source read-only and uses
+SQLite `VACUUM INTO` to capture a consistent database, including committed WAL
+pages. It does not copy just the main file or checkpoint/change the source.
+The output directory must be new; no existing snapshot is overwritten. The
+snapshot stores a complete legacy database and a version-1 manifest with its
+SHA-256, byte length, schema version, table counts, unread-message count and
+task/context state inventory. The manifest is written only after the copied
+database passes integrity/schema checks and its file is flushed.
+
+```powershell
+node dist/coordination/migration-cli.js backup C:/isolated-cutover/legacy.db C:/isolated-cutover/snapshot-001
+node dist/coordination/migration-cli.js verify C:/isolated-cutover/snapshot-001
+node dist/coordination/migration-cli.js restore C:/isolated-cutover/snapshot-001 C:/isolated-cutover/restored-legacy.db
+```
+
+Restore verifies the manifest, checksum, SQLite integrity and inventory, then
+creates a fresh destination exclusively. Existing destinations and SQLite
+sidecars are rejected. It never overwrites a live coordinator or legacy file.
+A failed/incomplete snapshot without a valid manifest is not restorable.
+
+The snapshot retains read and unread messages, tasks, annotations, locks,
+identities and all other legacy tables as historical data. Restoring this file
+does not resolve side effects performed after the snapshot. Before an actual
+rollback, stop candidate writers, retain their audit evidence, reconcile any
+post-cutover effects and deliberately select the restored legacy path through
+the checked launcher. Active legacy ownership is not valid coordinator authority;
+the import policy will explicitly settle that boundary before activation.
+
+`test/coordination-legacy-snapshot.test.ts` verifies both pinned schema baselines
+with WAL-only committed records, post-snapshot writes, pending messages, active
+tasks and lock context. It checks Node CLI backup plus checksum corruption,
+incomplete manifests, destination collisions and stray sidecars. Current result:
+three tests, 24 assertions. This establishes backup/restore, not a completed
+coordinator migration or live rollback.

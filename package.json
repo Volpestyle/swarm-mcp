@@ -5,6 +5,7 @@
   "bin": {
     "swarm-mcp": "./dist/cli.js",
     "swarm-legacy-guard": "./dist/legacy-guard-cli.js",
+    "swarm-coordinator-migrate": "./dist/coordination/migration-cli.js",
     "swarm-coordinator-client": "./dist/coordination/client-cli.js",
     "swarm-coordinator-mcp": "./dist/coordination/mcp-cli.js",
     "swarm-coordinator-owner": "./dist/coordination/owner-cli.js"
@@ -23,7 +24,7 @@
     "dev:ui:managed": "cd apps/swarm-ui && bunx tauri dev",
     "diagrams": "node scripts/render-mermaid.mjs",
     "generate:protocol": "node scripts/generate-protocol-types.mjs",
-    "build": "node scripts/generate-protocol-types.mjs && esbuild src/cli.ts src/index.ts src/legacy-guard-cli.ts src/coordination/client-cli.ts src/coordination/mcp-cli.ts src/coordination/owner-cli.ts src/coordination/claude-hook-cli.ts src/coordination/claude-launcher.ts src/coordination/codex-launcher.ts src/coordination/dispatch-runner.ts src/coordination/opencode-dispatch.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --packages=external --loader:.sql=text --banner:js='#!/usr/bin/env node'",
+    "build": "node scripts/generate-protocol-types.mjs && esbuild src/cli.ts src/index.ts src/legacy-guard-cli.ts src/coordination/client-cli.ts src/coordination/migration-cli.ts src/coordination/mcp-cli.ts src/coordination/owner-cli.ts src/coordination/claude-hook-cli.ts src/coordination/claude-launcher.ts src/coordination/codex-launcher.ts src/coordination/dispatch-runner.ts src/coordination/opencode-dispatch.ts --bundle --platform=node --format=esm --target=node20 --outdir=dist --packages=external --loader:.sql=text --banner:js='#!/usr/bin/env node'",
     "check:ui": "cd apps/swarm-ui && bun run check && bun run build",
     "test:server": "cargo test --manifest-path apps/swarm-server/Cargo.toml",
     "test:tauri": "cargo test --manifest-path apps/swarm-ui/src-tauri/Cargo.toml",
