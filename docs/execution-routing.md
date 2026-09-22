@@ -97,6 +97,23 @@ The regression exercises stop timeout, coordinator reopen, pending stop, confirm
 stop, repeated cancellation and pre-start cancellation using a controlled provider.
 Concrete host adapters must still implement and prove their stop-token fencing.
 
+## Reassignment and fallback
+
+The trusted `dispatch.reassign` transaction is an explicit creator retry, with a
+stable command ID and expected task version. It requires the previous dispatch to
+be released and the task to be failed or cancelled. It rechecks the unchanged
+intent fingerprint and all route constraints and budgets before reopening the
+same task and reserving its replacement route atomically. Missing capabilities
+leave the task terminal with an explicit blocker; fallback never weakens the
+contract. A completed task cannot be reassigned.
+
+The next begin records a fresh token; the next claim advances the attempt fence.
+Old provider bindings and late completion cannot take ownership or overwrite the
+replacement result. A controlled native-to-peer test verifies one task/contract,
+cancelled native attempt, completed peer attempt, changed-token rejection, late
+native-result rejection and idempotent reassignment/completion. This proves the
+coordinator contract; actual native and peer provider integrations remain open.
+
 ## Legacy implementation audit
 
 The referenced historical tickets are inputs, not execution dependencies:

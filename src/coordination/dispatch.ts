@@ -242,6 +242,28 @@ export class DispatchTransaction {
   }
 
   reserve(input: DispatchIntent, policy: DispatchPolicy) {
+    return this.reserveOrReassign(input, policy);
+  }
+
+  /** Explicit creator retry after confirmed release; preserves work identity. */
+  reassign(
+    input: DispatchIntent,
+    policy: DispatchPolicy,
+    expectedVersion: number,
+  ) {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1)
+      throw new CoordinationError(
+        "invalid_input",
+        "Reassignment requires a positive task version",
+      );
+    return this.reserveOrReassign(input, policy, expectedVersion);
+  }
+
+  private reserveOrReassign(
+    input: DispatchIntent,
+    policy: DispatchPolicy,
+    expectedVersion?: number,
+  ) {
     if (!this.command.sessionId || !this.command.generation)
       throw new CoordinationError(
         "session_required",
@@ -284,14 +306,25 @@ export class DispatchTransaction {
           "idempotency_conflict",
           "Dispatch intent was reused for different work",
         );
-      return {
-        status: existing.state,
-        created: false,
-        taskId: existing.task_id,
-        routeId: existing.route_id,
-        path: existing.path,
-      };
+      if (expectedVersion === undefined)
+        return {
+          status: existing.state,
+          created: false,
+          taskId: existing.task_id,
+          routeId: existing.route_id,
+          path: existing.path,
+        };
+      if (existing.state !== "released")
+        throw new CoordinationError(
+          "conflict",
+          "Previous dispatch must be released before reassignment",
+        );
     }
+    if (!existing && expectedVersion !== undefined)
+      throw new CoordinationError(
+        "not_found",
+        "Cannot reassign an unknown dispatch",
+      );
     const counts = this.db
       .prepare(
         "SELECT route_id,COUNT(*) AS count FROM dispatch_intents WHERE scope=? AND state<>'released' GROUP BY route_id",
@@ -316,6 +349,31 @@ export class DispatchTransaction {
       this.at,
     );
     if (selection.status === "blocked") return selection;
+    if (existing && expectedVersion !== undefined) {
+      this.tasks.retry({ taskId: existing.task_id, expectedVersion });
+      this.db
+        .prepare(
+          "UPDATE dispatch_intents SET route_id=?,path=?,state='reserved',provision_token=NULL,external_id=NULL,worker_session=NULL,attempt_id=NULL,fence=NULL WHERE scope=? AND intent_id=?",
+        )
+        .run(
+          selection.routeId,
+          selection.path,
+          this.command.scope,
+          input.intentId,
+        );
+      this.change("dispatch.reassigned", input.intentId, {
+        taskId: existing.task_id,
+        routeId: selection.routeId,
+        path: selection.path,
+      });
+      return {
+        status: "reserved",
+        created: false,
+        taskId: existing.task_id,
+        routeId: selection.routeId,
+        path: selection.path,
+      };
+    }
     const { task } = this.tasks.create({ title: input.title, contract });
     this.db
       .prepare(
