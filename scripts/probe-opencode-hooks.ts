@@ -1,3 +1,7 @@
+import { Database } from "bun:sqlite";
+import { build } from "esbuild";
+import { enrollRuntime } from "../src/coordination/runtime-launcher";
+import { once } from "node:events";
 import {
   mkdirSync,
   mkdtempSync,
@@ -26,13 +30,42 @@ if (!output)
 const root = mkdtempSync(join(tmpdir(), "swarm-opencode-probe-"));
 const events = join(root, "events.jsonl");
 const plugin = join(root, "probe.mjs");
+const lifecyclePath = resolve("dist/test/opencode-lifecycle.mjs");
+await build({
+  entryPoints: ["src/coordination/opencode-plugin.ts"],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  packages: "external",
+  outfile: lifecyclePath,
+});
+const launcherOptions = {
+  stateDirectory: join(root, "private"),
+  nodePath: Bun.which("node")!,
+  ownerPath: resolve("dist/coordination/owner-cli.js"),
+  identity: {
+    projectRoot: root,
+    directory: root,
+    fileRoot: root,
+    profile: "probe",
+    allowedRoots: [root],
+  },
+};
+const observer = await enrollRuntime({
+  ...launcherOptions,
+  host: "opencode",
+  hostSessionId: "probe-observer",
+  incarnation: "probe",
+});
 writeFileSync(
   plugin,
   `import { appendFileSync } from 'node:fs';
+import { opencodeLifecycle } from ${JSON.stringify(pathToFileURL(lifecyclePath).href)};
 export const Probe = async ({directory}) => {
   const record = event => appendFileSync(process.env.SWARM_PROBE_EVENTS, JSON.stringify(event)+'\\n');
   record({type:'plugin.loaded',directory});
-  return {event: async ({event}) => record(event)};
+  const hooks = opencodeLifecycle(${JSON.stringify(launcherOptions)}, event => record({ ...event, type: 'coordination.' + event.type }));
+  return {...hooks, event: async (input) => { await hooks.event(input); record(input.event); }};
 };`,
 );
 const env = {
@@ -91,6 +124,37 @@ try {
   });
   assert.equal(created.status, 200, await created.clone().text());
   const session = (await created.json()) as { id: string };
+  const waitFor = async (type: string, hostSessionId: string) => {
+    for (let i = 0; i < 150; i++) {
+      const records = existsSync(events)
+        ? readFileSync(events, "utf8")
+            .trim()
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => JSON.parse(line))
+        : [];
+      if (records.some((e) => e.type === "coordination.error"))
+        throw new Error("Lifecycle adapter reported an error");
+      if (
+        records.some(
+          (e) => e.type === type && e.hostSessionId === hostSessionId,
+        )
+      )
+        return;
+      await delay(100);
+    }
+    throw new Error(`Missing ${type} for ${hostSessionId}`);
+  };
+  // The initial create can precede the host event subscription. A native
+  // update is an adoption opportunity, without fabricating plugin callbacks.
+  const updated = await fetch(base + "/session/" + session.id, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: "adopt pre-subscription session" }),
+    signal: AbortSignal.timeout(10000),
+  });
+  assert.equal(updated.status, 200, await updated.clone().text());
+  await waitFor("coordination.enrolled", session.id);
   const removed = await fetch(base + "/session/" + session.id, {
     method: "DELETE",
     signal: AbortSignal.timeout(10000),
@@ -104,11 +168,14 @@ try {
   });
   assert.equal(warm.status, 200);
   const warmSession = (await warm.json()) as { id: string };
+  await waitFor("coordination.enrolled", warmSession.id);
   const warmRemoved = await fetch(base + "/session/" + warmSession.id, {
     method: "DELETE",
     signal: AbortSignal.timeout(10000),
   });
   assert.equal(warmRemoved.status, 200);
+  await waitFor("coordination.closed", session.id);
+  await waitFor("coordination.closed", warmSession.id);
   let recorded: Array<{ type: string }> = [];
   for (let i = 0; i < 50; i++) {
     if (existsSync(events))
@@ -128,6 +195,35 @@ try {
       recorded.some((event) => event.type === type),
       `Missing real host event: ${type}`,
     );
+  const db = new Database(join(root, "private", "coordination.db"), {
+    readonly: true,
+  });
+  let coordinatorSessions;
+  try {
+    coordinatorSessions = db
+      .query(
+        "SELECT agent_id, generation, state FROM sessions WHERE agent_id != ? ORDER BY agent_id",
+      )
+      .all(observer.actor);
+    assert.equal(
+      coordinatorSessions.length,
+      2,
+      "Exactly one enrollment per native session",
+    );
+    for (const entry of coordinatorSessions as Array<{
+      state: string;
+      generation: number;
+    }>) {
+      assert.equal(entry.state, "closed");
+      assert.equal(
+        entry.generation,
+        1,
+        "Repeated host updates must not supersede the session",
+      );
+    }
+  } finally {
+    db.close();
+  }
   mkdirSync(resolve(output, ".."), { recursive: true });
   writeFileSync(
     output,
@@ -136,12 +232,13 @@ try {
         binary,
         root,
         sessions: [session.id, warmSession.id],
+        coordinatorSessions,
         createdEvents: recorded.filter(
           (event) => event.type === "session.created",
         ).length,
         recorded,
         limitations:
-          "Actual host plugin load and two session create/delete operations only. Missing session.created is recorded, not assumed supported. No model invocation, tool-boundary delivery, reservation denial or wakeup proven.",
+          "Actual host plugin load, automatic enrollment and coordinator session close for two native sessions. Missing session.created is recorded, not assumed supported. No model invocation, tool-boundary delivery, reservation denial or wakeup proven.",
       },
       null,
       2,
@@ -152,4 +249,10 @@ try {
   child.kill();
   await child.exited;
   await stderr;
+  if (observer.launchedOwner) {
+    observer.launchedOwner.ref();
+    const exited = once(observer.launchedOwner, "exit");
+    observer.launchedOwner.kill();
+    await exited;
+  }
 }

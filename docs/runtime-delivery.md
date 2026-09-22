@@ -39,8 +39,9 @@ session ID and incarnation. Reuse the incarnation when retrying uncertain
 enrollment; choose a new one for an actual host restart/resume. A bootstrap with
 the returned session capability verifies it is still current before returning.
 Only the endpoint and session capability are returned in the child environment;
-owner and resume secrets remain in launcher state. Host-hook wiring remains to
-be completed.
+owner and resume secrets remain in launcher state. OpenCode V1 lifecycle hooks
+now use this composition; startup reconciliation, delivery/wake hooks and other
+hosts remain to be completed.
 
 `RuntimeDelivery` consumes an authenticated coordinator request function and a
 trusted host adapter. It has no spawn or terminal-injection API. Enrollment and

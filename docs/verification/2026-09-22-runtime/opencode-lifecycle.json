@@ -1,0 +1,174 @@
+{
+  "binary": "C:/Users/volpe/.bun/install/global/node_modules/opencode-windows-x64/bin/opencode.exe",
+  "root": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-d71MWQ",
+  "sessions": [
+    "ses_f37f5be39ffeBkJWa5z83W2nGA",
+    "ses_f37f5b704ffeXMIgxCIBplVhaB"
+  ],
+  "coordinatorSessions": [
+    {
+      "agent_id": "34bf91fb-b072-4c4b-9519-eeacc17ef33a",
+      "generation": 1,
+      "state": "closed"
+    },
+    {
+      "agent_id": "bc63676f-a004-461d-8f93-5398c9d7f27f",
+      "generation": 1,
+      "state": "closed"
+    }
+  ],
+  "createdEvents": 1,
+  "recorded": [
+    {
+      "type": "plugin.loaded",
+      "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-d71MWQ"
+    },
+    {
+      "type": "coordination.enrolled",
+      "hostSessionId": "ses_f37f5be39ffeBkJWa5z83W2nGA",
+      "actor": "bc63676f-a004-461d-8f93-5398c9d7f27f"
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37f5be39ffeBkJWa5z83W2nGA",
+        "info": {
+          "id": "ses_f37f5be39ffeBkJWa5z83W2nGA",
+          "slug": "stellar-engine",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-d71MWQ",
+          "title": "adopt pre-subscription session",
+          "version": "1.4.3",
+          "time": {
+            "created": 1790062510534,
+            "updated": 1790062510550
+          }
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37f5be39ffeBkJWa5z83W2nGA",
+        "info": {
+          "id": "ses_f37f5be39ffeBkJWa5z83W2nGA",
+          "slug": "stellar-engine",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-d71MWQ",
+          "title": "adopt pre-subscription session",
+          "version": "1.4.3",
+          "time": {
+            "created": 1790062510534,
+            "updated": 1790062512374
+          }
+        }
+      }
+    },
+    {
+      "type": "coordination.closed",
+      "hostSessionId": "ses_f37f5be39ffeBkJWa5z83W2nGA",
+      "actor": "bc63676f-a004-461d-8f93-5398c9d7f27f"
+    },
+    {
+      "type": "session.deleted",
+      "properties": {
+        "sessionID": "ses_f37f5be39ffeBkJWa5z83W2nGA",
+        "info": {
+          "id": "ses_f37f5be39ffeBkJWa5z83W2nGA",
+          "slug": "stellar-engine",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-d71MWQ",
+          "title": "adopt pre-subscription session",
+          "version": "1.4.3",
+          "time": {
+            "created": 1790062510534,
+            "updated": 1790062510550
+          }
+        }
+      }
+    },
+    {
+      "type": "coordination.enrolled",
+      "hostSessionId": "ses_f37f5b704ffeXMIgxCIBplVhaB",
+      "actor": "34bf91fb-b072-4c4b-9519-eeacc17ef33a"
+    },
+    {
+      "type": "session.created",
+      "properties": {
+        "sessionID": "ses_f37f5b704ffeXMIgxCIBplVhaB",
+        "info": {
+          "id": "ses_f37f5b704ffeXMIgxCIBplVhaB",
+          "slug": "mighty-circuit",
+          "version": "1.4.3",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-d71MWQ",
+          "title": "warm lifecycle probe",
+          "time": {
+            "created": 1790062512379,
+            "updated": 1790062512379
+          }
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37f5b704ffeXMIgxCIBplVhaB",
+        "info": {
+          "id": "ses_f37f5b704ffeXMIgxCIBplVhaB",
+          "slug": "mighty-circuit",
+          "version": "1.4.3",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-d71MWQ",
+          "title": "warm lifecycle probe",
+          "time": {
+            "created": 1790062512379,
+            "updated": 1790062512379
+          }
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37f5b704ffeXMIgxCIBplVhaB",
+        "info": {
+          "id": "ses_f37f5b704ffeXMIgxCIBplVhaB",
+          "slug": "mighty-circuit",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-d71MWQ",
+          "title": "warm lifecycle probe",
+          "version": "1.4.3",
+          "time": {
+            "created": 1790062512379,
+            "updated": 1790062514247
+          }
+        }
+      }
+    },
+    {
+      "type": "coordination.closed",
+      "hostSessionId": "ses_f37f5b704ffeXMIgxCIBplVhaB",
+      "actor": "34bf91fb-b072-4c4b-9519-eeacc17ef33a"
+    },
+    {
+      "type": "session.deleted",
+      "properties": {
+        "sessionID": "ses_f37f5b704ffeXMIgxCIBplVhaB",
+        "info": {
+          "id": "ses_f37f5b704ffeXMIgxCIBplVhaB",
+          "slug": "mighty-circuit",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-d71MWQ",
+          "title": "warm lifecycle probe",
+          "version": "1.4.3",
+          "time": {
+            "created": 1790062512379,
+            "updated": 1790062512379
+          }
+        }
+      }
+    }
+  ],
+  "limitations": "Actual host plugin load, automatic enrollment and coordinator session close for two native sessions. Missing session.created is recorded, not assumed supported. No model invocation, tool-boundary delivery, reservation denial or wakeup proven."
+}

@@ -2,7 +2,22 @@
 
 VUH-1339 includes OpenCode. Target the installed **1.4.3** V1 plugin API; V2
 support is not claimed. Archived VUH-56/57 supply requirements, not dependencies.
-The adapter implementation and tool-boundary delivery verification remain open.
+The lifecycle adapter is implemented; tool-boundary delivery verification remains open.
+
+`src/coordination/opencode-plugin.ts` supplies V1 event and shell-environment
+hooks to a trusted plugin wrapper. Creation/update events enroll once per native
+session, concurrent callbacks serialize per session, and deletion closes the
+coordinator session. A per-plugin incarnation fences old credentials on reload.
+The shell hook can adopt an unknown session and exports only its endpoint and
+session capability; this hook has not yet been exercised by the installed-host
+probe. No delivery/wake support is claimed by these lifecycle hooks.
+
+The extended probe captures `opencode-lifecycle.json`: two real host sessions
+produce exactly two coordinator sessions, each generation 1 and durably closed
+after deletion. The first is adopted through an explicit native title update
+after its creation event was missed. Repeated update events do not reenroll it.
+Startup enumeration/reconciliation remains necessary for sessions that produce
+no subsequent event. The probe starts and stops its own isolated coordinator.
 
 ## Actual host evidence
 
