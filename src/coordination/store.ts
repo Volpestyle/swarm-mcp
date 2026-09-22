@@ -404,9 +404,15 @@ export class CoordinationStore {
     return result;
   }
 
-  inbox(scope: string, actor: string, cursor = 0, limit = 50) {
+  inbox(
+    scope: string,
+    actor: string,
+    cursor = 0,
+    limit = 50,
+    activeOnly = false,
+  ) {
     this.ensureOpen();
-    return readInbox(this.db, scope, actor, cursor, limit);
+    return readInbox(this.db, scope, actor, cursor, limit, activeOnly);
   }
 
   openSession(input: Enrollment) {

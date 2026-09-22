@@ -309,9 +309,15 @@ export class CoordinationCore {
     this.store.assertContext(context);
     return this.store.attempts(context.scope, taskId);
   }
-  inbox(context: ActorContext, cursor = 0, limit = 50) {
+  inbox(context: ActorContext, cursor = 0, limit = 50, activeOnly = false) {
     this.store.assertContext(context);
-    return this.store.inbox(context.scope, context.actor, cursor, limit);
+    return this.store.inbox(
+      context.scope,
+      context.actor,
+      cursor,
+      limit,
+      activeOnly,
+    );
   }
   messageStatus(context: ActorContext, id: string) {
     this.store.assertContext(context);

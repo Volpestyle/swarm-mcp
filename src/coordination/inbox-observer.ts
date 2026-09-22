@@ -90,11 +90,12 @@ function observeConnection(options: Options) {
         let cursor = 0;
         for (;;) {
           if (stopped || !options.ready()) break;
-          // One bounded envelope per frame; old history is read, never leased.
+          // One bounded envelope per frame; terminal history stays in SQLite.
           const page = (await reads!.request({
             op: "inbox",
             cursor,
             limit: 1,
+            activeOnly: true,
           })) as {
             items: Array<{
               message: { id: string };

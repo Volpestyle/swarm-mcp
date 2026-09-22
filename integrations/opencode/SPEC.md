@@ -178,7 +178,10 @@ The capture verifies the new delivery is leased and a repeated wake defers.
 the peer message alone drives coordinator event wait → pending inbox read →
 verified idle wake → native turn-start payload admission → model request. Each
 enrolled actor has separate event/read IPC connections so held waits do not
-block reads. Bootstrap captures the event cursor before scanning the backlog;
+block reads. Observer reads request `activeOnly`, filtering terminal history in
+SQLite instead of transporting each acknowledged message. The default inbox
+query still includes that history. Active pagination preserves both pending and
+leased work and does not mutate either. Bootstrap captures the event cursor before scanning the backlog;
 host idle/snapshot-ready events also recheck pending work. Reads never lease or
 acknowledge messages. Expired work is ignored, and pending backoff uses a timer
 at its next attempt time rather than model polling.
@@ -199,8 +202,8 @@ with the original capability. It also verifies retry exhaustion, explicit stop
 and terminal authentication failure. The test supplies the owner restart.
 `opencode-inbox-retry.json` verifies the installed-host delivery flow remains
 working with this observer; it does not inject a coordinator crash into that host
-run. Efficient traversal of retained inbox history and expired-lease recovery
-remain open. Exhausted observers require lifecycle reinitialization.
+run. Expired-lease recovery remains open; it must coordinate with durable host
+context deduplication. Exhausted observers require lifecycle reinitialization.
 
 ## Actual host evidence
 

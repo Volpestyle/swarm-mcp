@@ -129,6 +129,48 @@ test("fetch replay preserves the lease; acknowledgment is explicit and idempoten
   expect(core.inbox(bob).items[0]!.state).toBe("acknowledged");
 });
 
+test("active inbox pagination excludes terminal history without consuming work", async () => {
+  const { core } = await setup();
+  for (let i = 0; i < 120; i++) {
+    core.command(alice, send(`history-${i}`));
+    const lease = delivery(core, `lease-${i}`);
+    core.command(bob, {
+      id: `ack-${i}`,
+      type: "inbox.ack",
+      payload: {
+        messageId: lease.message.id,
+        leaseToken: lease.leaseToken,
+      },
+    });
+  }
+  core.command(alice, send("leased"));
+  const lease = delivery(core, "active-lease");
+  const pending = core.command(alice, send("pending")).value as {
+    messageId: string;
+  };
+  core.command(alice, send("other-recipient", "carol"));
+  const first = core.inbox(bob, 0, 1, true);
+  expect(first.items).toHaveLength(1);
+  expect(first.items[0]).toMatchObject({
+    messageId: lease.message.id,
+    state: "leased",
+    attempts: 1,
+  });
+  const second = core.inbox(bob, first.cursor, 1, true);
+  expect(second.items).toHaveLength(1);
+  expect(second.items[0]).toMatchObject({
+    messageId: pending.messageId,
+    state: "pending",
+    attempts: 0,
+  });
+  expect(core.inbox(bob, second.cursor, 1, true).items).toEqual([]);
+  expect(core.inbox(bob, 0, 1).items[0]!.state).toBe("acknowledged");
+  expect(core.inbox({ ...bob, scope: "other" }, 0, 1, true).items).toEqual([]);
+  expect(() => core.inbox(bob, 0, 1, "true" as unknown as boolean)).toThrow(
+    "activeOnly must be boolean",
+  );
+});
+
 test("recipient restart retains hour-old work and fences stale delivery tokens", async () => {
   const env = await setup({ backoffMs: 10 });
   env.core.command(alice, send());

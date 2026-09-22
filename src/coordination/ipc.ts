@@ -27,7 +27,7 @@ export type Operation =
   | { op: "kv"; key: string }
   | { op: "kv_list"; prefix?: string; cursor?: string; limit?: number }
   | { op: "kv_history"; key: string; cursor?: number; limit?: number }
-  | { op: "inbox"; cursor?: number; limit?: number }
+  | { op: "inbox"; cursor?: number; limit?: number; activeOnly?: boolean }
   | { op: "message_status"; messageId: string }
   | { op: "events"; cursor: number; limit?: number }
   | { op: "watch"; cursor: number; timeoutMs: number; limit?: number };
@@ -249,6 +249,7 @@ export async function serveCoordination(options: {
               actor,
               raw.cursor as number | undefined,
               raw.limit as number | undefined,
+              raw.activeOnly as boolean | undefined,
             );
             break;
           case "message_status":

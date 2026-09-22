@@ -120,12 +120,15 @@ export function readInbox(
   actor: string,
   after = 0,
   limit = 50,
+  activeOnly = false,
 ) {
   integer(after, "cursor", 0, Number.MAX_SAFE_INTEGER);
   integer(limit, "limit", 1, 100);
+  if (typeof activeOnly !== "boolean")
+    throw new CoordinationError("invalid_input", "activeOnly must be boolean");
   const rows = db
     .prepare(
-      `${selection} WHERE m.scope=? AND d.recipient=? AND m.seq>? ORDER BY m.seq LIMIT ?`,
+      `${selection} WHERE m.scope=? AND d.recipient=? AND m.seq>? ${activeOnly ? "AND d.state IN ('pending','leased')" : ""} ORDER BY m.seq LIMIT ?`,
     )
     .all(scope, actor, after, limit) as Row[];
   return {

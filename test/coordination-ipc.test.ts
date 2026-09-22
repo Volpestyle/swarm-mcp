@@ -358,6 +358,10 @@ test("inbox leases and acknowledgments round trip through the authenticated owne
     items: Array<{ state: string }>;
   };
   expect(inbox.items[0]!.state).toBe("acknowledged");
+  expect(await client.request({ op: "inbox", activeOnly: true })).toEqual({
+    items: [],
+    cursor: 0,
+  });
 });
 
 test("Bun client command and replay use the Node owner's durable core", async () => {
