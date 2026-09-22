@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { enrollRuntime } from "../src/coordination/runtime-launcher";
+import { prepareClaudeLaunch } from "../src/coordination/claude-launcher";
 import { CoordinationClient } from "../src/coordination/ipc";
 import { hasClaudeContext } from "../src/coordination/claude-context";
 import { setTimeout as delay } from "node:timers/promises";
@@ -52,7 +53,11 @@ const sender = await enrollRuntime({
   ...options,
   hostSessionId: "fixture-sender",
 });
-let recipient = await enrollRuntime({ ...options, hostSessionId: sessionId });
+let recipient = await prepareClaudeLaunch({
+  ...options,
+  hostSessionId: sessionId,
+  hookPath: join(bundles, "hook.mjs"),
+});
 const initialRecipient = recipient;
 const client = await CoordinationClient.connect(
   sender.environment.SWARM_COORDINATOR_ENDPOINT,
@@ -250,28 +255,12 @@ try {
       );
     },
   });
-  const hook = `node "${join(bundles, "hook.mjs").replaceAll("\\", "/")}"`;
-  const settings = join(root, "settings.json");
-  writeFileSync(
-    settings,
-    JSON.stringify({
-      hooks: Object.fromEntries(
-        ["SessionStart", "UserPromptSubmit", "PostToolUse", "SessionEnd"].map(
-          (event) => [
-            event,
-            [{ hooks: [{ type: "command", command: hook, timeout: 10 }] }],
-          ],
-        ),
-      ),
-    }),
-  );
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
       ([key]) => !/^(SWARM_|CLAUDE|ANTHROPIC|HERDR)/i.test(key),
     ),
   );
   Object.assign(env, recipient.environment, {
-    SWARM_NATIVE_SESSION_ID: sessionId,
     CLAUDE_CONFIG_DIR: join(root, "claude-config"),
     ANTHROPIC_BASE_URL: server.url.href.replace(/\/$/, ""),
     ANTHROPIC_API_KEY: "fixture-only",
@@ -280,16 +269,13 @@ try {
     DISABLE_TELEMETRY: "1",
     DISABLE_ERROR_REPORTING: "1",
   });
-  const launch = (resume: boolean) =>
+  const launch = () =>
     Bun.spawn({
       cmd: [
         executable,
         "-p",
         "Run the local fixture.",
-        resume ? "--resume" : "--session-id",
-        sessionId,
-        "--settings",
-        settings,
+        ...recipient.arguments,
         "--setting-sources",
         "",
         "--strict-mcp-config",
@@ -308,7 +294,7 @@ try {
       stderr: "pipe",
       stdin: "ignore",
     });
-  child = launch(false);
+  child = launch();
   timeout = setTimeout(
     () => child?.kill(),
     // Restart includes two native startups, real lease expiry and shutdown.
@@ -365,10 +351,12 @@ try {
         ),
       );
     await delay(32000);
-    recipient = await enrollRuntime({
+    recipient = await prepareClaudeLaunch({
       ...options,
       hostSessionId: sessionId,
       incarnation: randomUUID(),
+      hookPath: join(bundles, "hook.mjs"),
+      resume: true,
     });
     const old = await CoordinationClient.connect(
       initialRecipient.environment.SWARM_COORDINATOR_ENDPOINT,
@@ -382,7 +370,7 @@ try {
       old.close();
     }
     Object.assign(env, recipient.environment);
-    child = launch(true);
+    child = launch();
   }
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,

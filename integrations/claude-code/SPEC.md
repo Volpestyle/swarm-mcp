@@ -12,6 +12,27 @@ Every hook checks that its input session matches that binding. `SessionStart`
 verifies the capability; `SessionEnd` closes it. This is separate from the legacy
 Python plugin and has not been installed into live user settings.
 
+`prepareClaudeLaunch` in `src/coordination/claude-launcher.ts` now composes this
+setup for a trusted host launcher. Supply the runtime identity/state options,
+native UUID, incarnation, absolute Node and hook paths, and optional additional
+settings. It validates settings before enrollment, preserves existing hook
+entries, appends the four coordinator hooks and returns the bound environment
+plus native session/settings arguments. Set `resume: true` and use a new
+incarnation for an explicit native resume. The caller owns host execution; the
+helper never creates a process in response to peer delivery.
+
+The build includes `dist/coordination/claude-launcher.js` and
+`dist/coordination/claude-hook-cli.js`. Hook commands quote literal paths for the
+host's POSIX shell (Git Bash on the verified Windows installation). Additional
+settings are capped at 8 KiB for bounded command-line use; invalid UUIDs, malformed
+hook arrays and explicitly disabled hooks fail before enrollment. Managed host
+policy can still disable execution; supplied settings do not override that policy.
+The installed-host probe now uses this helper instead of assembling bindings
+and hook settings itself. Normal-flow evidence: `claude-launcher.json`;
+forced-kill/native-resume evidence through the helper:
+`claude-launcher-resume.json`. The latter again verifies stable identity,
+generation fencing, transcript-based renewal/replay and both acknowledgments.
+
 `UserPromptSubmit` and `PostToolUse` fetch at most one leased envelope through
 the shared runtime delivery contract. They return
 `hookSpecificOutput.additionalContext` with the matching `hookEventName`.
@@ -83,7 +104,7 @@ unchanged. `claude-restart-regression.json` is the normal-flow regression.
 The [official hook reference](https://code.claude.com/docs/en/hooks) supplies the
 JSON contract; the installed executable probe supplies version-specific evidence.
 Remaining: recovery before saved native history and transcript schema compatibility,
-launcher/legacy-plugin integration, availability outside callbacks, and validated
+legacy-plugin migration, availability outside callbacks, and validated
 idle wake admission. Until that work lands this adapter delivers only at native
 turn/tool boundaries; it does not start a model loop or spawn an agent to wake it.
 
