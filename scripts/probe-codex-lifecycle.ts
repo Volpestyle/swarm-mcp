@@ -13,6 +13,63 @@ import {
 import { CoordinationError } from "../src/coordination/errors";
 
 const [capture, executable, mode] = process.argv.slice(2);
+const deliveryProbe = mode === "--delivery";
+let modelInput: unknown;
+let modelRequests = 0;
+const modelServer = deliveryProbe
+  ? Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(request) {
+        if (new URL(request.url).pathname !== "/responses")
+          return new Response("Unknown route", { status: 404 });
+        if (++modelRequests > 2)
+          return new Response("Fixture request budget exceeded", {
+            status: 400,
+          });
+        const body = (await request.json()) as { input: unknown };
+        modelInput = body.input;
+        const item = {
+          type: "message",
+          id: "msg_fixture",
+          role: "assistant",
+          status: "completed",
+          content: [
+            {
+              type: "output_text",
+              text: "Fixture received context.",
+              annotations: [],
+            },
+          ],
+        };
+        const events = [
+          {
+            type: "response.created",
+            response: { id: "resp_fixture", status: "in_progress", output: [] },
+          },
+          { type: "response.output_item.done", output_index: 0, item },
+          {
+            type: "response.completed",
+            response: {
+              id: "resp_fixture",
+              status: "completed",
+              output: [item],
+              usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+            },
+          },
+        ];
+        return new Response(
+          events
+            .map(
+              (event) =>
+                `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+            )
+            .join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    })
+  : undefined;
 if (!capture || !executable)
   throw new Error(
     "Usage: probe-codex-lifecycle <capture.json> <native codex executable>",
@@ -68,7 +125,7 @@ writeFileSync(
 model_provider = "fixture"
 [model_providers.fixture]
 name = "local fixture (no inference)"
-base_url = "http://127.0.0.1:1"
+base_url = "http://127.0.0.1:${modelServer?.port ?? 1}"
 wire_api = "responses"
 requires_openai_auth = false
 [mcp_servers.swarm]
@@ -313,7 +370,7 @@ try {
     throw new Error("Peer fetch changed another actor's delivery");
   await call("thread/unsubscribe", { threadId: peerThread.thread.id });
   let nativeResume: unknown;
-  if (mode === "--resume") {
+  if (mode === "--resume" || deliveryProbe) {
     await call("thread/inject_items", {
       threadId,
       items: [
@@ -399,7 +456,121 @@ try {
       next.environment.SWARM_COORDINATOR_ENDPOINT,
       next.environment.SWARM_SESSION_CAPABILITY,
     );
+    let deliveryEvidence: unknown;
     try {
+      if (deliveryProbe) {
+        const deliveredMessage = (await coordinator.request({
+          op: "command",
+          command: {
+            id: "codex-context-message",
+            type: "message.send",
+            payload: {
+              recipient: next.actor,
+              kind: "question",
+              body: "Native Codex model context delivery fixture",
+            },
+          },
+        })) as { value: { messageId: string } };
+        const receipt = await invoke("swarm_inbox", {
+          commandId: "context-fetch",
+          action: "fetch",
+          consumer: "native-context-probe",
+        });
+        const deliveryLease = receipt.value.deliveries[0];
+        if (deliveryLease.message.id !== deliveredMessage.value.messageId)
+          throw new Error("Context lease mismatch");
+        const envelope =
+          "Swarm peer message (explicit acknowledgment required):\n" +
+          JSON.stringify(deliveryLease);
+        await call("thread/inject_items", {
+          threadId,
+          items: [
+            {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: envelope }],
+            },
+          ],
+        });
+        let stop: () => void = () => {};
+        const completed = new Promise<any>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error("Codex fixture turn timed out")),
+            30000,
+          );
+          const listener = (method: string, params: any) => {
+            if (method === "turn/completed" && params.threadId === threadId) {
+              clearTimeout(timer);
+              nativeListeners.delete(listener);
+              resolve(params.turn);
+            }
+          };
+          nativeListeners.add(listener);
+          stop = () => {
+            clearTimeout(timer);
+            nativeListeners.delete(listener);
+          };
+        });
+        let turn;
+        try {
+          await call("turn/start", {
+            threadId,
+            input: [
+              { type: "text", text: "Process the pending fixture context." },
+            ],
+          });
+          turn = await completed;
+        } finally {
+          stop();
+        }
+        if (turn.status !== "completed")
+          throw new Error(
+            "Codex fixture turn did not complete: " +
+              JSON.stringify(turn.error),
+          );
+        const strings = (value: unknown): string[] =>
+          typeof value === "string"
+            ? [value]
+            : Array.isArray(value)
+              ? value.flatMap(strings)
+              : value && typeof value === "object"
+                ? Object.values(value).flatMap(strings)
+                : [];
+        const contextOccurrences = strings(modelInput).filter(
+          (text) => text === envelope,
+        ).length;
+        if (contextOccurrences !== 1)
+          throw new Error(
+            "Native model request did not contain exactly one delivery envelope",
+          );
+        const before = (await nativeClient.request({
+          op: "message_status",
+          messageId: deliveryLease.message.id,
+        })) as { deliveries: Array<{ state: string }> };
+        if (before.deliveries[0].state !== "leased")
+          throw new Error("Model turn implicitly acknowledged delivery");
+        await invoke("swarm_inbox", {
+          commandId: "context-ack",
+          action: "ack",
+          messageId: deliveryLease.message.id,
+          leaseToken: deliveryLease.leaseToken,
+        });
+        const after = (await nativeClient.request({
+          op: "message_status",
+          messageId: deliveryLease.message.id,
+        })) as { deliveries: Array<{ state: string }> };
+        if (after.deliveries[0].state !== "acknowledged")
+          throw new Error("Native context acknowledgment failed");
+        deliveryEvidence = {
+          modelRequests,
+          contextOccurrences,
+          turnStatus: turn.status,
+          beforeAck: before.deliveries[0].state,
+          afterAck: after.deliveries[0].state,
+          acknowledgmentDriver:
+            "explicit app-server MCP call after scripted model turn",
+        };
+      }
       await call("thread/archive", { threadId });
       await next.settle();
       const closedCapabilityRejected = await nativeClient
@@ -433,6 +604,7 @@ try {
       initialAvailability,
       listenersReleased:
         nativeListeners.size === 0 && disconnectListeners.size === 0,
+      deliveryEvidence,
     };
   }
   const snapshot = await call("thread/read", { threadId }).catch(
@@ -459,7 +631,7 @@ try {
     idleSteer,
     unsubscribe,
     notifications: [...new Set(notices)],
-    inferenceRequested: false,
+    inferenceRequested: deliveryProbe,
     nativeResume,
     mcp: {
       tools,
@@ -483,6 +655,7 @@ try {
     throw new Error("Idle steering unexpectedly accepted");
   console.log(capture);
 } finally {
+  modelServer?.stop(true);
   child.stdin.end();
   const timeout = setTimeout(() => child.kill(), 3000);
   await child.exited;

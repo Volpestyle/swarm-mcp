@@ -93,6 +93,23 @@ idle availability, native archive revocation and listener cleanup. Evidence:
 `docs/verification/2026-09-22-runtime/codex-composed-resume.json`. Initial thread
 creation and model-visible inbox delivery remain separate unfinished paths.
 
+### Native context delivery probe
+
+The final `--delivery` probe argument additionally runs a scripted localhost
+Responses endpoint. It sends a real inbox message to the native-thread actor,
+fetches a lease through Codex MCP, injects the envelope with `thread/inject_items`,
+and starts a turn on that existing idle thread. The endpoint verifies exactly one
+complete envelope in the actual model input. The turn completes while the
+coordinator delivery remains leased; an explicit app-server MCP acknowledgment
+then changes it to acknowledged. The fixture drives that acknowledgment, not a
+model-selected tool call. No remote inference or persistent configuration is used.
+
+Evidence: `docs/verification/2026-09-22-runtime/codex-context-delivery.json`.
+This establishes native context transport, not autonomous scheduling or replay
+deduplication. The app-server owner must serialize turn admission; `turn/start`
+can steer an active turn, so an earlier idle observation alone is insufficient
+permission for an independent wake loop.
+
 The probe's hooks are reported as untrusted. Listing a hook is not execution:
 live setup must obtain normal hook trust before claiming automatic delivery.
 No live trust/config changes were made. Automatic native-thread enrollment, safe

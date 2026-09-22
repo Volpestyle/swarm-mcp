@@ -26,12 +26,19 @@ busy, blocked, idle, disconnected and unsupported; nonterminal connection loss
 does not revoke identity. `resumeCodexRuntime` now attaches the observer before
 resume, reconciles initial status and releases listeners on disposal; the installed
 host probe verifies idle status and archive revocation through that composition.
-Initial thread creation and model-turn context delivery are still open.
+Initial thread creation and automatic model-turn context delivery are still open.
+
+A further Codex `--delivery` probe verifies the native context path: one complete
+leased envelope reaches the scripted localhost model request through
+`thread/inject_items`, the turn completes with the delivery still leased, and an
+explicit app-server MCP call acknowledges it. Automatic scheduling and replay
+deduplication remain open; the fixture, not the model, drives acknowledgment.
 
 OpenCode and Claude evidence uses scripted localhost model endpoints; it proves
 host execution and context assembly, not model comprehension. Captures live in
 `docs/verification/2026-09-22-runtime/`; integration specs name their reproduction
-commands and remaining work. Codex capture makes no model requests.
+commands and remaining work. Codex lifecycle-only captures make no model requests;
+its context-delivery capture uses a scripted localhost Responses endpoint.
 
 For another environment, discover the native host executable/version and relevant
 installed API first. For Hermes also inspect the intended virtual environment or
