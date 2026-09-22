@@ -3,6 +3,8 @@ import {
   getDefaultEnvironment,
 } from "@modelcontextprotocol/client/stdio";
 import { Client } from "@modelcontextprotocol/client";
+import { processMemory } from "./fixtures/process-memory";
+import { setTimeout as delay } from "node:timers/promises";
 
 // Real stdio MCP calls against disposable servers. No model invocation or host billing claim.
 import { mkdtempSync } from "node:fs";
@@ -13,6 +15,7 @@ const count = Number(process.argv[2]);
 if (![2, 8, 32].includes(count)) throw new Error("Expected 2, 8 or 32 agents");
 const fixture = mkdtempSync(join(tmpdir(), "swarm-mcp-context-"));
 const clients: Client[] = [];
+const transports: StdioClientTransport[] = [];
 const ids: string[] = [];
 const transcript: Array<{
   agent: number;
@@ -50,8 +53,7 @@ try {
       version: "1",
     });
     clients.push(client);
-    await client.connect(
-      new StdioClientTransport({
+    const transport = new StdioClientTransport({
         command: process.execPath,
         args: ["run", resolve("src/index.ts")],
         cwd: process.cwd(),
@@ -61,8 +63,9 @@ try {
           SWARM_DB_PATH: join(fixture, "swarm.db"),
           AGENT_IDENTITY: "benchmark",
         },
-      }),
-    );
+      });
+    transports.push(transport);
+    await client.connect(transport);
     if (agent === 0) schema = await client.listTools();
     const result = await call(agent, "register", {
       directory: fixture,
@@ -87,6 +90,8 @@ try {
       "Peer message missing",
     );
   }
+  await delay(2000);
+  const memory = processMemory(transports.map(transport => transport.pid!));
   console.log(
     JSON.stringify(
       {
@@ -96,6 +101,7 @@ try {
         toolSchema: schema,
         toolCalls: transcript.length,
         transcript,
+        memory,
         limitations:
           "Real stdio discovery/register/bootstrap/send/poll. Count tool-call arguments and textual results with a named tokenizer; schemas may be loaded once per agent or deferred by the host. Excludes hidden host prompt framing, reasoning tokens, model inference and native host delivery integration.",
       },

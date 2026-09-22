@@ -8,6 +8,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { strict as assert } from "node:assert";
+import { processMemory } from "./fixtures/process-memory";
+import { setTimeout as delay } from "node:timers/promises";
 
 // Actual Node owner and stdio adapters; enrollment happens outside model calls.
 const count = Number(process.argv[2]);
@@ -43,6 +45,7 @@ const owner = Bun.spawn({
   stderr: "pipe",
 });
 const clients: Client[] = [];
+const transports: StdioClientTransport[] = [];
 const transcript: Array<Record<string, unknown>> = [];
 try {
   const reader = owner.stdout.getReader();
@@ -60,8 +63,7 @@ try {
       version: "1",
     });
     clients.push(client);
-    await client.connect(
-      new StdioClientTransport({
+    const transport = new StdioClientTransport({
         command: Bun.which("node")!,
         args: [join(bundle, "src/coordination/mcp-cli.js")],
         stderr: "pipe",
@@ -70,8 +72,9 @@ try {
           SWARM_COORDINATOR_ENDPOINT: endpoint,
           SWARM_SESSION_CAPABILITY: capability,
         },
-      }),
-    );
+      });
+    transports.push(transport);
+    await client.connect(transport);
   }
   const toolSchema = await clients[0]!.listTools();
   const call = async (
@@ -121,6 +124,8 @@ try {
       leaseToken: delivery.leaseToken,
     });
   }
+  await delay(2000);
+  const memory = processMemory([...transports.map(transport => transport.pid!), owner.pid]);
   writeFileSync(
     output,
     JSON.stringify(
@@ -132,6 +137,8 @@ try {
         toolSchema,
         toolCalls: transcript.length,
         transcript,
+        memory,
+        memoryRoles: { owner: owner.pid, adapters: transports.map(transport => transport.pid) },
         limitations:
           "Real stdio catalog/bootstrap/send/fetch/ack. Trusted enrollment excluded from model calls. Explicit processing acknowledgment adds a call compared with legacy poll; no claim of reduced handoff calls. No inference or hidden host framing measured. Text results counted once; hosts may additionally include structuredContent.",
       },

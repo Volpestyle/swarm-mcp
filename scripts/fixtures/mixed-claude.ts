@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { prepareClaudeLaunch } from "../../src/coordination/claude-launcher";
+import { processMemory } from "./process-memory";
 
 /** Actual Claude host, deterministic local model; never calls an external model. */
 export async function mixedClaude(
@@ -18,6 +19,7 @@ export async function mixedClaude(
   let child: ReturnType<typeof Bun.spawn> | undefined;
   let lease: any;
   let step = 0;
+  let memory: ReturnType<typeof processMemory> | undefined;
   const strings = (value: any): string[] => typeof value === "string" ? [value]
     : Array.isArray(value) ? value.flatMap(strings)
     : value && typeof value === "object" ? Object.values(value).flatMap(strings) : [];
@@ -52,6 +54,7 @@ export async function mixedClaude(
         messageId: lease.message.id, leaseToken: lease.leaseToken,
       } };
       step++;
+      if (step === 3 && child) memory = processMemory([child.pid]);
       if (tool) calls.push({ at: Date.now(), ...tool });
       const block = tool ? { type: "tool_use", id: `toolu_mixed_${step}`, ...tool }
         : { type: "text", text: "Peer reply sent and question acknowledged." };
@@ -97,7 +100,7 @@ export async function mixedClaude(
           child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
         ]);
         if (exitCode) throw new Error(`Claude fixture exit ${exitCode}: ${stderr}`);
-        return { startedAt, finishedAt: Date.now(), exitCode, stdout, stderr, userPromptInvocations: 1 };
+        return { startedAt, finishedAt: Date.now(), exitCode, stdout, stderr, memory, userPromptInvocations: 1 };
       } finally { clearTimeout(timer); }
     },
     async close() { child?.kill(); if (child) await child.exited; server.stop(true); },

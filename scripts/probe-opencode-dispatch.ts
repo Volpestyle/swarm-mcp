@@ -19,6 +19,7 @@ import { canonicalPath } from "../src/coordination/worktrees";
 import { mixedClaude } from "./fixtures/mixed-claude";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { processMemory } from "./fixtures/process-memory";
 
 const [output, binary, claudeBinary] = process.argv.slice(2);
 let mixed: Awaited<ReturnType<typeof mixedClaude>> | undefined;
@@ -450,6 +451,8 @@ try {
         diagnostics,
         modelRequests,
         toolCalls,
+        memory: processMemory([host.pid, observer.launchedOwner!.pid!]),
+        memoryRoles: { opencode: host.pid, owner: observer.launchedOwner!.pid },
         mixedHost: mixed ? { claudeBinary, requests: mixed.requests, calls: mixed.calls, result: claudeResult, deliveries: mixedDeliveries,
           taskSubmittedAt, taskCompletedAt, durationMs: taskCompletedAt - taskSubmittedAt,
           userPromptInvocations: 1, automaticOpenCodeWakes: true,
