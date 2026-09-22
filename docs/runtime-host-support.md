@@ -34,6 +34,13 @@ leased envelope reaches the scripted localhost model request through
 explicit app-server MCP call acknowledges it. Automatic scheduling and replay
 deduplication remain open; the fixture, not the model, drives acknowledgment.
 
+The Codex lease-expiry probe now verifies retained-context renewal: after real
+expiry and an explicit sweep/refetch, the second model request contains exactly
+one original envelope plus one metadata-only renewal. The native item ID and
+complete message are matched in the bound rollout. Rewritten history currently
+returns uncertainty; compaction/rollback recovery and autonomous scheduling remain
+open. Evidence: `codex-lease-renewal.json` in the runtime verification directory.
+
 OpenCode and Claude evidence uses scripted localhost model endpoints; it proves
 host execution and context assembly, not model comprehension. Captures live in
 `docs/verification/2026-09-22-runtime/`; integration specs name their reproduction

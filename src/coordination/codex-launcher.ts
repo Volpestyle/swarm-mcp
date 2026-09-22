@@ -4,6 +4,7 @@ import { enrollRuntime } from "./runtime-launcher";
 import { CoordinationClient } from "./ipc";
 import { CodexLifecycle } from "./codex-lifecycle";
 export { CodexLifecycle } from "./codex-lifecycle";
+export { codexContextItem, hasCodexContext } from "./codex-context";
 
 type HostCall = (
   method: string,

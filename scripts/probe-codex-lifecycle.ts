@@ -11,9 +11,14 @@ import {
   resumeCodexRuntime,
 } from "../src/coordination/codex-launcher";
 import { CoordinationError } from "../src/coordination/errors";
+import {
+  codexContextItem,
+  hasCodexContext,
+} from "../src/coordination/codex-context";
 
 const [capture, executable, mode] = process.argv.slice(2);
-const deliveryProbe = mode === "--delivery";
+const expiryProbe = mode === "--lease-expiry";
+const deliveryProbe = mode === "--delivery" || expiryProbe;
 let modelInput: unknown;
 let modelRequests = 0;
 const modelServer = deliveryProbe
@@ -476,58 +481,55 @@ try {
           action: "fetch",
           consumer: "native-context-probe",
         });
-        const deliveryLease = receipt.value.deliveries[0];
+        let deliveryLease = receipt.value.deliveries[0];
         if (deliveryLease.message.id !== deliveredMessage.value.messageId)
           throw new Error("Context lease mismatch");
-        const envelope =
-          "Swarm peer message (explicit acknowledgment required):\n" +
-          JSON.stringify(deliveryLease);
+        const contextItem = codexContextItem(deliveryLease, false);
+        const envelope = contextItem.content[0].text;
         await call("thread/inject_items", {
           threadId,
-          items: [
-            {
-              type: "message",
-              role: "user",
-              content: [{ type: "input_text", text: envelope }],
-            },
-          ],
+          items: [contextItem],
         });
-        let stop: () => void = () => {};
-        const completed = new Promise<any>((resolve, reject) => {
-          const timer = setTimeout(
-            () => reject(new Error("Codex fixture turn timed out")),
-            30000,
-          );
-          const listener = (method: string, params: any) => {
-            if (method === "turn/completed" && params.threadId === threadId) {
+        const runTurn = async () => {
+          let stop: () => void = () => {};
+          const completed = new Promise<any>((resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error("Codex fixture turn timed out")),
+              30000,
+            );
+            const listener = (method: string, params: any) => {
+              if (method === "turn/completed" && params.threadId === threadId) {
+                clearTimeout(timer);
+                nativeListeners.delete(listener);
+                resolve(params.turn);
+              }
+            };
+            nativeListeners.add(listener);
+            stop = () => {
               clearTimeout(timer);
               nativeListeners.delete(listener);
-              resolve(params.turn);
-            }
-          };
-          nativeListeners.add(listener);
-          stop = () => {
-            clearTimeout(timer);
-            nativeListeners.delete(listener);
-          };
-        });
-        let turn;
-        try {
-          await call("turn/start", {
-            threadId,
-            input: [
-              { type: "text", text: "Process the pending fixture context." },
-            ],
+            };
           });
-          turn = await completed;
-        } finally {
-          stop();
-        }
-        if (turn.status !== "completed")
-          throw new Error(
-            "Codex fixture turn did not complete: " +
-              JSON.stringify(turn.error),
-          );
+          let turn;
+          try {
+            await call("turn/start", {
+              threadId,
+              input: [
+                { type: "text", text: "Process the pending fixture context." },
+              ],
+            });
+            turn = await completed;
+          } finally {
+            stop();
+          }
+          if (turn.status !== "completed")
+            throw new Error(
+              "Codex fixture turn did not complete: " +
+                JSON.stringify(turn.error),
+            );
+          return turn;
+        };
+        const turn = await runTurn();
         const strings = (value: unknown): string[] =>
           typeof value === "string"
             ? [value]
@@ -543,6 +545,64 @@ try {
           throw new Error(
             "Native model request did not contain exactly one delivery envelope",
           );
+        const saved = await call("thread/read", { threadId });
+        const retained = await hasCodexContext(
+          saved.thread.path,
+          threadId,
+          root,
+          deliveryLease.message,
+          new AbortController().signal,
+        );
+        if (!retained)
+          throw new Error("Codex did not retain the injected item identity");
+        let renewalOccurrences: number | undefined;
+        if (expiryProbe) {
+          await Bun.sleep(
+            Math.max(0, deliveryLease.leaseUntil - Date.now()) + 1200,
+          );
+          await nativeClient.request({
+            op: "command",
+            command: {
+              id: "context-expiry-sweep",
+              type: "inbox.sweep",
+              payload: {},
+            },
+          });
+          await Bun.sleep(1200);
+          const renewed = await invoke("swarm_inbox", {
+            commandId: "context-refetch",
+            action: "fetch",
+            consumer: "native-context-probe",
+          });
+          const nextLease = renewed.value.deliveries[0];
+          if (
+            !nextLease ||
+            nextLease.message.id !== deliveryLease.message.id ||
+            nextLease.leaseToken === deliveryLease.leaseToken
+          )
+            throw new Error("Expired Codex lease was not renewed");
+          const snapshot = await call("thread/read", { threadId });
+          const present = await hasCodexContext(
+            snapshot.thread.path,
+            threadId,
+            root,
+            nextLease.message,
+            new AbortController().signal,
+          );
+          if (!present) throw new Error("Expired delivery lost native context");
+          const renewal = codexContextItem(nextLease, present);
+          await call("thread/inject_items", { threadId, items: [renewal] });
+          await runTurn();
+          renewalOccurrences = strings(modelInput).filter(
+            (text) => text === renewal.content[0].text,
+          ).length;
+          if (
+            renewalOccurrences !== 1 ||
+            strings(modelInput).filter((text) => text === envelope).length !== 1
+          )
+            throw new Error("Codex renewal duplicated or lost message context");
+          deliveryLease = nextLease;
+        }
         const before = (await nativeClient.request({
           op: "message_status",
           messageId: deliveryLease.message.id,
@@ -564,6 +624,8 @@ try {
         deliveryEvidence = {
           modelRequests,
           contextOccurrences,
+          retainedEnvelopeVerified: retained,
+          renewalOccurrences,
           turnStatus: turn.status,
           beforeAck: before.deliveries[0].state,
           afterAck: after.deliveries[0].state,
@@ -571,7 +633,31 @@ try {
             "explicit app-server MCP call after scripted model turn",
         };
       }
-      await call("thread/archive", { threadId });
+      let stopArchiveWait: () => void = () => {};
+      const archived = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("Native archive event timed out")),
+          10000,
+        );
+        const listener = (method: string, params: any) => {
+          if (method === "thread/archived" && params.threadId === threadId) {
+            clearTimeout(timer);
+            nativeListeners.delete(listener);
+            resolve();
+          }
+        };
+        nativeListeners.add(listener);
+        stopArchiveWait = () => {
+          clearTimeout(timer);
+          nativeListeners.delete(listener);
+        };
+      });
+      try {
+        await call("thread/archive", { threadId });
+        await archived;
+      } finally {
+        stopArchiveWait();
+      }
       await next.settle();
       const closedCapabilityRejected = await nativeClient
         .request({ op: "bootstrap" })

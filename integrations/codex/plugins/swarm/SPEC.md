@@ -110,6 +110,24 @@ deduplication. The app-server owner must serialize turn admission; `turn/start`
 can steer an active turn, so an earlier idle observation alone is insufficient
 permission for an independent wake loop.
 
+### Retained context and lease renewal
+
+`codexContextItem` gives full delivery items a stable message-derived native item
+ID. `hasCodexContext` inspects the host-provided rollout path, validates native
+session identity and workspace, and requires both that item ID and the complete
+message envelope to match. Quoted user text without the injected ID cannot count.
+Reads are bounded to 16 MiB / 20,000 rows; malformed, rewritten or mismatched
+history is uncertain and must not trigger a blind replay. Compaction, rollback
+and revert support still need verified reconstruction semantics.
+
+The `--lease-expiry` probe waits for a real lease to expire, sweeps and refetches
+it, verifies retained native context, and injects only renewal metadata with the
+new token. The next actual model request must contain one original envelope and
+one renewal. Acknowledgment remains explicit. This probe uses an explicit sweep
+and owner-driven turn, not autonomous scheduling. It also waits for the native
+archive notification before checking revocation; an archive RPC response does
+not establish that notification handling has completed.
+
 The probe's hooks are reported as untrusted. Listing a hook is not execution:
 live setup must obtain normal hook trust before claiming automatic delivery.
 No live trust/config changes were made. Automatic native-thread enrollment, safe
