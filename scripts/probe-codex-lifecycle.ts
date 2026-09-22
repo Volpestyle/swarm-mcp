@@ -1,6 +1,10 @@
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { build } from "esbuild";
+import { once } from "node:events";
+import { enrollRuntime } from "../src/coordination/runtime-launcher";
+import { CoordinationClient } from "../src/coordination/ipc";
 
 const [capture, executable] = process.argv.slice(2);
 if (!capture || !executable)
@@ -10,6 +14,36 @@ if (!capture || !executable)
 const root = mkdtempSync(join(tmpdir(), "swarm-codex-probe-"));
 const home = join(root, "codex");
 mkdirSync(home);
+mkdirSync(resolve("dist/test"), { recursive: true });
+const bundles = mkdtempSync(resolve("dist/test/codex-mcp-"));
+for (const name of ["owner-cli", "mcp-cli"])
+  await build({
+    entryPoints: [`src/coordination/${name}.ts`],
+    outfile: join(bundles, `${name}.mjs`),
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    packages: "external",
+  });
+const enrolled = await enrollRuntime({
+  stateDirectory: join(root, "private"),
+  nodePath: Bun.which("node")!,
+  ownerPath: join(bundles, "owner-cli.mjs"),
+  host: "codex",
+  hostSessionId: "app-server-fixture",
+  incarnation: "initial",
+  identity: {
+    projectRoot: root,
+    directory: root,
+    fileRoot: root,
+    profile: "fixture",
+    allowedRoots: [root],
+  },
+});
+const coordinator = await CoordinationClient.connect(
+  enrolled.environment.SWARM_COORDINATOR_ENDPOINT,
+  enrolled.environment.SWARM_SESSION_CAPABILITY,
+);
 writeFileSync(
   join(home, "config.toml"),
   `model = "fixture"
@@ -19,6 +53,10 @@ name = "local fixture (no inference)"
 base_url = "http://127.0.0.1:1"
 wire_api = "responses"
 requires_openai_auth = false
+[mcp_servers.swarm]
+command = ${JSON.stringify(Bun.which("node"))}
+args = [${JSON.stringify(join(bundles, "mcp-cli.mjs"))}]
+env_vars = ["SWARM_COORDINATOR_ENDPOINT", "SWARM_SESSION_CAPABILITY"]
 `,
 );
 const configured = JSON.parse(
@@ -37,6 +75,7 @@ const env = Object.fromEntries(
   ),
 );
 env.CODEX_HOME = home;
+Object.assign(env, enrolled.environment);
 const child = Bun.spawn({
   cmd: [executable, "app-server"],
   cwd: root,
@@ -97,6 +136,7 @@ const call = (method: string, params: unknown) => {
 try {
   const initialized = await call("initialize", {
     clientInfo: { name: "swarm_lifecycle_probe", version: "1" },
+    capabilities: { experimentalApi: true },
   });
   send({ method: "initialized", params: {} });
   const hooks = await call("hooks/list", { cwds: [root] });
@@ -120,6 +160,68 @@ try {
     sandbox: "read-only",
   });
   const threadId = started.thread.id;
+  const inventory = await call("mcpServerStatus/list", {
+    threadId,
+    limit: 100,
+    detail: "toolsAndAuthOnly",
+  });
+  const swarm = inventory.data.find(
+    (server: { name: string }) => server.name === "swarm",
+  );
+  const tools = Object.keys(swarm?.tools ?? {}).sort();
+  if (!tools.includes("swarm_inbox"))
+    throw new Error("Codex did not discover the coordinator inbox tool");
+  const invoke = async (tool: string, arguments_: unknown) => {
+    const result = await call("mcpServer/tool/call", {
+      threadId,
+      server: "swarm",
+      tool,
+      arguments: arguments_,
+    });
+    if (result.isError) throw new Error("Codex MCP tool reported an error");
+    return result.structuredContent.data;
+  };
+  const sync = await invoke("swarm_sync", {});
+  if (sync.actor !== enrolled.actor)
+    throw new Error("Codex MCP actor mismatch");
+  const sent = (await coordinator.request({
+    op: "command",
+    command: {
+      id: "codex-mcp-message",
+      type: "message.send",
+      payload: {
+        recipient: enrolled.actor,
+        kind: "question",
+        body: "Codex native MCP roundtrip",
+      },
+    },
+  })) as { value: { messageId: string } };
+  const fetched = await invoke("swarm_inbox", {
+    commandId: "codex-fetch",
+    action: "fetch",
+    consumer: "codex-app-server-probe",
+  });
+  const lease = fetched.value.deliveries[0];
+  if (lease.message.id !== sent.value.messageId)
+    throw new Error("Codex fetched another message");
+  const beforeAck = (await coordinator.request({
+    op: "message_status",
+    messageId: lease.message.id,
+  })) as { deliveries: Array<{ state: string }> };
+  if (beforeAck.deliveries[0].state !== "leased")
+    throw new Error("Codex fetch did not retain an unacknowledged lease");
+  await invoke("swarm_inbox", {
+    commandId: "codex-ack",
+    action: "ack",
+    messageId: lease.message.id,
+    leaseToken: lease.leaseToken,
+  });
+  const status = (await coordinator.request({
+    op: "message_status",
+    messageId: lease.message.id,
+  })) as { deliveries: Array<{ state: string }> };
+  if (status.deliveries[0].state !== "acknowledged")
+    throw new Error("Codex MCP acknowledgment did not commit");
   const snapshot = await call("thread/read", { threadId }).catch(
     (error: Error) => ({ error: error.message }),
   );
@@ -145,6 +247,14 @@ try {
     unsubscribe,
     notifications: [...new Set(notices)],
     inferenceRequested: false,
+    mcp: {
+      tools,
+      actorMatched: true,
+      stateBeforeExplicitAck: beforeAck.deliveries[0].state,
+      stateAfterExplicitAck: status.deliveries[0].state,
+      identityBinding: "fixture enrollment; not automatic native-thread lifecycle",
+      driver: "thread-scoped app-server MCP call; no model turn",
+    },
   };
   writeFileSync(capture, JSON.stringify(evidence, null, 2) + "\n");
   if (idleSteer === "unexpected acceptance")
@@ -157,4 +267,11 @@ try {
   clearTimeout(timeout);
   await read;
   await stderr;
+  coordinator.close();
+  if (enrolled.launchedOwner) {
+    enrolled.launchedOwner.ref();
+    const exited = once(enrolled.launchedOwner, "exit");
+    enrolled.launchedOwner.kill();
+    await exited;
+  }
 }

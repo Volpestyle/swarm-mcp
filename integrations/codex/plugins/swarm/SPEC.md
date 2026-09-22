@@ -21,10 +21,23 @@ unsubscribes. `thread/read` immediately after creation may race rollout persiste
 the capture records its actual response. Unsubscribe is not session termination.
 Evidence: `docs/verification/2026-09-22-runtime/codex-lifecycle.json`.
 
+The extended probe also builds the real coordinator and stdio MCP entrypoints,
+enrolls an isolated fixture actor, and mounts the MCP server through the disposable
+Codex configuration. Thread-scoped `mcpServerStatus/list` discovers all nine tools;
+`mcpServer/tool/call` verifies the authenticated actor, fetches a real message and
+explicitly acknowledges its lease. A direct coordinator query proves the delivery
+remains `leased` after fetch and becomes `acknowledged` only after acknowledgment.
+Evidence: `docs/verification/2026-09-22-runtime/codex-mcp.json`.
+
+Reproduce with `bun scripts/probe-codex-lifecycle.ts <capture.json> <codex-executable>`.
+This path makes no model request. The fixture actor is enrolled before the native
+thread exists; this verifies MCP transport and authorization, not automatic
+per-thread identity, lifecycle or model-context delivery.
+
 The probe's hooks are reported as untrusted. Listing a hook is not execution:
 live setup must obtain normal hook trust before claiming automatic delivery.
-No live trust/config changes were made. New coordinator enrollment, safe context
-delivery/acknowledgment, restart deduplication and authorized idle turn admission
+No live trust/config changes were made. Automatic native-thread enrollment, safe
+context delivery, restart deduplication and authorized idle turn admission
 remain unverified in Codex. `turn/steer` is for an active turn; an idle wake needs
 a validated `turn/start` path on the existing thread.
 
