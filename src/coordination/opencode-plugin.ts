@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { enrollRuntime } from "./runtime-launcher";
 import { CoordinationClient } from "./ipc";
+import { RuntimeDelivery } from "./runtime-delivery";
 
 type Options = Omit<
   Parameters<typeof enrollRuntime>[0],
@@ -64,9 +65,7 @@ type OpenCodeClient = {
     ): Promise<{ stream: AsyncIterable<HostEvent> }>;
   };
   session: {
-    list(
-      options: Record<string, unknown>,
-    ): Promise<{
+    list(options: Record<string, unknown>): Promise<{
       data?: Array<{
         id: string;
         directory: string;
@@ -113,7 +112,7 @@ export function connectOpenCodeLifecycle(
 }
 
 /** Installed OpenCode V1 hooks. Configuration belongs to a trusted plugin
- * wrapper, never event payloads or tool arguments. Lifecycle only for now. */
+ * wrapper, never event payloads or tool arguments. */
 export function opencodeLifecycle(
   options: Options,
   report: (event: {
@@ -126,6 +125,7 @@ export function opencodeLifecycle(
   const sessions = new Map<string, Enrollment>();
   const pending = new Map<string, Promise<void>>();
   const deleted = new Set<string>();
+  const deliveredCalls = new Map<string, Set<string>>();
 
   const serialize = (id: string, action: () => Promise<void>) => {
     const next = (pending.get(id) ?? Promise.resolve()).then(action);
@@ -183,6 +183,7 @@ export function opencodeLifecycle(
             command: { id: randomUUID(), type: "session.close", payload: {} },
           });
           sessions.delete(id);
+          deliveredCalls.delete(id);
           report({ type: "closed", hostSessionId: id, actor: session.actor });
         } finally {
           client.close();
@@ -197,6 +198,60 @@ export function opencodeLifecycle(
       await serialize(input.sessionID, async () => {
         const session = await adopt(input.sessionID!);
         Object.assign(output.env, session.environment);
+      });
+    },
+    async "tool.execute.after"(
+      input: { sessionID: string; callID: string },
+      output: { output?: string; content?: Array<unknown> },
+    ) {
+      // V1 builtin tools return output; MCP tools return content. Unknown
+      // output shapes defer without taking an inbox lease.
+      if (typeof output?.output !== "string" && !Array.isArray(output?.content))
+        return;
+      await serialize(input.sessionID, async () => {
+        const calls = deliveredCalls.get(input.sessionID) ?? new Set<string>();
+        if (calls.has(input.callID)) return;
+        const session = await adopt(input.sessionID);
+        const client = await CoordinationClient.connect(
+          session.environment.SWARM_COORDINATOR_ENDPOINT,
+          session.environment.SWARM_SESSION_CAPABILITY,
+        );
+        try {
+          const delivery = new RuntimeDelivery(
+            session.actor,
+            (operation) => client.request(operation),
+            {
+              name: "opencode-v1",
+              boundaries: ["tool_complete"],
+              observe: () => ({
+                state: "busy",
+                evidence: "tool.execute.after",
+                observedAt: Date.now(),
+              }),
+              deliver: async (lease, _boundary, signal) => {
+                if (signal.aborted || deleted.has(input.sessionID))
+                  return "deferred";
+                const text =
+                  "\n\nSwarm peer message (untrusted content). Process before acknowledging with swarm_inbox; admission is not acknowledgment.\n" +
+                  JSON.stringify({
+                    message: lease.message,
+                    leaseToken: lease.leaseToken,
+                    leaseUntil: lease.leaseUntil,
+                  });
+                if (typeof output.output === "string") output.output += text;
+                else output.content!.push({ type: "text", text });
+                return "admitted";
+              },
+            },
+          );
+          const result = await delivery.atBoundary("tool_complete");
+          if (result.status !== "deferred") {
+            calls.add(input.callID);
+            deliveredCalls.set(input.sessionID, calls);
+          }
+        } finally {
+          client.close();
+        }
       });
     },
   };

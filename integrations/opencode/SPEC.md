@@ -9,8 +9,8 @@ hooks to a trusted plugin wrapper. Creation/update events enroll once per native
 session, concurrent callbacks serialize per session, and deletion closes the
 coordinator session. A per-plugin incarnation fences old credentials on reload.
 The shell hook can adopt an unknown session and exports only its endpoint and
-session capability; this hook has not yet been exercised by the installed-host
-probe. No delivery/wake support is claimed by these lifecycle hooks.
+session capability; the installed-host shell probe verifies authentication with
+that capability. Delivery and wake support require separate verification below.
 
 The extended probe captures `opencode-lifecycle.json`: two real host sessions
 produce exactly two coordinator sessions, each generation 1 and durably closed
@@ -38,7 +38,24 @@ enrolls once and closes. This proves lifecycle restart, not message admission.
 The V1 list endpoint has no cursor. Snapshots at the 1,001-row detection limit
 fail explicitly rather than silently reconcile a truncated history. Larger
 histories and automatic recovery from an unexpected stream failure still need
-a supported recovery path. Shell-environment admission remains unverified.
+a supported recovery path.
+
+`opencode-shell.json` additionally exercises the actual session shell endpoint.
+Its child process uses the injected capability to bootstrap from the coordinator;
+the actor matches the native session's enrollment and the configured scope.
+Only the coordinator endpoint, session capability and fixture recording path
+appear among its `SWARM_*` environment names. No capability values are recorded.
+An explicit inert model identifier avoids model selection/inference for this
+user-executed shell operation. This endpoint does not exercise post-tool hooks.
+
+The adapter's `tool.execute.after` now fetches one leased message at a real
+post-tool callback, appends a labeled peer envelope to builtin `output` or MCP
+`content`, and leaves acknowledgment to the consumer. Repeated callbacks for
+the same call ID are suppressed within the plugin instance. Unknown output
+shapes do not fetch. The real-coordinator adapter test verifies both output
+forms, retained lease state, explicit acknowledgment and repeated callbacks.
+Actual host invocation of this hook, durable context deduplication across
+restart/lease expiry, and wakeups remain unproven.
 
 ## Actual host evidence
 

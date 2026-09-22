@@ -39,6 +39,15 @@ await build({
   packages: "external",
   outfile: lifecyclePath,
 });
+const shellProbe = resolve("dist/test/runtime-shell-probe.mjs");
+await build({
+  entryPoints: ["scripts/fixtures/runtime-shell-probe.ts"],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  packages: "external",
+  outfile: shellProbe,
+});
 const launcherOptions = {
   stateDirectory: join(root, "private"),
   nodePath: Bun.which("node")!,
@@ -90,6 +99,10 @@ const env = {
   }),
 };
 // Do not inherit server authentication or an explicit external config path.
+for (const key of Object.keys(env)) {
+  if (key.startsWith("SWARM_") && key !== "SWARM_PROBE_EVENTS")
+    delete (env as Record<string, string | undefined>)[key];
+}
 delete env.OPENCODE_CONFIG;
 delete env.OPENCODE_SERVER_PASSWORD;
 delete env.OPENCODE_SERVER_USERNAME;
@@ -157,6 +170,43 @@ try {
   });
   assert.equal(restored.status, 200);
   await waitFor("coordination.enrolled", session.id, 2);
+  const shellResponse = await fetch(
+    base + "/session/" + session.id + "/shell",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agent: "build",
+        model: { providerID: "probe", modelID: "no-inference" },
+        command: 'node "' + shellProbe.replaceAll("\\", "/") + '"',
+      }),
+      signal: AbortSignal.timeout(20000),
+    },
+  );
+  assert.equal(shellResponse.status, 200, await shellResponse.clone().text());
+  const shellResult = (await shellResponse.json()) as {
+    parts: Array<{ type: string; state?: { output?: string } }>;
+  };
+  const shellOutput =
+    shellResult.parts.find((part) => part.type === "tool")?.state?.output ?? "";
+  const shellEvidence = JSON.parse(shellOutput.trim());
+  assert.equal(shellEvidence.marker, "swarm-shell-probe");
+  const enrollments = readFileSync(events, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .filter(
+      (event) =>
+        event.type === "coordination.enrolled" &&
+        event.hostSessionId === session.id,
+    );
+  assert.equal(shellEvidence.snapshot.actor, enrollments.at(-1).actor);
+  assert.equal(shellEvidence.snapshot.scope, observer.scope);
+  assert.deepEqual(shellEvidence.keys, [
+    "SWARM_COORDINATOR_ENDPOINT",
+    "SWARM_PROBE_EVENTS",
+    "SWARM_SESSION_CAPABILITY",
+  ]);
   const removed = await fetch(base + "/session/" + session.id, {
     method: "DELETE",
     signal: AbortSignal.timeout(10000),
@@ -246,12 +296,13 @@ try {
         root,
         sessions: [session.id, warmSession.id],
         coordinatorSessions,
+        shellEvidence,
         createdEvents: recorded.filter(
           (event) => event.type === "session.created",
         ).length,
         recorded,
         limitations:
-          "Actual host plugin load, Subscription-first enrollment, instance restart reconciliation with stable actor and fenced generation, and close for two native sessions. Missing session.created is recorded, not assumed supported. No model invocation, tool-boundary delivery, reservation denial or wakeup proven.",
+          "Actual host plugin load, Subscription-first enrollment, instance restart reconciliation with stable actor and fenced generation, and close for two native sessions. Missing session.created is recorded, not assumed supported. Actual shell.env capability authenticated by child bootstrap. No model invocation, tool.execute.after delivery, reservation denial or wakeup proven.",
       },
       null,
       2,
