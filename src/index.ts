@@ -2085,10 +2085,19 @@ server.registerTool(
 );
 
 async function main() {
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
+  server.server.onclose = cleanup;
   process.on("exit", cleanup);
-  serveStdio(() => server, { legacy: "serve", maxSubscriptions: 16 });
+  const handle = serveStdio(() => server, {
+    legacy: "serve",
+    maxSubscriptions: 16,
+  });
+  const close = () => {
+    cleanup();
+    void handle.close();
+  };
+  process.once("SIGINT", close);
+  process.once("SIGTERM", close);
+  process.stdin.once("end", close);
 }
 
 main().catch((err) => {
