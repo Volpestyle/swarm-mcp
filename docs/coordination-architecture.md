@@ -10,6 +10,12 @@ Keep TypeScript and SQLite. Separate the existing desktop/mobile control plane, 
 
 The April-only design cannot simply be patched forward. Preserve useful final-upstream identity adoption, adapter boundaries and task contracts, while replacing destructive inbox consumption, unfenced ownership and full-swarm bootstrap dumps.
 
+Implementation verification selected Node 22 for the Windows service owner. Bun
+1.3.11 crashes natively on a duplicate named-pipe bind; Node 22.14.0 returns
+`EADDRINUSE`. Bun clients remain supported against that owner. The standalone
+reproduction and mixed-runtime IPC checks are retained in the
+[core verification record](verification/2026-09-21-core/README.md).
+
 ## Evidence and alternatives
 
 Hardware/workload and raw results live in [the baseline evidence](verification/2026-09-21-baseline/README.md). The fixed workload is 12 ring messages per agent, 256-byte bodies, real independent Bun processes, temporary SQLite databases, and bounded observation. Module experiments exclude real host/model execution.
