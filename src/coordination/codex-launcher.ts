@@ -32,7 +32,7 @@ export async function resumeCodexThread(
         "Codex launcher requires absolute executable and MCP paths",
       );
   const normalize = (path: string) => {
-    const real = realpathSync(path);
+    const real = realpathSync.native(path);
     return process.platform === "win32" ? real.toLowerCase() : real;
   };
   const snapshot = await call("thread/read", { threadId });

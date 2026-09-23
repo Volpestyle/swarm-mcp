@@ -33,7 +33,7 @@ export function canonicalPath(input: string): string {
   while (true) {
     try {
       lstatSync(parent);
-      return fold(join(realpathSync(parent), ...tail.reverse()));
+      return fold(join(realpathSync.native(parent), ...tail.reverse()));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       // If lstat succeeds but realpath failed this is a dangling link.
@@ -61,7 +61,7 @@ export function canonicalPath(input: string): string {
 /** Git discovery occurs before the database transaction, never while holding
  * its writer lock. Commands are argument arrays with bounded execution. */
 export function discoverWorktree(directory: string): Worktree {
-  const cwd = realpathSync(directory);
+  const cwd = realpathSync.native(directory);
   const git = (flag: string) =>
     execFileSync(
       "git",

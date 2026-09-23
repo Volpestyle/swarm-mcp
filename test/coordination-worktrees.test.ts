@@ -70,3 +70,24 @@ test("new files resolve ancestor links and reject symlink escape and Git metadat
   expect(() => mapWorktreeFile(tree, ".git/index")).toThrow("Git metadata");
   expect(() => mapWorktreeFile(tree, "actual")).toThrow("concrete files");
 });
+
+test("Windows 8.3 short-name spellings canonicalize to the long path", () => {
+  if (process.platform !== "win32") return;
+  const root = mkdtempSync(join(tmpdir(), "swarm-shortname-")),
+    name = "long-directory-name-for-short-alias",
+    long = join(root, name);
+  mkdirSync(long);
+  const listing = execFileSync("cmd.exe", ["/c", "dir", "/x", root], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  const short = listing
+    .split(/\r?\n/)
+    .map((line) => line.match(/\s(\S{1,8}~\d+)\s+(\S+)\s*$/))
+    .find((match) => match?.[2] === name)?.[1];
+  // Volumes with 8.3 name creation disabled cannot exercise this case.
+  if (!short) return;
+  expect(canonicalPath(join(root, short, "file.txt"))).toBe(
+    canonicalPath(join(long, "file.txt")),
+  );
+});

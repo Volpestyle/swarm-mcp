@@ -30,6 +30,9 @@ async function privatePath(path: string, initialize = false) {
     return;
   }
   // Pass paths as environment data, never executable PowerShell interpolation.
+  // The script uses .NET types only, no cmdlets: Windows PowerShell 5.1 fails
+  // to autoload Microsoft.PowerShell.Security (Get-Acl) when it inherits a
+  // PSModulePath from PowerShell 7, as on hosted Windows CI runners.
   await runFile(
     "powershell.exe",
     [
@@ -41,17 +44,17 @@ $ErrorActionPreference = 'Stop'
 $target = $env:SWARM_PRIVATE_STATE_PATH
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 if ($env:SWARM_PRIVATE_STATE_INITIALIZE -eq '1') {
-  $acl = New-Object System.Security.AccessControl.DirectorySecurity
+  $acl = [System.Security.AccessControl.DirectorySecurity]::new()
   $acl.SetOwner($sid)
   $acl.SetAccessRuleProtection($true, $false)
-  $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+  $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, [System.Security.AccessControl.FileSystemRights]::FullControl, [System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit', [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow)
   $acl.AddAccessRule($rule)
   # CreateDirectory receives the ACL at creation; there is no public-directory
   # window for another launcher to observe. Existing directories are unchanged.
-  $directory = New-Object System.IO.DirectoryInfo($target)
+  $directory = [System.IO.DirectoryInfo]::new($target)
   $directory.Create($acl)
 }
-$acl = Get-Acl -LiteralPath $target
+$acl = if ([System.IO.Directory]::Exists($target)) { [System.IO.DirectoryInfo]::new($target).GetAccessControl() } else { [System.IO.FileInfo]::new($target).GetAccessControl() }
 if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'Launcher state has a different owner' }
 foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
   if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')) { throw 'Launcher state grants access to another principal' }

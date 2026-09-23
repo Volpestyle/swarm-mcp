@@ -84,7 +84,7 @@ export function launcherIdentity(input: {
   allowedRoots?: string[];
 }) {
   const normalize = (path: string) => {
-    const real = realpathSync(path);
+    const real = realpathSync.native(path);
     return process.platform === "win32" ? real.toLowerCase() : real;
   };
   const projectRoot = normalize(input.projectRoot),
