@@ -40,6 +40,10 @@ The built modules expose the tested launcher/plugin compositions:
   Supply the absolute Node, owner and hook paths, private state directory, validated
   identity/worktree roots, native session UUID and incarnation. Launch Claude with
   the returned arguments and environment; retain native approval/sandbox settings.
+  The `swarm-claude` bin does this from the current directory: it scopes the
+  session to the repository's main checkout (so its worktrees share one swarm),
+  prints the session ID, and passes arguments after `--` to Claude. Resume with
+  `swarm-claude --resume <session>`. A rebuilt package needs its owner restarted.
 - OpenCode: `dist/coordination/opencode-plugin.js` exports `opencodeLifecycle`.
   Use the trusted options and native plugin wiring in the
   [OpenCode integration specification](../integrations/opencode/SPEC.md).
