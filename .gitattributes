@@ -1,0 +1,5 @@
+# Generated TypeScript is rewritten with LF by the build on every platform.
+# Pin its checkout EOL so git does not report an EOL-only change under
+# core.autocrlf=true, which would trip the verification source guard.
+src/generated/*.ts text eol=lf
+apps/swarm-ui/src/lib/generated/*.ts text eol=lf

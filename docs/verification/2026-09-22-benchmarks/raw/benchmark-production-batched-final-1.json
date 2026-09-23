@@ -1,0 +1,375 @@
+{
+  "source": {
+    "revision": "074b1ef958138f332d097e2c47d2b4fca2024c1a",
+    "workingTree": "M scripts/benchmark-baseline.ts\n M src/generated/protocol.ts",
+    "diffSha256": "9bb6613b1bd3fb316c5e987580b4bcdcab7c407df4cab3bb54e3491c66e1ceb0",
+    "ownerBundleSha256": "cb278807ba014cfcc9a520029458b164b720dbf7910427c06954142ef8b55ed1",
+    "harnessSha256": "e31334bd97d3581ed98baeac944bb164fe8fc64bc05cd46a5e090a2e4aba83bf"
+  },
+  "revision": "074b1ef958138f332d097e2c47d2b4fca2024c1a",
+  "hardware": {
+    "cpu": "Intel(R) Core(TM) i9-14900KF",
+    "logicalCpus": 32,
+    "physicalMemoryBytes": 34034339840,
+    "platform": "win32",
+    "release": "10.0.26200",
+    "bun": "1.3.11",
+    "node": "v22.14.0"
+  },
+  "workload": {
+    "profiled": false,
+    "count": 1,
+    "messagesPerAgent": 12,
+    "bodyBytes": 256,
+    "spacingMs": 73,
+    "idleMs": 4200,
+    "warmupMs": 2000,
+    "slowMs": 0,
+    "deferredConsumerMs": 0,
+    "root": "C:\\Users\\volpe\\AppData\\Local\\Temp\\coordination-bench-zLGpYW"
+  },
+  "accepted": 12,
+  "received": 12,
+  "deliveryMs": {
+    "p50": 6,
+    "p95": 9,
+    "p99": 9
+  },
+  "acknowledgeMs": {
+    "p50": 7,
+    "p95": 10
+  },
+  "sendToDeliverMs": {
+    "p50": 5,
+    "p95": 8
+  },
+  "deliveredPerSecond": 11.916583912611719,
+  "aggregateIdleCpuPercentOfOneCore": 0,
+  "ownerCpuPercent": 0,
+  "ownerPid": 12772,
+  "ownerWorkingSetBytes": 54677504,
+  "ownerPrivateBytes": 66916352,
+  "processMemory": {
+    "at": 1790079767393,
+    "processes": [
+      {
+        "Id": 40856,
+        "CPU": 0.078125,
+        "WorkingSet64": 153985024,
+        "PrivateMemorySize64": 393523200
+      },
+      {
+        "Id": 12772,
+        "CPU": 0.09375,
+        "WorkingSet64": 54677504,
+        "PrivateMemorySize64": 66916352
+      }
+    ]
+  },
+  "aggregateWorkerRssBytes": 153927680,
+  "explicitRequestBytes": 11076,
+  "explicitResponseBytes": 22538,
+  "transportRequests": 62,
+  "errors": [],
+  "diagnostics": {
+    "observedAt": 1790079768572,
+    "adapterCoverage": {
+      "evidenceDate": "2026-09-22",
+      "meaning": "Candidate support, not host discovery or a liveness claim",
+      "opencode": {
+        "boundaries": [
+          "turn_start",
+          "tool_complete"
+        ],
+        "idleWake": true,
+        "coverage": "installed-host verified",
+        "limitation": "killed/resumed delivery and large histories unverified"
+      },
+      "claude": {
+        "boundaries": [
+          "turn_start",
+          "tool_complete"
+        ],
+        "idleWake": false,
+        "coverage": "installed-host verified",
+        "limitation": "waits for native boundary; legacy-plugin rollout pending"
+      },
+      "codex": {
+        "boundaries": [
+          "owner_driven"
+        ],
+        "idleWake": false,
+        "coverage": "degraded",
+        "limitation": "automatic enrollment and autonomous delivery unverified"
+      },
+      "hermes": {
+        "boundaries": [
+          "in_process"
+        ],
+        "idleWake": false,
+        "coverage": "degraded",
+        "limitation": "lifecycle tests only; installed-host delivery unverified"
+      }
+    },
+    "scope": "benchmark",
+    "freshnessMs": 60000,
+    "summary": {
+      "total": 12,
+      "pending": 0,
+      "leased": 0,
+      "deadLetter": 0,
+      "acknowledged": 12,
+      "retries": 0,
+      "meanAcknowledgmentMs": 5.416666666666667
+    },
+    "recoveryCounts": [
+      {
+        "type": "delivery.leased",
+        "count": 12
+      }
+    ],
+    "deliveryLatency": {
+      "meanFirstDeliveryMs": 3.4166666666666665,
+      "measuredMessages": 12
+    },
+    "deliveries": {
+      "items": [
+        {
+          "messageId": "0c4ac747-a706-4744-94df-abdd392310ed",
+          "taskId": null,
+          "recipient": "worker-0",
+          "state": "acknowledged",
+          "attempts": 1,
+          "createdAt": 1790079768321,
+          "leaseUntil": 1790079798324,
+          "acknowledgedAt": 1790079768326,
+          "nextAttemptAt": 1790079768321,
+          "expiresAt": null,
+          "ageMs": 251,
+          "acknowledgmentLatencyMs": 5,
+          "recovery": "none"
+        }
+      ],
+      "truncated": true
+    },
+    "tasks": {
+      "items": [],
+      "truncated": false
+    },
+    "sessions": {
+      "items": [
+        {
+          "actor": "worker-0",
+          "sessionId": "46fd86ee-78a0-4183-9a7c-0a60a3a9ba53",
+          "generation": 1,
+          "state": "active",
+          "runtime": "unavailable",
+          "runtimeAt": null,
+          "transportAt": null,
+          "progressAt": null,
+          "availability": "unavailable",
+          "processLiveness": "not established by enrollment or transport activity"
+        }
+      ],
+      "truncated": true
+    },
+    "audit": {
+      "items": [
+        {
+          "cursor": 38,
+          "type": "delivery.acknowledged",
+          "entityId": "0c4ac747-a706-4744-94df-abdd392310ed",
+          "actor": "worker-0",
+          "at": 1790079768326,
+          "sessionId": "46fd86ee-78a0-4183-9a7c-0a60a3a9ba53",
+          "generation": 1
+        }
+      ],
+      "truncated": true
+    },
+    "wakes": {
+      "items": [],
+      "truncated": false
+    },
+    "wakeCoverage": "Authenticated recipient self-reports; accepted means host admission, never processing acknowledgment. Missing records do not establish failure.",
+    "database": {
+      "journalMode": "wal",
+      "synchronous": 2
+    },
+    "processMetrics": {
+      "since": 1790079760053,
+      "staleOwnerRejections": 0,
+      "databaseBusyErrors": 0,
+      "writerAcquisitions": 38,
+      "writerAcquireMs": 0.2419999999966933,
+      "maxWriterAcquireMs": 0.016099999999994452,
+      "retention": "this owner process only; writer acquisition time includes uncontended overhead"
+    },
+    "protocol": {
+      "modern": "2026-07-28",
+      "legacy": [
+        "2025-11-25",
+        "2025-06-18",
+        "2025-03-26",
+        "2024-11-05",
+        "2024-10-07"
+      ]
+    }
+  },
+  "workers": [
+    {
+      "index": 0,
+      "pid": 40856,
+      "accepted": 12,
+      "received": 12,
+      "sendStart": 1790079767406,
+      "finished": 1790079768413,
+      "idleWallMs": 4208.2302,
+      "idleCpuUs": 0,
+      "idleRequests": 0,
+      "rssBytes": 153927680,
+      "requests": 62,
+      "requestBytes": 11076,
+      "responseBytes": 22538,
+      "operations": [
+        1.2931999999999988,
+        5.423300000000381,
+        2.0119999999997162,
+        1.6226999999998952,
+        2.516099999999824,
+        1.8551000000006752,
+        2.117699999999786,
+        3.341200000000754,
+        1.724500000000262,
+        1.5942000000004555,
+        3.5034000000005108,
+        1.7454999999999927,
+        1.498899999999594,
+        3.76549999999952,
+        1.6302999999998065,
+        1.6661000000003696,
+        3.635099999999511,
+        4.153599999999642,
+        1.5933999999997468,
+        3.8586000000004788,
+        2.039600000000064,
+        1.495600000000195,
+        3.4632000000001426,
+        1.700300000000425,
+        1.5102999999999156,
+        3.0958999999993466,
+        3.787999999999556,
+        2.037000000000262,
+        4.084200000000237,
+        1.766099999999824,
+        1.4774999999999636,
+        3.258100000000013,
+        1.5487999999995736,
+        1.3443000000006577,
+        3.9306999999989785,
+        1.746499999999287,
+        1.4787999999989552
+      ],
+      "errors": [],
+      "samples": [
+        {
+          "messageId": "bdf856c0-2e6d-4d87-991a-18556669b8fc",
+          "sequence": 0,
+          "sentAt": 1790079767406,
+          "createdAt": 1790079767406,
+          "receivedAt": 1790079767414,
+          "ackResponseAt": 1790079767415
+        },
+        {
+          "messageId": "93167636-e5b1-42c9-8e37-eb4ff296e6c5",
+          "sequence": 1,
+          "sentAt": 1790079767498,
+          "createdAt": 1790079767498,
+          "receivedAt": 1790079767502,
+          "ackResponseAt": 1790079767504
+        },
+        {
+          "messageId": "ce405f92-1ebd-4395-ba99-d5389d092647",
+          "sequence": 2,
+          "sentAt": 1790079767576,
+          "createdAt": 1790079767576,
+          "receivedAt": 1790079767581,
+          "ackResponseAt": 1790079767583
+        },
+        {
+          "messageId": "7f67f5cc-7339-463b-b5d0-54770a8670de",
+          "sequence": 3,
+          "sentAt": 1790079767654,
+          "createdAt": 1790079767654,
+          "receivedAt": 1790079767659,
+          "ackResponseAt": 1790079767661
+        },
+        {
+          "messageId": "5bc295af-e9e1-4c41-87c1-349a7bf42daf",
+          "sequence": 4,
+          "sentAt": 1790079767731,
+          "createdAt": 1790079767730,
+          "receivedAt": 1790079767736,
+          "ackResponseAt": 1790079767738
+        },
+        {
+          "messageId": "2da840c8-0120-4c6c-80e6-be18760f7b5f",
+          "sequence": 5,
+          "sentAt": 1790079767808,
+          "createdAt": 1790079767807,
+          "receivedAt": 1790079767816,
+          "ackResponseAt": 1790079767817
+        },
+        {
+          "messageId": "2082a885-2bfc-4bc5-bc96-107e5aa9b4aa",
+          "sequence": 6,
+          "sentAt": 1790079767883,
+          "createdAt": 1790079767883,
+          "receivedAt": 1790079767889,
+          "ackResponseAt": 1790079767891
+        },
+        {
+          "messageId": "bdcb3672-ae68-4f05-aa76-cb8e9899bc0b",
+          "sequence": 7,
+          "sentAt": 1790079767978,
+          "createdAt": 1790079767977,
+          "receivedAt": 1790079767983,
+          "ackResponseAt": 1790079767984
+        },
+        {
+          "messageId": "54b762d7-2362-4960-9c2c-2a65454f0d07",
+          "sequence": 8,
+          "sentAt": 1790079768073,
+          "createdAt": 1790079768072,
+          "receivedAt": 1790079768079,
+          "ackResponseAt": 1790079768081
+        },
+        {
+          "messageId": "1a0ea237-a06b-4ca6-afbe-0defe6adb66d",
+          "sequence": 9,
+          "sentAt": 1790079768148,
+          "createdAt": 1790079768148,
+          "receivedAt": 1790079768154,
+          "ackResponseAt": 1790079768156
+        },
+        {
+          "messageId": "453975a7-961c-4393-959f-79161a3831ec",
+          "sequence": 10,
+          "sentAt": 1790079768244,
+          "createdAt": 1790079768244,
+          "receivedAt": 1790079768249,
+          "ackResponseAt": 1790079768251
+        },
+        {
+          "messageId": "0c4ac747-a706-4744-94df-abdd392310ed",
+          "sequence": 11,
+          "sentAt": 1790079768321,
+          "createdAt": 1790079768321,
+          "receivedAt": 1790079768327,
+          "ackResponseAt": 1790079768328
+        }
+      ]
+    }
+  ],
+  "limitations": "Production Node owner and independent Bun IPC clients; no model inference or MCP serialization. JSON volumes omit transport framing. First-delivery timestamp is transaction timestamp (includes commit time); acknowledgment is measured through response. Windows memory includes shared working-set pages. Deferred consumer stays connected; not a process-disconnect/restart proof. No processing side effects beyond fixture acknowledgment."
+}

@@ -1,0 +1,250 @@
+{
+  "source": "installed OpenCode 1.4.3, isolated fixture, scripted local model endpoint",
+  "modelRequests": 2,
+  "children": [
+    "ses_f3714e97cfferQSaet52pfGAQs"
+  ],
+  "completed": "completed",
+  "acknowledged": [
+    {
+      "state": "acknowledged",
+      "attempts": 1
+    }
+  ],
+  "release": {
+    "status": "released",
+    "taskId": "41dc597f-9716-4925-95b8-e53dacea941d",
+    "existing": false
+  },
+  "diagnostics": {
+    "observedAt": 1790077251213,
+    "protocol": {
+      "modern": "2026-07-28",
+      "legacy": [
+        "2025-11-25",
+        "2025-06-18",
+        "2025-03-26",
+        "2024-11-05",
+        "2024-10-07"
+      ]
+    },
+    "adapterCoverage": {
+      "evidenceDate": "2026-09-22",
+      "meaning": "Candidate support, not host discovery or a liveness claim",
+      "opencode": {
+        "boundaries": [
+          "turn_start",
+          "tool_complete"
+        ],
+        "idleWake": true,
+        "coverage": "installed-host verified",
+        "limitation": "killed/resumed delivery and large histories unverified"
+      },
+      "claude": {
+        "boundaries": [
+          "turn_start",
+          "tool_complete"
+        ],
+        "idleWake": false,
+        "coverage": "installed-host verified",
+        "limitation": "waits for native boundary; legacy-plugin rollout pending"
+      },
+      "codex": {
+        "boundaries": [
+          "owner_driven"
+        ],
+        "idleWake": false,
+        "coverage": "degraded",
+        "limitation": "automatic enrollment and autonomous delivery unverified"
+      },
+      "hermes": {
+        "boundaries": [
+          "in_process"
+        ],
+        "idleWake": false,
+        "coverage": "degraded",
+        "limitation": "lifecycle tests only; installed-host delivery unverified"
+      }
+    },
+    "scope": "d5002fa66bd772070a4ba19456b7b76d2d002c91e7714bc92970d3bbbf0f1b56",
+    "freshnessMs": 60000,
+    "summary": {
+      "total": 1,
+      "pending": 0,
+      "leased": 0,
+      "deadLetter": 0,
+      "acknowledged": 1,
+      "retries": 0,
+      "meanAcknowledgmentMs": 2377
+    },
+    "recoveryCounts": [
+      {
+        "type": "delivery.leased",
+        "count": 1
+      }
+    ],
+    "deliveryLatency": {
+      "meanFirstDeliveryMs": 897,
+      "measuredMessages": 1
+    },
+    "deliveries": {
+      "items": [
+        {
+          "messageId": "60ae1247-239d-4e92-a9f6-89f6dc0cddee",
+          "taskId": "41dc597f-9716-4925-95b8-e53dacea941d",
+          "recipient": "a20f12f9-6bc2-4465-87e3-89cdc7e6806c",
+          "state": "acknowledged",
+          "attempts": 1,
+          "createdAt": 1790077247877,
+          "leaseUntil": 1790077278774,
+          "acknowledgedAt": 1790077250254,
+          "nextAttemptAt": 1790077247877,
+          "expiresAt": null,
+          "ageMs": 3336,
+          "acknowledgmentLatencyMs": 2377,
+          "recovery": "none"
+        }
+      ],
+      "truncated": false
+    },
+    "tasks": {
+      "items": [
+        {
+          "taskId": "41dc597f-9716-4925-95b8-e53dacea941d",
+          "status": "completed",
+          "attemptId": null,
+          "fence": null,
+          "sessionId": null,
+          "generation": null,
+          "leaseUntil": null,
+          "progressAt": null,
+          "sessionState": null,
+          "recovery": "none"
+        }
+      ],
+      "truncated": false
+    },
+    "sessions": {
+      "items": [
+        {
+          "actor": "a20f12f9-6bc2-4465-87e3-89cdc7e6806c",
+          "sessionId": "e8837420-939f-4d83-8c2a-459373c176bf",
+          "generation": 1,
+          "state": "active",
+          "runtime": "available",
+          "runtimeAt": 1790077250641,
+          "transportAt": null,
+          "progressAt": null,
+          "availability": "available",
+          "processLiveness": "not established by enrollment or transport activity"
+        },
+        {
+          "actor": "a77ccefa-e573-45d2-bf42-d05da7da442e",
+          "sessionId": "9cb57417-fb1b-4ac2-b100-3bea0d44c845",
+          "generation": 1,
+          "state": "active",
+          "runtime": "available",
+          "runtimeAt": 1790077242637,
+          "transportAt": null,
+          "progressAt": null,
+          "availability": "available",
+          "processLiveness": "not established by enrollment or transport activity"
+        },
+        {
+          "actor": "f360bbcc-6812-4f2d-9e58-9d062511c168",
+          "sessionId": "42a8fca1-f2d9-446d-a4aa-1dbf6b36ff6e",
+          "generation": 1,
+          "state": "active",
+          "runtime": "unavailable",
+          "runtimeAt": null,
+          "transportAt": null,
+          "progressAt": null,
+          "availability": "unavailable",
+          "processLiveness": "not established by enrollment or transport activity"
+        }
+      ],
+      "truncated": false
+    },
+    "audit": {
+      "items": [
+        {
+          "cursor": 26,
+          "type": "dispatch.released",
+          "entityId": "native-probe",
+          "actor": "f360bbcc-6812-4f2d-9e58-9d062511c168",
+          "at": 1790077251209
+        },
+        {
+          "cursor": 21,
+          "type": "delivery.acknowledged",
+          "entityId": "60ae1247-239d-4e92-a9f6-89f6dc0cddee",
+          "actor": "a20f12f9-6bc2-4465-87e3-89cdc7e6806c",
+          "at": 1790077250254
+        },
+        {
+          "cursor": 16,
+          "type": "delivery.leased",
+          "entityId": "60ae1247-239d-4e92-a9f6-89f6dc0cddee",
+          "actor": "a20f12f9-6bc2-4465-87e3-89cdc7e6806c",
+          "at": 1790077248774
+        },
+        {
+          "cursor": 14,
+          "type": "dispatch.bound",
+          "entityId": "native-probe",
+          "actor": "f360bbcc-6812-4f2d-9e58-9d062511c168",
+          "at": 1790077247877
+        },
+        {
+          "cursor": 10,
+          "type": "dispatch.provisioned",
+          "entityId": "native-probe",
+          "actor": "f360bbcc-6812-4f2d-9e58-9d062511c168",
+          "at": 1790077245067
+        },
+        {
+          "cursor": 9,
+          "type": "dispatch.provisioning",
+          "entityId": "native-probe",
+          "actor": "f360bbcc-6812-4f2d-9e58-9d062511c168",
+          "at": 1790077245034
+        },
+        {
+          "cursor": 8,
+          "type": "dispatch.reserved",
+          "entityId": "native-probe",
+          "actor": "f360bbcc-6812-4f2d-9e58-9d062511c168",
+          "at": 1790077245031
+        }
+      ],
+      "truncated": false
+    },
+    "wakes": {
+      "items": [
+        {
+          "cursor": 17,
+          "messageId": "60ae1247-239d-4e92-a9f6-89f6dc0cddee",
+          "recipient": "a20f12f9-6bc2-4465-87e3-89cdc7e6806c",
+          "at": 1790077248777,
+          "status": "accepted",
+          "sessionId": "e8837420-939f-4d83-8c2a-459373c176bf",
+          "generation": 1,
+          "taskId": "41dc597f-9716-4925-95b8-e53dacea941d",
+          "attemptId": "bbd15be5-6379-4d90-9f25-1719a95433b8",
+          "deliveryAttempt": 1
+        }
+      ],
+      "truncated": false
+    },
+    "wakeCoverage": "Authenticated recipient self-reports; accepted means host admission, never processing acknowledgment. Missing records do not establish failure.",
+    "processMetrics": {
+      "since": 1790077244919,
+      "staleOwnerRejections": 0,
+      "databaseBusyErrors": 0,
+      "writerAcquisitions": 31,
+      "writerAcquireMs": 0.2710999999998194,
+      "maxWriterAcquireMs": 0.032500000000027285,
+      "retention": "this owner process only; writer acquisition time includes uncontended overhead"
+    }
+  }
+}

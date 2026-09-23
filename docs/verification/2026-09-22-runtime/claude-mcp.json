@@ -1,0 +1,44 @@
+{
+  "host": "Claude Code",
+  "version": "2.1.278 (Claude Code)",
+  "sessionId": "476535df-ae8e-466b-8b64-459116a9f68c",
+  "exitCode": 0,
+  "requests": 3,
+  "sent": 2,
+  "seen": 2,
+  "beforeAck": [
+    "leased",
+    "leased"
+  ],
+  "states": [
+    "acknowledged",
+    "acknowledged"
+  ],
+  "hostResult": {
+    "subtype": "success",
+    "isError": false,
+    "turns": 3
+  },
+  "stderrBytes": 0,
+  "endedCapabilityError": "stale_session",
+  "persistedContext": [
+    true,
+    true
+  ],
+  "leaseExpiryProbe": false,
+  "mcpProbe": true,
+  "advertisedCoordinatorTools": [
+    "mcp__swarm__swarm_assign",
+    "mcp__swarm__swarm_context",
+    "mcp__swarm__swarm_evidence",
+    "mcp__swarm__swarm_find",
+    "mcp__swarm__swarm_inbox",
+    "mcp__swarm__swarm_send",
+    "mcp__swarm__swarm_sync",
+    "mcp__swarm__swarm_task",
+    "mcp__swarm__swarm_wait"
+  ],
+  "restartProbe": false,
+  "leaseRefreshes": 0,
+  "scriptedLocalModel": true
+}

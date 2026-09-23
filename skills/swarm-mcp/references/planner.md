@@ -34,7 +34,7 @@ The server maintains `owner/planner` automatically.
 
 ## Work Tracker Linkage
 
-For non-trivial work that should be visible outside swarm, load `references/work-trackers.md`.
+For non-trivial legacy work that should be visible outside swarm, load `legacy-work-trackers.md`.
 
 - Use only the configured same-identity tracker for this repo/scope.
 - Do not pick Linear, Jira, GitHub Issues, or any other tracker just because that MCP is loaded.

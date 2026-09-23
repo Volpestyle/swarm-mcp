@@ -1,0 +1,325 @@
+# OpenCode coordinator adapter investigation
+
+VUH-1339 includes OpenCode. Target the installed **1.4.3** V1 plugin API; V2
+support is not claimed. Archived VUH-56/57 supply requirements, not dependencies.
+Lifecycle, post-tool delivery/acknowledgment, and autonomous idle delivery have
+installed-host evidence below. Retained-context deduplication and lease refresh
+also have installed-host evidence; killed/resumed-host recovery remains open.
+
+`src/coordination/opencode-plugin.ts` supplies V1 event and shell-environment
+hooks to a trusted plugin wrapper. Creation/update events enroll once per native
+session, concurrent callbacks serialize per session, and deletion closes the
+coordinator session. A per-plugin incarnation fences old credentials on reload.
+The shell hook can adopt an unknown session and exports only its endpoint and
+session capability; the installed-host shell probe verifies authentication with
+that capability. Delivery and wake support require separate verification below.
+
+The extended probe captures `opencode-lifecycle.json`: two real host sessions
+produce exactly two coordinator sessions, each generation 1 and durably closed
+after deletion. The first is adopted through an explicit native title update
+after its creation event was missed. Repeated update events do not reenroll it.
+That initial capture predates subscription-first reconciliation. The probe starts
+and stops its own isolated coordinator.
+
+`connectOpenCodeLifecycle` now starts a directory-scoped SSE subscription and
+lists retained, unarchived sessions after `server.connected`. The tagged
+[event route](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/server/routes/event.ts)
+installs its bus subscription before writing the connected event. Mutations
+during the snapshot remain queued on the stream. The wrapper starts this worker
+without awaiting its lifetime from plugin initialization. It uses the actual
+server URL, preserves the injected SDK authentication, and stops on instance
+disposal. Startup and snapshot requests have ten-second limits; transport loss
+reports disconnected with no hidden infinite retry loop.
+
+`opencode-reconciliation.json` verifies first-session enrollment without a title
+update, then actual instance disposal/reinitialization. The retained session
+keeps its actor and advances to generation 2; SQLite shows generation 1
+superseded and generation 2 closed after deletion. A second native session
+enrolls once and closes. This proves lifecycle restart, not message admission.
+
+Reconciliation uses the same-version HTTP SDK's experimental session listing,
+which supplies `x-next-cursor`. The host cursor is an exclusive updated-time
+timestamp. The adapter overlaps the boundary millisecond and deduplicates IDs;
+following the cursor literally could omit sessions sharing that timestamp.
+Pages start at 100 rows and expand only when a timestamp group prevents progress,
+up to 12,800. Invalid scope/order/cursors and saturated groups fail explicitly;
+the ten-second snapshot deadline still applies. Host updates during enumeration
+are reconciled through the already-subscribed event stream.
+
+`coordination-opencode-snapshot.test.ts` drives the real SDK through a local HTTP
+fixture with 1,500 sessions, including 400 sharing one timestamp. It verifies
+complete enumeration, deduplication, and bounded failure on a non-progressing
+cursor. `opencode-pagination.json` reruns installed-host lifecycle, restart,
+delivery and acknowledgment with the new endpoint. That host capture has a small
+history; it does not establish large-history enrollment within the deadline.
+Endpoint semantics are pinned to the host's
+[experimental route](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/server/routes/experimental.ts)
+and [session query](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/session/index.ts).
+
+`opencode-shell.json` additionally exercises the actual session shell endpoint.
+Its child process uses the injected capability to bootstrap from the coordinator;
+the actor matches the native session's enrollment and the configured scope.
+Only the coordinator endpoint, session capability and fixture recording path
+appear among its `SWARM_*` environment names. No capability values are recorded.
+An explicit inert model identifier avoids model selection/inference for this
+user-executed shell operation. This endpoint does not exercise post-tool hooks.
+
+The adapter's `tool.execute.after` now fetches one leased message at a real
+post-tool callback, appends a labeled peer envelope to builtin `output` or MCP
+`content`, and leaves acknowledgment to the consumer. Repeated callbacks for
+the same call ID are suppressed within the plugin instance. Unknown output
+shapes do not fetch. The real-coordinator adapter test verifies both output
+forms, retained lease state, explicit acknowledgment and repeated callbacks.
+`opencode-delivery.json` exercises this hook through the installed host's real
+agent loop. A localhost OpenAI-compatible fixture requests a file read, receives
+the peer envelope in the next model request, and requests an explicit shell
+acknowledgment using the received lease. The third request sees the acknowledgment
+result and completes. SQLite confirms `leased` before that explicit action and
+the coordinator confirms `acknowledged` afterward. The fixture is deterministic:
+this proves host tool execution and context assembly, not model comprehension.
+It uses no external model service. Retained evidence redacts lease tokens.
+Later captures below extend this evidence to idle wakeups and lease expiry.
+
+`opencode-lease-refresh.json` verifies both delivered envelopes remain in the
+host's retained context. After a real 32-second wait, an explicit native prompt
+reaches the expired lease. The adapter appends only the new lease metadata,
+and the fixture acknowledges with that token. Six model requests complete the
+probe, including lifecycle deletion and enrollment of a final session. This
+does not establish autonomous waking for expired leases or killed-host recovery.
+
+Context inspection uses the installed HTTP SDK's opaque message cursor, checks
+session/part identity, and excludes ignored text, pruned tool results and
+reverted context. Compaction boundaries stop the search. Inspection is bounded
+by the delivery deadline, 100 pages and 16 MiB; failure retains the uncertain
+lease. Unit fixtures cover cursor failure, scope mismatch and context pruning.
+
+The retained failure capture records the earlier final-enrollment timeout.
+A reduced Windows Bun 1.3.11 reproduction showed a timed synchronous child
+command succeeding once, then spuriously timing out after an idle interval;
+the equivalent Node sequence succeeded. Launcher ACL validation now uses
+asynchronous `execFile`, preserving every ACL check and the 10-second timeout.
+The real-host probe passes, and a private-state regression test rereads the
+same owner identity after an 11-second idle interval. Existing tests still
+reject insecure directories and malformed credentials.
+
+`opencode-autonomous-lease.json` extends the expiry proof: the fixture supplies
+no recovery prompt. The observer waits for the real lease deadline and retry
+backoff, sweeps through the coordinator, and wakes the idle native session.
+The adapter finds the original context and appends only renewed lease metadata;
+the fixture explicitly acknowledges. The run completes with six model requests.
+Reproduce this autonomous lease-expiry run by adding `--lease-expiry` after the
+native executable argument in the probe command below. The earlier
+`opencode-lease-refresh.json` remains evidence for explicit-prompt recovery.
+
+`opencode-availability.json` adds a real `read` permission wait to that agent
+loop. The adapter observes `blocked` and the coordinator delivery remains
+`pending`. The fixture replies once through the native permission API; the read
+then completes, the message reaches the next model request, and explicit
+acknowledgment succeeds. No permission prompt is bypassed by the adapter.
+
+Availability tracks status events and outstanding permission/question IDs.
+Duplicate asks are idempotent; one reply cannot clear a different wait. Replies
+establish busy, never idle; retry is busy. Stream loss and deletion establish
+disconnected. Unknown sessions/statuses are unsupported until verified host
+evidence arrives. Post-tool delivery checks blocked/disconnected both before
+fetch and immediately before admission. Permission/question reconstruction now
+runs before snapshot readiness; subsequent installed-host wake captures below
+verify authoritative idle admission.
+
+`opencode-recovery.json` stops and recreates the observer while the actual host
+is waiting for read permission. Status, pending permissions and pending questions
+are read through the pinned `@opencode-ai/sdk@1.4.3` public HTTP client; the
+injected V1 client lacks the latter two methods. This SDK import does not change
+the V1 plugin hook API. HTTP requests use the actual server URL, directory and
+the host's configured server credentials.
+
+Reconnection clears stale observations/waits and defers tool admission while
+the snapshot is incomplete. The real-host probe restores blocked from the
+snapshot, verifies pending inbox state, then grants that one fixture permission
+and completes delivery/acknowledgment. Unit tests additionally check that stale
+idle cannot survive reconnection. The probe explicitly recreates the observer;
+that historical capture predates automatic reconnect. Snapshot failure reports
+disconnected and never declares readiness.
+
+`opencode-reconnect.json` ends the real SDK event iterator during a permission
+wait and verifies recovery by the same observer, without fixture recreation.
+The observer retries at 150, 500 and 1,500 ms (at most four connections per
+observer lifetime), rebuilding the full snapshot after each connection. The
+fixture leaves the actual host and pending permission alive; it does not claim
+to simulate a host crash. Explicit stop cancels backoff and host instance
+disposal is terminal. Exhaustion stays disconnected for operator/runtime
+recovery. This loop invokes no model and never starts another host.
+
+Observer tests cover repeated snapshot failure without false readiness,
+disposal after reconciliation and explicit stop before retry. Each attempt
+aborts its own connection on exit; snapshot timeout also covers enrollment work
+between the list and state reads.
+
+The wrapper feeds operational events from the SSE observer only. Its native
+event hook may record diagnostics, but must not feed the same events back into
+availability: two independently scheduled subscriptions can replay an older
+status after a newer one. `connectOpenCodeLifecycle` forwards stream loss to
+the adapter so subsequent tool callbacks defer until reconnection.
+
+## Wake admission evidence
+
+`opencode-admission-race.json` submits a normal session prompt while a real
+user shell is held at a fixture barrier. The host reports busy and persists the
+new prompt, but the local model endpoint receives no request before release.
+After the shell finishes, the model loop reads the fixture and completes the
+existing delivery/permission/reconnect/acknowledgment checks. This proves the
+active user-shell race; it does not claim every active model-tool race or a
+finished automatic wake implementation.
+
+The tagged [runner](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/effect/runner.ts)
+coalesces an existing run and queues behind a shell. The
+[prompt implementation](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/session/prompt.ts)
+persists the user message before requesting that run. A status check therefore
+cannot be treated as an atomic idle reservation: wake logic must tolerate native
+queuing if the host becomes busy, keep durable pending work on uncertain
+acceptance, and coalesce/reconcile its own prompt requests. It must not cancel
+the current run or spawn a replacement session.
+
+`OpenCodeWake` now admits a wake only for committed pending work for its actor,
+an existing unarchived native session, idle host status and no pending host
+permission/question. Concurrent hints share one attempt. Before the HTTP POST,
+private launcher state publishes stable host message/part IDs for that scope,
+native session and peer message. Later instances reconcile that exact host
+message. An uncertain attempt whose message is absent remains uncertain rather
+than posting again; recovery of that ambiguous intent still needs an explicit
+policy. HTTP 204 means request admission, not persistence or processing.
+
+`opencode-wake.json` verifies busy deferral, two concurrent hints producing one
+additional native model request, and a new helper reusing the retained message.
+The peer delivery stays pending. Lost-response tests cover both a host that
+persisted the prompt and one that did not, with exactly one POST in either case.
+The wake helper is now connected to the coordinator event observer as described
+below. Message-context deduplication and the second host remain open.
+
+`opencode-turn-start.json` verifies `chat.message` delivery on the idle wake:
+the first subsequent model request contains the peer envelope without choosing
+a tool first. The callback appends to an existing text part, preserving the
+host-assigned message/part IDs. It uses the same leased-admission implementation
+as post-tool delivery and never acknowledges automatically. Busy turns defer
+and repeated callbacks for the same native message are suppressed in-process.
+Snapshot status maps absent entries to idle only for sessions enumerated from
+the same host directory, matching the installed host's status API semantics.
+The capture verifies the new delivery is leased and a repeated wake defers.
+
+`opencode-autonomous.json` removes the fixture's explicit wake call. Committing
+the peer message alone drives coordinator event wait → pending inbox read →
+verified idle wake → native turn-start payload admission → model request. Each
+enrolled actor has separate event/read IPC connections so held waits do not
+block reads. Observer reads request `activeOnly`, filtering terminal history in
+SQLite instead of transporting each acknowledged message. The default inbox
+query still includes that history. Active pagination preserves both pending and
+leased work and does not mutate either. Bootstrap captures the event cursor before scanning the backlog;
+host idle/snapshot-ready events also recheck pending work. Reads never lease or
+acknowledge messages. Timers track lease expiry, message TTL and pending backoff.
+Once the host is ready, due work invokes the authenticated recipient's
+`inbox.sweep`; the coordinator enforces TTL, attempt limits and exponential
+backoff. A new read then schedules or wakes eligible pending work. Busy/blocked
+hosts wait for an idle observation; no timer invokes a model directly.
+
+Wake intents are keyed by message and completed delivery-attempt count. An
+expired attempt can therefore request a fresh native turn, while repeated hints
+or adapter replacement reconcile the same prompt for the same attempt. A lost
+POST response with an absent prompt still remains uncertain; this change does
+not authorize blind resubmission.
+
+The pinned host's [prompt implementation](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/session/prompt.ts)
+runs `chat.message` before persisting the user message. The
+[asynchronous route](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/server/routes/session.ts)
+returns before prompt execution completes. A missing prompt therefore cannot
+prove the earlier request had no effect, even with a repeated message ID.
+
+An uncertain wake no longer ends the inbox scan: later pending messages can
+offer another delivery opportunity. After an accepted/deferred wake, the scan
+continues deadline maintenance without requesting more turns in that scan,
+and stops if host readiness changes. `coordination-inbox-backlog.test.ts` uses
+the real Node IPC/store to reproduce a stuck first hint hiding both later work
+and TTL expiry. It failed before this change and now verifies later notification,
+expiry without notification, and preservation of the two pending messages.
+`opencode-backlog-scan.json` separately covers the installed-host regression;
+the backlog failure is injected in the IPC test, not that host capture.
+
+Host disposal and session deletion stop their observers, close IPC connections
+and abort an in-flight wake request before any later POST. This cannot undo a
+POST already admitted by the host. Startup-backlog tests verify notification
+leaves deliveries pending. Coordinator transport errors trigger bounded retries
+after 150, 500 and 1,500 ms, up to four connections per observer lifetime.
+Each attempt uses the existing capability and repeats bootstrap/backlog discovery;
+the observer never reenrolls a session or starts an owner. Invalid credentials,
+fenced sessions and protocol errors are terminal. Stop cancels backoff, aborts
+wakes and waits for the old scan to settle before allowing another attempt.
+
+`coordination-inbox-observer.test.ts` kills and restarts the production Node owner
+against its retained database. The same observer finds the same pending message
+with the original capability. It also verifies retry exhaustion, explicit stop
+and terminal authentication failure. The test supplies the owner restart.
+`opencode-inbox-retry.json` verifies the installed-host delivery flow remains
+working with this observer; it does not inject a coordinator crash into that host
+run. The test also verifies that a busy host retains an expired lease and an
+idle observation recovers it after coordinator backoff. Installed-host autonomous
+expiry recovery is recorded separately above. Exhausted observers require
+lifecycle reinitialization.
+
+## Actual host evidence
+
+Run the installed native executable, not its Windows package shim:
+
+```powershell
+bun scripts/probe-opencode-hooks.ts dist/test/opencode-hooks.json C:/Users/volpe/.bun/install/global/node_modules/opencode-windows-x64/bin/opencode.exe
+```
+
+The probe starts a localhost server with disposable XDG paths, database and
+`OPENCODE_TEST_HOME`, loads a local function-export plugin, and creates/deletes
+two sessions without model inference. Both operations succeed. Recorded events:
+
+```
+plugin.loaded
+session.updated
+session.deleted
+session.created
+session.updated
+session.updated
+session.deleted
+```
+
+The first session's creation event is absent; the second arrives after plugin
+initialization. Enrollment must therefore reconcile existing sessions on startup
+and adopt unknown sessions from updates or verified tool boundaries. A
+creation-event-only integration loses the first session in this observed run.
+
+The initial probe also showed that killing the Windows package shim left its
+native server child alive holding output pipes. The probe now requires a native
+binary path on Windows and owns that process directly. XDG paths alone did not
+isolate the home `.opencode` configuration; the host-specific test-home override
+is required. The successful evidence uses that override.
+
+## Plugin decision and remaining checks
+
+Use a plugin, not a launcher-only registration shim. The tagged V1
+[plugin interface](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/plugin/src/index.ts)
+provides events and tool hooks; the
+[loader](https://github.com/anomalyco/opencode/blob/v1.4.3/packages/opencode/src/plugin/index.ts)
+accepts function exports and subscribes to session events. This source contract
+plus the real lifecycle probe establishes a viable plugin entrypoint. It does
+not by itself prove write denial, tool-result context delivery or safe idle wakeups.
+The later delivery/wake captures above establish the latter two paths.
+
+OpenCode's [V2 migration guide](https://opencode.ai/v2/docs/build/plugins/migrate-v1)
+describes a different hook registration API. Do not copy V2 `setup` hooks into
+the installed V1 adapter. Pin the tested API and exercise each host hook.
+
+Remaining: installed-host write denial and configured command registration;
+the current runtime evidence and limits are maintained in
+[`runtime-host-support.md`](../../docs/runtime-host-support.md). Record capabilities separately: lifecycle
+events do not establish an acknowledgment of message processing. Ordinary
+delivery must not spawn agents, and busy sessions must not be interrupted.
+
+Existing Codex and Claude Code subprocess integrations and Hermes's in-process
+plugin remain sources for shared identity, reservation and lifecycle semantics.
+On this machine, the observed CLI versions are Codex 0.155.1 and Claude Code
+2.1.278; Hermes was not resolved by the PATH probe. That is an environment result,
+not a permanent unsupported-host policy.

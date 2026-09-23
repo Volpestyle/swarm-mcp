@@ -1,0 +1,40 @@
+{
+  "host": "Claude Code",
+  "version": "2.1.278 (Claude Code)",
+  "sessionId": "6582d0ce-cc72-4bcb-bddc-8a53efa10cc0",
+  "exitCode": 0,
+  "requests": 4,
+  "sent": 2,
+  "seen": 2,
+  "beforeAck": [
+    "leased",
+    "leased",
+    "leased"
+  ],
+  "states": [
+    "acknowledged",
+    "leased"
+  ],
+  "hostResult": {
+    "subtype": "success",
+    "isError": false,
+    "turns": 2
+  },
+  "stderrBytes": 0,
+  "endedCapabilityError": "stale_session",
+  "persistedContext": [
+    true,
+    true
+  ],
+  "leaseExpiryProbe": false,
+  "restartProbe": true,
+  "restart": {
+    "terminatedExit": 137,
+    "sameActor": true,
+    "initialGeneration": 1,
+    "resumedGeneration": 2,
+    "oldCapabilityError": "stale_session"
+  },
+  "leaseRefreshes": 1,
+  "scriptedLocalModel": true
+}

@@ -1,0 +1,522 @@
+{
+  "revision": "f9a0a1bd4cd50ed7fba1f95a3a93464277c89daa",
+  "hardware": {
+    "cpu": "Intel(R) Core(TM) i9-14900KF",
+    "logicalCpus": 32,
+    "physicalMemoryBytes": 34034339840,
+    "platform": "win32",
+    "release": "10.0.26200",
+    "bun": "1.3.11",
+    "node": "v22.14.0"
+  },
+  "workload": {
+    "count": 2,
+    "messagesPerAgent": 12,
+    "bodyBytes": 256,
+    "spacingMs": 73,
+    "idleMs": 4200,
+    "warmupMs": 2000,
+    "slowMs": 0,
+    "deferredConsumerMs": 0,
+    "root": "C:\\Users\\volpe\\AppData\\Local\\Temp\\coordination-bench-ZaWJaS"
+  },
+  "accepted": 24,
+  "received": 24,
+  "deliveryMs": {
+    "p50": 8,
+    "p95": 113,
+    "p99": 126
+  },
+  "acknowledgeMs": {
+    "p50": 11,
+    "p95": 144
+  },
+  "sendToDeliverMs": {
+    "p50": 9,
+    "p95": 112
+  },
+  "deliveredPerSecond": 22.770398481973434,
+  "aggregateIdleCpuPercentOfOneCore": 0,
+  "ownerCpuPercent": 0,
+  "ownerPid": 43812,
+  "ownerWorkingSetBytes": 54726656,
+  "ownerPrivateBytes": 67141632,
+  "processMemory": {
+    "at": 1790078417717,
+    "processes": [
+      {
+        "Id": 3564,
+        "CPU": 0.078125,
+        "WorkingSet64": 153804800,
+        "PrivateMemorySize64": 393482240
+      },
+      {
+        "Id": 50160,
+        "CPU": 0.078125,
+        "WorkingSet64": 153890816,
+        "PrivateMemorySize64": 394014720
+      },
+      {
+        "Id": 43812,
+        "CPU": 0.15625,
+        "WorkingSet64": 54726656,
+        "PrivateMemorySize64": 67141632
+      }
+    ]
+  },
+  "aggregateWorkerRssBytes": 307593216,
+  "explicitRequestBytes": 22885,
+  "explicitResponseBytes": 64950,
+  "transportRequests": 137,
+  "errors": [],
+  "diagnostics": {
+    "observedAt": 1790078419093,
+    "adapterCoverage": {
+      "evidenceDate": "2026-09-22",
+      "meaning": "Candidate support, not host discovery or a liveness claim",
+      "opencode": {
+        "boundaries": [
+          "turn_start",
+          "tool_complete"
+        ],
+        "idleWake": true,
+        "coverage": "installed-host verified",
+        "limitation": "killed/resumed delivery and large histories unverified"
+      },
+      "claude": {
+        "boundaries": [
+          "turn_start",
+          "tool_complete"
+        ],
+        "idleWake": false,
+        "coverage": "installed-host verified",
+        "limitation": "waits for native boundary; legacy-plugin rollout pending"
+      },
+      "codex": {
+        "boundaries": [
+          "owner_driven"
+        ],
+        "idleWake": false,
+        "coverage": "degraded",
+        "limitation": "automatic enrollment and autonomous delivery unverified"
+      },
+      "hermes": {
+        "boundaries": [
+          "in_process"
+        ],
+        "idleWake": false,
+        "coverage": "degraded",
+        "limitation": "lifecycle tests only; installed-host delivery unverified"
+      }
+    },
+    "scope": "benchmark",
+    "freshnessMs": 60000,
+    "summary": {
+      "total": 24,
+      "pending": 0,
+      "leased": 0,
+      "deadLetter": 0,
+      "acknowledged": 24,
+      "retries": 0,
+      "meanAcknowledgmentMs": 20.541666666666668
+    },
+    "recoveryCounts": [
+      {
+        "type": "delivery.leased",
+        "count": 24
+      }
+    ],
+    "deliveryLatency": {
+      "meanFirstDeliveryMs": 11.375,
+      "measuredMessages": 24
+    },
+    "deliveries": {
+      "items": [
+        {
+          "messageId": "98a500cd-2cd1-4789-9e82-567f339e7886",
+          "taskId": null,
+          "recipient": "worker-0",
+          "state": "acknowledged",
+          "attempts": 1,
+          "createdAt": 1790078418712,
+          "leaseUntil": 1790078448717,
+          "acknowledgedAt": 1790078418720,
+          "nextAttemptAt": 1790078418712,
+          "expiresAt": null,
+          "ageMs": 381,
+          "acknowledgmentLatencyMs": 8,
+          "recovery": "none"
+        }
+      ],
+      "truncated": true
+    },
+    "tasks": {
+      "items": [],
+      "truncated": false
+    },
+    "sessions": {
+      "items": [
+        {
+          "actor": "worker-1",
+          "sessionId": "e403a367-7863-4d17-bc70-1ca198e72bae",
+          "generation": 1,
+          "state": "active",
+          "runtime": "unavailable",
+          "runtimeAt": null,
+          "transportAt": null,
+          "progressAt": null,
+          "availability": "unavailable",
+          "processLiveness": "not established by enrollment or transport activity"
+        }
+      ],
+      "truncated": true
+    },
+    "audit": {
+      "items": [
+        {
+          "cursor": 75,
+          "type": "delivery.acknowledged",
+          "entityId": "98a500cd-2cd1-4789-9e82-567f339e7886",
+          "actor": "worker-0",
+          "at": 1790078418720,
+          "sessionId": "6fb41006-7ffb-408d-a195-118af4cea757",
+          "generation": 1
+        }
+      ],
+      "truncated": true
+    },
+    "wakes": {
+      "items": [],
+      "truncated": false
+    },
+    "wakeCoverage": "Authenticated recipient self-reports; accepted means host admission, never processing acknowledgment. Missing records do not establish failure.",
+    "processMetrics": {
+      "since": 1790078410369,
+      "staleOwnerRejections": 0,
+      "databaseBusyErrors": 0,
+      "writerAcquisitions": 75,
+      "writerAcquireMs": 0.4543999999935835,
+      "maxWriterAcquireMs": 0.03269999999974971,
+      "retention": "this owner process only; writer acquisition time includes uncontended overhead"
+    },
+    "protocol": {
+      "modern": "2026-07-28",
+      "legacy": [
+        "2025-11-25",
+        "2025-06-18",
+        "2025-03-26",
+        "2024-11-05",
+        "2024-10-07"
+      ]
+    }
+  },
+  "workers": [
+    {
+      "index": 0,
+      "pid": 3564,
+      "accepted": 12,
+      "received": 12,
+      "sendStart": 1790078417735,
+      "finished": 1790078418788,
+      "idleWallMs": 4207.1228,
+      "idleCpuUs": 0,
+      "idleRequests": 0,
+      "rssBytes": 153759744,
+      "requests": 69,
+      "requestBytes": 11470,
+      "responseBytes": 32486,
+      "operations": [
+        1.1984999999999992,
+        4.46560000000045,
+        4.103699999999662,
+        3.1054000000003725,
+        72.03590000000077,
+        82.73120000000017,
+        58.44680000000062,
+        16.21180000000004,
+        1.9068000000006577,
+        4.003600000000006,
+        3.9817000000002736,
+        3.255000000000109,
+        3.9399999999996,
+        2.209100000000035,
+        3.9688999999998487,
+        2.401400000000649,
+        2.1202000000002954,
+        4.157799999999952,
+        1.6287999999995009,
+        2.341699999999946,
+        3.7015999999994165,
+        2.037000000000262,
+        2.0851000000002387,
+        3.0161000000007334,
+        3.7453000000004977,
+        3.66570000000047,
+        4.178799999999683,
+        2.973500000000058,
+        4.544399999999769,
+        3.016599999999926,
+        2.901400000000649,
+        2.080100000001039,
+        4.2150000000001455,
+        2.8598000000001775,
+        2.1616999999987456,
+        4.026900000000751,
+        2.7358000000003813
+      ],
+      "errors": [],
+      "samples": [
+        {
+          "messageId": "a7d1750d-c8ce-4772-a798-4da450a2b42e",
+          "sequence": 0,
+          "sentAt": 1790078417736,
+          "createdAt": 1790078417739,
+          "receivedAt": 1790078417746,
+          "ackResponseAt": 1790078417749
+        },
+        {
+          "messageId": "92d0b8a8-458f-4339-b43c-8b2fe3d39e9e",
+          "sequence": 1,
+          "sentAt": 1790078417828,
+          "createdAt": 1790078417827,
+          "receivedAt": 1790078417940,
+          "ackResponseAt": 1790078417998
+        },
+        {
+          "messageId": "76cd2663-e714-4b89-8d87-4cbb632b01a9",
+          "sequence": 2,
+          "sentAt": 1790078417939,
+          "createdAt": 1790078417981,
+          "receivedAt": 1790078418004,
+          "ackResponseAt": 1790078418008
+        },
+        {
+          "messageId": "eca1d910-683c-4414-a3b5-f22e1493611a",
+          "sequence": 3,
+          "sentAt": 1790078418080,
+          "createdAt": 1790078418079,
+          "receivedAt": 1790078418086,
+          "ackResponseAt": 1790078418090
+        },
+        {
+          "messageId": "3b653bc0-9b08-4148-84d0-7a84b2d12492",
+          "sequence": 4,
+          "sentAt": 1790078418171,
+          "createdAt": 1790078418172,
+          "receivedAt": 1790078418181,
+          "ackResponseAt": 1790078418183
+        },
+        {
+          "messageId": "4f9343cd-7f21-4146-bbad-44c8cb036ebd",
+          "sequence": 5,
+          "sentAt": 1790078418248,
+          "createdAt": 1790078418249,
+          "receivedAt": 1790078418258,
+          "ackResponseAt": 1790078418259
+        },
+        {
+          "messageId": "9a2fba80-4d1e-4ce1-a72c-08a768781e46",
+          "sequence": 6,
+          "sentAt": 1790078418327,
+          "createdAt": 1790078418328,
+          "receivedAt": 1790078418336,
+          "ackResponseAt": 1790078418338
+        },
+        {
+          "messageId": "f7a8118a-1885-4555-820f-7cc39165e8bf",
+          "sequence": 7,
+          "sentAt": 1790078418404,
+          "createdAt": 1790078418404,
+          "receivedAt": 1790078418411,
+          "ackResponseAt": 1790078418415
+        },
+        {
+          "messageId": "54b64ce3-5dcd-44a6-94c5-1bdbf7c63c42",
+          "sequence": 8,
+          "sentAt": 1790078418479,
+          "createdAt": 1790078418480,
+          "receivedAt": 1790078418488,
+          "ackResponseAt": 1790078418491
+        },
+        {
+          "messageId": "68388ba2-4957-406c-b972-36be6907f39b",
+          "sequence": 9,
+          "sentAt": 1790078418557,
+          "createdAt": 1790078418556,
+          "receivedAt": 1790078418563,
+          "ackResponseAt": 1790078418566
+        },
+        {
+          "messageId": "28f5d5bd-4998-45bf-ad5b-26353fd5e429",
+          "sequence": 10,
+          "sentAt": 1790078418632,
+          "createdAt": 1790078418633,
+          "receivedAt": 1790078418641,
+          "ackResponseAt": 1790078418644
+        },
+        {
+          "messageId": "98a500cd-2cd1-4789-9e82-567f339e7886",
+          "sequence": 11,
+          "sentAt": 1790078418711,
+          "createdAt": 1790078418712,
+          "receivedAt": 1790078418720,
+          "ackResponseAt": 1790078418722
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "pid": 50160,
+      "accepted": 12,
+      "received": 12,
+      "sendStart": 1790078417736,
+      "finished": 1790078418789,
+      "idleWallMs": 4207.2306,
+      "idleCpuUs": 0,
+      "idleRequests": 0,
+      "rssBytes": 153833472,
+      "requests": 68,
+      "requestBytes": 11415,
+      "responseBytes": 32464,
+      "operations": [
+        0.8157999999999994,
+        5.993100000000595,
+        3.53229999999985,
+        4.1141999999999825,
+        29.30119999999988,
+        81.76419999999962,
+        56.67529999999988,
+        17.817300000000614,
+        4.041400000000067,
+        2.918699999999262,
+        2.7385999999996784,
+        4.229099999999562,
+        2.6994999999997162,
+        3.4329999999999927,
+        3.221099999999751,
+        2.7828999999992448,
+        3.6648000000004686,
+        2.9873999999999796,
+        2.7006000000001222,
+        3.736200000000281,
+        2.895400000000336,
+        2.5684999999994034,
+        4.584600000000137,
+        4.2742000000007465,
+        2.8611000000000786,
+        3.1860999999998967,
+        4.0603000000000975,
+        3.0252000000000407,
+        3.1437000000005355,
+        4.35989999999947,
+        1.5758999999998196,
+        3.4717000000000553,
+        5.007600000000821,
+        3.092799999998533,
+        4.287900000001173,
+        4.940299999998388,
+        2.8392000000003463
+      ],
+      "errors": [],
+      "samples": [
+        {
+          "messageId": "171b4ad1-c9c9-4296-a9c8-0891fe91cd79",
+          "sequence": 0,
+          "sentAt": 1790078417735,
+          "createdAt": 1790078417736,
+          "receivedAt": 1790078417744,
+          "ackResponseAt": 1790078417748
+        },
+        {
+          "messageId": "45506310-9887-4cf7-a108-b5f4ba5f76bd",
+          "sequence": 1,
+          "sentAt": 1790078417828,
+          "createdAt": 1790078417856,
+          "receivedAt": 1790078417982,
+          "ackResponseAt": 1790078418000
+        },
+        {
+          "messageId": "3329243a-de64-4100-9269-ecbc13f6353f",
+          "sequence": 2,
+          "sentAt": 1790078417985,
+          "createdAt": 1790078417999,
+          "receivedAt": 1790078418007,
+          "ackResponseAt": 1790078418010
+        },
+        {
+          "messageId": "ab5aef1c-4cf3-4dd8-acef-3535f4077645",
+          "sequence": 3,
+          "sentAt": 1790078418080,
+          "createdAt": 1790078418082,
+          "receivedAt": 1790078418089,
+          "ackResponseAt": 1790078418091
+        },
+        {
+          "messageId": "2711609e-3b1c-455d-bb50-4b79f6fb401f",
+          "sequence": 4,
+          "sentAt": 1790078418171,
+          "createdAt": 1790078418170,
+          "receivedAt": 1790078418177,
+          "ackResponseAt": 1790078418180
+        },
+        {
+          "messageId": "75e22f9a-a240-4809-a2f7-3675b6a84a0d",
+          "sequence": 5,
+          "sentAt": 1790078418248,
+          "createdAt": 1790078418247,
+          "receivedAt": 1790078418253,
+          "ackResponseAt": 1790078418256
+        },
+        {
+          "messageId": "80d5466b-7747-480a-b008-023e38548164",
+          "sequence": 6,
+          "sentAt": 1790078418327,
+          "createdAt": 1790078418326,
+          "receivedAt": 1790078418332,
+          "ackResponseAt": 1790078418335
+        },
+        {
+          "messageId": "ab07195c-b4dd-4b9f-ba86-1ed8543e462c",
+          "sequence": 7,
+          "sentAt": 1790078418403,
+          "createdAt": 1790078418403,
+          "receivedAt": 1790078418410,
+          "ackResponseAt": 1790078418413
+        },
+        {
+          "messageId": "88cffca5-63e7-424d-abcb-11f1b4f5061d",
+          "sequence": 8,
+          "sentAt": 1790078418479,
+          "createdAt": 1790078418482,
+          "receivedAt": 1790078418489,
+          "ackResponseAt": 1790078418492
+        },
+        {
+          "messageId": "258c3aff-9c65-41a1-9ac1-2c34a80ab92c",
+          "sequence": 9,
+          "sentAt": 1790078418557,
+          "createdAt": 1790078418559,
+          "receivedAt": 1790078418568,
+          "ackResponseAt": 1790078418570
+        },
+        {
+          "messageId": "92c4e367-0ee1-4ea6-bb6e-8612a59a9517",
+          "sequence": 10,
+          "sentAt": 1790078418632,
+          "createdAt": 1790078418631,
+          "receivedAt": 1790078418639,
+          "ackResponseAt": 1790078418642
+        },
+        {
+          "messageId": "859572fc-7824-4376-8949-1984849c6bc9",
+          "sequence": 11,
+          "sentAt": 1790078418711,
+          "createdAt": 1790078418710,
+          "receivedAt": 1790078418718,
+          "ackResponseAt": 1790078418721
+        }
+      ]
+    }
+  ],
+  "limitations": "Production Node owner and independent Bun IPC clients; no model inference or MCP serialization. JSON volumes omit transport framing. First-delivery timestamp is transaction timestamp (includes commit time); acknowledgment is measured through response. Windows memory includes shared working-set pages. Deferred consumer stays connected; not a process-disconnect/restart proof. No processing side effects beyond fixture acknowledgment."
+}

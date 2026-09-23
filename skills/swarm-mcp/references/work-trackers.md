@@ -1,105 +1,65 @@
-# Work Trackers
+# Optional work tracker integration
 
-Use this reference when swarm work should be linked to a human-facing tracker such as Linear, Jira, GitHub Issues, or another configured system.
+The compact coordinator performs no automatic Linear writes. The user's mandate
+or project configuration chooses whether work is tracked, which authenticated
+tracker/team/project to use, and who may write. Missing tracker access never blocks
+local coordination or silently selects another account. Role labels do not confer
+tracker credentials or authority.
 
-## Current Contract
+Reuse the existing design cluster: [VUH-35](https://linear.app/vuhlp/issue/VUH-35)
+for promotion, [VUH-36](https://linear.app/vuhlp/issue/VUH-36) for create/link,
+[VUH-37](https://linear.app/vuhlp/issue/VUH-37) for status and
+[VUH-38](https://linear.app/vuhlp/issue/VUH-38) for completion evidence. These are
+archived design tickets, not proof of shipped compact automation. The redesign's
+VUH-1344 acceptance rule supersedes their automatic worker-done-to-issue-Done
+mapping. Keep the old records intact; do not reopen or implement a second bridge
+merely to use this skill.
 
-`swarm-mcp` does not hard-code Linear, Jira, GitHub Issues, or any other tracker. Runtime hooks/plugins publish configured tracker metadata into swarm KV when config is present; tracker use remains skill/config doctrine layered on top of swarm tasks.
+## Promotion and binding
 
-Agents must choose trackers in this order:
+Prefer linking an issue explicitly named by the user. Resolve it read-only and
+retain its UUID and human identifier without rewriting its title or description.
+Otherwise promote substantive human-facing deliverables only within an authorized
+tracking mandate and configured destination. Ephemeral messages, heartbeats, leases,
+worker availability and routine coordination stay in the coordinator. Promotion
+can be disabled entirely by choosing coordinator-only operation; no Linear server
+is required for the compact runtime.
 
-1. Use the tracker explicitly configured for the repo, swarm scope, launcher profile, or operator instruction.
-2. Verify the configured tracker matches the current `identity:<work|personal>` boundary.
-3. Verify the matching MCP surface is loaded in this process, such as `linear_work`, `linear_personal`, `jira_work`, or `github_personal`.
-4. If the configured same-identity tracker is missing, ask for relaunch, route to a same-identity peer that has it, or continue in swarm only and report that tracker updates were skipped.
+Use `(scope, taskId)` as the durable binding identity, never pane/process/session
+IDs. Retain the provider, issue UUID, identifier, designated writer and accepted
+source task version. If a create response is uncertain, inspect the destination
+for that binding before attempting another create; local command idempotency does
+not make a remote tracker call exactly-once. Defer unresolved promotion and keep
+runtime work moving.
 
-Do not infer tracker choice from whichever MCP happens to be available. Do not cross `identity:work` and `identity:personal`. Do not use ambiguous unsuffixed tracker MCP names when identity-specific names exist.
+## One writer, explicit versions
 
-## Config Sources
+One authorized writer owns each binding's tracker mutations. A worker may be that
+writer when its contract says so; a lead or bridge must not write concurrently as
+a backstop. Transfer writer authority explicitly, reconcile any in-flight remote
+request, and continue from the retained binding version. A local shared-key CAS
+can serialize binding changes, but it is not an atomic transaction with Linear.
 
-Hooks read tracker metadata from the first matching source they support:
+Before each write, read the current issue/comment and task state. Preserve newer
+human changes. Use the task's current `version` plus terminal `attemptId`/`fence`
+for provenance, and record the tracker's last observed `updatedAt`. If either
+changed, reconcile instead of replaying stale desired state. Without a remote
+conditional-write API this is a single-writer operating policy, not a claim that
+races with human edits are mechanically impossible.
 
-- identity env files sourced by launcher functions, usually `~/.config/swarm-mcp/work.env` or `~/.config/swarm-mcp/personal.env`
-- `SWARM_<runtime>_WORK_TRACKER`, for example `SWARM_CC_WORK_TRACKER` or `SWARM_CODEX_WORK_TRACKER`
-- `SWARM_WORK_TRACKER`
-- field env vars such as `SWARM_WORK_TRACKER_PROVIDER`, `SWARM_WORK_TRACKER_MCP`, and `SWARM_WORK_TRACKER_TEAM`
-- repo-local `.swarm-work-tracker` or `.swarm-work-tracker.json`
-- Hermes config `swarm.work_tracker`
+Post evidence when it changes what a human can assess: accepted result, meaningful
+failure, review finding or a concrete blocker. Retain the posted comment ID and
+source version so retries edit/reconcile the existing evidence instead of appending
+it twice. Do not mechanically mirror every local state change.
 
-The `swarm-mcp` repo ships examples in `env/`. Copy them to a local config directory and edit the copies:
+`completed` means the worker reported completion under a valid fence. Use the
+project's review/acceptance workflow to decide whether the issue is In Review or
+Done. Review acceptance, integration and deployment are separate facts and need
+their own evidence when required. For many swarm tasks bound to one issue, the
+writer evaluates the issue's full acceptance criteria; one finished child cannot
+close the parent. Failed/cancelled execution likewise does not automatically cancel
+a human request that still needs work.
 
-```sh
-mkdir -p ~/.config/swarm-mcp
-cp /path/to/swarm-mcp/env/work.env.example ~/.config/swarm-mcp/work.env
-cp /path/to/swarm-mcp/env/personal.env.example ~/.config/swarm-mcp/personal.env
-```
-
-Launcher aliases/functions should source the matching env file before starting the runtime.
-
-The value may be an identity-keyed JSON object:
-
-```json
-{
-  "work": {
-    "provider": "linear",
-    "mcp": "linear_work",
-    "team": "ENG"
-  },
-  "personal": {
-    "provider": "github_issues",
-    "mcp": "github_personal",
-    "repo": "Volpestyle/swarm-mcp"
-  }
-}
-```
-
-Or a direct tracker object when the launcher/config root already fixes identity:
-
-```json
-{
-  "provider": "linear",
-  "mcp": "linear_work",
-  "team": "ENG"
-}
-```
-
-Hooks publish the selected object to `config/work_tracker/<identity>` in swarm KV, for example `config/work_tracker/work`. `bootstrap` returns the matching `work_tracker` row for the current instance when present.
-
-## What Goes Where
-
-Use the work tracker for durable human-facing state:
-
-- original request and acceptance criteria
-- product priority and links
-- durable start, blocked, review, and completion comments
-- final summary, test status, PR/commit links, and unresolved risks
-
-Use swarm for live coordination:
-
-- worker heartbeats and presence
-- tasks, dependencies, claims, and terminal status
-- direct messages and wakeups
-- file locks
-- short-lived progress, ownership, and plan KV
-
-Do not mirror every swarm event into the tracker.
-
-## Concrete Loop
-
-For non-trivial human-trackable work:
-
-1. Determine the current identity from the launcher/config root and swarm label.
-2. Read `bootstrap.work_tracker` or `kv_get("config/work_tracker/<identity>")`.
-3. Create or link one tracker item only if the matching MCP is available and authorized.
-4. Create swarm task(s) for execution; include the tracker URL or ID in task descriptions or plan KV.
-5. Use swarm for assignment, dependencies, locks, messages, review tasks, and structured results.
-6. Update the tracker only at durable milestones or when the task contract grants tracker-update authority.
-7. For tracker-backed work, mark the swarm task with `tracker_required` when creating/dispatching it. Promotion-aware dispatch paths may set this automatically.
-8. Require `complete_task` results for tracker-backed work to include either `tracker_update` or `tracker_update_skipped`.
-9. If the tracker MCP is unavailable, keep coordination in swarm, include `tracker_update_skipped` in the final result, and notify the planner/gateway so a tracker-capable peer can finish the update.
-
-## Missing Or Ambiguous Config
-
-If no tracker is configured, use swarm only unless the operator explicitly asks to file or link an issue.
-
-If config points to one tracker but only a different tracker MCP is available, do not substitute it. Ask for a config fix, relaunch under the right identity, or delegate to a peer with the configured MCP.
+Legacy deployments use [legacy tracker guidance](legacy-work-trackers.md) for
+legacy configuration keys. Do not assume those hooks publish tracker configuration
+into the compact coordinator.

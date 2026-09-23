@@ -1,0 +1,275 @@
+bun test v1.3.11 (af24e281)
+
+test\coordination-batch.test.ts:
+(pass) batch isolates command failure and publishes only a durable combined cursor [47.00ms]
+(pass) batch process exit before_batch_commit preserves all receipts or none (bun) [141.00ms]
+(pass) batch process exit after_batch_commit preserves all receipts or none (bun) [156.00ms]
+(pass) batch process exit before_batch_commit preserves all receipts or none (node) [141.00ms]
+(pass) batch process exit after_batch_commit preserves all receipts or none (node) [140.00ms]
+
+test\coordination-boundaries.test.ts:
+(pass) domain core has no transitive MCP or host SDK runtime dependency
+(pass) thin IPC clients do not eagerly load the MCP server SDK
+
+test\coordination-claude-context.test.ts:
+(pass) Claude context proof follows the active branch and excludes quotes and compaction [16.00ms]
+
+test\coordination-claude-hook.test.ts:
+(pass) Claude hooks reject another native session before using its capability
+(pass) unsupported Claude events cannot claim a delivery boundary
+
+test\coordination-claude-launcher.test.ts:
+(pass) Claude hook settings preserve existing hooks and quote literal paths through the real shell [62.00ms]
+(pass) Claude launcher rejects invalid native identity before starting an owner
+
+test\coordination-claude-legacy.test.ts:
+(pass) legacy Claude entrypoints use launcher lifecycle and coordinator write leases without legacy CLI calls [1672.00ms]
+
+test\coordination-codex-context.test.ts:
+(pass) Codex retained context requires native identity and exact injected item, and rejects rewritten history [16.00ms]
+
+test\coordination-codex-launcher.test.ts:
+(pass) Codex resume rejects mismatched workspaces and loaded threads before enrollment [16.00ms]
+
+test\coordination-codex-lifecycle.test.ts:
+(pass) Codex status distinguishes blocked from busy and never closes on disconnection
+
+test\coordination-compatibility.test.ts:
+(pass) contract and configured skill validation distinguish stale, missing and unobserved
+(pass) different built clients reject a live owner without enrolling or replacing it [515.00ms]
+
+test\coordination-core.test.ts:
+(pass) coordination command boundary > oversized receipts and events roll back before acceptance [15.00ms]
+(pass) coordination command boundary > event byte pages retain every event and advance only through returned rows [32.00ms]
+(pass) coordination command boundary > commits task, event and reusable result together [15.00ms]
+(pass) coordination command boundary > same timestamps remain observable through ordered paginated cursors [16.00ms]
+(pass) coordination command boundary > cancel checks scope, creator and version inside its transaction [16.00ms]
+(pass) coordination command boundary > transaction failure rolls back state, event and command receipt [31.00ms]
+(pass) coordination command boundary > failed notification cannot turn a committed command into a failed acceptance [15.00ms]
+(pass) coordination command boundary > mutation without an event is rejected and rolled back [16.00ms]
+(pass) real process persistence and migration > identity inspection stays consistent when another connection commits migration between reads [16.00ms]
+(pass) real process persistence and migration > commit-before-publish crash is replayable after process restart (bun) [93.00ms]
+(pass) real process persistence and migration > commit-before-publish crash is replayable after process restart (node) [79.00ms]
+(pass) real process persistence and migration > process exit during migration leaves no adopted partial schema (bun) [78.00ms]
+(pass) real process persistence and migration > process exit during migration leaves no adopted partial schema (node) [78.00ms]
+(pass) real process persistence and migration > concurrent startup and repeated commands converge on one state change (bun) [172.00ms]
+(pass) real process persistence and migration > concurrent startup and repeated commands converge on one state change (node) [234.00ms]
+(pass) real process persistence and migration > legacy and newer databases are refused without rewriting their version [16.00ms]
+
+test\coordination-diagnostics.test.ts:
+(pass) diagnostics count real SQLite writer contention after rollback [5547.00ms]
+(pass) diagnostics distinguish processing, ack and stale runtime without disclosing content or credentials [31.00ms]
+
+test\coordination-dispatch-handoff.test.ts:
+(pass) native-to-peer handoff retains one contract and rejects the old owner [47.00ms]
+
+test\coordination-dispatch-peer.test.ts:
+(pass) existing peer completed from another Node process [125.00ms]
+(pass) existing peer cancelled from another Node process [140.00ms]
+
+test\coordination-dispatch-runner.test.ts:
+(pass) lost-response reconciles one task/worker across coordinator reopen without another start [125.00ms]
+(pass) timeout reconciles one task/worker across coordinator reopen without another start [141.00ms]
+
+test\coordination-dispatch.test.ts:
+(pass) concurrent Node dispatch reservations share one task and retain capacity across restart [203.00ms]
+
+test\coordination-evidence.test.ts:
+(pass) retention changes require the author and findings reject unstable provenance [15.00ms]
+(pass) immutable capture survives source removal/restart and replays the original receipt [47.00ms]
+(pass) metadata failure leaves no accepted reference and retry uses a complete blob [31.00ms]
+(pass) findings expose annotation freshness, provenance and missing/expired artifact references [32.00ms]
+(pass) artifact reads detect corruption and reject cross-scope references [31.00ms]
+(pass) task result provenance and explicit retention preserve control history [16.00ms]
+(pass) finding pagination and retention boundaries remain visible after restart [31.00ms]
+(pass) artifact before_command_commit process exit recovers without partial references (bun) [125.00ms]
+(pass) artifact after_command_commit process exit recovers without partial references (bun) [94.00ms]
+(pass) artifact before_command_commit process exit recovers without partial references (node) [93.00ms]
+(pass) artifact after_command_commit process exit recovers without partial references (node) [94.00ms]
+
+test\coordination-inbox-backlog.test.ts:
+(pass) uncertain wake does not hide later work or expiry behind an accepted wake [734.00ms]
+
+test\coordination-inbox-observer.test.ts:
+(pass) inbox observer reconnects to a restarted production owner without replacing identity [1454.00ms]
+(pass) observer bounds unavailable-owner retries and stop cancels backoff [2187.00ms]
+
+test\coordination-inbox.test.ts:
+(pass) fetch replay preserves the lease; acknowledgment is explicit and idempotent [31.00ms]
+(pass) active inbox pagination excludes terminal history without consuming work [594.00ms]
+(pass) recipient restart retains hour-old work and fences stale delivery tokens [31.00ms]
+(pass) bounded retry and backoff expose poison messages without blocking healthy work [31.00ms]
+(pass) explicit expiry keeps visible records and scoped announcements have separate deliveries [16.00ms]
+(pass) recipient quota is atomic for fanout and does not block independent recipients [15.00ms]
+(pass) untrusted command properties cannot replace the authorized scope or sender [16.00ms]
+(pass) version-one migration preserves tasks and rolls back interrupted schema changes [78.00ms]
+(pass) lost fetch and ack responses survive abrupt process exit (bun) [156.00ms]
+(pass) crashed consumer loses lease and eight concurrent consumers claim once (bun) [297.00ms]
+(pass) lost fetch and ack responses survive abrupt process exit (node) [141.00ms]
+(pass) crashed consumer loses lease and eight concurrent consumers claim once (node) [219.00ms]
+
+test\coordination-ipc.test.ts:
+(pass) inspect over IPC is bounded and derives scope from authorization [219.00ms]
+(pass) dispatch over authenticated IPC uses owner routes and deduplicates assignment [141.00ms]
+(pass) launcher enrollment is separate from agent authority and resume fences old transports [78.00ms]
+(pass) enrollment is unavailable unless the owner explicitly configures it [62.00ms]
+(pass) held event pages obey their limit without skipping the remaining events [125.00ms]
+(pass) task waits survive client disconnect without creating or cancelling work [78.00ms]
+(pass) artifact bytes, evidence links and shared context round trip through the owner [79.00ms]
+(pass) session capability fences task ownership over IPC after suspension [78.00ms]
+(pass) inbox leases and acknowledgments round trip through the authenticated owner [78.00ms]
+(pass) Bun client command and replay use the Node owner's durable core [62.00ms]
+(pass) held event wait wakes after a committed relevant event [78.00ms]
+(pass) capability binds actor and scope; invalid capability cannot mutate [63.00ms]
+(pass) disconnect rejects pending wait and reconnect replays committed events [78.00ms]
+(pass) Node owner rejects a duplicate named-pipe service without crashing [63.00ms]
+(pass) Node client uses the same command interface [78.00ms]
+
+test\coordination-launcher-state.test.ts:
+(pass) concurrent private-state writers publish one complete owner and resume identity [2750.00ms]
+(pass) malformed owner state is rejected without rotating credentials [1015.00ms]
+(pass) existing insecure state directories are refused without writing credentials [313.00ms]
+(pass) private state remains readable after an idle interval longer than the ACL subprocess deadline [12062.00ms]
+
+test\coordination-legacy-guard.test.ts:
+(pass) read-only guard rejects coordinator identity even at a legacy version [32.00ms]
+(pass) current legacy entrypoint rejects coordinator before bootstrap writes [62.00ms]
+(pass) historical b446c18 initializes its fixture but cannot touch coordinator through guard [250.00ms]
+(pass) historical b95f607 initializes its fixture but cannot touch coordinator through guard [266.00ms]
+
+test\coordination-legacy-import.test.ts:
+(pass) b446c18: import preserves data without resurrecting ownership [203.00ms]
+(pass) b95f607: import preserves data without resurrecting ownership [203.00ms]
+(pass) unmapped recipient and interrupted import never publish a usable candidate [172.00ms]
+(pass) Node import and abrupt exits before commit/publication preserve the cutover boundary [375.00ms]
+
+test\coordination-legacy-snapshot.test.ts:
+(pass) b446c18: WAL-consistent backup and fresh-path restore preserve historical state [140.00ms]
+(pass) b95f607: WAL-consistent backup and fresh-path restore preserve historical state [157.00ms]
+(pass) Node CLI backs up; corruption, incomplete manifests and stray sidecars fail closed [187.00ms]
+
+test\coordination-mcp-output.test.ts:
+(pass) success schemas require receipt metadata and reject error-only results
+(pass) wait schema requires a resumable reference and a recognized outcome
+
+test\coordination-mcp.test.ts:
+(pass) compact MCP executes durable workflows through the Node owner (modern) [1297.00ms]
+(pass) compact MCP executes durable workflows through the Node owner (legacy) [1000.00ms]
+
+test\coordination-notifications.test.ts:
+(pass) notification hints never forward another recipient's inbox activity
+
+test\coordination-opencode-context.test.ts:
+(pass) OpenCode context proof pages history and respects pruning, revert and compaction [15.00ms]
+
+test\coordination-opencode-dispatch.test.ts:
+(pass) OpenCode creation persists identity before enrollment (lost response=false) [63.00ms]
+(pass) OpenCode creation persists identity before enrollment (lost response=true) [31.00ms]
+
+test\coordination-opencode-observer.test.ts:
+(pass) observer bounds repeated snapshot failure and never reports readiness [2203.00ms]
+(pass) host disposal is terminal even after successful reconciliation
+(pass) explicit stop cancels reconnect without starting another subscription
+
+test\coordination-opencode-plugin.test.ts:
+(pass) OpenCode post-tool admission preserves explicit ack and suppresses repeated callbacks [2406.00ms]
+
+test\coordination-opencode-snapshot.test.ts:
+(pass) SDK snapshot reads large histories without losing timestamp ties [16.00ms]
+(pass) SDK snapshot refuses malformed cursors and saturated timestamp groups
+
+test\coordination-opencode-state.test.ts:
+(pass) new sessions can wake without a first prompt, but creation cannot erase newer state
+(pass) multiple host waits override status and a reply never authorizes idle wake
+(pass) reconnection discards stale idle and rebuilds pending waits before delivery
+
+test\coordination-opencode-wake.test.ts:
+(pass) uncertain wake reconciles retained intent (host persisted=false) without another POST [1062.00ms]
+(pass) uncertain wake reconciles retained intent (host persisted=true) without another POST [1063.00ms]
+(pass) each recovered delivery attempt gets one new wake, retained across adapter replacement [2093.00ms]
+
+test\coordination-owner-native.test.ts:
+(pass) configured native route resolves retained plugin identity without reenrollment [1578.00ms]
+
+test\coordination-owner.test.ts:
+(pass) production Node owner resumes durable launcher enrollment after restart [281.00ms]
+(pass) simultaneous launchers converge on one owner and reuse it without spawning [235.00ms]
+(pass) owner startup reports a missing runtime without an endless retry loop [31.00ms]
+
+test\coordination-queries.test.ts:
+(pass) bootstrap resumes from a scoped snapshot and summary pages omit large payloads [31.00ms]
+
+test\coordination-reservations.test.ts:
+(pass) multi-file acquisition is atomic and conflict includes actionable holder details [47.00ms]
+(pass) nested tools reuse enclosing grants without releasing them [31.00ms]
+(pass) expired and superseded holders cannot release or renew replacement grants [32.00ms]
+(pass) cross-worktree edits warn without physical serialization; integration is exclusive [31.00ms]
+(pass) task-bound grants expire with their attempt and checks reject stale fences [31.00ms]
+
+test\coordination-routing.test.ts:
+(pass) routing chooses the least overhead path meeting lifetime, host and capability constraints
+(pass) routing preserves blockers and refuses stale, unauthorized and cross-scope candidates
+
+test\coordination-runtime-delivery.test.ts:
+(pass) only committed pending work wakes an idle peer; duplicate hints coalesce [16.00ms]
+(pass) host admission does not acknowledge processing and concurrent boundaries share one lease [31.00ms]
+(pass) wake failure and uncertain admission retain work for recovery [16.00ms]
+(pass) stalled host admission times out without acknowledging or losing the lease [46.00ms]
+(pass) busy turns admit only at a supported post-tool boundary without waking [16.00ms]
+(pass) explicit host deferral requeues the lease and preserves a delivery backlog [31.00ms]
+
+test\coordination-runtime-launcher.test.ts:
+(pass) runtime launcher composes private state, owner startup, replay and fenced resume [4453.00ms]
+
+test\coordination-sessions.test.ts:
+(pass) restart adoption preserves identity and inbox but supersedes old session commands and reads [32.00ms]
+(pass) lost enrollment response replays without a new incarnation or persisted plaintext secrets [31.00ms]
+(pass) launcher identity canonicalizes paths and preserves configured profile roots
+(pass) project/profile binding is independent of labels and enrolled agents cannot omit session fencing [16.00ms]
+(pass) transport, runtime and progress observations remain independent through long tools and suspension [31.00ms]
+
+test\coordination-shared-context.test.ts:
+(pass) compare-and-set prevents lost updates and history survives restart [31.00ms]
+(pass) append is atomic, replay deduplicates and payload size stays bounded [16.00ms]
+(pass) expiry and deletion remain visible and cannot reset version numbers [31.00ms]
+(pass) prefix and history retrieval are bounded and paginated [31.00ms]
+(pass) eight concurrent writers preserve every append and accept one CAS (bun) [313.00ms]
+(pass) eight concurrent writers preserve every append and accept one CAS (node) [281.00ms]
+
+test\coordination-tasks.test.ts:
+(pass) task contracts survive restart and invalid creation rolls back for retry [47.00ms]
+(pass) bounded waits resume the same task without cancellation or duplicated attempts [47.00ms]
+(pass) completion racing with a wait timeout is observed without another mutation [31.00ms]
+(pass) expired ownership is recovered once and stale completion cannot overwrite its replacement [31.00ms]
+(pass) suspended owner is recoverable and cannot resume its old task attempt [31.00ms]
+(pass) lease renewal survives process exit before_command_commit (bun) [94.00ms]
+(pass) lease renewal survives process exit after_command_commit (bun) [94.00ms]
+(pass) lease renewal survives process exit before_command_commit (node) [78.00ms]
+(pass) lease renewal survives process exit after_command_commit (node) [78.00ms]
+(pass) long tool lease renewal is independent of heartbeat and model progress [31.00ms]
+(pass) restart adoption fences the old task attempt even before its lease expires [32.00ms]
+(pass) cancellation during work rejects late success and propagates dependency state through retry [31.00ms]
+(pass) failed attempts retain results across retry and task addressing remains scope-bound [31.00ms]
+(pass) simultaneous task claims accept exactly one owner (bun) [203.00ms]
+(pass) simultaneous task claims accept exactly one owner (node) [157.00ms]
+
+test\coordination-worktrees.test.ts:
+(pass) real Git worktrees share logical mapping while retaining separate physical files [265.00ms]
+(pass) new files resolve ancestor links and reject symlink escape and Git metadata
+
+test\coordination-write-hooks.test.ts:
+(pass) real pre/post hooks serialize competing subprocess writes and release the winning grant [579.00ms]
+(pass) integration critical section blocks another worktree's subprocess until release [281.00ms]
+(pass) opted-in hooks deny unknown path payloads and unreachable coordinators [234.00ms]
+(pass) Codex rename hook reserves source and destination atomically [391.00ms]
+(pass) Node owner recovers expired grants and rejects stale client release [94.00ms]
+
+test\mcp-protocol.test.ts:
+(pass) real stdio server serves legacy tools, resources and prompts [15390.00ms]
+(pass) real stdio server serves modern tools, resources and prompts [15656.00ms]
+(pass) modern stdio requires valid metadata on every request [297.00ms]
+
+ 173 pass
+ 0 fail
+ 1457 expect() calls
+Ran 173 tests across 48 files. [90.33s]

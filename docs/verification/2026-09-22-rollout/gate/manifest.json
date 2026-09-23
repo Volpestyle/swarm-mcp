@@ -1,0 +1,108 @@
+{
+  "startedAt": "2026-09-22T13:55:30.661Z",
+  "revision": "4621877878ee9cb0dad0b4aaccf453cb3c3756ff",
+  "workingTree": "M src/generated/protocol.ts",
+  "diffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "platform": "win32",
+  "arch": "x64",
+  "node": "v22.14.0",
+  "bun": "1.3.11",
+  "steps": [
+    {
+      "command": [
+        "bun",
+        "run",
+        "typecheck"
+      ],
+      "exitCode": 0,
+      "durationMs": 2319,
+      "log": "1.log"
+    },
+    {
+      "command": [
+        "bun",
+        "run",
+        "build"
+      ],
+      "exitCode": 0,
+      "durationMs": 172,
+      "log": "2.log"
+    },
+    {
+      "command": [
+        "bun",
+        "test",
+        "./test/coordination-batch.test.ts",
+        "./test/coordination-boundaries.test.ts",
+        "./test/coordination-claude-context.test.ts",
+        "./test/coordination-claude-hook.test.ts",
+        "./test/coordination-claude-launcher.test.ts",
+        "./test/coordination-claude-legacy.test.ts",
+        "./test/coordination-codex-context.test.ts",
+        "./test/coordination-codex-launcher.test.ts",
+        "./test/coordination-codex-lifecycle.test.ts",
+        "./test/coordination-compatibility.test.ts",
+        "./test/coordination-core.test.ts",
+        "./test/coordination-diagnostics.test.ts",
+        "./test/coordination-dispatch-handoff.test.ts",
+        "./test/coordination-dispatch-peer.test.ts",
+        "./test/coordination-dispatch-runner.test.ts",
+        "./test/coordination-dispatch.test.ts",
+        "./test/coordination-evidence.test.ts",
+        "./test/coordination-inbox-backlog.test.ts",
+        "./test/coordination-inbox-observer.test.ts",
+        "./test/coordination-inbox.test.ts",
+        "./test/coordination-ipc.test.ts",
+        "./test/coordination-launcher-state.test.ts",
+        "./test/coordination-legacy-guard.test.ts",
+        "./test/coordination-legacy-import.test.ts",
+        "./test/coordination-legacy-snapshot.test.ts",
+        "./test/coordination-mcp-output.test.ts",
+        "./test/coordination-mcp.test.ts",
+        "./test/coordination-notifications.test.ts",
+        "./test/coordination-opencode-context.test.ts",
+        "./test/coordination-opencode-dispatch.test.ts",
+        "./test/coordination-opencode-observer.test.ts",
+        "./test/coordination-opencode-plugin.test.ts",
+        "./test/coordination-opencode-snapshot.test.ts",
+        "./test/coordination-opencode-state.test.ts",
+        "./test/coordination-opencode-wake.test.ts",
+        "./test/coordination-owner-native.test.ts",
+        "./test/coordination-owner.test.ts",
+        "./test/coordination-queries.test.ts",
+        "./test/coordination-reservations.test.ts",
+        "./test/coordination-routing.test.ts",
+        "./test/coordination-runtime-delivery.test.ts",
+        "./test/coordination-runtime-launcher.test.ts",
+        "./test/coordination-sessions.test.ts",
+        "./test/coordination-shared-context.test.ts",
+        "./test/coordination-tasks.test.ts",
+        "./test/coordination-worktrees.test.ts",
+        "./test/coordination-write-hooks.test.ts",
+        "./test/mcp-protocol.test.ts"
+      ],
+      "exitCode": 0,
+      "durationMs": 90364,
+      "log": "3.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "unittest",
+        "integrations.hermes.test_lifecycle",
+        "integrations._shared.test_swarm_hook_core"
+      ],
+      "exitCode": 0,
+      "durationMs": 191,
+      "log": "4.log"
+    }
+  ],
+  "finishedAt": "2026-09-22T13:57:03.878Z",
+  "finalSource": {
+    "revision": "4621877878ee9cb0dad0b4aaccf453cb3c3756ff",
+    "workingTree": "M src/generated/protocol.ts",
+    "diffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "sourceChanged": false
+}

@@ -18,6 +18,7 @@ from typing import Any, Callable, Iterable, Optional
 
 PATCH_FILE_RE = re.compile(r"^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+?)\s*$", re.MULTILINE)
 PATCH_MOVE_RE = re.compile(r"^\*\*\*\s+Move\s+File:\s*(.+?)\s*->\s*(.+?)\s*$", re.MULTILINE)
+PATCH_MOVE_TO_RE = re.compile(r"^\*\*\*\s+Move\s+to:\s*(.+?)\s*$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,7 @@ def dedupe_paths(paths: Iterable[str]) -> list[str]:
 def apply_patch_paths(patch: str, cwd: Callable[[], str]) -> list[str]:
     paths: list[str] = []
     paths.extend(abs_path(match.group(1).strip(), cwd) for match in PATCH_FILE_RE.finditer(patch))
+    paths.extend(abs_path(match.group(1).strip(), cwd) for match in PATCH_MOVE_TO_RE.finditer(patch))
     for match in PATCH_MOVE_RE.finditer(patch):
         paths.append(abs_path(match.group(1).strip(), cwd))
         paths.append(abs_path(match.group(2).strip(), cwd))

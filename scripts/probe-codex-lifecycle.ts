@@ -1,0 +1,758 @@
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { build } from "esbuild";
+import { once } from "node:events";
+import { pathToFileURL } from "node:url";
+import { enrollRuntime } from "../src/coordination/runtime-launcher";
+import { CoordinationClient } from "../src/coordination/ipc";
+import {
+  resumeCodexThread,
+  resumeCodexRuntime,
+} from "../src/coordination/codex-launcher";
+import { CoordinationError } from "../src/coordination/errors";
+import {
+  codexContextItem,
+  hasCodexContext,
+} from "../src/coordination/codex-context";
+
+const [capture, executable, mode] = process.argv.slice(2);
+const expiryProbe = mode === "--lease-expiry";
+const deliveryProbe = mode === "--delivery" || expiryProbe;
+let modelInput: unknown;
+let modelRequests = 0;
+const modelServer = deliveryProbe
+  ? Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(request) {
+        if (new URL(request.url).pathname !== "/responses")
+          return new Response("Unknown route", { status: 404 });
+        if (++modelRequests > 2)
+          return new Response("Fixture request budget exceeded", {
+            status: 400,
+          });
+        const body = (await request.json()) as { input: unknown };
+        modelInput = body.input;
+        const item = {
+          type: "message",
+          id: "msg_fixture",
+          role: "assistant",
+          status: "completed",
+          content: [
+            {
+              type: "output_text",
+              text: "Fixture received context.",
+              annotations: [],
+            },
+          ],
+        };
+        const events = [
+          {
+            type: "response.created",
+            response: { id: "resp_fixture", status: "in_progress", output: [] },
+          },
+          { type: "response.output_item.done", output_index: 0, item },
+          {
+            type: "response.completed",
+            response: {
+              id: "resp_fixture",
+              status: "completed",
+              output: [item],
+              usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+            },
+          },
+        ];
+        return new Response(
+          events
+            .map(
+              (event) =>
+                `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+            )
+            .join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    })
+  : undefined;
+if (!capture || !executable)
+  throw new Error(
+    "Usage: probe-codex-lifecycle <capture.json> <native codex executable>",
+  );
+const root = mkdtempSync(join(tmpdir(), "swarm-codex-probe-"));
+const home = join(root, "codex");
+mkdirSync(home);
+mkdirSync(resolve("dist/test"), { recursive: true });
+const bundles = mkdtempSync(resolve("dist/test/codex-mcp-"));
+for (const name of ["owner-cli", "mcp-cli"])
+  await build({
+    entryPoints: [`src/coordination/${name}.ts`],
+    outfile: join(bundles, `${name}.mjs`),
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    packages: "external",
+  });
+const enrolled = await enrollRuntime({
+  stateDirectory: join(root, "private"),
+  nodePath: Bun.which("node")!,
+  ownerPath: join(bundles, "owner-cli.mjs"),
+  host: "codex",
+  hostSessionId: "app-server-fixture",
+  incarnation: "initial",
+  identity: {
+    projectRoot: root,
+    directory: root,
+    fileRoot: root,
+    profile: "fixture",
+    allowedRoots: [root],
+  },
+});
+const coordinator = await CoordinationClient.connect(
+  enrolled.environment.SWARM_COORDINATOR_ENDPOINT,
+  enrolled.environment.SWARM_SESSION_CAPABILITY,
+);
+const nativeContextPath = join(root, "native-context.json");
+const mcpWrapperPath = join(bundles, "inspect-context.mjs");
+writeFileSync(
+  mcpWrapperPath,
+  `import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(nativeContextPath)}, JSON.stringify({
+  threadId: process.env.CODEX_THREAD_ID ?? null,
+  sessionId: process.env.CODEX_SESSION_ID ?? null
+}));
+await import(${JSON.stringify(pathToFileURL(join(bundles, "mcp-cli.mjs")).href)});
+`,
+);
+writeFileSync(
+  join(home, "config.toml"),
+  `model = "fixture"
+model_provider = "fixture"
+[model_providers.fixture]
+name = "local fixture (no inference)"
+base_url = "http://127.0.0.1:${modelServer?.port ?? 1}"
+wire_api = "responses"
+requires_openai_auth = false
+[mcp_servers.swarm]
+command = ${JSON.stringify(Bun.which("node"))}
+args = [${JSON.stringify(mcpWrapperPath)}]
+env_vars = ["SWARM_COORDINATOR_ENDPOINT", "SWARM_SESSION_CAPABILITY"]
+`,
+);
+const configured = JSON.parse(
+  readFileSync("integrations/codex/plugins/swarm/hooks.json", "utf8"),
+);
+for (const groups of Object.values(configured.hooks) as Array<
+  Array<{ hooks: Array<{ command: string }> }>
+>)
+  for (const group of groups)
+    for (const hook of group.hooks)
+      hook.command = "node -e \"process.stdout.write('{}')\"";
+writeFileSync(join(home, "hooks.json"), JSON.stringify(configured));
+const env = Object.fromEntries(
+  Object.entries(process.env).filter(
+    ([key]) => !/^(CODEX|OPENAI|SWARM_|HERDR)/i.test(key),
+  ),
+);
+env.CODEX_HOME = home;
+Object.assign(env, enrolled.environment);
+const child = Bun.spawn({
+  cmd: [executable, "app-server"],
+  cwd: root,
+  env,
+  stdin: "pipe",
+  stdout: "pipe",
+  stderr: "pipe",
+});
+const pending = new Map<
+  number,
+  { resolve: (result: any) => void; reject: (error: Error) => void }
+>();
+const notices: string[] = [];
+const nativeListeners = new Set<(method: string, params: unknown) => void>();
+const disconnectListeners = new Set<() => void>();
+let sequence = 0;
+const send = (message: unknown) =>
+  child.stdin.write(JSON.stringify(message) + "\n");
+const read = (async () => {
+  let buffer = "";
+  for await (const chunk of child.stdout) {
+    buffer += new TextDecoder().decode(chunk);
+    let end: number;
+    while ((end = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, end);
+      buffer = buffer.slice(end + 1);
+      if (!line.trim()) continue;
+      const message = JSON.parse(line);
+      const wait = pending.get(message.id);
+      if (wait) {
+        pending.delete(message.id);
+        if (message.error)
+          wait.reject(new Error(JSON.stringify(message.error)));
+        else wait.resolve(message.result);
+      } else if (message.method) {
+        notices.push(message.method);
+        for (const listener of nativeListeners)
+          listener(message.method, message.params);
+      }
+    }
+  }
+  for (const listener of disconnectListeners) listener();
+})();
+const stderr = new Response(child.stderr).text();
+const call = (method: string, params: unknown) => {
+  const id = ++sequence;
+  return new Promise<any>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`Timed out: ${method}`));
+    }, 10000);
+    pending.set(id, {
+      resolve: (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      reject: (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    });
+    send({ id, method, params });
+  });
+};
+try {
+  const initialized = await call("initialize", {
+    clientInfo: { name: "swarm_lifecycle_probe", version: "1" },
+    capabilities: { experimentalApi: true },
+  });
+  send({ method: "initialized", params: {} });
+  const hooks = await call("hooks/list", { cwds: [root] });
+  const loaded = hooks.data[0];
+  if (
+    loaded.errors.length ||
+    loaded.hooks.length !== Object.keys(configured.hooks).length ||
+    !loaded.hooks.some(
+      (hook: { eventName: string }) => hook.eventName === "sessionEnd",
+    ) ||
+    loaded.hooks.some(
+      (hook: { eventName: string }) => hook.eventName === "stop",
+    )
+  )
+    throw new Error("Codex hook lifecycle mapping was not loaded correctly");
+  const started = await call("thread/start", {
+    cwd: root,
+    model: "fixture",
+    modelProvider: "fixture",
+    approvalPolicy: "never",
+    sandbox: "read-only",
+  });
+  const threadId = started.thread.id;
+  const inventory = await call("mcpServerStatus/list", {
+    threadId,
+    limit: 100,
+    detail: "toolsAndAuthOnly",
+  });
+  const swarm = inventory.data.find(
+    (server: { name: string }) => server.name === "swarm",
+  );
+  const tools = Object.keys(swarm?.tools ?? {}).sort();
+  if (!tools.includes("swarm_inbox"))
+    throw new Error("Codex did not discover the coordinator inbox tool");
+  const invoke = async (
+    tool: string,
+    arguments_: unknown,
+    targetThread = threadId,
+  ) => {
+    const result = await call("mcpServer/tool/call", {
+      threadId: targetThread,
+      server: "swarm",
+      tool,
+      arguments: arguments_,
+    });
+    if (result.isError) throw new Error("Codex MCP tool reported an error");
+    return result.structuredContent.data;
+  };
+  const sync = await invoke("swarm_sync", {});
+  if (sync.actor !== enrolled.actor)
+    throw new Error("Codex MCP actor mismatch");
+  const sent = (await coordinator.request({
+    op: "command",
+    command: {
+      id: "codex-mcp-message",
+      type: "message.send",
+      payload: {
+        recipient: enrolled.actor,
+        kind: "question",
+        body: "Codex native MCP roundtrip",
+      },
+    },
+  })) as { value: { messageId: string } };
+  const fetched = await invoke("swarm_inbox", {
+    commandId: "codex-fetch",
+    action: "fetch",
+    consumer: "codex-app-server-probe",
+  });
+  const lease = fetched.value.deliveries[0];
+  if (lease.message.id !== sent.value.messageId)
+    throw new Error("Codex fetched another message");
+  const beforeAck = (await coordinator.request({
+    op: "message_status",
+    messageId: lease.message.id,
+  })) as { deliveries: Array<{ state: string }> };
+  if (beforeAck.deliveries[0].state !== "leased")
+    throw new Error("Codex fetch did not retain an unacknowledged lease");
+  await invoke("swarm_inbox", {
+    commandId: "codex-ack",
+    action: "ack",
+    messageId: lease.message.id,
+    leaseToken: lease.leaseToken,
+  });
+  const status = (await coordinator.request({
+    op: "message_status",
+    messageId: lease.message.id,
+  })) as { deliveries: Array<{ state: string }> };
+  if (status.deliveries[0].state !== "acknowledged")
+    throw new Error("Codex MCP acknowledgment did not commit");
+  const peer = await enrollRuntime({
+    stateDirectory: join(root, "private"),
+    nodePath: Bun.which("node")!,
+    ownerPath: join(bundles, "owner-cli.mjs"),
+    host: "codex",
+    hostSessionId: "second-app-server-fixture",
+    incarnation: "initial",
+    identity: {
+      projectRoot: root,
+      directory: root,
+      fileRoot: root,
+      profile: "fixture",
+      allowedRoots: [root],
+    },
+  });
+  const peerThread = await call("thread/start", {
+    cwd: root,
+    model: "fixture",
+    modelProvider: "fixture",
+    approvalPolicy: "never",
+    sandbox: "read-only",
+    config: { "mcp_servers.swarm.env": peer.environment },
+  });
+  const peerSync = await invoke("swarm_sync", {}, peerThread.thread.id);
+  const originalSync = await invoke("swarm_sync", {});
+  if (
+    peerSync.actor !== peer.actor ||
+    originalSync.actor !== enrolled.actor ||
+    peer.actor === enrolled.actor
+  )
+    throw new Error("Codex thread-scoped MCP identities were not isolated");
+  const privateMessage = (await coordinator.request({
+    op: "command",
+    command: {
+      id: "codex-private-message",
+      type: "message.send",
+      payload: {
+        recipient: enrolled.actor,
+        kind: "question",
+        body: "Only the original actor may consume this",
+      },
+    },
+  })) as { value: { messageId: string } };
+  const peerInbox = await invoke(
+    "swarm_inbox",
+    {
+      commandId: "codex-peer-fetch",
+      action: "fetch",
+      consumer: "peer",
+    },
+    peerThread.thread.id,
+  );
+  if (peerInbox.value.deliveries.length !== 0)
+    throw new Error("Codex peer fetched another actor's inbox");
+  const privateStatus = (await coordinator.request({
+    op: "message_status",
+    messageId: privateMessage.value.messageId,
+  })) as { deliveries: Array<{ state: string }> };
+  if (privateStatus.deliveries[0].state !== "pending")
+    throw new Error("Peer fetch changed another actor's delivery");
+  await call("thread/unsubscribe", { threadId: peerThread.thread.id });
+  let nativeResume: unknown;
+  if (mode === "--resume" || deliveryProbe) {
+    await call("thread/inject_items", {
+      threadId,
+      items: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Native resume fixture" }],
+        },
+      ],
+    });
+    await call("thread/archive", { threadId });
+    await call("thread/unarchive", { threadId });
+    const nativeOptions = {
+      stateDirectory: join(root, "private"),
+      nodePath: Bun.which("node")!,
+      ownerPath: join(bundles, "owner-cli.mjs"),
+      mcpPath: join(bundles, "mcp-cli.mjs"),
+      hostSessionId: threadId,
+      incarnation: "native-first",
+      identity: {
+        projectRoot: root,
+        directory: root,
+        fileRoot: root,
+        profile: "fixture",
+        allowedRoots: [root],
+      },
+    };
+    const native = await resumeCodexThread(nativeOptions, call);
+    const nativeSync = await invoke("swarm_sync", {});
+    if (native.threadId !== threadId || nativeSync.actor !== native.actor)
+      throw new Error("Native Codex resume did not bind the native actor");
+    const loadedRefused = await resumeCodexThread(
+      { ...nativeOptions, incarnation: "must-not-enroll" },
+      call,
+    ).then(
+      () => false,
+      (error: Error) => error.message.includes("already loaded"),
+    );
+    if (!loadedRefused)
+      throw new Error("Loaded Codex thread was not protected");
+    await call("thread/archive", { threadId });
+    await call("thread/unarchive", { threadId });
+    const next = await resumeCodexRuntime(
+      { ...nativeOptions, incarnation: "native-second" },
+      {
+        call,
+        subscribe(notify, disconnected) {
+          nativeListeners.add(notify);
+          disconnectListeners.add(disconnected);
+          return () => {
+            nativeListeners.delete(notify);
+            disconnectListeners.delete(disconnected);
+          };
+        },
+      },
+    );
+    const initialAvailability = next.lifecycle.observe().state;
+    if (initialAvailability !== "idle")
+      throw new Error(
+        "Codex composed resume did not observe native idle state",
+      );
+    const oldClient = await CoordinationClient.connect(
+      native.environment.SWARM_COORDINATOR_ENDPOINT,
+      native.environment.SWARM_SESSION_CAPABILITY,
+    );
+    let oldCapabilityRejected: boolean;
+    try {
+      oldCapabilityRejected = await oldClient.request({ op: "bootstrap" }).then(
+        () => false,
+        (error: unknown) =>
+          error instanceof CoordinationError && error.code === "stale_session",
+      );
+    } finally {
+      oldClient.close();
+    }
+    if (
+      next.actor !== native.actor ||
+      next.generation !== native.generation + 1 ||
+      !oldCapabilityRejected
+    )
+      throw new Error("Codex resume failed identity or generation fencing");
+    const nativeClient = await CoordinationClient.connect(
+      next.environment.SWARM_COORDINATOR_ENDPOINT,
+      next.environment.SWARM_SESSION_CAPABILITY,
+    );
+    let deliveryEvidence: unknown;
+    try {
+      if (deliveryProbe) {
+        const deliveredMessage = (await coordinator.request({
+          op: "command",
+          command: {
+            id: "codex-context-message",
+            type: "message.send",
+            payload: {
+              recipient: next.actor,
+              kind: "question",
+              body: "Native Codex model context delivery fixture",
+            },
+          },
+        })) as { value: { messageId: string } };
+        const receipt = await invoke("swarm_inbox", {
+          commandId: "context-fetch",
+          action: "fetch",
+          consumer: "native-context-probe",
+        });
+        let deliveryLease = receipt.value.deliveries[0];
+        if (deliveryLease.message.id !== deliveredMessage.value.messageId)
+          throw new Error("Context lease mismatch");
+        const contextItem = codexContextItem(deliveryLease, false);
+        const envelope = contextItem.content[0].text;
+        await call("thread/inject_items", {
+          threadId,
+          items: [contextItem],
+        });
+        const runTurn = async () => {
+          let stop: () => void = () => {};
+          const completed = new Promise<any>((resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error("Codex fixture turn timed out")),
+              30000,
+            );
+            const listener = (method: string, params: any) => {
+              if (method === "turn/completed" && params.threadId === threadId) {
+                clearTimeout(timer);
+                nativeListeners.delete(listener);
+                resolve(params.turn);
+              }
+            };
+            nativeListeners.add(listener);
+            stop = () => {
+              clearTimeout(timer);
+              nativeListeners.delete(listener);
+            };
+          });
+          let turn;
+          try {
+            await call("turn/start", {
+              threadId,
+              input: [
+                { type: "text", text: "Process the pending fixture context." },
+              ],
+            });
+            turn = await completed;
+          } finally {
+            stop();
+          }
+          if (turn.status !== "completed")
+            throw new Error(
+              "Codex fixture turn did not complete: " +
+                JSON.stringify(turn.error),
+            );
+          return turn;
+        };
+        const turn = await runTurn();
+        const strings = (value: unknown): string[] =>
+          typeof value === "string"
+            ? [value]
+            : Array.isArray(value)
+              ? value.flatMap(strings)
+              : value && typeof value === "object"
+                ? Object.values(value).flatMap(strings)
+                : [];
+        const contextOccurrences = strings(modelInput).filter(
+          (text) => text === envelope,
+        ).length;
+        if (contextOccurrences !== 1)
+          throw new Error(
+            "Native model request did not contain exactly one delivery envelope",
+          );
+        const saved = await call("thread/read", { threadId });
+        const retained = await hasCodexContext(
+          saved.thread.path,
+          threadId,
+          root,
+          deliveryLease.message,
+          new AbortController().signal,
+        );
+        if (!retained)
+          throw new Error("Codex did not retain the injected item identity");
+        let renewalOccurrences: number | undefined;
+        if (expiryProbe) {
+          await Bun.sleep(
+            Math.max(0, deliveryLease.leaseUntil - Date.now()) + 1200,
+          );
+          await nativeClient.request({
+            op: "command",
+            command: {
+              id: "context-expiry-sweep",
+              type: "inbox.sweep",
+              payload: {},
+            },
+          });
+          await Bun.sleep(1200);
+          const renewed = await invoke("swarm_inbox", {
+            commandId: "context-refetch",
+            action: "fetch",
+            consumer: "native-context-probe",
+          });
+          const nextLease = renewed.value.deliveries[0];
+          if (
+            !nextLease ||
+            nextLease.message.id !== deliveryLease.message.id ||
+            nextLease.leaseToken === deliveryLease.leaseToken
+          )
+            throw new Error("Expired Codex lease was not renewed");
+          const snapshot = await call("thread/read", { threadId });
+          const present = await hasCodexContext(
+            snapshot.thread.path,
+            threadId,
+            root,
+            nextLease.message,
+            new AbortController().signal,
+          );
+          if (!present) throw new Error("Expired delivery lost native context");
+          const renewal = codexContextItem(nextLease, present);
+          await call("thread/inject_items", { threadId, items: [renewal] });
+          await runTurn();
+          renewalOccurrences = strings(modelInput).filter(
+            (text) => text === renewal.content[0].text,
+          ).length;
+          if (
+            renewalOccurrences !== 1 ||
+            strings(modelInput).filter((text) => text === envelope).length !== 1
+          )
+            throw new Error("Codex renewal duplicated or lost message context");
+          deliveryLease = nextLease;
+        }
+        const before = (await nativeClient.request({
+          op: "message_status",
+          messageId: deliveryLease.message.id,
+        })) as { deliveries: Array<{ state: string }> };
+        if (before.deliveries[0].state !== "leased")
+          throw new Error("Model turn implicitly acknowledged delivery");
+        await invoke("swarm_inbox", {
+          commandId: "context-ack",
+          action: "ack",
+          messageId: deliveryLease.message.id,
+          leaseToken: deliveryLease.leaseToken,
+        });
+        const after = (await nativeClient.request({
+          op: "message_status",
+          messageId: deliveryLease.message.id,
+        })) as { deliveries: Array<{ state: string }> };
+        if (after.deliveries[0].state !== "acknowledged")
+          throw new Error("Native context acknowledgment failed");
+        deliveryEvidence = {
+          modelRequests,
+          contextOccurrences,
+          retainedEnvelopeVerified: retained,
+          renewalOccurrences,
+          turnStatus: turn.status,
+          beforeAck: before.deliveries[0].state,
+          afterAck: after.deliveries[0].state,
+          acknowledgmentDriver:
+            "explicit app-server MCP call after scripted model turn",
+        };
+      }
+      let stopArchiveWait: () => void = () => {};
+      const archived = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("Native archive event timed out")),
+          10000,
+        );
+        const listener = (method: string, params: any) => {
+          if (method === "thread/archived" && params.threadId === threadId) {
+            clearTimeout(timer);
+            nativeListeners.delete(listener);
+            resolve();
+          }
+        };
+        nativeListeners.add(listener);
+        stopArchiveWait = () => {
+          clearTimeout(timer);
+          nativeListeners.delete(listener);
+        };
+      });
+      try {
+        await call("thread/archive", { threadId });
+        await archived;
+      } finally {
+        stopArchiveWait();
+      }
+      await next.settle();
+      const closedCapabilityRejected = await nativeClient
+        .request({ op: "bootstrap" })
+        .then(
+          () => false,
+          (error: unknown) =>
+            error instanceof CoordinationError &&
+            error.code === "stale_session",
+        );
+      if (!closedCapabilityRejected)
+        throw new Error(
+          "Native close did not revoke coordinator session: " +
+            JSON.stringify({
+              notices: [...new Set(notices)],
+              observation: next.lifecycle.observe(),
+            }),
+        );
+    } finally {
+      nativeClient.close();
+      await next.dispose();
+    }
+    nativeResume = {
+      sameThread: true,
+      actorMatched: true,
+      generations: [native.generation, next.generation],
+      loadedRefused,
+      oldCapabilityRejected,
+      nativeCloseRevoked: true,
+      automaticAttachment: true,
+      initialAvailability,
+      listenersReleased:
+        nativeListeners.size === 0 && disconnectListeners.size === 0,
+      deliveryEvidence,
+    };
+  }
+  const snapshot = await call("thread/read", { threadId }).catch(
+    (error: Error) => ({ error: error.message }),
+  );
+  const idleSteer = await call("turn/steer", {
+    threadId,
+    expectedTurnId: "not-active",
+    input: [{ type: "text", text: "fixture" }],
+  }).then(
+    () => "unexpected acceptance",
+    (error: Error) => error.message,
+  );
+  const unsubscribe = await call("thread/unsubscribe", { threadId });
+  const evidence = {
+    version: new TextDecoder()
+      .decode(Bun.spawnSync([executable, "--version"]).stdout)
+      .trim(),
+    initialized,
+    hooks,
+    threadId,
+    status: started.thread.status,
+    readBeforeFirstTurn: snapshot,
+    idleSteer,
+    unsubscribe,
+    notifications: [...new Set(notices)],
+    inferenceRequested: deliveryProbe,
+    nativeResume,
+    mcp: {
+      tools,
+      actorMatched: true,
+      stateBeforeExplicitAck: beforeAck.deliveries[0].state,
+      stateAfterExplicitAck: status.deliveries[0].state,
+      identityBinding:
+        "fixture enrollment; not automatic native-thread lifecycle",
+      nativeMcpContext: JSON.parse(readFileSync(nativeContextPath, "utf8")),
+      perThreadConfiguration: {
+        distinctActors: true,
+        originalBindingPreserved: true,
+        peerInboxEmpty: true,
+        originalMessageState: privateStatus.deliveries[0].state,
+      },
+      driver: "thread-scoped app-server MCP call; no model turn",
+    },
+  };
+  writeFileSync(capture, JSON.stringify(evidence, null, 2) + "\n");
+  if (idleSteer === "unexpected acceptance")
+    throw new Error("Idle steering unexpectedly accepted");
+  console.log(capture);
+} finally {
+  modelServer?.stop(true);
+  child.stdin.end();
+  const timeout = setTimeout(() => child.kill(), 3000);
+  await child.exited;
+  clearTimeout(timeout);
+  await read;
+  await stderr;
+  coordinator.close();
+  if (enrolled.launchedOwner) {
+    enrolled.launchedOwner.ref();
+    const exited = once(enrolled.launchedOwner, "exit");
+    enrolled.launchedOwner.kill();
+    await exited;
+  }
+}

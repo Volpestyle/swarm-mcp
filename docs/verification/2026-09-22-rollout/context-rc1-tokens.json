@@ -1,0 +1,70 @@
+﻿{
+  "tokenizer": "tiktoken 0.12.0 / o200k_base",
+  "measurement": "Explicit call name/arguments and text-result tokens. Schema JSON counted separately. Instruction counts are null when absent from historical captures. No hidden prompt framing, reasoning, caching adjustment or claim of a live model bill.",
+  "runs": [
+    {
+      "agents": 2,
+      "calls": 8,
+      "tools": 9,
+      "schemaTokensPerAgent": 2870,
+      "argumentTokens": 313,
+      "textResultTokens": 761,
+      "callsTokensTotal": 1074,
+      "withSchemaPerAgentTotal": 6814,
+      "byTool": {
+        "swarm_inbox": {
+          "calls": 4,
+          "textResultTokens": 438,
+          "minTextResultTokensPerCall": 56,
+          "maxTextResultTokensPerCall": 163
+        },
+        "swarm_send": {
+          "calls": 2,
+          "textResultTokens": 117,
+          "minTextResultTokensPerCall": 57,
+          "maxTextResultTokensPerCall": 60
+        },
+        "swarm_sync": {
+          "calls": 2,
+          "textResultTokens": 206,
+          "minTextResultTokensPerCall": 103,
+          "maxTextResultTokensPerCall": 103
+        }
+      },
+      "instructionsTokensPerAgent": 73,
+      "catalogAndInstructionsTokensPerAgent": 2943
+    },
+    {
+      "agents": 32,
+      "calls": 128,
+      "tools": 9,
+      "schemaTokensPerAgent": 2870,
+      "argumentTokens": 5107,
+      "textResultTokens": 12263,
+      "callsTokensTotal": 17370,
+      "withSchemaPerAgentTotal": 109210,
+      "byTool": {
+        "swarm_inbox": {
+          "calls": 64,
+          "textResultTokens": 7101,
+          "minTextResultTokensPerCall": 55,
+          "maxTextResultTokensPerCall": 169
+        },
+        "swarm_send": {
+          "calls": 32,
+          "textResultTokens": 1866,
+          "minTextResultTokensPerCall": 56,
+          "maxTextResultTokensPerCall": 62
+        },
+        "swarm_sync": {
+          "calls": 32,
+          "textResultTokens": 3296,
+          "minTextResultTokensPerCall": 103,
+          "maxTextResultTokensPerCall": 103
+        }
+      },
+      "instructionsTokensPerAgent": 73,
+      "catalogAndInstructionsTokensPerAgent": 2943
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "root": "C:\\Users\\volpe\\swarm-mcp-redesign",
+  "fixture": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-baseline-loss-nQqTVF",
+  "schema": {
+    "user_version": 1
+  },
+  "lostResponse": {
+    "fetched": 1,
+    "retry": 0
+  },
+  "unreadExpiry": {
+    "before": 1,
+    "after": 0
+  },
+  "staleRecipient": {
+    "before": 1,
+    "after": 0
+  }
+}

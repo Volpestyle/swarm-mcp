@@ -1,0 +1,15 @@
+Captured from the final `bun test test/coordination-ipc.test.ts` tool output:
+
+(pass) session capability fences task ownership over IPC after suspension [265.00ms]
+(pass) inbox leases and acknowledgments round trip through the authenticated owner [250.00ms]
+(pass) Bun client command and replay use the Node owner's durable core [266.00ms]
+(pass) held event wait wakes after a committed relevant event [250.00ms]
+(pass) capability binds actor and scope; invalid capability cannot mutate [250.00ms]
+(pass) disconnect rejects pending wait and reconnect replays committed events [250.00ms]
+(pass) Node owner rejects a duplicate named-pipe service without crashing [250.00ms]
+(pass) Node client uses the same command interface [266.00ms]
+
+8 pass
+0 fail
+17 expect() calls
+Ran 8 tests across 1 file. [2.12s]

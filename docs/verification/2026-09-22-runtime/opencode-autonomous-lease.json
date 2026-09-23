@@ -1,0 +1,2732 @@
+{
+  "binary": "C:/Users/volpe/.bun/install/global/node_modules/opencode-windows-x64/bin/opencode.exe",
+  "root": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+  "sessions": [
+    "ses_f37981340ffevccxou7mTA2sTN",
+    "ses_f37977996ffe7K3LunZXrzzq3r"
+  ],
+  "coordinatorSessions": [
+    {
+      "agent_id": "11d335e4-81f1-4904-95e7-dd6a71425fd9",
+      "generation": 1,
+      "state": "superseded"
+    },
+    {
+      "agent_id": "11d335e4-81f1-4904-95e7-dd6a71425fd9",
+      "generation": 2,
+      "state": "closed"
+    },
+    {
+      "agent_id": "e2bafdd4-7518-4a87-85fa-6559c5fef677",
+      "generation": 1,
+      "state": "closed"
+    }
+  ],
+  "shellEvidence": {
+    "marker": "swarm-shell-probe",
+    "snapshot": {
+      "scope": "dc9b7b000232acc40e2db16d0b67a951eb0fd8e35a5649291d190379f91b4269",
+      "actor": "11d335e4-81f1-4904-95e7-dd6a71425fd9",
+      "eventCursor": 3,
+      "tasks": {
+        "items": [],
+        "cursor": 0
+      },
+      "inbox": []
+    },
+    "keys": [
+      "SWARM_COORDINATOR_ENDPOINT",
+      "SWARM_PROBE_EVENTS",
+      "SWARM_SESSION_CAPABILITY"
+    ]
+  },
+  "deliveryEvidence": {
+    "persistedContext": [
+      true,
+      true
+    ],
+    "leaseExpiryProbe": true,
+    "autonomousLeaseRecovery": true,
+    "leaseRefreshState": "acknowledged",
+    "wake": {
+      "busyDeferred": true,
+      "autonomousFromInboxEvent": true,
+      "modelRequests": 1,
+      "wakeMessageId": "msg_0c868054e00135464f231c5b54",
+      "inboxState": "leased",
+      "payloadReachedModelAtTurnStart": true
+    },
+    "promptQueuedWhileBusy": true,
+    "modelWaitedForShell": true,
+    "scriptedLocalModel": true,
+    "requests": 6,
+    "toolResultReachedModel": true,
+    "messageId": "3d2cbcb6-4c1f-484a-8c1e-907ed8ef8de5",
+    "stateRecoveredAfterAutomaticReconnect": "blocked",
+    "stateWhilePermissionBlocked": "pending",
+    "stateAfterAdmission": "leased",
+    "stateAfterExplicitAck": "acknowledged"
+  },
+  "createdEvents": 1,
+  "recorded": [
+    {
+      "type": "plugin.loaded",
+      "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5"
+    },
+    {
+      "type": "coordination.enrolled",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "actor": "11d335e4-81f1-4904-95e7-dd6a71425fd9"
+    },
+    {
+      "type": "availability.unsupported",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "Host snapshot in progress"
+    },
+    {
+      "type": "observer.reconciled"
+    },
+    {
+      "type": "server.instance.disposed",
+      "properties": {
+        "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5"
+      }
+    },
+    {
+      "type": "observer.disconnected"
+    },
+    {
+      "type": "plugin.loaded",
+      "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5"
+    },
+    {
+      "type": "coordination.enrolled",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "actor": "11d335e4-81f1-4904-95e7-dd6a71425fd9"
+    },
+    {
+      "type": "availability.unsupported",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "Host snapshot in progress"
+    },
+    {
+      "type": "observer.reconciled"
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c867fc040012A7KjPX35XPE1c",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "time": {
+            "created": 1790068653060
+          },
+          "role": "user",
+          "agent": "build",
+          "model": {
+            "providerID": "probe",
+            "modelID": "no-inference"
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "text",
+          "id": "prt_0c867fc08001PmilLjpPVYRchc",
+          "messageID": "msg_0c867fc040012A7KjPX35XPE1c",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "text": "The following tool was executed by the user",
+          "synthetic": true
+        },
+        "time": 1790068653064
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c867fc090016qjaoV8upuLFRh",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "parentID": "msg_0c867fc040012A7KjPX35XPE1c",
+          "mode": "build",
+          "agent": "build",
+          "cost": 0,
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "time": {
+            "created": 1790068653065
+          },
+          "role": "assistant",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "no-inference",
+          "providerID": "probe"
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "id": "prt_0c867fc0a001ya1LZwiuqfkY0o",
+          "messageID": "msg_0c867fc090016qjaoV8upuLFRh",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "tool": "bash",
+          "callID": "01M346FZ0AEAK7GANVGDP04KRH",
+          "state": {
+            "status": "running",
+            "time": {
+              "start": 1790068653066
+            },
+            "input": {
+              "command": "node \"C:/Users/volpe/swarm-mcp-redesign/dist/test/runtime-shell-probe.mjs\" \"C:/Users/volpe/AppData/Local/Temp/swarm-opencode-probe-O4uYD5/shell-barrier\""
+            }
+          }
+        },
+        "time": 1790068653067
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "role": "user",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "time": {
+            "created": 1790068653437
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "fixture",
+            "modelID": "probe"
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "text",
+          "text": "Read fixture.txt once.",
+          "messageID": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "id": "prt_0c867fd7d002LJdJfKgbk63ibX"
+        },
+        "time": 1790068653440
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068653441
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "id": "prt_0c867fc0a001ya1LZwiuqfkY0o",
+          "messageID": "msg_0c867fc090016qjaoV8upuLFRh",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "tool": "bash",
+          "callID": "01M346FZ0AEAK7GANVGDP04KRH",
+          "state": {
+            "status": "running",
+            "time": {
+              "start": 1790068653066
+            },
+            "input": {
+              "command": "node \"C:/Users/volpe/swarm-mcp-redesign/dist/test/runtime-shell-probe.mjs\" \"C:/Users/volpe/AppData/Local/Temp/swarm-opencode-probe-O4uYD5/shell-barrier\""
+            },
+            "metadata": {
+              "output": "{\"marker\":\"swarm-shell-probe\",\"snapshot\":{\"scope\":\"dc9b7b000232acc40e2db16d0b67a951eb0fd8e35a5649291d190379f91b4269\",\"actor\":\"11d335e4-81f1-4904-95e7-dd6a71425fd9\",\"eventCursor\":3,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"keys\":[\"SWARM_COORDINATOR_ENDPOINT\",\"SWARM_PROBE_EVENTS\",\"SWARM_SESSION_CAPABILITY\"]}\n",
+              "description": ""
+            }
+          }
+        },
+        "time": 1790068653495
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c867fc090016qjaoV8upuLFRh",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "parentID": "msg_0c867fc040012A7KjPX35XPE1c",
+          "mode": "build",
+          "agent": "build",
+          "cost": 0,
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "time": {
+            "created": 1790068653065,
+            "completed": 1790068653857
+          },
+          "role": "assistant",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "no-inference",
+          "providerID": "probe"
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "id": "prt_0c867fc0a001ya1LZwiuqfkY0o",
+          "messageID": "msg_0c867fc090016qjaoV8upuLFRh",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "tool": "bash",
+          "callID": "01M346FZ0AEAK7GANVGDP04KRH",
+          "state": {
+            "status": "completed",
+            "time": {
+              "start": 1790068653066,
+              "end": 1790068653858
+            },
+            "input": {
+              "command": "node \"C:/Users/volpe/swarm-mcp-redesign/dist/test/runtime-shell-probe.mjs\" \"C:/Users/volpe/AppData/Local/Temp/swarm-opencode-probe-O4uYD5/shell-barrier\""
+            },
+            "title": "",
+            "metadata": {
+              "output": "{\"marker\":\"swarm-shell-probe\",\"snapshot\":{\"scope\":\"dc9b7b000232acc40e2db16d0b67a951eb0fd8e35a5649291d190379f91b4269\",\"actor\":\"11d335e4-81f1-4904-95e7-dd6a71425fd9\",\"eventCursor\":3,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"keys\":[\"SWARM_COORDINATOR_ENDPOINT\",\"SWARM_PROBE_EVENTS\",\"SWARM_SESSION_CAPABILITY\"]}\n",
+              "description": ""
+            },
+            "output": "{\"marker\":\"swarm-shell-probe\",\"snapshot\":{\"scope\":\"dc9b7b000232acc40e2db16d0b67a951eb0fd8e35a5649291d190379f91b4269\",\"actor\":\"11d335e4-81f1-4904-95e7-dd6a71425fd9\",\"eventCursor\":3,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"keys\":[\"SWARM_COORDINATOR_ENDPOINT\",\"SWARM_PROBE_EVENTS\",\"SWARM_SESSION_CAPABILITY\"]}\n"
+          }
+        },
+        "time": 1790068653858
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c867ff27001soFMVsV3Sq345O",
+          "parentID": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068653863
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068653913
+          }
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c867ff74001RwI3qcoIa5G6rq",
+          "messageID": "msg_0c867ff27001soFMVsV3Sq345O",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "step-start"
+        },
+        "time": 1790068653940
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c867ff75001z3dc4Fj7P10Ror",
+          "messageID": "msg_0c867ff27001soFMVsV3Sq345O",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "tool",
+          "tool": "read",
+          "callID": "call_fixture_read",
+          "state": {
+            "status": "pending",
+            "input": {},
+            "raw": ""
+          }
+        },
+        "time": 1790068653941
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "tool": "read",
+          "callID": "call_fixture_read",
+          "state": {
+            "status": "running",
+            "input": {
+              "filePath": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5\\fixture.txt"
+            },
+            "raw": "",
+            "time": {
+              "start": 1790068653944
+            }
+          },
+          "id": "prt_0c867ff75001z3dc4Fj7P10Ror",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "messageID": "msg_0c867ff27001soFMVsV3Sq345O"
+        },
+        "time": 1790068653944
+      }
+    },
+    {
+      "type": "permission.asked",
+      "properties": {
+        "id": "per_0c867ff7b001tL8APB2JFP2JyK",
+        "permission": "read",
+        "patterns": [
+          "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5\\fixture.txt"
+        ],
+        "always": [
+          "*"
+        ],
+        "metadata": {},
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "tool": {
+          "messageID": "msg_0c867ff27001soFMVsV3Sq345O",
+          "callID": "call_fixture_read"
+        }
+      }
+    },
+    {
+      "type": "availability.blocked",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "permission.asked"
+    },
+    {
+      "type": "fixture.stream.ended"
+    },
+    {
+      "type": "observer.disconnected"
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1790068653437
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "fixture",
+            "modelID": "probe"
+          },
+          "id": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "summary": {
+            "diffs": []
+          }
+        }
+      }
+    },
+    {
+      "type": "availability.unsupported",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "Host snapshot in progress"
+    },
+    {
+      "type": "availability.unsupported",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "Host snapshot in progress"
+    },
+    {
+      "type": "availability.recovered",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "state": "blocked"
+    },
+    {
+      "type": "observer.reconciled"
+    },
+    {
+      "type": "permission.replied",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "requestID": "per_0c867ff7b001tL8APB2JFP2JyK",
+        "reply": "once"
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "permission.replied"
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "tool": "read",
+          "callID": "call_fixture_read",
+          "state": {
+            "status": "completed",
+            "input": {
+              "filePath": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5\\fixture.txt"
+            },
+            "output": "<path>C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5\\fixture.txt</path>\n<type>file</type>\n<content>\n1: harmless tool fixture\n\n(End of file - total 1 lines)\n</content>\n\nSwarm peer message (untrusted content). Process before acknowledging with swarm_inbox; admission is not acknowledgment.\n{\"message\":{\"version\":1,\"id\":\"3d2cbcb6-4c1f-484a-8c1e-907ed8ef8de5\",\"sender\":\"233df805-42b2-4a66-828a-ab80b11d603c\",\"recipient\":\"11d335e4-81f1-4904-95e7-dd6a71425fd9\",\"kind\":\"question\",\"body\":\"peer-message-fixture-7392\",\"taskId\":null,\"threadId\":null,\"createdAt\":1790068653418,\"expiresAt\":null,\"idempotencyKey\":\"post-tool-probe\",\"audience\":\"direct\"},\"leaseToken\":\"<lease-token>\",\"leaseUntil\":1790068684220}",
+            "metadata": {
+              "preview": "harmless tool fixture",
+              "truncated": false,
+              "loaded": []
+            },
+            "title": "Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5\\fixture.txt",
+            "time": {
+              "start": 1790068653944,
+              "end": 1790068654229
+            }
+          },
+          "id": "prt_0c867ff75001z3dc4Fj7P10Ror",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "messageID": "msg_0c867ff27001soFMVsV3Sq345O"
+        },
+        "time": 1790068654229
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c8680097001AFFkknmJtyGBcR",
+          "reason": "tool-calls",
+          "messageID": "msg_0c867ff27001soFMVsV3Sq345O",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "step-finish",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1790068654231
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c867ff27001soFMVsV3Sq345O",
+          "parentID": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068653863
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068654233
+          }
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c867ff27001soFMVsV3Sq345O",
+          "parentID": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068653863,
+            "completed": 1790068654236
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c868009d001ZcR9OPbm41JOIz",
+          "parentID": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068654237
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        }
+      }
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1790068653437
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "fixture",
+            "modelID": "probe"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c86800b00012lwU2g0AVf9apA",
+          "messageID": "msg_0c868009d001ZcR9OPbm41JOIz",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "step-start"
+        },
+        "time": 1790068654256
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c86800b1001sHbJNS7y3Y4vQI",
+          "messageID": "msg_0c868009d001ZcR9OPbm41JOIz",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_fixture_ack",
+          "state": {
+            "status": "pending",
+            "input": {},
+            "raw": ""
+          }
+        },
+        "time": 1790068654257
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_fixture_ack",
+          "state": {
+            "status": "running",
+            "input": {
+              "command": "node \"C:/Users/volpe/swarm-mcp-redesign/dist/test/runtime-ack-probe.mjs\" 3d2cbcb6-4c1f-484a-8c1e-907ed8ef8de5 <lease-token>",
+              "description": "Acknowledge processed fixture message"
+            },
+            "raw": "",
+            "time": {
+              "start": 1790068654262
+            }
+          },
+          "id": "prt_0c86800b1001sHbJNS7y3Y4vQI",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "messageID": "msg_0c868009d001ZcR9OPbm41JOIz"
+        },
+        "time": 1790068654262
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_fixture_ack",
+          "state": {
+            "metadata": {
+              "output": "",
+              "description": "Acknowledge processed fixture message"
+            },
+            "status": "running",
+            "input": {
+              "command": "node \"C:/Users/volpe/swarm-mcp-redesign/dist/test/runtime-ack-probe.mjs\" 3d2cbcb6-4c1f-484a-8c1e-907ed8ef8de5 <lease-token>",
+              "description": "Acknowledge processed fixture message"
+            },
+            "time": {
+              "start": 1790068654276
+            }
+          },
+          "id": "prt_0c86800b1001sHbJNS7y3Y4vQI",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "messageID": "msg_0c868009d001ZcR9OPbm41JOIz"
+        },
+        "time": 1790068654276
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_fixture_ack",
+          "state": {
+            "metadata": {
+              "output": "swarm-fixture-acknowledged\n",
+              "description": "Acknowledge processed fixture message"
+            },
+            "status": "running",
+            "input": {
+              "command": "node \"C:/Users/volpe/swarm-mcp-redesign/dist/test/runtime-ack-probe.mjs\" 3d2cbcb6-4c1f-484a-8c1e-907ed8ef8de5 <lease-token>",
+              "description": "Acknowledge processed fixture message"
+            },
+            "time": {
+              "start": 1790068654485
+            }
+          },
+          "id": "prt_0c86800b1001sHbJNS7y3Y4vQI",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "messageID": "msg_0c868009d001ZcR9OPbm41JOIz"
+        },
+        "time": 1790068654485
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_fixture_ack",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "node \"C:/Users/volpe/swarm-mcp-redesign/dist/test/runtime-ack-probe.mjs\" 3d2cbcb6-4c1f-484a-8c1e-907ed8ef8de5 <lease-token>",
+              "description": "Acknowledge processed fixture message"
+            },
+            "output": "swarm-fixture-acknowledged\n",
+            "metadata": {
+              "output": "swarm-fixture-acknowledged\n",
+              "exit": 0,
+              "description": "Acknowledge processed fixture message",
+              "truncated": false
+            },
+            "title": "Acknowledge processed fixture message",
+            "time": {
+              "start": 1790068654485,
+              "end": 1790068654842
+            }
+          },
+          "id": "prt_0c86800b1001sHbJNS7y3Y4vQI",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "messageID": "msg_0c868009d001ZcR9OPbm41JOIz"
+        },
+        "time": 1790068654842
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c8680309001K3Gs2w24cL885j",
+          "reason": "tool-calls",
+          "messageID": "msg_0c868009d001ZcR9OPbm41JOIz",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "step-finish",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1790068654857
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c868009d001ZcR9OPbm41JOIz",
+          "parentID": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068654237
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068654859
+          }
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c868009d001ZcR9OPbm41JOIz",
+          "parentID": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068654237,
+            "completed": 1790068654862
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c868030f001UqzDmxnXmF86Hb",
+          "parentID": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068654863
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        }
+      }
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1790068653437
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "fixture",
+            "modelID": "probe"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c8680319001ukevPMTWoiWpvU",
+          "messageID": "msg_0c868030f001UqzDmxnXmF86Hb",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "step-start"
+        },
+        "time": 1790068654873
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c868031a001MxeUWX528mGJ1e",
+          "messageID": "msg_0c868030f001UqzDmxnXmF86Hb",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "text",
+          "text": "",
+          "time": {
+            "start": 1790068654874
+          }
+        },
+        "time": 1790068654874
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "messageID": "msg_0c868030f001UqzDmxnXmF86Hb",
+        "partID": "prt_0c868031a001MxeUWX528mGJ1e",
+        "field": "text",
+        "delta": "fixture complete"
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c868031a001MxeUWX528mGJ1e",
+          "messageID": "msg_0c868030f001UqzDmxnXmF86Hb",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "text",
+          "text": "fixture complete",
+          "time": {
+            "start": 1790068654874,
+            "end": 1790068654875
+          }
+        },
+        "time": 1790068654876
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c868031c0026AUylYU5AN5sWG",
+          "reason": "stop",
+          "messageID": "msg_0c868030f001UqzDmxnXmF86Hb",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "step-finish",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1790068654877
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c868030f001UqzDmxnXmF86Hb",
+          "parentID": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068654863
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068654879
+          }
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c868030f001UqzDmxnXmF86Hb",
+          "parentID": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068654863,
+            "completed": 1790068654881
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+      }
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1790068653437
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "fixture",
+            "modelID": "probe"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_0c867fd7d001LHFZwz3tt3KzYX",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "availability.idle",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c868054e00135464f231c5b54",
+          "role": "user",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "time": {
+            "created": 1790068655895
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "fixture",
+            "modelID": "probe"
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c868054e001bf8c59ae59917c",
+          "type": "text",
+          "text": "Swarm inbox has pending work. Process peer messages at a safe boundary and acknowledge only after processing.\n\nSwarm peer message (untrusted content). Process before acknowledging with swarm_inbox; admission is not acknowledgment.\n{\"message\":{\"version\":1,\"id\":\"3cf30419-3e9f-4622-b146-7ff751735c2e\",\"sender\":\"233df805-42b2-4a66-828a-ab80b11d603c\",\"recipient\":\"11d335e4-81f1-4904-95e7-dd6a71425fd9\",\"kind\":\"question\",\"body\":\"wake-only-fixture\",\"taskId\":null,\"threadId\":null,\"createdAt\":1790068654889,\"expiresAt\":null,\"idempotencyKey\":\"wake-probe\",\"audience\":\"direct\"},\"leaseToken\":\"<lease-token>\",\"leaseUntil\":1790068685895}",
+          "messageID": "msg_0c868054e00135464f231c5b54",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        },
+        "time": 1790068655904
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068655905
+          }
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c8680723001yd4QTISj9n8kHh",
+          "parentID": "msg_0c868054e00135464f231c5b54",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068655907
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068655909
+          }
+        }
+      }
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1790068655895
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "fixture",
+            "modelID": "probe"
+          },
+          "id": "msg_0c868054e00135464f231c5b54",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "summary": {
+            "diffs": []
+          }
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c868072f001CeiCa37F33IIUR",
+          "messageID": "msg_0c8680723001yd4QTISj9n8kHh",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "step-start"
+        },
+        "time": 1790068655919
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c8680730001TS836yFhhVBrx9",
+          "messageID": "msg_0c8680723001yd4QTISj9n8kHh",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "text",
+          "text": "",
+          "time": {
+            "start": 1790068655920
+          }
+        },
+        "time": 1790068655920
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "messageID": "msg_0c8680723001yd4QTISj9n8kHh",
+        "partID": "prt_0c8680730001TS836yFhhVBrx9",
+        "field": "text",
+        "delta": "fixture complete"
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c8680730001TS836yFhhVBrx9",
+          "messageID": "msg_0c8680723001yd4QTISj9n8kHh",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "text",
+          "text": "fixture complete",
+          "time": {
+            "start": 1790068655920,
+            "end": 1790068655921
+          }
+        },
+        "time": 1790068655921
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c8680732001YdWlZp9hXoeutN",
+          "reason": "stop",
+          "messageID": "msg_0c8680723001yd4QTISj9n8kHh",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "step-finish",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1790068655922
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c8680723001yd4QTISj9n8kHh",
+          "parentID": "msg_0c868054e00135464f231c5b54",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068655907
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068655923
+          }
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c8680723001yd4QTISj9n8kHh",
+          "parentID": "msg_0c868054e00135464f231c5b54",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068655907,
+            "completed": 1790068655925
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+      }
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1790068655895
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "fixture",
+            "modelID": "probe"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_0c868054e00135464f231c5b54",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "availability.idle",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c86881fb001b576289ec20056",
+          "role": "user",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "time": {
+            "created": 1790068687763
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "fixture",
+            "modelID": "probe"
+          }
+        }
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c86881fb0011691b5eec82710",
+          "type": "text",
+          "text": "Swarm inbox has pending work. Process peer messages at a safe boundary and acknowledge only after processing.\n\nSwarm delivery lease renewed for a peer message already in this context. Use this token only after processing that message; do not repeat completed effects.\n{\"messageId\":\"3cf30419-3e9f-4622-b146-7ff751735c2e\",\"leaseToken\":\"<lease-token>\",\"leaseUntil\":1790068717763,\"attempt\":2}",
+          "messageID": "msg_0c86881fb001b576289ec20056",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        },
+        "time": 1790068687771
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068687771
+          }
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c868839d001srgxZ1jGH52YOR",
+          "parentID": "msg_0c86881fb001b576289ec20056",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068687774
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068687775
+          }
+        }
+      }
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1790068687763
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "fixture",
+            "modelID": "probe"
+          },
+          "id": "msg_0c86881fb001b576289ec20056",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "summary": {
+            "diffs": []
+          }
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c86883a9001YAjg2CJe3whTni",
+          "messageID": "msg_0c868839d001srgxZ1jGH52YOR",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "step-start"
+        },
+        "time": 1790068687785
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c86883a9003ygUxXmtc7Zl3YK",
+          "messageID": "msg_0c868839d001srgxZ1jGH52YOR",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_fixture_ack",
+          "state": {
+            "status": "pending",
+            "input": {},
+            "raw": ""
+          }
+        },
+        "time": 1790068687786
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_fixture_ack",
+          "state": {
+            "status": "running",
+            "input": {
+              "command": "node \"C:/Users/volpe/swarm-mcp-redesign/dist/test/runtime-ack-probe.mjs\" 3cf30419-3e9f-4622-b146-7ff751735c2e <lease-token>",
+              "description": "Acknowledge the refreshed fixture delivery lease"
+            },
+            "raw": "",
+            "time": {
+              "start": 1790068687789
+            }
+          },
+          "id": "prt_0c86883a9003ygUxXmtc7Zl3YK",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "messageID": "msg_0c868839d001srgxZ1jGH52YOR"
+        },
+        "time": 1790068687789
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_fixture_ack",
+          "state": {
+            "metadata": {
+              "output": "",
+              "description": "Acknowledge the refreshed fixture delivery lease"
+            },
+            "status": "running",
+            "input": {
+              "command": "node \"C:/Users/volpe/swarm-mcp-redesign/dist/test/runtime-ack-probe.mjs\" 3cf30419-3e9f-4622-b146-7ff751735c2e <lease-token>",
+              "description": "Acknowledge the refreshed fixture delivery lease"
+            },
+            "time": {
+              "start": 1790068687790
+            }
+          },
+          "id": "prt_0c86883a9003ygUxXmtc7Zl3YK",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "messageID": "msg_0c868839d001srgxZ1jGH52YOR"
+        },
+        "time": 1790068687791
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_fixture_ack",
+          "state": {
+            "metadata": {
+              "output": "swarm-fixture-acknowledged\n",
+              "description": "Acknowledge the refreshed fixture delivery lease"
+            },
+            "status": "running",
+            "input": {
+              "command": "node \"C:/Users/volpe/swarm-mcp-redesign/dist/test/runtime-ack-probe.mjs\" 3cf30419-3e9f-4622-b146-7ff751735c2e <lease-token>",
+              "description": "Acknowledge the refreshed fixture delivery lease"
+            },
+            "time": {
+              "start": 1790068688000
+            }
+          },
+          "id": "prt_0c86883a9003ygUxXmtc7Zl3YK",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "messageID": "msg_0c868839d001srgxZ1jGH52YOR"
+        },
+        "time": 1790068688000
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "call_fixture_ack",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "node \"C:/Users/volpe/swarm-mcp-redesign/dist/test/runtime-ack-probe.mjs\" 3cf30419-3e9f-4622-b146-7ff751735c2e <lease-token>",
+              "description": "Acknowledge the refreshed fixture delivery lease"
+            },
+            "output": "swarm-fixture-acknowledged\n",
+            "metadata": {
+              "output": "swarm-fixture-acknowledged\n",
+              "exit": 0,
+              "description": "Acknowledge the refreshed fixture delivery lease",
+              "truncated": false
+            },
+            "title": "Acknowledge the refreshed fixture delivery lease",
+            "time": {
+              "start": 1790068688000,
+              "end": 1790068688349
+            }
+          },
+          "id": "prt_0c86883a9003ygUxXmtc7Zl3YK",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "messageID": "msg_0c868839d001srgxZ1jGH52YOR"
+        },
+        "time": 1790068688349
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c86885de001cSYVlnzsfbQqfj",
+          "reason": "tool-calls",
+          "messageID": "msg_0c868839d001srgxZ1jGH52YOR",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "step-finish",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1790068688350
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c868839d001srgxZ1jGH52YOR",
+          "parentID": "msg_0c86881fb001b576289ec20056",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068687774
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068688352
+          }
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c868839d001srgxZ1jGH52YOR",
+          "parentID": "msg_0c86881fb001b576289ec20056",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068687774,
+            "completed": 1790068688354
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "finish": "tool-calls"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c86885e3001XdfbhcjbvTH1IL",
+          "parentID": "msg_0c86881fb001b576289ec20056",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068688355
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        }
+      }
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1790068687763
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "fixture",
+            "modelID": "probe"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_0c86881fb001b576289ec20056",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c86885eb001OV0EEY9FhEY7oh",
+          "messageID": "msg_0c86885e3001XdfbhcjbvTH1IL",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "step-start"
+        },
+        "time": 1790068688364
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c86885ec002DFwWeGlhg9ZqsB",
+          "messageID": "msg_0c86885e3001XdfbhcjbvTH1IL",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "text",
+          "text": "",
+          "time": {
+            "start": 1790068688364
+          }
+        },
+        "time": 1790068688364
+      }
+    },
+    {
+      "type": "message.part.delta",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "messageID": "msg_0c86885e3001XdfbhcjbvTH1IL",
+        "partID": "prt_0c86885ec002DFwWeGlhg9ZqsB",
+        "field": "text",
+        "delta": "fixture complete"
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c86885ec002DFwWeGlhg9ZqsB",
+          "messageID": "msg_0c86885e3001XdfbhcjbvTH1IL",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "text",
+          "text": "fixture complete",
+          "time": {
+            "start": 1790068688364,
+            "end": 1790068688365
+          }
+        },
+        "time": 1790068688365
+      }
+    },
+    {
+      "type": "message.part.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "part": {
+          "id": "prt_0c86885ee001kziNDIVNFgwe8p",
+          "reason": "stop",
+          "messageID": "msg_0c86885e3001XdfbhcjbvTH1IL",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "type": "step-finish",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0
+        },
+        "time": 1790068688366
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c86885e3001XdfbhcjbvTH1IL",
+          "parentID": "msg_0c86881fb001b576289ec20056",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068688355
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068688368
+          }
+        }
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "msg_0c86885e3001XdfbhcjbvTH1IL",
+          "parentID": "msg_0c86881fb001b576289ec20056",
+          "role": "assistant",
+          "mode": "build",
+          "agent": "build",
+          "path": {
+            "cwd": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+            "root": "/"
+          },
+          "cost": 0,
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "modelID": "probe",
+          "providerID": "fixture",
+          "time": {
+            "created": 1790068688355,
+            "completed": 1790068688369
+          },
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+          "finish": "stop"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "busy"
+        }
+      }
+    },
+    {
+      "type": "session.status",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "status": {
+          "type": "idle"
+        }
+      }
+    },
+    {
+      "type": "session.idle",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+      }
+    },
+    {
+      "type": "session.diff",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "diff": []
+      }
+    },
+    {
+      "type": "message.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "role": "user",
+          "time": {
+            "created": 1790068687763
+          },
+          "agent": "build",
+          "model": {
+            "providerID": "fixture",
+            "modelID": "probe"
+          },
+          "summary": {
+            "diffs": []
+          },
+          "id": "msg_0c86881fb001b576289ec20056",
+          "sessionID": "ses_f37981340ffevccxou7mTA2sTN"
+        }
+      }
+    },
+    {
+      "type": "availability.busy",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "availability.idle",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "evidence": "session.status"
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068688484
+          }
+        }
+      }
+    },
+    {
+      "type": "session.deleted",
+      "properties": {
+        "sessionID": "ses_f37981340ffevccxou7mTA2sTN",
+        "info": {
+          "id": "ses_f37981340ffevccxou7mTA2sTN",
+          "slug": "clever-harbor",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "swarm lifecycle probe",
+          "version": "1.4.3",
+          "summary": {
+            "additions": 0,
+            "deletions": 0,
+            "files": 0
+          },
+          "time": {
+            "created": 1790068649151,
+            "updated": 1790068688368
+          }
+        }
+      }
+    },
+    {
+      "type": "session.created",
+      "properties": {
+        "sessionID": "ses_f37977996ffe7K3LunZXrzzq3r",
+        "info": {
+          "id": "ses_f37977996ffe7K3LunZXrzzq3r",
+          "slug": "nimble-circuit",
+          "version": "1.4.3",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "warm lifecycle probe",
+          "time": {
+            "created": 1790068688489,
+            "updated": 1790068688489
+          }
+        }
+      }
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37977996ffe7K3LunZXrzzq3r",
+        "info": {
+          "id": "ses_f37977996ffe7K3LunZXrzzq3r",
+          "slug": "nimble-circuit",
+          "version": "1.4.3",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "warm lifecycle probe",
+          "time": {
+            "created": 1790068688489,
+            "updated": 1790068688489
+          }
+        }
+      }
+    },
+    {
+      "type": "coordination.closed",
+      "hostSessionId": "ses_f37981340ffevccxou7mTA2sTN",
+      "actor": "11d335e4-81f1-4904-95e7-dd6a71425fd9"
+    },
+    {
+      "type": "coordination.enrolled",
+      "hostSessionId": "ses_f37977996ffe7K3LunZXrzzq3r",
+      "actor": "e2bafdd4-7518-4a87-85fa-6559c5fef677"
+    },
+    {
+      "type": "session.updated",
+      "properties": {
+        "sessionID": "ses_f37977996ffe7K3LunZXrzzq3r",
+        "info": {
+          "id": "ses_f37977996ffe7K3LunZXrzzq3r",
+          "slug": "nimble-circuit",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "warm lifecycle probe",
+          "version": "1.4.3",
+          "time": {
+            "created": 1790068688489,
+            "updated": 1790068690265
+          }
+        }
+      }
+    },
+    {
+      "type": "session.deleted",
+      "properties": {
+        "sessionID": "ses_f37977996ffe7K3LunZXrzzq3r",
+        "info": {
+          "id": "ses_f37977996ffe7K3LunZXrzzq3r",
+          "slug": "nimble-circuit",
+          "projectID": "global",
+          "directory": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-opencode-probe-O4uYD5",
+          "title": "warm lifecycle probe",
+          "version": "1.4.3",
+          "time": {
+            "created": 1790068688489,
+            "updated": 1790068688489
+          }
+        }
+      }
+    },
+    {
+      "type": "coordination.closed",
+      "hostSessionId": "ses_f37977996ffe7K3LunZXrzzq3r",
+      "actor": "e2bafdd4-7518-4a87-85fa-6559c5fef677"
+    }
+  ],
+  "limitations": "Actual host plugin load, Subscription-first enrollment, instance restart reconciliation with stable actor and fenced generation, and close for two native sessions. Missing session.created is recorded, not assumed supported. Actual shell.env capability authenticated by child bootstrap. Real host tools and model-request assembly verified using a local scripted OpenAI-compatible endpoint; no external model inference or semantic understanding claimed. Reservation denial, idle wakeup and restart delivery deduplication remain unproven."
+}

@@ -1,0 +1,12 @@
+$ node scripts/build.mjs
+wrote C:\Users\volpe\swarm-mcp-redesign\src\generated\protocol.ts
+wrote C:\Users\volpe\swarm-mcp-redesign\apps\swarm-ui\src\lib\generated\protocol.ts
+
+  dist\cli.js                           321.3kb
+  dist\index.js                         235.0kb
+  dist\coordination\owner-cli.js        172.0kb
+  dist\coordination\opencode-plugin.js   53.7kb
+  dist\coordination\mcp-cli.js           32.6kb
+  ...and 8 more output files...
+
+Done in 24ms

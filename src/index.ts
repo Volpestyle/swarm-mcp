@@ -1,9 +1,7 @@
-import {
-  McpServer,
-  ResourceTemplate,
-} from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { setTimeout as delay } from "node:timers/promises";
 import { runCleanup } from "./cleanup";
 import { db, stateBackendFingerprint } from "./db";
 import * as context from "./context";
@@ -35,9 +33,39 @@ let lastInstancesVersion = "";
 let lastKvUpdate = 0;
 let notificationsClosed = false;
 
-const server = new McpServer({
-  name: "swarm",
-  version: "1.0.0",
+const server = new McpServer(
+  {
+    name: "swarm",
+    version: "1.0.0",
+  },
+  {
+    capabilities: { resources: { subscribe: true } },
+    cacheHints: {
+      "resources/read": { ttlMs: 0, cacheScope: "private" },
+      "tools/list": { ttlMs: 60000, cacheScope: "private" },
+      "prompts/list": { ttlMs: 60000, cacheScope: "private" },
+      "resources/list": { ttlMs: 60000, cacheScope: "private" },
+      "resources/templates/list": { ttlMs: 60000, cacheScope: "private" },
+      "server/discover": { ttlMs: 60000, cacheScope: "private" },
+    },
+  },
+);
+
+const legacySubscriptions = new Set<string>();
+const subscribableResources = new Set([
+  "swarm://inbox",
+  "swarm://tasks",
+  "swarm://instances",
+]);
+server.server.setRequestHandler("resources/subscribe", async ({ params }) => {
+  if (!subscribableResources.has(params.uri))
+    throw new Error("Unknown subscribable resource");
+  legacySubscriptions.add(params.uri);
+  return {};
+});
+server.server.setRequestHandler("resources/unsubscribe", async ({ params }) => {
+  legacySubscriptions.delete(params.uri);
+  return {};
 });
 
 const REGISTER_PROMPT = `You are now registered with the swarm and should operate in autonomous mode.
@@ -91,7 +119,10 @@ function autoPromptPeer(opts: {
 }
 
 function assignedBlockedTasks(scope: string, viewer: registry.Instance) {
-  const blocked = new Map<string, { assignee: string; title: string; type: string }>();
+  const blocked = new Map<
+    string,
+    { assignee: string; title: string; type: string }
+  >();
   for (const task of tasks.list(scope, { status: "blocked", viewer })) {
     const id = typeof task.id === "string" ? task.id : "";
     const assignee = typeof task.assignee === "string" ? task.assignee : "";
@@ -109,7 +140,10 @@ function notifyAssignedUnblockedTasks(opts: {
   before: Map<string, { assignee: string; title: string; type: string }>;
 }) {
   const prompts: Array<Record<string, unknown>> = [];
-  for (const task of tasks.list(opts.scope, { status: "claimed", viewer: opts.viewer })) {
+  for (const task of tasks.list(opts.scope, {
+    status: "claimed",
+    viewer: opts.viewer,
+  })) {
     const id = typeof task.id === "string" ? task.id : "";
     const assignee = typeof task.assignee === "string" ? task.assignee : "";
     if (!id || !assignee || assignee === opts.sender) continue;
@@ -174,25 +208,25 @@ function registeredTool<Shape extends ToolShape>(
   handlerOrMetadata:
     | ((args: z.infer<z.ZodObject<Shape>>) => Promise<unknown> | unknown)
     | ToolMetadata,
-  maybeHandler?: (args: z.infer<z.ZodObject<Shape>>) => Promise<unknown> | unknown,
+  maybeHandler?: (
+    args: z.infer<z.ZodObject<Shape>>,
+  ) => Promise<unknown> | unknown,
 ) {
   const metadata =
     typeof handlerOrMetadata === "function" ? undefined : handlerOrMetadata;
   const handler =
-    typeof handlerOrMetadata === "function"
-      ? handlerOrMetadata
-      : maybeHandler!;
+    typeof handlerOrMetadata === "function" ? handlerOrMetadata : maybeHandler!;
 
   const wrapped = (async (args: z.infer<z.ZodObject<Shape>>) => {
     if (!ensureInstance()) return missing();
     return handler(args);
   }) as any;
 
-  if (metadata) {
-    (server.tool as any)(name, description, shape, metadata, wrapped);
-  } else {
-    server.tool(name, description, shape, wrapped);
-  }
+  server.registerTool(
+    name,
+    { description, inputSchema: z.object(shape), annotations: metadata },
+    wrapped,
+  );
 }
 
 const taskTypeSchema = z.enum(tasks.TASK_TYPES);
@@ -269,7 +303,9 @@ const taskCreateShape = {
   tracker_provider: z
     .string()
     .optional()
-    .describe("Optional configured tracker provider name, such as linear, jira, or github_issues."),
+    .describe(
+      "Optional configured tracker provider name, such as linear, jira, or github_issues.",
+    ),
 } satisfies ToolShape;
 
 function resolveFileInput(file: string) {
@@ -328,6 +364,12 @@ function isBrokenPipeError(error: unknown) {
 
 async function sendResourceUpdate(uri: string) {
   if (notificationsClosed) return false;
+  // Modern opt-in routing is owned by serveStdio's subscription router.
+  if (
+    server.server.getNegotiatedProtocolVersion() !== "2026-07-28" &&
+    !legacySubscriptions.has(uri)
+  )
+    return true;
   try {
     await server.server.sendResourceUpdated({ uri });
     return true;
@@ -369,6 +411,7 @@ async function poll() {
 }
 
 function cleanup() {
+  legacySubscriptions.clear();
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (notifyTimer) clearInterval(notifyTimer);
   if (instance) registry.deregister(instance.id);
@@ -378,7 +421,7 @@ function cleanup() {
   runCleanup({ mode: "manual" });
 }
 
-server.resource(
+server.registerResource(
   "inbox",
   "swarm://inbox",
   {
@@ -394,7 +437,7 @@ server.resource(
   },
 );
 
-server.resource(
+server.registerResource(
   "tasks",
   "swarm://tasks",
   { description: "Open and active tasks in this swarm scope." },
@@ -414,11 +457,14 @@ server.resource(
         "swarm://tasks",
       );
 
-    return resource(tasks.snapshot(instance.scope, {}, instance), "swarm://tasks");
+    return resource(
+      tasks.snapshot(instance.scope, {}, instance),
+      "swarm://tasks",
+    );
   },
 );
 
-server.resource(
+server.registerResource(
   "instances",
   "swarm://instances",
   { description: "All active instances in this swarm scope." },
@@ -428,7 +474,7 @@ server.resource(
   },
 );
 
-server.resource(
+server.registerResource(
   "lock-for-file",
   new ResourceTemplate("swarm://lock{?file}", { list: undefined }),
   {
@@ -447,8 +493,7 @@ server.registerPrompt(
   "setup",
   {
     title: "Swarm Setup",
-    description:
-      "Register this agent session and inspect current swarm state.",
+    description: "Register this agent session and inspect current swarm state.",
   },
   async () => prompt(prompts.setup()),
 );
@@ -463,35 +508,38 @@ server.registerPrompt(
   async () => prompt(prompts.protocol()),
 );
 
-server.tool(
+server.registerTool(
   "register",
-  "Register this agent session with the swarm. Call this first before using other tools.",
   {
-    directory: z
-      .string()
-      .describe("The project directory this instance is working in"),
-    label: z
-      .string()
-      .optional()
-      .describe("Optional friendly label for this instance"),
-    scope: z
-      .string()
-      .optional()
-      .describe(
-        "Optional shared swarm scope. Defaults to the detected git root.",
-      ),
-    file_root: z
-      .string()
-      .optional()
-      .describe(
-        "Optional canonical base directory for resolving relative file paths. Useful when multiple worktrees should share one logical file tree.",
-      ),
-    adopt_instance_id: z
-      .string()
-      .optional()
-      .describe(
-        "Optional existing leased instance ID to adopt instead of creating a fresh registration.",
-      ),
+    description:
+      "Register this agent session with the swarm. Call this first before using other tools.",
+    inputSchema: z.object({
+      directory: z
+        .string()
+        .describe("The project directory this instance is working in"),
+      label: z
+        .string()
+        .optional()
+        .describe("Optional friendly label for this instance"),
+      scope: z
+        .string()
+        .optional()
+        .describe(
+          "Optional shared swarm scope. Defaults to the detected git root.",
+        ),
+      file_root: z
+        .string()
+        .optional()
+        .describe(
+          "Optional canonical base directory for resolving relative file paths. Useful when multiple worktrees should share one logical file tree.",
+        ),
+      adopt_instance_id: z
+        .string()
+        .optional()
+        .describe(
+          "Optional existing leased instance ID to adopt instead of creating a fresh registration.",
+        ),
+    }),
   },
   async ({ directory, label, scope, file_root, adopt_instance_id }) => {
     const adoptId = adopt_instance_id?.trim() || undefined;
@@ -518,7 +566,8 @@ server.tool(
     // `~/.swarm-mcp/swarm.db` (with adopted=0) and injects its id via
     // SWARM_MCP_INSTANCE_ID. `registry.register` will adopt the existing row
     // and flip `adopted=1` instead of creating a duplicate.
-    const preassignedId = process.env.SWARM_MCP_INSTANCE_ID?.trim() || undefined;
+    const preassignedId =
+      process.env.SWARM_MCP_INSTANCE_ID?.trim() || undefined;
     bindInstance(
       registry.register(
         directory,
@@ -672,11 +721,11 @@ function tryAdoptLeasedRegistration() {
        ORDER BY registered_at ASC`,
     )
     .all(scope, directory) as Array<
-      Omit<registry.Instance, "adopted"> & {
-        adopted: number;
-        lease_until: number | null;
-      }
-    >;
+    Omit<registry.Instance, "adopted"> & {
+      adopted: number;
+      lease_until: number | null;
+    }
+  >;
 
   if (candidates.length !== 1) return;
 
@@ -709,18 +758,21 @@ function ensureInstance() {
 
 tryAutoAdopt();
 
-(server.tool as any)(
+server.registerTool(
   "list_instances",
-  "List all currently active agent sessions in this swarm scope.",
   {
-    label_contains: z
-      .string()
-      .optional()
-      .describe(
-        "Filter instances whose label contains this substring (e.g. 'role:implementer')",
-      ),
+    description:
+      "List all currently active agent sessions in this swarm scope.",
+    inputSchema: z.object({
+      label_contains: z
+        .string()
+        .optional()
+        .describe(
+          "Filter instances whose label contains this substring (e.g. 'role:implementer')",
+        ),
+    }),
+    annotations: { readOnlyHint: true },
   },
-  { readOnlyHint: true },
   async ({ label_contains }: { label_contains?: string }) => {
     const current = ensureInstance();
     if (!current) return missing();
@@ -744,11 +796,13 @@ tryAutoAdopt();
   },
 );
 
-(server.tool as any)(
+server.registerTool(
   "whoami",
-  "Get this instance's swarm ID and registration info.",
-  {},
-  { readOnlyHint: true },
+  {
+    description: "Get this instance's swarm ID and registration info.",
+    inputSchema: z.object({}),
+    annotations: { readOnlyHint: true },
+  },
   async () => {
     const current = ensureInstance();
     if (!current) return missing();
@@ -758,41 +812,44 @@ tryAutoAdopt();
   },
 );
 
-(server.tool as any)(
+server.registerTool(
   "bootstrap",
-  "Atomic 'where am I?' for swarm state. Returns this instance, peers (excluding self), unread messages, and the task snapshot in one call. Use this on session start, after compaction, or any time you need to rejoin and rehydrate. By default consumes unread messages (mark-as-read); pass mark_read=false to peek.",
   {
-    mark_read: z
-      .boolean()
-      .optional()
-      .default(true)
-      .describe(
-        "When true (default), unread messages are returned and marked read (matches poll_messages). When false, messages are peeked and remain unread.",
-      ),
-    adopt_instance_id: z
-      .string()
-      .optional()
-      .describe(
-        "Optional existing leased instance ID to adopt before returning the bootstrap snapshot.",
-      ),
-    include_terminal: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
-        "When true, include full terminal task rows. Default false keeps bootstrap compact and returns terminal_counts only.",
-      ),
-    terminal_limit: z
-      .number()
-      .int()
-      .min(0)
-      .optional()
-      .default(0)
-      .describe(
-        "Maximum terminal rows per status to include when include_terminal=false. Default 0 returns counts only.",
-      ),
+    description:
+      "Atomic 'where am I?' for swarm state. Returns this instance, peers (excluding self), unread messages, and the task snapshot in one call. Use this on session start, after compaction, or any time you need to rejoin and rehydrate. By default consumes unread messages (mark-as-read); pass mark_read=false to peek.",
+    inputSchema: z.object({
+      mark_read: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe(
+          "When true (default), unread messages are returned and marked read (matches poll_messages). When false, messages are peeked and remain unread.",
+        ),
+      adopt_instance_id: z
+        .string()
+        .optional()
+        .describe(
+          "Optional existing leased instance ID to adopt before returning the bootstrap snapshot.",
+        ),
+      include_terminal: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "When true, include full terminal task rows. Default false keeps bootstrap compact and returns terminal_counts only.",
+        ),
+      terminal_limit: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .default(0)
+        .describe(
+          "Maximum terminal rows per status to include when include_terminal=false. Default 0 returns counts only.",
+        ),
+    }),
+    annotations: { readOnlyHint: false, idempotentHint: false },
   },
-  { readOnlyHint: false, idempotentHint: false },
   async ({
     mark_read,
     adopt_instance_id,
@@ -810,9 +867,9 @@ tryAutoAdopt();
     }
     const current = ensureInstance();
     if (!current) return missing();
-    const peers = registry.listVisible(current).filter(
-      (p) => p.id !== current.id,
-    );
+    const peers = registry
+      .listVisible(current)
+      .filter((p) => p.id !== current.id);
     const unread = mark_read
       ? messages.poll(current.id, current.scope, 50)
       : messages.peek(current.id, current.scope, 50);
@@ -821,20 +878,30 @@ tryAutoAdopt();
       peers,
       unread_messages: unread,
       state_backend: stateBackendFingerprint(current.scope),
-      tasks: tasks.snapshot(current.scope, {
-        include_terminal,
-        terminal_limit,
-      }, current),
-      work_tracker: workTracker.configuredWorkTracker(current.scope, current.label),
+      tasks: tasks.snapshot(
+        current.scope,
+        {
+          include_terminal,
+          terminal_limit,
+        },
+        current,
+      ),
+      work_tracker: workTracker.configuredWorkTracker(
+        current.scope,
+        current.label,
+      ),
     });
   },
 );
 
-server.tool(
+server.registerTool(
   "remove_instance",
-  "Forcefully remove another instance from the swarm. Releases its tasks and locks.",
   {
-    instance_id: z.string().describe("The instance ID to remove"),
+    description:
+      "Forcefully remove another instance from the swarm. Releases its tasks and locks.",
+    inputSchema: z.object({
+      instance_id: z.string().describe("The instance ID to remove"),
+    }),
   },
   async ({ instance_id }) => {
     const current = ensureInstance();
@@ -879,10 +946,13 @@ server.tool(
   },
 );
 
-server.tool(
+server.registerTool(
   "deregister",
-  "Remove this instance from the swarm and clean up its tasks and locks.",
-  {},
+  {
+    description:
+      "Remove this instance from the swarm and clean up its tasks and locks.",
+    inputSchema: z.object({}),
+  },
   async () => {
     const current = ensureInstance();
     if (!current) return missing();
@@ -946,14 +1016,26 @@ registeredTool(
     recipient: z.string().describe("Target swarm instance id"),
     message: z.string().describe("Instruction to send through swarm"),
     task_id: z.string().optional().describe("Optional related swarm task id"),
-    nudge: z.boolean().optional().default(true).describe("Whether to wake the target workspace handle"),
-    force: z.boolean().optional().default(false).describe("Wake even when the target workspace handle is working; reserve for urgent or corrective updates"),
+    nudge: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Whether to wake the target workspace handle"),
+    force: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        "Wake even when the target workspace handle is working; reserve for urgent or corrective updates",
+      ),
   },
   async ({ recipient, message, task_id, nudge, force }) => {
     const current = instance!;
     const target = registry.get(recipient);
     if (!target || target.scope !== current.scope) {
-      return respondJson({ error: `Instance ${recipient} is not active in this scope` });
+      return respondJson({
+        error: `Instance ${recipient} is not active in this scope`,
+      });
     }
     if (target.id === current.id) {
       return respondJson({ error: "Cannot prompt yourself" });
@@ -1001,7 +1083,9 @@ registeredTool(
     const current = instance!;
     const target = registry.get(recipient);
     if (!target || target.scope !== current.scope) {
-      return respondJson({ error: `Instance ${recipient} is not active in this scope` });
+      return respondJson({
+        error: `Instance ${recipient} is not active in this scope`,
+      });
     }
     if (target.id === current.id) {
       return respondJson({ error: "Cannot peek yourself" });
@@ -1032,18 +1116,24 @@ registeredTool(
       .string()
       .optional()
       .default("herdr")
-      .describe("Workspace backend name. The current bundled backend is herdr."),
+      .describe(
+        "Workspace backend name. The current bundled backend is herdr.",
+      ),
     handle_kind: z
       .string()
       .optional()
       .default("pane")
       .describe("Type of workspace handle, such as pane"),
-    handle: z.string().describe("Transport-local workspace handle from the backend"),
+    handle: z
+      .string()
+      .describe("Transport-local workspace handle from the backend"),
     validate: z
       .boolean()
       .optional()
       .default(true)
-      .describe("Validate published identities through the backend and repair stale aliases"),
+      .describe(
+        "Validate published identities through the backend and repair stale aliases",
+      ),
   },
   async ({ backend, handle_kind, handle, validate }) => {
     const current = instance!;
@@ -1179,12 +1269,12 @@ registeredTool(
   "Create multiple tasks atomically in a single transaction. Supports $N references (1-indexed) for dependencies, parent links, review links, and fix links in the batch. Rolls back entirely on validation failure.",
   {
     tasks: z
-      .array(
-        z.object(taskCreateShape),
-      )
+      .array(z.object(taskCreateShape))
       .min(1)
       .max(50)
-      .describe("Array of task specifications. $N references are 1-indexed positional refs within this array."),
+      .describe(
+        "Array of task specifications. $N references are 1-indexed positional refs within this array.",
+      ),
   },
   async ({ tasks: taskSpecs }) => {
     const current = instance!;
@@ -1219,10 +1309,10 @@ registeredTool(
       if (spec.assignee && taskResult.new) {
         const list = notifs.get(spec.assignee) ?? [];
         const statusNote =
-          taskResult.status !== "claimed"
-            ? ` (${taskResult.status})`
-            : "";
-        list.push(`"${spec.title}" (${spec.type}, task_id: ${taskResult.id})${statusNote}`);
+          taskResult.status !== "claimed" ? ` (${taskResult.status})` : "";
+        list.push(
+          `"${spec.title}" (${spec.type}, task_id: ${taskResult.id})${statusNote}`,
+        );
         notifs.set(spec.assignee, list);
       }
     }
@@ -1282,36 +1372,52 @@ registeredTool(
       .string()
       .optional()
       .describe("Spawner backend: herdr (default) or swarm-ui"),
-    harness: z.string().optional().describe("Launcher/harness for spawned worker"),
+    harness: z
+      .string()
+      .optional()
+      .describe("Launcher/harness for spawned worker"),
     cwd: z
       .string()
       .optional()
       .describe("Spawn cwd; defaults to this instance directory"),
-    label: z.string().optional().describe("Additional label for spawned worker"),
+    label: z
+      .string()
+      .optional()
+      .describe("Additional label for spawned worker"),
     name: z.string().optional().describe("Display name for spawned worker"),
     wait_seconds: z
       .number()
       .min(0)
       .optional()
-      .describe("Seconds to wait for worker spawn/adoption; defaults depend on spawner"),
+      .describe(
+        "Seconds to wait for worker spawn/adoption; defaults depend on spawner",
+      ),
     placement: z
       .object({
         workspace: z
           .string()
           .optional()
-          .describe('Workspace placement policy: "reuse_scope" (default), "new", "current", or backend-specific workspace id'),
+          .describe(
+            'Workspace placement policy: "reuse_scope" (default), "new", "current", or backend-specific workspace id',
+          ),
         tab: z
           .string()
           .optional()
-          .describe('Tab placement policy: "reuse_group" (default), "new", "current", or backend-specific tab id'),
+          .describe(
+            'Tab placement policy: "reuse_group" (default), "new", "current", or backend-specific tab id',
+          ),
         group: z
           .string()
           .optional()
-          .describe("Logical layout group used for tab reuse, such as a batch or role name"),
+          .describe(
+            "Logical layout group used for tab reuse, such as a batch or role name",
+          ),
         parent_pane_id: z
           .string()
           .optional()
-          .describe("Explicit parent pane to split from; overrides scope layout reuse"),
+          .describe(
+            "Explicit parent pane to split from; overrides scope layout reuse",
+          ),
         split_direction: z
           .enum(["right", "down"])
           .optional()
@@ -1325,7 +1431,9 @@ registeredTool(
           .describe("Maximum panes per reused tab before creating another tab"),
         layout: placementLayoutSchema
           .optional()
-          .describe('Backend-agnostic visual layout intent, such as {"kind":"grid","rows":2,"cols":3} or {"kind":"balance"}'),
+          .describe(
+            'Backend-agnostic visual layout intent, such as {"kind":"grid","rows":2,"cols":3} or {"kind":"balance"}',
+          ),
       })
       .optional()
       .describe("Optional workspace placement intent for spawner backends"),
@@ -1333,8 +1441,14 @@ registeredTool(
       .number()
       .min(0)
       .optional()
-      .describe("Seconds to wait for the dispatched task to reach done, failed, or cancelled. Omit or pass 0 to return immediately after handoff/spawn."),
-    nudge: z.boolean().optional().default(true).describe("Wake live worker handle"),
+      .describe(
+        "Seconds to wait for the dispatched task to reach done, failed, or cancelled. Omit or pass 0 to return immediately after handoff/spawn.",
+      ),
+    nudge: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Wake live worker handle"),
     force: z
       .boolean()
       .optional()
@@ -1424,7 +1538,9 @@ registeredTool(
     types: z
       .array(taskTypeSchema)
       .optional()
-      .describe("Optional task types to consider, such as ['implement'] or ['review']"),
+      .describe(
+        "Optional task types to consider, such as ['implement'] or ['review']",
+      ),
     files: z
       .array(z.string())
       .optional()
@@ -1460,7 +1576,10 @@ registeredTool(
   },
   async ({ task_id, status, result }) => {
     const current = instance!;
-    const blockedBefore = status === "done" ? assignedBlockedTasks(current.scope, current) : new Map();
+    const blockedBefore =
+      status === "done"
+        ? assignedBlockedTasks(current.scope, current)
+        : new Map();
     const next = tasks.update(
       task_id,
       current.scope,
@@ -1476,7 +1595,11 @@ registeredTool(
     // Auto-notify and wake the requester when a task reaches a terminal state.
     if ("ok" in next && (status === "done" || status === "failed")) {
       const task = tasks.get(task_id, current.scope, current);
-      if (task && typeof task.requester === "string" && task.requester !== current.id) {
+      if (
+        task &&
+        typeof task.requester === "string" &&
+        task.requester !== current.id
+      ) {
         response.prompt = autoPromptPeer({
           scope: current.scope,
           sender: current.id,
@@ -1494,7 +1617,8 @@ registeredTool(
         viewer: current,
         before: blockedBefore,
       });
-      if (unblockedPrompts.length) response.unblocked_prompts = unblockedPrompts;
+      if (unblockedPrompts.length)
+        response.unblocked_prompts = unblockedPrompts;
     }
 
     return respondJson(response);
@@ -1502,7 +1626,10 @@ registeredTool(
 );
 
 const structuredTestResultShape = z.object({
-  command: z.string().optional().describe("Command that was run, such as 'bun test'"),
+  command: z
+    .string()
+    .optional()
+    .describe("Command that was run, such as 'bun test'"),
   status: z
     .enum(["passed", "failed", "skipped", "unknown"])
     .describe("Outcome for this verification step"),
@@ -1519,7 +1646,9 @@ registeredTool(
       .optional()
       .default("done")
       .describe("Terminal status. Defaults to done."),
-    summary: z.string().describe("Concise summary of what changed or what happened"),
+    summary: z
+      .string()
+      .describe("Concise summary of what changed or what happened"),
     files_changed: z
       .array(z.string())
       .optional()
@@ -1529,13 +1658,17 @@ registeredTool(
       .optional()
       .describe("Verification commands or checks and their outcomes"),
     tracker_update: z
-      .union([z.record(z.unknown()), z.string()])
+      .union([z.record(z.string(), z.unknown()), z.string()])
       .optional()
-      .describe("Durable work-tracker update details when you updated the configured tracker directly"),
+      .describe(
+        "Durable work-tracker update details when you updated the configured tracker directly",
+      ),
     tracker_update_skipped: z
-      .union([z.record(z.unknown()), z.string()])
+      .union([z.record(z.string(), z.unknown()), z.string()])
       .optional()
-      .describe("Exact reason the configured tracker was not updated, plus enough context for a tracker-capable planner/gateway to do it"),
+      .describe(
+        "Exact reason the configured tracker was not updated, plus enough context for a tracker-capable planner/gateway to do it",
+      ),
     followups: z
       .array(z.string())
       .optional()
@@ -1553,7 +1686,10 @@ registeredTool(
   }) => {
     const current = instance!;
     const statusValue = terminalStatus ?? "done";
-    const blockedBefore = statusValue === "done" ? assignedBlockedTasks(current.scope, current) : new Map();
+    const blockedBefore =
+      statusValue === "done"
+        ? assignedBlockedTasks(current.scope, current)
+        : new Map();
     const next = tasks.completeStructured(task_id, current.scope, current.id, {
       status: statusValue,
       summary,
@@ -1570,7 +1706,11 @@ registeredTool(
 
     if (statusValue === "done" || statusValue === "failed") {
       const task = tasks.get(task_id, current.scope, current);
-      if (task && typeof task.requester === "string" && task.requester !== current.id) {
+      if (
+        task &&
+        typeof task.requester === "string" &&
+        task.requester !== current.id
+      ) {
         response.prompt = autoPromptPeer({
           scope: current.scope,
           sender: current.id,
@@ -1588,7 +1728,8 @@ registeredTool(
         viewer: current,
         before: blockedBefore,
       });
-      if (unblockedPrompts.length) response.unblocked_prompts = unblockedPrompts;
+      if (unblockedPrompts.length)
+        response.unblocked_prompts = unblockedPrompts;
     }
 
     return respondJson(response);
@@ -1605,23 +1746,34 @@ registeredTool(
       .string()
       .nullable()
       .optional()
-      .describe("Why progress is blocked. Pass null to clear an earlier blocked reason."),
+      .describe(
+        "Why progress is blocked. Pass null to clear an earlier blocked reason.",
+      ),
     expected_next_update_at: z
       .number()
       .int()
       .nullable()
       .optional()
-      .describe("Unix timestamp in seconds for the next expected progress update. Pass null to clear."),
+      .describe(
+        "Unix timestamp in seconds for the next expected progress update. Pass null to clear.",
+      ),
   },
   async ({ task_id, summary, blocked_reason, expected_next_update_at }) => {
     const current = instance!;
     const progressOpts: tasks.ProgressOpts = {};
-    if (blocked_reason !== undefined) progressOpts.blocked_reason = blocked_reason;
+    if (blocked_reason !== undefined)
+      progressOpts.blocked_reason = blocked_reason;
     if (expected_next_update_at !== undefined) {
       progressOpts.expected_next_update_at = expected_next_update_at;
     }
     return respondJson(
-      tasks.reportProgress(task_id, current.scope, current.id, summary, progressOpts),
+      tasks.reportProgress(
+        task_id,
+        current.scope,
+        current.id,
+        summary,
+        progressOpts,
+      ),
     );
   },
 );
@@ -1653,7 +1805,10 @@ registeredTool(
       }
     }
 
-    return respondJson({ ...result, ...(promptResult ? { prompt: promptResult } : {}) });
+    return respondJson({
+      ...result,
+      ...(promptResult ? { prompt: promptResult } : {}),
+    });
   },
 );
 
@@ -1685,7 +1840,12 @@ registeredTool(
   async ({ status, assignee, requester }) => {
     const current = instance!;
     return respondJson(
-       tasks.list(current.scope, { status, assignee, requester, viewer: current }),
+      tasks.list(current.scope, {
+        status,
+        assignee,
+        requester,
+        viewer: current,
+      }),
     );
   },
 );
@@ -1699,7 +1859,9 @@ registeredTool(
   { readOnlyHint: true },
   async ({ file }) => {
     const current = instance!;
-    return respondJson(context.fileLock(current.scope, resolveFileInput(file), current));
+    return respondJson(
+      context.fileLock(current.scope, resolveFileInput(file), current),
+    );
   },
 );
 
@@ -1781,9 +1943,7 @@ registeredTool(
   "Atomically append a value to a JSON array in the KV store. Creates the key with [value] if it doesn't exist. If the existing value is not an array, wraps it in one first.",
   {
     key: z.string().describe("The key to append to"),
-    value: z
-      .string()
-      .describe("The value to append (must be valid JSON)"),
+    value: z.string().describe("The value to append (must be valid JSON)"),
   },
   async ({ key, value }) => {
     try {
@@ -1828,22 +1988,30 @@ registeredTool(
   async () => respondJson(status.buildStatus(instance!)),
 );
 
-(server.tool as any)(
+server.registerTool(
   "wait_for_activity",
-  "Block until new swarm activity arrives (messages, task changes, KV changes, or instance changes), then return what changed. Use this only while you own active monitoring responsibility, not as a generic idle loop. Returns immediately if there is already unread activity. Note: returned messages are marked read.",
   {
-    timeout_seconds: z
-      .number()
-      .int()
-      .min(0)
-      .optional()
-      .default(0)
-      .describe(
-        "Max seconds to wait before returning (even if nothing changed). Default 0 means wait indefinitely.",
-      ),
+    description:
+      "Block until new swarm activity arrives (messages, task changes, KV changes, or instance changes), then return what changed. Use this only while you own active monitoring responsibility, not as a generic idle loop. Returns immediately if there is already unread activity. Note: returned messages are marked read.",
+    inputSchema: z.object({
+      timeout_seconds: z
+        .number()
+        .int()
+        .min(0)
+        .max(60)
+        .optional()
+        .default(30)
+        .describe(
+          "Max seconds to wait, capped at 60. Default 30; zero also uses 30 for bounded legacy compatibility.",
+        ),
+    }),
+    annotations: {
+      readOnlyHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
   },
-  { readOnlyHint: false, idempotentHint: false, openWorldHint: false },
-  async ({ timeout_seconds = 0 }: { timeout_seconds?: number }) => {
+  async ({ timeout_seconds = 30 }: { timeout_seconds?: number }, ctx) => {
     const current = ensureInstance();
     if (!current) return missing();
 
@@ -1865,10 +2033,11 @@ registeredTool(
     const startInstancesVersion = getInstancesVersion();
     const startKvUpdate = getMaxKvUpdate();
 
-    const deadline = timeout_seconds > 0 ? Date.now() + timeout_seconds * 1000 : 0;
+    const deadline = Date.now() + (timeout_seconds || 30) * 1000;
     const pollInterval = 2000; // check every 2 seconds
 
-    while (deadline === 0 || Date.now() < deadline) {
+    while (Date.now() < deadline) {
+      ctx.mcpReq.signal.throwIfAborted();
       const currentMsgId = getMaxMsgId();
       const currentTaskUpdate = getMaxTaskUpdate();
       const currentInstancesVersion = getInstancesVersion();
@@ -1899,7 +2068,9 @@ registeredTool(
       }
 
       // Sleep before next check
-      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      await delay(Math.min(pollInterval, deadline - Date.now()), undefined, {
+        signal: ctx.mcpReq.signal,
+      });
     }
 
     // Timeout with no changes
@@ -1914,11 +2085,19 @@ registeredTool(
 );
 
 async function main() {
-  const transport = new StdioServerTransport();
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
+  server.server.onclose = cleanup;
   process.on("exit", cleanup);
-  await server.connect(transport);
+  const handle = serveStdio(() => server, {
+    legacy: "serve",
+    maxSubscriptions: 16,
+  });
+  const close = () => {
+    cleanup();
+    void handle.close();
+  };
+  process.once("SIGINT", close);
+  process.once("SIGTERM", close);
+  process.stdin.once("end", close);
 }
 
 main().catch((err) => {

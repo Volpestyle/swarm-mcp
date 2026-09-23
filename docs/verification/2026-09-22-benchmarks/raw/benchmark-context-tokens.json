@@ -1,0 +1,102 @@
+﻿{
+  "tokenizer": "tiktoken 0.12.0 / o200k_base",
+  "measurement": "Explicit call name/arguments and text-result tokens. Schema JSON counted separately. Instruction counts are null when absent from historical captures. No hidden prompt framing, reasoning, caching adjustment or claim of a live model bill.",
+  "runs": [
+    {
+      "agents": 2,
+      "calls": 8,
+      "tools": 9,
+      "schemaTokensPerAgent": 2846,
+      "argumentTokens": 324,
+      "textResultTokens": 628,
+      "callsTokensTotal": 952,
+      "withSchemaPerAgentTotal": 6644,
+      "byTool": {
+        "swarm_inbox": {
+          "calls": 4,
+          "textResultTokens": 449,
+          "minTextResultTokensPerCall": 56,
+          "maxTextResultTokensPerCall": 167
+        },
+        "swarm_send": {
+          "calls": 2,
+          "textResultTokens": 117,
+          "minTextResultTokensPerCall": 57,
+          "maxTextResultTokensPerCall": 60
+        },
+        "swarm_sync": {
+          "calls": 2,
+          "textResultTokens": 62,
+          "minTextResultTokensPerCall": 31,
+          "maxTextResultTokensPerCall": 31
+        }
+      },
+      "instructionsTokensPerAgent": 73,
+      "catalogAndInstructionsTokensPerAgent": 2919
+    },
+    {
+      "agents": 8,
+      "calls": 32,
+      "tools": 9,
+      "schemaTokensPerAgent": 2846,
+      "argumentTokens": 1265,
+      "textResultTokens": 2469,
+      "callsTokensTotal": 3734,
+      "withSchemaPerAgentTotal": 26502,
+      "byTool": {
+        "swarm_inbox": {
+          "calls": 16,
+          "textResultTokens": 1759,
+          "minTextResultTokensPerCall": 55,
+          "maxTextResultTokensPerCall": 165
+        },
+        "swarm_send": {
+          "calls": 8,
+          "textResultTokens": 462,
+          "minTextResultTokensPerCall": 56,
+          "maxTextResultTokensPerCall": 60
+        },
+        "swarm_sync": {
+          "calls": 8,
+          "textResultTokens": 248,
+          "minTextResultTokensPerCall": 31,
+          "maxTextResultTokensPerCall": 31
+        }
+      },
+      "instructionsTokensPerAgent": 73,
+      "catalogAndInstructionsTokensPerAgent": 2919
+    },
+    {
+      "agents": 32,
+      "calls": 128,
+      "tools": 9,
+      "schemaTokensPerAgent": 2846,
+      "argumentTokens": 5105,
+      "textResultTokens": 10023,
+      "callsTokensTotal": 15128,
+      "withSchemaPerAgentTotal": 106200,
+      "byTool": {
+        "swarm_inbox": {
+          "calls": 64,
+          "textResultTokens": 7132,
+          "minTextResultTokensPerCall": 55,
+          "maxTextResultTokensPerCall": 170
+        },
+        "swarm_send": {
+          "calls": 32,
+          "textResultTokens": 1899,
+          "minTextResultTokensPerCall": 56,
+          "maxTextResultTokensPerCall": 63
+        },
+        "swarm_sync": {
+          "calls": 32,
+          "textResultTokens": 992,
+          "minTextResultTokensPerCall": 31,
+          "maxTextResultTokensPerCall": 31
+        }
+      },
+      "instructionsTokensPerAgent": 73,
+      "catalogAndInstructionsTokensPerAgent": 2919
+    }
+  ]
+}

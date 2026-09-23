@@ -1,0 +1,32 @@
+﻿{
+  "tokenizer": "tiktoken 0.12.0 / o200k_base",
+  "measurement": "Explicit call name/arguments and text-result tokens. Schema JSON counted separately. Instruction counts are null when absent from historical captures. No hidden prompt framing, reasoning, caching adjustment or claim of a live model bill.",
+  "runs": [
+    {
+      "agents": 2,
+      "calls": 8,
+      "tools": 9,
+      "schemaTokensPerAgent": 2846,
+      "argumentTokens": 314,
+      "textResultTokens": 610,
+      "callsTokensTotal": 924,
+      "withSchemaPerAgentTotal": 6616,
+      "byTool": {
+        "swarm_inbox": {
+          "calls": 4,
+          "textResultTokens": 435
+        },
+        "swarm_send": {
+          "calls": 2,
+          "textResultTokens": 113
+        },
+        "swarm_sync": {
+          "calls": 2,
+          "textResultTokens": 62
+        }
+      },
+      "instructionsTokensPerAgent": 73,
+      "catalogAndInstructionsTokensPerAgent": 2919
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "tokenizer": "tiktoken 0.12.0 / o200k_base",
+  "measurement": "Explicit call name/arguments and text-result tokens. Schema JSON counted separately. No hidden prompt framing, reasoning, caching adjustment or claim of a live model bill.",
+  "runs": [
+    {
+      "agents": 2,
+      "calls": 8,
+      "tools": 33,
+      "schemaTokensPerAgent": 6042,
+      "argumentTokens": 289,
+      "textResultTokens": 2245,
+      "callsTokensTotal": 2534,
+      "withSchemaPerAgentTotal": 14618,
+      "byTool": {
+        "bootstrap": {
+          "calls": 2,
+          "textResultTokens": 1306
+        },
+        "poll_messages": {
+          "calls": 2,
+          "textResultTokens": 143
+        },
+        "register": {
+          "calls": 2,
+          "textResultTokens": 743
+        },
+        "send_message": {
+          "calls": 2,
+          "textResultTokens": 53
+        }
+      }
+    },
+    {
+      "agents": 8,
+      "calls": 32,
+      "tools": 33,
+      "schemaTokensPerAgent": 6042,
+      "argumentTokens": 1125,
+      "textResultTokens": 19163,
+      "callsTokensTotal": 20288,
+      "withSchemaPerAgentTotal": 68624,
+      "byTool": {
+        "bootstrap": {
+          "calls": 8,
+          "textResultTokens": 15440
+        },
+        "poll_messages": {
+          "calls": 8,
+          "textResultTokens": 573
+        },
+        "register": {
+          "calls": 8,
+          "textResultTokens": 2941
+        },
+        "send_message": {
+          "calls": 8,
+          "textResultTokens": 209
+        }
+      }
+    },
+    {
+      "agents": 32,
+      "calls": 128,
+      "tools": 33,
+      "schemaTokensPerAgent": 6042,
+      "argumentTokens": 4570,
+      "textResultTokens": 241730,
+      "callsTokensTotal": 246300,
+      "withSchemaPerAgentTotal": 439644,
+      "byTool": {
+        "bootstrap": {
+          "calls": 32,
+          "textResultTokens": 226816
+        },
+        "poll_messages": {
+          "calls": 32,
+          "textResultTokens": 2298
+        },
+        "register": {
+          "calls": 32,
+          "textResultTokens": 11770
+        },
+        "send_message": {
+          "calls": 32,
+          "textResultTokens": 846
+        }
+      }
+    }
+  ]
+}

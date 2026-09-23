@@ -1,0 +1,5711 @@
+{
+  "count": 32,
+  "fixture": "C:\\Users\\volpe\\AppData\\Local\\Temp\\swarm-compact-context-VMv5VP",
+  "server": {
+    "name": "swarm",
+    "version": "2.0.0"
+  },
+  "toolSchema": {
+    "tools": [
+      {
+        "name": "swarm_sync",
+        "description": "Bootstrap once; resume with an event cursor for targeted deltas.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "waitMs": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 30000
+            }
+          },
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "data": {},
+            "error": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "data",
+            "error"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_find",
+        "description": "Find scoped peers or task summaries; use taskId for details.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "peers",
+                "tasks",
+                "task"
+              ]
+            },
+            "taskId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "role": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "owner": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "status": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "cursor": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "limit": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "data": {},
+            "error": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "data",
+            "error"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_assign",
+        "description": "Create durable work asynchronously. Reuse commandId on retry; wait separately with the returned task ID.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "contract": {
+              "type": "object",
+              "properties": {
+                "objective": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "worktree": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "acceptanceCriteria": {
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "expectedArtifacts": {
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "constraints": {
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                }
+              },
+              "required": [
+                "objective",
+                "worktree",
+                "acceptanceCriteria",
+                "expectedArtifacts",
+                "constraints"
+              ],
+              "additionalProperties": false
+            },
+            "dependencies": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          },
+          "required": [
+            "commandId",
+            "title",
+            "contract"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "data": {},
+            "error": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "data",
+            "error"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_task",
+        "description": "Claim, renew, report progress, finish, cancel or recover work. Finish requires evidence and limitations.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "claim",
+                "renew",
+                "progress",
+                "finish",
+                "cancel",
+                "retry",
+                "recover"
+              ]
+            },
+            "taskId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "expectedVersion": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "attemptId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "fence": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "completed",
+                "failed",
+                "cancelled"
+              ]
+            },
+            "report": {
+              "type": "object",
+              "properties": {
+                "summary": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "evidence": {
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "limitations": {
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                }
+              },
+              "required": [
+                "summary",
+                "evidence",
+                "limitations"
+              ]
+            }
+          },
+          "required": [
+            "commandId",
+            "action",
+            "taskId"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "data": {},
+            "error": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "data",
+            "error"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_send",
+        "description": "Send a question, blocker, decision request or completion notice. Work assignment uses swarm_assign.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "recipient": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "question",
+                "blocker",
+                "decision_request",
+                "completion_notice"
+              ]
+            },
+            "body": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "threadId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "taskId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "commandId",
+            "recipient",
+            "kind",
+            "body",
+            "threadId"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "data": {},
+            "error": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "data",
+            "error"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_inbox",
+        "description": "Fetch leases one message. Ack only after processing; reject with a reason for retry.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "fetch",
+                "ack",
+                "reject"
+              ]
+            },
+            "consumer": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "messageId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "leaseToken": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          },
+          "required": [
+            "commandId",
+            "action"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "data": {},
+            "error": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "data",
+            "error"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_wait",
+        "description": "Wait for a task's terminal state. Timeout returns the same resumable reference without cancelling work.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "timeoutMs": {
+              "default": 30000,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 30000
+            }
+          },
+          "required": [
+            "taskId"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "data": {},
+            "error": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "data",
+            "error"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_context",
+        "description": "Versioned shared state: get, set with expectedVersion, atomic append, or delete. Keep values small; link artifacts.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "get",
+                "set",
+                "append",
+                "delete"
+              ]
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "expectedVersion": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "value": {}
+          },
+          "required": [
+            "action",
+            "key"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "data": {},
+            "error": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "data",
+            "error"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "swarm_evidence",
+        "description": "Capture a completed worktree file or record a result, decision or annotation with provenance. Read bytes through the returned artifact URI.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "commandId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "capture",
+                "record"
+              ]
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "mediaType": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "result",
+                "decision",
+                "annotation"
+              ]
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"
+            },
+            "files": {
+              "default": [],
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              }
+            },
+            "verification": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "artifactIds": {
+              "default": [],
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
+            "taskId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "attemptId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "commandId",
+            "action",
+            "summary"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "data": {},
+            "error": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "retryable"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "ok",
+            "data",
+            "error"
+          ],
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      }
+    ]
+  },
+  "toolCalls": 128,
+  "transcript": [
+    {
+      "agent": 0,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-0\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-0",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 22.446100000000115
+    },
+    {
+      "agent": 1,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-1\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-1",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.9255000000002838
+    },
+    {
+      "agent": 2,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-2\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-2",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.875199999999495
+    },
+    {
+      "agent": 3,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-3\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-3",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.686800000000403
+    },
+    {
+      "agent": 4,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-4\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-4",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.082699999999932
+    },
+    {
+      "agent": 5,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-5\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-5",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.715400000000045
+    },
+    {
+      "agent": 6,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-6\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-6",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.886700000000019
+    },
+    {
+      "agent": 7,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-7\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-7",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.7161999999998443
+    },
+    {
+      "agent": 8,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-8\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-8",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.6513000000004467
+    },
+    {
+      "agent": 9,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-9\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-9",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.063000000000102
+    },
+    {
+      "agent": 10,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-10\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-10",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.6685999999999694
+    },
+    {
+      "agent": 11,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-11\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-11",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.6644999999998618
+    },
+    {
+      "agent": 12,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-12\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-12",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.5995999999995547
+    },
+    {
+      "agent": 13,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-13\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-13",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.9793999999992593
+    },
+    {
+      "agent": 14,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-14\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-14",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.5595000000002983
+    },
+    {
+      "agent": 15,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-15\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-15",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.5549999999993815
+    },
+    {
+      "agent": 16,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-16\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-16",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.6630000000004657
+    },
+    {
+      "agent": 17,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-17\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-17",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.733400000000074
+    },
+    {
+      "agent": 18,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-18\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-18",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.8575000000000728
+    },
+    {
+      "agent": 19,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-19\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-19",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.153599999999642
+    },
+    {
+      "agent": 20,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-20\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-20",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.8104999999995925
+    },
+    {
+      "agent": 21,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-21\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-21",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.997399999999288
+    },
+    {
+      "agent": 22,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-22\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-22",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.178599999999278
+    },
+    {
+      "agent": 23,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-23\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-23",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.9605000000001382
+    },
+    {
+      "agent": 24,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-24\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-24",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.6098000000001775
+    },
+    {
+      "agent": 25,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-25\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-25",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.21980000000076
+    },
+    {
+      "agent": 26,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-26\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-26",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.539400000000569
+    },
+    {
+      "agent": 27,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-27\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-27",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.7718000000004395
+    },
+    {
+      "agent": 28,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-28\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-28",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.65729999999985
+    },
+    {
+      "agent": 29,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-29\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-29",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.6050999999997657
+    },
+    {
+      "agent": 30,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-30\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-30",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 4.289800000000469
+    },
+    {
+      "agent": 31,
+      "name": "swarm_sync",
+      "arguments": {},
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"scope\":\"measurement\",\"actor\":\"agent-31\",\"eventCursor\":32,\"tasks\":{\"items\":[],\"cursor\":0},\"inbox\":[]},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "scope": "measurement",
+            "actor": "agent-31",
+            "eventCursor": 32,
+            "tasks": {
+              "items": [],
+              "cursor": 0
+            },
+            "inbox": []
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 3.7064000000000306
+    },
+    {
+      "agent": 0,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-0",
+        "recipient": "agent-1",
+        "kind": "question",
+        "threadId": "thread-0",
+        "body": "fixture handoff 0: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"a5c037e4-5246-445e-a764-d901de0172e5\",\"recipients\":[\"agent-1\"],\"idempotencyKey\":\"send-0\"},\"cursor\":33,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "a5c037e4-5246-445e-a764-d901de0172e5",
+              "recipients": [
+                "agent-1"
+              ],
+              "idempotencyKey": "send-0"
+            },
+            "cursor": 33,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 7.622699999999895
+    },
+    {
+      "agent": 1,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-1",
+        "recipient": "agent-2",
+        "kind": "question",
+        "threadId": "thread-1",
+        "body": "fixture handoff 1: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"3c0992fe-ed44-4ec2-96e3-6a737543b796\",\"recipients\":[\"agent-2\"],\"idempotencyKey\":\"send-1\"},\"cursor\":34,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "3c0992fe-ed44-4ec2-96e3-6a737543b796",
+              "recipients": [
+                "agent-2"
+              ],
+              "idempotencyKey": "send-1"
+            },
+            "cursor": 34,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 13.707699999999932
+    },
+    {
+      "agent": 2,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-2",
+        "recipient": "agent-3",
+        "kind": "question",
+        "threadId": "thread-2",
+        "body": "fixture handoff 2: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"03017895-fb09-4bc8-a360-41db66d189bc\",\"recipients\":[\"agent-3\"],\"idempotencyKey\":\"send-2\"},\"cursor\":35,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "03017895-fb09-4bc8-a360-41db66d189bc",
+              "recipients": [
+                "agent-3"
+              ],
+              "idempotencyKey": "send-2"
+            },
+            "cursor": 35,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.806099999999788
+    },
+    {
+      "agent": 3,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-3",
+        "recipient": "agent-4",
+        "kind": "question",
+        "threadId": "thread-3",
+        "body": "fixture handoff 3: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"c1438d5e-f815-49bd-b60d-3c176bb0900e\",\"recipients\":[\"agent-4\"],\"idempotencyKey\":\"send-3\"},\"cursor\":36,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "c1438d5e-f815-49bd-b60d-3c176bb0900e",
+              "recipients": [
+                "agent-4"
+              ],
+              "idempotencyKey": "send-3"
+            },
+            "cursor": 36,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.895400000000336
+    },
+    {
+      "agent": 4,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-4",
+        "recipient": "agent-5",
+        "kind": "question",
+        "threadId": "thread-4",
+        "body": "fixture handoff 4: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"9e7df0bd-bc5e-4d7a-b370-ff2f0db590e6\",\"recipients\":[\"agent-5\"],\"idempotencyKey\":\"send-4\"},\"cursor\":37,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "9e7df0bd-bc5e-4d7a-b370-ff2f0db590e6",
+              "recipients": [
+                "agent-5"
+              ],
+              "idempotencyKey": "send-4"
+            },
+            "cursor": 37,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.269000000000233
+    },
+    {
+      "agent": 5,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-5",
+        "recipient": "agent-6",
+        "kind": "question",
+        "threadId": "thread-5",
+        "body": "fixture handoff 5: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"58ac404d-d1e1-4b62-93e1-2b06c46abb93\",\"recipients\":[\"agent-6\"],\"idempotencyKey\":\"send-5\"},\"cursor\":38,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "58ac404d-d1e1-4b62-93e1-2b06c46abb93",
+              "recipients": [
+                "agent-6"
+              ],
+              "idempotencyKey": "send-5"
+            },
+            "cursor": 38,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.920500000000175
+    },
+    {
+      "agent": 6,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-6",
+        "recipient": "agent-7",
+        "kind": "question",
+        "threadId": "thread-6",
+        "body": "fixture handoff 6: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"bc8814d3-fbcc-49e8-9f54-0ebd338bfb21\",\"recipients\":[\"agent-7\"],\"idempotencyKey\":\"send-6\"},\"cursor\":39,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "bc8814d3-fbcc-49e8-9f54-0ebd338bfb21",
+              "recipients": [
+                "agent-7"
+              ],
+              "idempotencyKey": "send-6"
+            },
+            "cursor": 39,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 13.082300000000032
+    },
+    {
+      "agent": 7,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-7",
+        "recipient": "agent-8",
+        "kind": "question",
+        "threadId": "thread-7",
+        "body": "fixture handoff 7: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"b9c9d758-a8ff-4cfe-b600-2bb31dd83adb\",\"recipients\":[\"agent-8\"],\"idempotencyKey\":\"send-7\"},\"cursor\":40,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "b9c9d758-a8ff-4cfe-b600-2bb31dd83adb",
+              "recipients": [
+                "agent-8"
+              ],
+              "idempotencyKey": "send-7"
+            },
+            "cursor": 40,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.3766999999998
+    },
+    {
+      "agent": 8,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-8",
+        "recipient": "agent-9",
+        "kind": "question",
+        "threadId": "thread-8",
+        "body": "fixture handoff 8: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"b08eb549-2e2c-496b-8671-c7531911a5cb\",\"recipients\":[\"agent-9\"],\"idempotencyKey\":\"send-8\"},\"cursor\":41,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "b08eb549-2e2c-496b-8671-c7531911a5cb",
+              "recipients": [
+                "agent-9"
+              ],
+              "idempotencyKey": "send-8"
+            },
+            "cursor": 41,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.142100000000028
+    },
+    {
+      "agent": 9,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-9",
+        "recipient": "agent-10",
+        "kind": "question",
+        "threadId": "thread-9",
+        "body": "fixture handoff 9: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"0cec7caa-bd41-4a10-9a25-b49babaebd2d\",\"recipients\":[\"agent-10\"],\"idempotencyKey\":\"send-9\"},\"cursor\":42,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "0cec7caa-bd41-4a10-9a25-b49babaebd2d",
+              "recipients": [
+                "agent-10"
+              ],
+              "idempotencyKey": "send-9"
+            },
+            "cursor": 42,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.424399999999878
+    },
+    {
+      "agent": 10,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-10",
+        "recipient": "agent-11",
+        "kind": "question",
+        "threadId": "thread-10",
+        "body": "fixture handoff 10: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"c6de0cdc-6438-46e1-b213-b2cba69b06ab\",\"recipients\":[\"agent-11\"],\"idempotencyKey\":\"send-10\"},\"cursor\":43,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "c6de0cdc-6438-46e1-b213-b2cba69b06ab",
+              "recipients": [
+                "agent-11"
+              ],
+              "idempotencyKey": "send-10"
+            },
+            "cursor": 43,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 13.638899999999921
+    },
+    {
+      "agent": 11,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-11",
+        "recipient": "agent-12",
+        "kind": "question",
+        "threadId": "thread-11",
+        "body": "fixture handoff 11: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"2439432d-e66b-4be6-829c-5c3775c42796\",\"recipients\":[\"agent-12\"],\"idempotencyKey\":\"send-11\"},\"cursor\":44,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "2439432d-e66b-4be6-829c-5c3775c42796",
+              "recipients": [
+                "agent-12"
+              ],
+              "idempotencyKey": "send-11"
+            },
+            "cursor": 44,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.507000000000517
+    },
+    {
+      "agent": 12,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-12",
+        "recipient": "agent-13",
+        "kind": "question",
+        "threadId": "thread-12",
+        "body": "fixture handoff 12: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"0957505e-495f-4481-ad63-c2320299fa1f\",\"recipients\":[\"agent-13\"],\"idempotencyKey\":\"send-12\"},\"cursor\":45,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "0957505e-495f-4481-ad63-c2320299fa1f",
+              "recipients": [
+                "agent-13"
+              ],
+              "idempotencyKey": "send-12"
+            },
+            "cursor": 45,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.487199999999575
+    },
+    {
+      "agent": 13,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-13",
+        "recipient": "agent-14",
+        "kind": "question",
+        "threadId": "thread-13",
+        "body": "fixture handoff 13: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"b4c9526d-1162-419d-8948-180aeb566eb3\",\"recipients\":[\"agent-14\"],\"idempotencyKey\":\"send-13\"},\"cursor\":46,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "b4c9526d-1162-419d-8948-180aeb566eb3",
+              "recipients": [
+                "agent-14"
+              ],
+              "idempotencyKey": "send-13"
+            },
+            "cursor": 46,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.9354000000003
+    },
+    {
+      "agent": 14,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-14",
+        "recipient": "agent-15",
+        "kind": "question",
+        "threadId": "thread-14",
+        "body": "fixture handoff 14: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"4c3f6717-8328-41e0-8454-972f9ee6700e\",\"recipients\":[\"agent-15\"],\"idempotencyKey\":\"send-14\"},\"cursor\":47,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "4c3f6717-8328-41e0-8454-972f9ee6700e",
+              "recipients": [
+                "agent-15"
+              ],
+              "idempotencyKey": "send-14"
+            },
+            "cursor": 47,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.160399999999754
+    },
+    {
+      "agent": 15,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-15",
+        "recipient": "agent-16",
+        "kind": "question",
+        "threadId": "thread-15",
+        "body": "fixture handoff 15: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"80c2d5a3-1032-4555-8be5-0cd906cb717c\",\"recipients\":[\"agent-16\"],\"idempotencyKey\":\"send-15\"},\"cursor\":48,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "80c2d5a3-1032-4555-8be5-0cd906cb717c",
+              "recipients": [
+                "agent-16"
+              ],
+              "idempotencyKey": "send-15"
+            },
+            "cursor": 48,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 11.140900000000329
+    },
+    {
+      "agent": 16,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-16",
+        "recipient": "agent-17",
+        "kind": "question",
+        "threadId": "thread-16",
+        "body": "fixture handoff 16: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"f8f2fda5-dfbc-4192-bba1-ecaa1287dfcf\",\"recipients\":[\"agent-17\"],\"idempotencyKey\":\"send-16\"},\"cursor\":49,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "f8f2fda5-dfbc-4192-bba1-ecaa1287dfcf",
+              "recipients": [
+                "agent-17"
+              ],
+              "idempotencyKey": "send-16"
+            },
+            "cursor": 49,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.698699999999917
+    },
+    {
+      "agent": 17,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-17",
+        "recipient": "agent-18",
+        "kind": "question",
+        "threadId": "thread-17",
+        "body": "fixture handoff 17: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"d6a081dc-8148-4010-8535-d45561317a06\",\"recipients\":[\"agent-18\"],\"idempotencyKey\":\"send-17\"},\"cursor\":50,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "d6a081dc-8148-4010-8535-d45561317a06",
+              "recipients": [
+                "agent-18"
+              ],
+              "idempotencyKey": "send-17"
+            },
+            "cursor": 50,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.617500000000291
+    },
+    {
+      "agent": 18,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-18",
+        "recipient": "agent-19",
+        "kind": "question",
+        "threadId": "thread-18",
+        "body": "fixture handoff 18: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"25762a28-6fb6-4a13-81af-9474e8010bf3\",\"recipients\":[\"agent-19\"],\"idempotencyKey\":\"send-18\"},\"cursor\":51,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "25762a28-6fb6-4a13-81af-9474e8010bf3",
+              "recipients": [
+                "agent-19"
+              ],
+              "idempotencyKey": "send-18"
+            },
+            "cursor": 51,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.856499999999869
+    },
+    {
+      "agent": 19,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-19",
+        "recipient": "agent-20",
+        "kind": "question",
+        "threadId": "thread-19",
+        "body": "fixture handoff 19: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"f0dcb0c1-9740-4312-bd77-84c6c2673981\",\"recipients\":[\"agent-20\"],\"idempotencyKey\":\"send-19\"},\"cursor\":52,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "f0dcb0c1-9740-4312-bd77-84c6c2673981",
+              "recipients": [
+                "agent-20"
+              ],
+              "idempotencyKey": "send-19"
+            },
+            "cursor": 52,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.403199999999742
+    },
+    {
+      "agent": 20,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-20",
+        "recipient": "agent-21",
+        "kind": "question",
+        "threadId": "thread-20",
+        "body": "fixture handoff 20: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"70412197-ffae-4ce5-ae9e-244a0f9383c5\",\"recipients\":[\"agent-21\"],\"idempotencyKey\":\"send-20\"},\"cursor\":53,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "70412197-ffae-4ce5-ae9e-244a0f9383c5",
+              "recipients": [
+                "agent-21"
+              ],
+              "idempotencyKey": "send-20"
+            },
+            "cursor": 53,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.75
+    },
+    {
+      "agent": 21,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-21",
+        "recipient": "agent-22",
+        "kind": "question",
+        "threadId": "thread-21",
+        "body": "fixture handoff 21: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"6c6608e7-107b-415c-8251-dc9ca86cd45c\",\"recipients\":[\"agent-22\"],\"idempotencyKey\":\"send-21\"},\"cursor\":54,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "6c6608e7-107b-415c-8251-dc9ca86cd45c",
+              "recipients": [
+                "agent-22"
+              ],
+              "idempotencyKey": "send-21"
+            },
+            "cursor": 54,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.862900000000081
+    },
+    {
+      "agent": 22,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-22",
+        "recipient": "agent-23",
+        "kind": "question",
+        "threadId": "thread-22",
+        "body": "fixture handoff 22: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"edb10f70-bcf4-4be4-8961-c1cd14c65d06\",\"recipients\":[\"agent-23\"],\"idempotencyKey\":\"send-22\"},\"cursor\":55,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "edb10f70-bcf4-4be4-8961-c1cd14c65d06",
+              "recipients": [
+                "agent-23"
+              ],
+              "idempotencyKey": "send-22"
+            },
+            "cursor": 55,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.007800000000316
+    },
+    {
+      "agent": 23,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-23",
+        "recipient": "agent-24",
+        "kind": "question",
+        "threadId": "thread-23",
+        "body": "fixture handoff 23: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"c4e769f4-5fe4-43f5-a09b-c98715e297eb\",\"recipients\":[\"agent-24\"],\"idempotencyKey\":\"send-23\"},\"cursor\":56,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "c4e769f4-5fe4-43f5-a09b-c98715e297eb",
+              "recipients": [
+                "agent-24"
+              ],
+              "idempotencyKey": "send-23"
+            },
+            "cursor": 56,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.334100000000035
+    },
+    {
+      "agent": 24,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-24",
+        "recipient": "agent-25",
+        "kind": "question",
+        "threadId": "thread-24",
+        "body": "fixture handoff 24: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"2fee4ef1-98a2-4e5b-b408-f133aee32fb3\",\"recipients\":[\"agent-25\"],\"idempotencyKey\":\"send-24\"},\"cursor\":57,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "2fee4ef1-98a2-4e5b-b408-f133aee32fb3",
+              "recipients": [
+                "agent-25"
+              ],
+              "idempotencyKey": "send-24"
+            },
+            "cursor": 57,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.551100000000588
+    },
+    {
+      "agent": 25,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-25",
+        "recipient": "agent-26",
+        "kind": "question",
+        "threadId": "thread-25",
+        "body": "fixture handoff 25: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"db2a8abc-44a8-49ec-8ba9-5fff6ce12c44\",\"recipients\":[\"agent-26\"],\"idempotencyKey\":\"send-25\"},\"cursor\":58,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "db2a8abc-44a8-49ec-8ba9-5fff6ce12c44",
+              "recipients": [
+                "agent-26"
+              ],
+              "idempotencyKey": "send-25"
+            },
+            "cursor": 58,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.32970000000023
+    },
+    {
+      "agent": 26,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-26",
+        "recipient": "agent-27",
+        "kind": "question",
+        "threadId": "thread-26",
+        "body": "fixture handoff 26: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"277acf83-5b32-4493-b012-7f355e110b80\",\"recipients\":[\"agent-27\"],\"idempotencyKey\":\"send-26\"},\"cursor\":59,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "277acf83-5b32-4493-b012-7f355e110b80",
+              "recipients": [
+                "agent-27"
+              ],
+              "idempotencyKey": "send-26"
+            },
+            "cursor": 59,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.730400000000373
+    },
+    {
+      "agent": 27,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-27",
+        "recipient": "agent-28",
+        "kind": "question",
+        "threadId": "thread-27",
+        "body": "fixture handoff 27: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"515dac68-fa64-41da-92a6-94428fbef0e7\",\"recipients\":[\"agent-28\"],\"idempotencyKey\":\"send-27\"},\"cursor\":60,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "515dac68-fa64-41da-92a6-94428fbef0e7",
+              "recipients": [
+                "agent-28"
+              ],
+              "idempotencyKey": "send-27"
+            },
+            "cursor": 60,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.338800000000447
+    },
+    {
+      "agent": 28,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-28",
+        "recipient": "agent-29",
+        "kind": "question",
+        "threadId": "thread-28",
+        "body": "fixture handoff 28: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"871511d3-0270-48a8-b630-e04933434f88\",\"recipients\":[\"agent-29\"],\"idempotencyKey\":\"send-28\"},\"cursor\":61,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "871511d3-0270-48a8-b630-e04933434f88",
+              "recipients": [
+                "agent-29"
+              ],
+              "idempotencyKey": "send-28"
+            },
+            "cursor": 61,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.643800000000738
+    },
+    {
+      "agent": 29,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-29",
+        "recipient": "agent-30",
+        "kind": "question",
+        "threadId": "thread-29",
+        "body": "fixture handoff 29: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"220546c7-6022-4c94-acab-51bac065af75\",\"recipients\":[\"agent-30\"],\"idempotencyKey\":\"send-29\"},\"cursor\":62,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "220546c7-6022-4c94-acab-51bac065af75",
+              "recipients": [
+                "agent-30"
+              ],
+              "idempotencyKey": "send-29"
+            },
+            "cursor": 62,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.773000000000138
+    },
+    {
+      "agent": 30,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-30",
+        "recipient": "agent-31",
+        "kind": "question",
+        "threadId": "thread-30",
+        "body": "fixture handoff 30: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"20271e6d-6ae7-4a46-98af-13ca67b9baf8\",\"recipients\":[\"agent-31\"],\"idempotencyKey\":\"send-30\"},\"cursor\":63,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "20271e6d-6ae7-4a46-98af-13ca67b9baf8",
+              "recipients": [
+                "agent-31"
+              ],
+              "idempotencyKey": "send-30"
+            },
+            "cursor": 63,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.507299999999304
+    },
+    {
+      "agent": 31,
+      "name": "swarm_send",
+      "arguments": {
+        "commandId": "send-31",
+        "recipient": "agent-0",
+        "kind": "question",
+        "threadId": "thread-31",
+        "body": "fixture handoff 31: inspect the assigned module and return evidence"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"6c4a94a2-a05c-48e2-ae1e-83c246f7b1f4\",\"recipients\":[\"agent-0\"],\"idempotencyKey\":\"send-31\"},\"cursor\":64,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "6c4a94a2-a05c-48e2-ae1e-83c246f7b1f4",
+              "recipients": [
+                "agent-0"
+              ],
+              "idempotencyKey": "send-31"
+            },
+            "cursor": 64,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.973700000000463
+    },
+    {
+      "agent": 0,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-0",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"6c4a94a2-a05c-48e2-ae1e-83c246f7b1f4\",\"sender\":\"agent-31\",\"recipient\":\"agent-0\",\"kind\":\"question\",\"body\":\"fixture handoff 31: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-31\",\"createdAt\":1790058959203,\"expiresAt\":null,\"idempotencyKey\":\"send-31\",\"audience\":\"direct\"},\"leaseToken\":\"3bbfc5d0-2e4d-4149-98fd-121de32e3db9\",\"leaseUntil\":1790058989214,\"attempt\":1}]},\"cursor\":65,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "6c4a94a2-a05c-48e2-ae1e-83c246f7b1f4",
+                    "sender": "agent-31",
+                    "recipient": "agent-0",
+                    "kind": "question",
+                    "body": "fixture handoff 31: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-31",
+                    "createdAt": 1790058959203,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-31",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "3bbfc5d0-2e4d-4149-98fd-121de32e3db9",
+                  "leaseUntil": 1790058989214,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 65,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.81919999999991
+    },
+    {
+      "agent": 0,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-0",
+        "action": "ack",
+        "messageId": "6c4a94a2-a05c-48e2-ae1e-83c246f7b1f4",
+        "leaseToken": "3bbfc5d0-2e4d-4149-98fd-121de32e3db9"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"6c4a94a2-a05c-48e2-ae1e-83c246f7b1f4\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959223},\"cursor\":66,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "6c4a94a2-a05c-48e2-ae1e-83c246f7b1f4",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959223
+            },
+            "cursor": 66,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.400000000000546
+    },
+    {
+      "agent": 1,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-1",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"a5c037e4-5246-445e-a764-d901de0172e5\",\"sender\":\"agent-0\",\"recipient\":\"agent-1\",\"kind\":\"question\",\"body\":\"fixture handoff 0: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-0\",\"createdAt\":1790058958878,\"expiresAt\":null,\"idempotencyKey\":\"send-0\",\"audience\":\"direct\"},\"leaseToken\":\"7e2995b3-4c3c-4817-99ad-7dd48a6c7b80\",\"leaseUntil\":1790058989232,\"attempt\":1}]},\"cursor\":67,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "a5c037e4-5246-445e-a764-d901de0172e5",
+                    "sender": "agent-0",
+                    "recipient": "agent-1",
+                    "kind": "question",
+                    "body": "fixture handoff 0: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-0",
+                    "createdAt": 1790058958878,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-0",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "7e2995b3-4c3c-4817-99ad-7dd48a6c7b80",
+                  "leaseUntil": 1790058989232,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 67,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.898799999999937
+    },
+    {
+      "agent": 1,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-1",
+        "action": "ack",
+        "messageId": "a5c037e4-5246-445e-a764-d901de0172e5",
+        "leaseToken": "7e2995b3-4c3c-4817-99ad-7dd48a6c7b80"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"a5c037e4-5246-445e-a764-d901de0172e5\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959242},\"cursor\":68,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "a5c037e4-5246-445e-a764-d901de0172e5",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959242
+            },
+            "cursor": 68,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.897100000000137
+    },
+    {
+      "agent": 2,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-2",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"3c0992fe-ed44-4ec2-96e3-6a737543b796\",\"sender\":\"agent-1\",\"recipient\":\"agent-2\",\"kind\":\"question\",\"body\":\"fixture handoff 1: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-1\",\"createdAt\":1790058958893,\"expiresAt\":null,\"idempotencyKey\":\"send-1\",\"audience\":\"direct\"},\"leaseToken\":\"cacedba3-0951-43f7-b1ba-1ab589824a05\",\"leaseUntil\":1790058989252,\"attempt\":1}]},\"cursor\":69,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "3c0992fe-ed44-4ec2-96e3-6a737543b796",
+                    "sender": "agent-1",
+                    "recipient": "agent-2",
+                    "kind": "question",
+                    "body": "fixture handoff 1: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-1",
+                    "createdAt": 1790058958893,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-1",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "cacedba3-0951-43f7-b1ba-1ab589824a05",
+                  "leaseUntil": 1790058989252,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 69,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.582499999999527
+    },
+    {
+      "agent": 2,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-2",
+        "action": "ack",
+        "messageId": "3c0992fe-ed44-4ec2-96e3-6a737543b796",
+        "leaseToken": "cacedba3-0951-43f7-b1ba-1ab589824a05"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"3c0992fe-ed44-4ec2-96e3-6a737543b796\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959261},\"cursor\":70,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "3c0992fe-ed44-4ec2-96e3-6a737543b796",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959261
+            },
+            "cursor": 70,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.119300000000294
+    },
+    {
+      "agent": 3,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-3",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"03017895-fb09-4bc8-a360-41db66d189bc\",\"sender\":\"agent-2\",\"recipient\":\"agent-3\",\"kind\":\"question\",\"body\":\"fixture handoff 2: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-2\",\"createdAt\":1790058958903,\"expiresAt\":null,\"idempotencyKey\":\"send-2\",\"audience\":\"direct\"},\"leaseToken\":\"b4be5807-4c4c-4d7a-bc16-88283cb25a0c\",\"leaseUntil\":1790058989276,\"attempt\":1}]},\"cursor\":71,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "03017895-fb09-4bc8-a360-41db66d189bc",
+                    "sender": "agent-2",
+                    "recipient": "agent-3",
+                    "kind": "question",
+                    "body": "fixture handoff 2: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-2",
+                    "createdAt": 1790058958903,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-2",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "b4be5807-4c4c-4d7a-bc16-88283cb25a0c",
+                  "leaseUntil": 1790058989276,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 71,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.406199999999444
+    },
+    {
+      "agent": 3,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-3",
+        "action": "ack",
+        "messageId": "03017895-fb09-4bc8-a360-41db66d189bc",
+        "leaseToken": "b4be5807-4c4c-4d7a-bc16-88283cb25a0c"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"03017895-fb09-4bc8-a360-41db66d189bc\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959285},\"cursor\":72,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "03017895-fb09-4bc8-a360-41db66d189bc",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959285
+            },
+            "cursor": 72,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.43710000000101
+    },
+    {
+      "agent": 4,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-4",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"c1438d5e-f815-49bd-b60d-3c176bb0900e\",\"sender\":\"agent-3\",\"recipient\":\"agent-4\",\"kind\":\"question\",\"body\":\"fixture handoff 3: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-3\",\"createdAt\":1790058958912,\"expiresAt\":null,\"idempotencyKey\":\"send-3\",\"audience\":\"direct\"},\"leaseToken\":\"97438bc7-b662-4e23-8152-f33bb5e42561\",\"leaseUntil\":1790058989296,\"attempt\":1}]},\"cursor\":73,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "c1438d5e-f815-49bd-b60d-3c176bb0900e",
+                    "sender": "agent-3",
+                    "recipient": "agent-4",
+                    "kind": "question",
+                    "body": "fixture handoff 3: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-3",
+                    "createdAt": 1790058958912,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-3",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "97438bc7-b662-4e23-8152-f33bb5e42561",
+                  "leaseUntil": 1790058989296,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 73,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.696700000000419
+    },
+    {
+      "agent": 4,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-4",
+        "action": "ack",
+        "messageId": "c1438d5e-f815-49bd-b60d-3c176bb0900e",
+        "leaseToken": "97438bc7-b662-4e23-8152-f33bb5e42561"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"c1438d5e-f815-49bd-b60d-3c176bb0900e\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959305},\"cursor\":74,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "c1438d5e-f815-49bd-b60d-3c176bb0900e",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959305
+            },
+            "cursor": 74,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.772000000000844
+    },
+    {
+      "agent": 5,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-5",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"9e7df0bd-bc5e-4d7a-b370-ff2f0db590e6\",\"sender\":\"agent-4\",\"recipient\":\"agent-5\",\"kind\":\"question\",\"body\":\"fixture handoff 4: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-4\",\"createdAt\":1790058958923,\"expiresAt\":null,\"idempotencyKey\":\"send-4\",\"audience\":\"direct\"},\"leaseToken\":\"331a503c-a79d-43e7-aeb0-e509238b2347\",\"leaseUntil\":1790058989315,\"attempt\":1}]},\"cursor\":75,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "9e7df0bd-bc5e-4d7a-b370-ff2f0db590e6",
+                    "sender": "agent-4",
+                    "recipient": "agent-5",
+                    "kind": "question",
+                    "body": "fixture handoff 4: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-4",
+                    "createdAt": 1790058958923,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-4",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "331a503c-a79d-43e7-aeb0-e509238b2347",
+                  "leaseUntil": 1790058989315,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 75,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.248700000000099
+    },
+    {
+      "agent": 5,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-5",
+        "action": "ack",
+        "messageId": "9e7df0bd-bc5e-4d7a-b370-ff2f0db590e6",
+        "leaseToken": "331a503c-a79d-43e7-aeb0-e509238b2347"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"9e7df0bd-bc5e-4d7a-b370-ff2f0db590e6\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959324},\"cursor\":76,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "9e7df0bd-bc5e-4d7a-b370-ff2f0db590e6",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959324
+            },
+            "cursor": 76,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.013600000000224
+    },
+    {
+      "agent": 6,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-6",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"58ac404d-d1e1-4b62-93e1-2b06c46abb93\",\"sender\":\"agent-5\",\"recipient\":\"agent-6\",\"kind\":\"question\",\"body\":\"fixture handoff 5: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-5\",\"createdAt\":1790058958935,\"expiresAt\":null,\"idempotencyKey\":\"send-5\",\"audience\":\"direct\"},\"leaseToken\":\"998c7d03-fd2b-412e-916c-cfb3a0f81a45\",\"leaseUntil\":1790058989335,\"attempt\":1}]},\"cursor\":77,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "58ac404d-d1e1-4b62-93e1-2b06c46abb93",
+                    "sender": "agent-5",
+                    "recipient": "agent-6",
+                    "kind": "question",
+                    "body": "fixture handoff 5: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-5",
+                    "createdAt": 1790058958935,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-5",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "998c7d03-fd2b-412e-916c-cfb3a0f81a45",
+                  "leaseUntil": 1790058989335,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 77,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.719299999998839
+    },
+    {
+      "agent": 6,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-6",
+        "action": "ack",
+        "messageId": "58ac404d-d1e1-4b62-93e1-2b06c46abb93",
+        "leaseToken": "998c7d03-fd2b-412e-916c-cfb3a0f81a45"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"58ac404d-d1e1-4b62-93e1-2b06c46abb93\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959347},\"cursor\":78,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "58ac404d-d1e1-4b62-93e1-2b06c46abb93",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959347
+            },
+            "cursor": 78,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.814800000000105
+    },
+    {
+      "agent": 7,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-7",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"bc8814d3-fbcc-49e8-9f54-0ebd338bfb21\",\"sender\":\"agent-6\",\"recipient\":\"agent-7\",\"kind\":\"question\",\"body\":\"fixture handoff 6: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-6\",\"createdAt\":1790058958947,\"expiresAt\":null,\"idempotencyKey\":\"send-6\",\"audience\":\"direct\"},\"leaseToken\":\"7eaa29a8-cc6f-41d8-81e9-aa1bc0445654\",\"leaseUntil\":1790058989355,\"attempt\":1}]},\"cursor\":79,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "bc8814d3-fbcc-49e8-9f54-0ebd338bfb21",
+                    "sender": "agent-6",
+                    "recipient": "agent-7",
+                    "kind": "question",
+                    "body": "fixture handoff 6: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-6",
+                    "createdAt": 1790058958947,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-6",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "7eaa29a8-cc6f-41d8-81e9-aa1bc0445654",
+                  "leaseUntil": 1790058989355,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 79,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.197799999999916
+    },
+    {
+      "agent": 7,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-7",
+        "action": "ack",
+        "messageId": "bc8814d3-fbcc-49e8-9f54-0ebd338bfb21",
+        "leaseToken": "7eaa29a8-cc6f-41d8-81e9-aa1bc0445654"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"bc8814d3-fbcc-49e8-9f54-0ebd338bfb21\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959366},\"cursor\":80,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "bc8814d3-fbcc-49e8-9f54-0ebd338bfb21",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959366
+            },
+            "cursor": 80,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.685299999999188
+    },
+    {
+      "agent": 8,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-8",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"b9c9d758-a8ff-4cfe-b600-2bb31dd83adb\",\"sender\":\"agent-7\",\"recipient\":\"agent-8\",\"kind\":\"question\",\"body\":\"fixture handoff 7: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-7\",\"createdAt\":1790058958959,\"expiresAt\":null,\"idempotencyKey\":\"send-7\",\"audience\":\"direct\"},\"leaseToken\":\"4e2a0cac-d497-43c4-9f86-238842c39967\",\"leaseUntil\":1790058989377,\"attempt\":1}]},\"cursor\":81,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "b9c9d758-a8ff-4cfe-b600-2bb31dd83adb",
+                    "sender": "agent-7",
+                    "recipient": "agent-8",
+                    "kind": "question",
+                    "body": "fixture handoff 7: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-7",
+                    "createdAt": 1790058958959,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-7",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "4e2a0cac-d497-43c4-9f86-238842c39967",
+                  "leaseUntil": 1790058989377,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 81,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 11.167100000000573
+    },
+    {
+      "agent": 8,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-8",
+        "action": "ack",
+        "messageId": "b9c9d758-a8ff-4cfe-b600-2bb31dd83adb",
+        "leaseToken": "4e2a0cac-d497-43c4-9f86-238842c39967"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"b9c9d758-a8ff-4cfe-b600-2bb31dd83adb\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959386},\"cursor\":82,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "b9c9d758-a8ff-4cfe-b600-2bb31dd83adb",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959386
+            },
+            "cursor": 82,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.271199999999226
+    },
+    {
+      "agent": 9,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-9",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"b08eb549-2e2c-496b-8671-c7531911a5cb\",\"sender\":\"agent-8\",\"recipient\":\"agent-9\",\"kind\":\"question\",\"body\":\"fixture handoff 8: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-8\",\"createdAt\":1790058958970,\"expiresAt\":null,\"idempotencyKey\":\"send-8\",\"audience\":\"direct\"},\"leaseToken\":\"b503e735-3571-4e31-a9bb-95ea97bb5c6b\",\"leaseUntil\":1790058989395,\"attempt\":1}]},\"cursor\":83,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "b08eb549-2e2c-496b-8671-c7531911a5cb",
+                    "sender": "agent-8",
+                    "recipient": "agent-9",
+                    "kind": "question",
+                    "body": "fixture handoff 8: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-8",
+                    "createdAt": 1790058958970,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-8",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "b503e735-3571-4e31-a9bb-95ea97bb5c6b",
+                  "leaseUntil": 1790058989395,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 83,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.155899999999747
+    },
+    {
+      "agent": 9,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-9",
+        "action": "ack",
+        "messageId": "b08eb549-2e2c-496b-8671-c7531911a5cb",
+        "leaseToken": "b503e735-3571-4e31-a9bb-95ea97bb5c6b"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"b08eb549-2e2c-496b-8671-c7531911a5cb\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959405},\"cursor\":84,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "b08eb549-2e2c-496b-8671-c7531911a5cb",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959405
+            },
+            "cursor": 84,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.3075000000008
+    },
+    {
+      "agent": 10,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-10",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"0cec7caa-bd41-4a10-9a25-b49babaebd2d\",\"sender\":\"agent-9\",\"recipient\":\"agent-10\",\"kind\":\"question\",\"body\":\"fixture handoff 9: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-9\",\"createdAt\":1790058958980,\"expiresAt\":null,\"idempotencyKey\":\"send-9\",\"audience\":\"direct\"},\"leaseToken\":\"10cfddd3-acb7-4741-95de-393ffd7ccb3b\",\"leaseUntil\":1790058989415,\"attempt\":1}]},\"cursor\":85,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "0cec7caa-bd41-4a10-9a25-b49babaebd2d",
+                    "sender": "agent-9",
+                    "recipient": "agent-10",
+                    "kind": "question",
+                    "body": "fixture handoff 9: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-9",
+                    "createdAt": 1790058958980,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-9",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "10cfddd3-acb7-4741-95de-393ffd7ccb3b",
+                  "leaseUntil": 1790058989415,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 85,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.385800000000017
+    },
+    {
+      "agent": 10,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-10",
+        "action": "ack",
+        "messageId": "0cec7caa-bd41-4a10-9a25-b49babaebd2d",
+        "leaseToken": "10cfddd3-acb7-4741-95de-393ffd7ccb3b"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"0cec7caa-bd41-4a10-9a25-b49babaebd2d\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959423},\"cursor\":86,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "0cec7caa-bd41-4a10-9a25-b49babaebd2d",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959423
+            },
+            "cursor": 86,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.130700000001525
+    },
+    {
+      "agent": 11,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-11",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"c6de0cdc-6438-46e1-b213-b2cba69b06ab\",\"sender\":\"agent-10\",\"recipient\":\"agent-11\",\"kind\":\"question\",\"body\":\"fixture handoff 10: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-10\",\"createdAt\":1790058958990,\"expiresAt\":null,\"idempotencyKey\":\"send-10\",\"audience\":\"direct\"},\"leaseToken\":\"50357e0d-b84f-45a2-a13b-4fffed705fc6\",\"leaseUntil\":1790058989433,\"attempt\":1}]},\"cursor\":87,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "c6de0cdc-6438-46e1-b213-b2cba69b06ab",
+                    "sender": "agent-10",
+                    "recipient": "agent-11",
+                    "kind": "question",
+                    "body": "fixture handoff 10: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-10",
+                    "createdAt": 1790058958990,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-10",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "50357e0d-b84f-45a2-a13b-4fffed705fc6",
+                  "leaseUntil": 1790058989433,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 87,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.636200000000827
+    },
+    {
+      "agent": 11,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-11",
+        "action": "ack",
+        "messageId": "c6de0cdc-6438-46e1-b213-b2cba69b06ab",
+        "leaseToken": "50357e0d-b84f-45a2-a13b-4fffed705fc6"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"c6de0cdc-6438-46e1-b213-b2cba69b06ab\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959443},\"cursor\":88,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "c6de0cdc-6438-46e1-b213-b2cba69b06ab",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959443
+            },
+            "cursor": 88,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.491799999999785
+    },
+    {
+      "agent": 12,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-12",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"2439432d-e66b-4be6-829c-5c3775c42796\",\"sender\":\"agent-11\",\"recipient\":\"agent-12\",\"kind\":\"question\",\"body\":\"fixture handoff 11: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-11\",\"createdAt\":1790058959003,\"expiresAt\":null,\"idempotencyKey\":\"send-11\",\"audience\":\"direct\"},\"leaseToken\":\"184b16b0-b5ab-4acf-8a80-e15b18823ac1\",\"leaseUntil\":1790058989456,\"attempt\":1}]},\"cursor\":89,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "2439432d-e66b-4be6-829c-5c3775c42796",
+                    "sender": "agent-11",
+                    "recipient": "agent-12",
+                    "kind": "question",
+                    "body": "fixture handoff 11: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-11",
+                    "createdAt": 1790058959003,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-11",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "184b16b0-b5ab-4acf-8a80-e15b18823ac1",
+                  "leaseUntil": 1790058989456,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 89,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.881499999999505
+    },
+    {
+      "agent": 12,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-12",
+        "action": "ack",
+        "messageId": "2439432d-e66b-4be6-829c-5c3775c42796",
+        "leaseToken": "184b16b0-b5ab-4acf-8a80-e15b18823ac1"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"2439432d-e66b-4be6-829c-5c3775c42796\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959466},\"cursor\":90,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "2439432d-e66b-4be6-829c-5c3775c42796",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959466
+            },
+            "cursor": 90,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.014100000000326
+    },
+    {
+      "agent": 13,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-13",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"0957505e-495f-4481-ad63-c2320299fa1f\",\"sender\":\"agent-12\",\"recipient\":\"agent-13\",\"kind\":\"question\",\"body\":\"fixture handoff 12: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-12\",\"createdAt\":1790058959012,\"expiresAt\":null,\"idempotencyKey\":\"send-12\",\"audience\":\"direct\"},\"leaseToken\":\"99e2eae3-ee95-4ddb-b44e-ca17de37f2fc\",\"leaseUntil\":1790058989475,\"attempt\":1}]},\"cursor\":91,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "0957505e-495f-4481-ad63-c2320299fa1f",
+                    "sender": "agent-12",
+                    "recipient": "agent-13",
+                    "kind": "question",
+                    "body": "fixture handoff 12: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-12",
+                    "createdAt": 1790058959012,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-12",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "99e2eae3-ee95-4ddb-b44e-ca17de37f2fc",
+                  "leaseUntil": 1790058989475,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 91,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.907899999998335
+    },
+    {
+      "agent": 13,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-13",
+        "action": "ack",
+        "messageId": "0957505e-495f-4481-ad63-c2320299fa1f",
+        "leaseToken": "99e2eae3-ee95-4ddb-b44e-ca17de37f2fc"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"0957505e-495f-4481-ad63-c2320299fa1f\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959493},\"cursor\":92,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "0957505e-495f-4481-ad63-c2320299fa1f",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959493
+            },
+            "cursor": 92,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 13.404099999999744
+    },
+    {
+      "agent": 14,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-14",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"b4c9526d-1162-419d-8948-180aeb566eb3\",\"sender\":\"agent-13\",\"recipient\":\"agent-14\",\"kind\":\"question\",\"body\":\"fixture handoff 13: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-13\",\"createdAt\":1790058959022,\"expiresAt\":null,\"idempotencyKey\":\"send-13\",\"audience\":\"direct\"},\"leaseToken\":\"f2dc0bdc-7923-4c4e-91db-e8c10a56c6bb\",\"leaseUntil\":1790058989503,\"attempt\":1}]},\"cursor\":93,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "b4c9526d-1162-419d-8948-180aeb566eb3",
+                    "sender": "agent-13",
+                    "recipient": "agent-14",
+                    "kind": "question",
+                    "body": "fixture handoff 13: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-13",
+                    "createdAt": 1790058959022,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-13",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "f2dc0bdc-7923-4c4e-91db-e8c10a56c6bb",
+                  "leaseUntil": 1790058989503,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 93,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.57339999999931
+    },
+    {
+      "agent": 14,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-14",
+        "action": "ack",
+        "messageId": "b4c9526d-1162-419d-8948-180aeb566eb3",
+        "leaseToken": "f2dc0bdc-7923-4c4e-91db-e8c10a56c6bb"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"b4c9526d-1162-419d-8948-180aeb566eb3\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959514},\"cursor\":94,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "b4c9526d-1162-419d-8948-180aeb566eb3",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959514
+            },
+            "cursor": 94,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.84939999999915
+    },
+    {
+      "agent": 15,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-15",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"4c3f6717-8328-41e0-8454-972f9ee6700e\",\"sender\":\"agent-14\",\"recipient\":\"agent-15\",\"kind\":\"question\",\"body\":\"fixture handoff 14: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-14\",\"createdAt\":1790058959034,\"expiresAt\":null,\"idempotencyKey\":\"send-14\",\"audience\":\"direct\"},\"leaseToken\":\"be0c19eb-2d31-4a1b-98c4-3306ecdfe58c\",\"leaseUntil\":1790058989523,\"attempt\":1}]},\"cursor\":95,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "4c3f6717-8328-41e0-8454-972f9ee6700e",
+                    "sender": "agent-14",
+                    "recipient": "agent-15",
+                    "kind": "question",
+                    "body": "fixture handoff 14: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-14",
+                    "createdAt": 1790058959034,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-14",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "be0c19eb-2d31-4a1b-98c4-3306ecdfe58c",
+                  "leaseUntil": 1790058989523,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 95,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.431000000000495
+    },
+    {
+      "agent": 15,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-15",
+        "action": "ack",
+        "messageId": "4c3f6717-8328-41e0-8454-972f9ee6700e",
+        "leaseToken": "be0c19eb-2d31-4a1b-98c4-3306ecdfe58c"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"4c3f6717-8328-41e0-8454-972f9ee6700e\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959532},\"cursor\":96,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "4c3f6717-8328-41e0-8454-972f9ee6700e",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959532
+            },
+            "cursor": 96,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.580400000000736
+    },
+    {
+      "agent": 16,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-16",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"80c2d5a3-1032-4555-8be5-0cd906cb717c\",\"sender\":\"agent-15\",\"recipient\":\"agent-16\",\"kind\":\"question\",\"body\":\"fixture handoff 15: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-15\",\"createdAt\":1790058959048,\"expiresAt\":null,\"idempotencyKey\":\"send-15\",\"audience\":\"direct\"},\"leaseToken\":\"a89635a0-daf3-4510-84e7-b07a3a067267\",\"leaseUntil\":1790058989542,\"attempt\":1}]},\"cursor\":97,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "80c2d5a3-1032-4555-8be5-0cd906cb717c",
+                    "sender": "agent-15",
+                    "recipient": "agent-16",
+                    "kind": "question",
+                    "body": "fixture handoff 15: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-15",
+                    "createdAt": 1790058959048,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-15",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "a89635a0-daf3-4510-84e7-b07a3a067267",
+                  "leaseUntil": 1790058989542,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 97,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 11.74120000000039
+    },
+    {
+      "agent": 16,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-16",
+        "action": "ack",
+        "messageId": "80c2d5a3-1032-4555-8be5-0cd906cb717c",
+        "leaseToken": "a89635a0-daf3-4510-84e7-b07a3a067267"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"80c2d5a3-1032-4555-8be5-0cd906cb717c\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959552},\"cursor\":98,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "80c2d5a3-1032-4555-8be5-0cd906cb717c",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959552
+            },
+            "cursor": 98,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 7.955599999999322
+    },
+    {
+      "agent": 17,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-17",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"f8f2fda5-dfbc-4192-bba1-ecaa1287dfcf\",\"sender\":\"agent-16\",\"recipient\":\"agent-17\",\"kind\":\"question\",\"body\":\"fixture handoff 16: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-16\",\"createdAt\":1790058959057,\"expiresAt\":null,\"idempotencyKey\":\"send-16\",\"audience\":\"direct\"},\"leaseToken\":\"2a22a06d-6c06-4cb5-b3ee-0e8bdefabf21\",\"leaseUntil\":1790058989561,\"attempt\":1}]},\"cursor\":99,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "f8f2fda5-dfbc-4192-bba1-ecaa1287dfcf",
+                    "sender": "agent-16",
+                    "recipient": "agent-17",
+                    "kind": "question",
+                    "body": "fixture handoff 16: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-16",
+                    "createdAt": 1790058959057,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-16",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "2a22a06d-6c06-4cb5-b3ee-0e8bdefabf21",
+                  "leaseUntil": 1790058989561,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 99,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.828100000000632
+    },
+    {
+      "agent": 17,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-17",
+        "action": "ack",
+        "messageId": "f8f2fda5-dfbc-4192-bba1-ecaa1287dfcf",
+        "leaseToken": "2a22a06d-6c06-4cb5-b3ee-0e8bdefabf21"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"f8f2fda5-dfbc-4192-bba1-ecaa1287dfcf\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959569},\"cursor\":100,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "f8f2fda5-dfbc-4192-bba1-ecaa1287dfcf",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959569
+            },
+            "cursor": 100,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.834800000000541
+    },
+    {
+      "agent": 18,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-18",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"d6a081dc-8148-4010-8535-d45561317a06\",\"sender\":\"agent-17\",\"recipient\":\"agent-18\",\"kind\":\"question\",\"body\":\"fixture handoff 17: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-17\",\"createdAt\":1790058959068,\"expiresAt\":null,\"idempotencyKey\":\"send-17\",\"audience\":\"direct\"},\"leaseToken\":\"c3a4184d-76bc-4a67-9ab0-0ea739fb4e02\",\"leaseUntil\":1790058989585,\"attempt\":1}]},\"cursor\":101,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "d6a081dc-8148-4010-8535-d45561317a06",
+                    "sender": "agent-17",
+                    "recipient": "agent-18",
+                    "kind": "question",
+                    "body": "fixture handoff 17: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-17",
+                    "createdAt": 1790058959068,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-17",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "c3a4184d-76bc-4a67-9ab0-0ea739fb4e02",
+                  "leaseUntil": 1790058989585,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 101,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.157800000000861
+    },
+    {
+      "agent": 18,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-18",
+        "action": "ack",
+        "messageId": "d6a081dc-8148-4010-8535-d45561317a06",
+        "leaseToken": "c3a4184d-76bc-4a67-9ab0-0ea739fb4e02"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"d6a081dc-8148-4010-8535-d45561317a06\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959594},\"cursor\":102,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "d6a081dc-8148-4010-8535-d45561317a06",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959594
+            },
+            "cursor": 102,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.457700000000841
+    },
+    {
+      "agent": 19,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-19",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"25762a28-6fb6-4a13-81af-9474e8010bf3\",\"sender\":\"agent-18\",\"recipient\":\"agent-19\",\"kind\":\"question\",\"body\":\"fixture handoff 18: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-18\",\"createdAt\":1790058959077,\"expiresAt\":null,\"idempotencyKey\":\"send-18\",\"audience\":\"direct\"},\"leaseToken\":\"2ce9ca54-4a25-4dc4-83cc-2078cd1142fa\",\"leaseUntil\":1790058989604,\"attempt\":1}]},\"cursor\":103,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "25762a28-6fb6-4a13-81af-9474e8010bf3",
+                    "sender": "agent-18",
+                    "recipient": "agent-19",
+                    "kind": "question",
+                    "body": "fixture handoff 18: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-18",
+                    "createdAt": 1790058959077,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-18",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "2ce9ca54-4a25-4dc4-83cc-2078cd1142fa",
+                  "leaseUntil": 1790058989604,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 103,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.662200000000666
+    },
+    {
+      "agent": 19,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-19",
+        "action": "ack",
+        "messageId": "25762a28-6fb6-4a13-81af-9474e8010bf3",
+        "leaseToken": "2ce9ca54-4a25-4dc4-83cc-2078cd1142fa"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"25762a28-6fb6-4a13-81af-9474e8010bf3\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959612},\"cursor\":104,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "25762a28-6fb6-4a13-81af-9474e8010bf3",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959612
+            },
+            "cursor": 104,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.074000000000524
+    },
+    {
+      "agent": 20,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-20",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"f0dcb0c1-9740-4312-bd77-84c6c2673981\",\"sender\":\"agent-19\",\"recipient\":\"agent-20\",\"kind\":\"question\",\"body\":\"fixture handoff 19: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-19\",\"createdAt\":1790058959086,\"expiresAt\":null,\"idempotencyKey\":\"send-19\",\"audience\":\"direct\"},\"leaseToken\":\"e32f4304-6ff2-4a6d-8f4b-390279e1b5c1\",\"leaseUntil\":1790058989624,\"attempt\":1}]},\"cursor\":105,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "f0dcb0c1-9740-4312-bd77-84c6c2673981",
+                    "sender": "agent-19",
+                    "recipient": "agent-20",
+                    "kind": "question",
+                    "body": "fixture handoff 19: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-19",
+                    "createdAt": 1790058959086,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-19",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "e32f4304-6ff2-4a6d-8f4b-390279e1b5c1",
+                  "leaseUntil": 1790058989624,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 105,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.396199999999226
+    },
+    {
+      "agent": 20,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-20",
+        "action": "ack",
+        "messageId": "f0dcb0c1-9740-4312-bd77-84c6c2673981",
+        "leaseToken": "e32f4304-6ff2-4a6d-8f4b-390279e1b5c1"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"f0dcb0c1-9740-4312-bd77-84c6c2673981\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959634},\"cursor\":106,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "f0dcb0c1-9740-4312-bd77-84c6c2673981",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959634
+            },
+            "cursor": 106,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 11.540899999999965
+    },
+    {
+      "agent": 21,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-21",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"70412197-ffae-4ce5-ae9e-244a0f9383c5\",\"sender\":\"agent-20\",\"recipient\":\"agent-21\",\"kind\":\"question\",\"body\":\"fixture handoff 20: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-20\",\"createdAt\":1790058959098,\"expiresAt\":null,\"idempotencyKey\":\"send-20\",\"audience\":\"direct\"},\"leaseToken\":\"4a08c5ec-922a-4d69-9004-b24420507f62\",\"leaseUntil\":1790058989645,\"attempt\":1}]},\"cursor\":107,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "70412197-ffae-4ce5-ae9e-244a0f9383c5",
+                    "sender": "agent-20",
+                    "recipient": "agent-21",
+                    "kind": "question",
+                    "body": "fixture handoff 20: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-20",
+                    "createdAt": 1790058959098,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-20",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "4a08c5ec-922a-4d69-9004-b24420507f62",
+                  "leaseUntil": 1790058989645,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 107,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.680100000001403
+    },
+    {
+      "agent": 21,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-21",
+        "action": "ack",
+        "messageId": "70412197-ffae-4ce5-ae9e-244a0f9383c5",
+        "leaseToken": "4a08c5ec-922a-4d69-9004-b24420507f62"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"70412197-ffae-4ce5-ae9e-244a0f9383c5\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959654},\"cursor\":108,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "70412197-ffae-4ce5-ae9e-244a0f9383c5",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959654
+            },
+            "cursor": 108,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.061900000000605
+    },
+    {
+      "agent": 22,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-22",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"6c6608e7-107b-415c-8251-dc9ca86cd45c\",\"sender\":\"agent-21\",\"recipient\":\"agent-22\",\"kind\":\"question\",\"body\":\"fixture handoff 21: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-21\",\"createdAt\":1790058959107,\"expiresAt\":null,\"idempotencyKey\":\"send-21\",\"audience\":\"direct\"},\"leaseToken\":\"ccf0bea4-2c22-4ccd-bf4b-54b3871e4421\",\"leaseUntil\":1790058989664,\"attempt\":1}]},\"cursor\":109,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "6c6608e7-107b-415c-8251-dc9ca86cd45c",
+                    "sender": "agent-21",
+                    "recipient": "agent-22",
+                    "kind": "question",
+                    "body": "fixture handoff 21: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-21",
+                    "createdAt": 1790058959107,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-21",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "ccf0bea4-2c22-4ccd-bf4b-54b3871e4421",
+                  "leaseUntil": 1790058989664,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 109,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 14.908499999999549
+    },
+    {
+      "agent": 22,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-22",
+        "action": "ack",
+        "messageId": "6c6608e7-107b-415c-8251-dc9ca86cd45c",
+        "leaseToken": "ccf0bea4-2c22-4ccd-bf4b-54b3871e4421"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"6c6608e7-107b-415c-8251-dc9ca86cd45c\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959677},\"cursor\":110,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "6c6608e7-107b-415c-8251-dc9ca86cd45c",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959677
+            },
+            "cursor": 110,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.420399999999063
+    },
+    {
+      "agent": 23,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-23",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"edb10f70-bcf4-4be4-8961-c1cd14c65d06\",\"sender\":\"agent-22\",\"recipient\":\"agent-23\",\"kind\":\"question\",\"body\":\"fixture handoff 22: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-22\",\"createdAt\":1790058959116,\"expiresAt\":null,\"idempotencyKey\":\"send-22\",\"audience\":\"direct\"},\"leaseToken\":\"cc08eba4-319c-48e0-8e2e-882c955620ca\",\"leaseUntil\":1790058989686,\"attempt\":1}]},\"cursor\":111,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "edb10f70-bcf4-4be4-8961-c1cd14c65d06",
+                    "sender": "agent-22",
+                    "recipient": "agent-23",
+                    "kind": "question",
+                    "body": "fixture handoff 22: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-22",
+                    "createdAt": 1790058959116,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-22",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "cc08eba4-319c-48e0-8e2e-882c955620ca",
+                  "leaseUntil": 1790058989686,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 111,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.410200000000259
+    },
+    {
+      "agent": 23,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-23",
+        "action": "ack",
+        "messageId": "edb10f70-bcf4-4be4-8961-c1cd14c65d06",
+        "leaseToken": "cc08eba4-319c-48e0-8e2e-882c955620ca"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"edb10f70-bcf4-4be4-8961-c1cd14c65d06\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959694},\"cursor\":112,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "edb10f70-bcf4-4be4-8961-c1cd14c65d06",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959694
+            },
+            "cursor": 112,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.462100000000646
+    },
+    {
+      "agent": 24,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-24",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"c4e769f4-5fe4-43f5-a09b-c98715e297eb\",\"sender\":\"agent-23\",\"recipient\":\"agent-24\",\"kind\":\"question\",\"body\":\"fixture handoff 23: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-23\",\"createdAt\":1790058959128,\"expiresAt\":null,\"idempotencyKey\":\"send-23\",\"audience\":\"direct\"},\"leaseToken\":\"ba635295-af41-4ba6-b40f-224afcae73e6\",\"leaseUntil\":1790058989705,\"attempt\":1}]},\"cursor\":113,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "c4e769f4-5fe4-43f5-a09b-c98715e297eb",
+                    "sender": "agent-23",
+                    "recipient": "agent-24",
+                    "kind": "question",
+                    "body": "fixture handoff 23: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-23",
+                    "createdAt": 1790058959128,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-23",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "ba635295-af41-4ba6-b40f-224afcae73e6",
+                  "leaseUntil": 1790058989705,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 113,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.221299999999246
+    },
+    {
+      "agent": 24,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-24",
+        "action": "ack",
+        "messageId": "c4e769f4-5fe4-43f5-a09b-c98715e297eb",
+        "leaseToken": "ba635295-af41-4ba6-b40f-224afcae73e6"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"c4e769f4-5fe4-43f5-a09b-c98715e297eb\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959714},\"cursor\":114,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "c4e769f4-5fe4-43f5-a09b-c98715e297eb",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959714
+            },
+            "cursor": 114,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.3742000000002
+    },
+    {
+      "agent": 25,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-25",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"2fee4ef1-98a2-4e5b-b408-f133aee32fb3\",\"sender\":\"agent-24\",\"recipient\":\"agent-25\",\"kind\":\"question\",\"body\":\"fixture handoff 24: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-24\",\"createdAt\":1790058959137,\"expiresAt\":null,\"idempotencyKey\":\"send-24\",\"audience\":\"direct\"},\"leaseToken\":\"3cdec4f8-d826-4c4a-a200-ce8814055253\",\"leaseUntil\":1790058989722,\"attempt\":1}]},\"cursor\":115,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "2fee4ef1-98a2-4e5b-b408-f133aee32fb3",
+                    "sender": "agent-24",
+                    "recipient": "agent-25",
+                    "kind": "question",
+                    "body": "fixture handoff 24: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-24",
+                    "createdAt": 1790058959137,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-24",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "3cdec4f8-d826-4c4a-a200-ce8814055253",
+                  "leaseUntil": 1790058989722,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 115,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.877399999999398
+    },
+    {
+      "agent": 25,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-25",
+        "action": "ack",
+        "messageId": "2fee4ef1-98a2-4e5b-b408-f133aee32fb3",
+        "leaseToken": "3cdec4f8-d826-4c4a-a200-ce8814055253"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"2fee4ef1-98a2-4e5b-b408-f133aee32fb3\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959732},\"cursor\":116,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "2fee4ef1-98a2-4e5b-b408-f133aee32fb3",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959732
+            },
+            "cursor": 116,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.208400000001348
+    },
+    {
+      "agent": 26,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-26",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"db2a8abc-44a8-49ec-8ba9-5fff6ce12c44\",\"sender\":\"agent-25\",\"recipient\":\"agent-26\",\"kind\":\"question\",\"body\":\"fixture handoff 25: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-25\",\"createdAt\":1790058959147,\"expiresAt\":null,\"idempotencyKey\":\"send-25\",\"audience\":\"direct\"},\"leaseToken\":\"2632134b-c1b0-4fc4-a467-9a9b5e14e2eb\",\"leaseUntil\":1790058989742,\"attempt\":1}]},\"cursor\":117,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "db2a8abc-44a8-49ec-8ba9-5fff6ce12c44",
+                    "sender": "agent-25",
+                    "recipient": "agent-26",
+                    "kind": "question",
+                    "body": "fixture handoff 25: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-25",
+                    "createdAt": 1790058959147,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-25",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "2632134b-c1b0-4fc4-a467-9a9b5e14e2eb",
+                  "leaseUntil": 1790058989742,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 117,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.317699999999604
+    },
+    {
+      "agent": 26,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-26",
+        "action": "ack",
+        "messageId": "db2a8abc-44a8-49ec-8ba9-5fff6ce12c44",
+        "leaseToken": "2632134b-c1b0-4fc4-a467-9a9b5e14e2eb"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"db2a8abc-44a8-49ec-8ba9-5fff6ce12c44\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959751},\"cursor\":118,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "db2a8abc-44a8-49ec-8ba9-5fff6ce12c44",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959751
+            },
+            "cursor": 118,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.520799999998417
+    },
+    {
+      "agent": 27,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-27",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"277acf83-5b32-4493-b012-7f355e110b80\",\"sender\":\"agent-26\",\"recipient\":\"agent-27\",\"kind\":\"question\",\"body\":\"fixture handoff 26: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-26\",\"createdAt\":1790058959156,\"expiresAt\":null,\"idempotencyKey\":\"send-26\",\"audience\":\"direct\"},\"leaseToken\":\"a37c5d9f-c79f-49d3-a0f3-7feb0123be1f\",\"leaseUntil\":1790058989760,\"attempt\":1}]},\"cursor\":119,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "277acf83-5b32-4493-b012-7f355e110b80",
+                    "sender": "agent-26",
+                    "recipient": "agent-27",
+                    "kind": "question",
+                    "body": "fixture handoff 26: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-26",
+                    "createdAt": 1790058959156,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-26",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "a37c5d9f-c79f-49d3-a0f3-7feb0123be1f",
+                  "leaseUntil": 1790058989760,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 119,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 11.003600000000006
+    },
+    {
+      "agent": 27,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-27",
+        "action": "ack",
+        "messageId": "277acf83-5b32-4493-b012-7f355e110b80",
+        "leaseToken": "a37c5d9f-c79f-49d3-a0f3-7feb0123be1f"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"277acf83-5b32-4493-b012-7f355e110b80\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959771},\"cursor\":120,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "277acf83-5b32-4493-b012-7f355e110b80",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959771
+            },
+            "cursor": 120,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.208300000000236
+    },
+    {
+      "agent": 28,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-28",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"515dac68-fa64-41da-92a6-94428fbef0e7\",\"sender\":\"agent-27\",\"recipient\":\"agent-28\",\"kind\":\"question\",\"body\":\"fixture handoff 27: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-27\",\"createdAt\":1790058959166,\"expiresAt\":null,\"idempotencyKey\":\"send-27\",\"audience\":\"direct\"},\"leaseToken\":\"58262591-22c9-4e49-8efa-9c07cdd32f0f\",\"leaseUntil\":1790058989781,\"attempt\":1}]},\"cursor\":121,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "515dac68-fa64-41da-92a6-94428fbef0e7",
+                    "sender": "agent-27",
+                    "recipient": "agent-28",
+                    "kind": "question",
+                    "body": "fixture handoff 27: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-27",
+                    "createdAt": 1790058959166,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-27",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "58262591-22c9-4e49-8efa-9c07cdd32f0f",
+                  "leaseUntil": 1790058989781,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 121,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 14.133600000001024
+    },
+    {
+      "agent": 28,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-28",
+        "action": "ack",
+        "messageId": "515dac68-fa64-41da-92a6-94428fbef0e7",
+        "leaseToken": "58262591-22c9-4e49-8efa-9c07cdd32f0f"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"515dac68-fa64-41da-92a6-94428fbef0e7\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959794},\"cursor\":122,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "515dac68-fa64-41da-92a6-94428fbef0e7",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959794
+            },
+            "cursor": 122,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 9.560500000001412
+    },
+    {
+      "agent": 29,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-29",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"871511d3-0270-48a8-b630-e04933434f88\",\"sender\":\"agent-28\",\"recipient\":\"agent-29\",\"kind\":\"question\",\"body\":\"fixture handoff 28: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-28\",\"createdAt\":1790058959175,\"expiresAt\":null,\"idempotencyKey\":\"send-28\",\"audience\":\"direct\"},\"leaseToken\":\"e5267029-7ccf-44d9-bc16-02ea45734a11\",\"leaseUntil\":1790058989804,\"attempt\":1}]},\"cursor\":123,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "871511d3-0270-48a8-b630-e04933434f88",
+                    "sender": "agent-28",
+                    "recipient": "agent-29",
+                    "kind": "question",
+                    "body": "fixture handoff 28: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-28",
+                    "createdAt": 1790058959175,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-28",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "e5267029-7ccf-44d9-bc16-02ea45734a11",
+                  "leaseUntil": 1790058989804,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 123,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 13.16189999999915
+    },
+    {
+      "agent": 29,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-29",
+        "action": "ack",
+        "messageId": "871511d3-0270-48a8-b630-e04933434f88",
+        "leaseToken": "e5267029-7ccf-44d9-bc16-02ea45734a11"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"871511d3-0270-48a8-b630-e04933434f88\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959821},\"cursor\":124,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "871511d3-0270-48a8-b630-e04933434f88",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959821
+            },
+            "cursor": 124,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 13.52639999999883
+    },
+    {
+      "agent": 30,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-30",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"220546c7-6022-4c94-acab-51bac065af75\",\"sender\":\"agent-29\",\"recipient\":\"agent-30\",\"kind\":\"question\",\"body\":\"fixture handoff 29: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-29\",\"createdAt\":1790058959185,\"expiresAt\":null,\"idempotencyKey\":\"send-29\",\"audience\":\"direct\"},\"leaseToken\":\"be8178a5-8b00-46d8-85d4-01692af1ff62\",\"leaseUntil\":1790058989832,\"attempt\":1}]},\"cursor\":125,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "220546c7-6022-4c94-acab-51bac065af75",
+                    "sender": "agent-29",
+                    "recipient": "agent-30",
+                    "kind": "question",
+                    "body": "fixture handoff 29: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-29",
+                    "createdAt": 1790058959185,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-29",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "be8178a5-8b00-46d8-85d4-01692af1ff62",
+                  "leaseUntil": 1790058989832,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 125,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 10.452100000000428
+    },
+    {
+      "agent": 30,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-30",
+        "action": "ack",
+        "messageId": "220546c7-6022-4c94-acab-51bac065af75",
+        "leaseToken": "be8178a5-8b00-46d8-85d4-01692af1ff62"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"220546c7-6022-4c94-acab-51bac065af75\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959840},\"cursor\":126,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "220546c7-6022-4c94-acab-51bac065af75",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959840
+            },
+            "cursor": 126,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 7.717499999998836
+    },
+    {
+      "agent": 31,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "fetch-31",
+        "action": "fetch",
+        "consumer": "measurement"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"deliveries\":[{\"message\":{\"version\":1,\"id\":\"20271e6d-6ae7-4a46-98af-13ca67b9baf8\",\"sender\":\"agent-30\",\"recipient\":\"agent-31\",\"kind\":\"question\",\"body\":\"fixture handoff 30: inspect the assigned module and return evidence\",\"taskId\":null,\"threadId\":\"thread-30\",\"createdAt\":1790058959194,\"expiresAt\":null,\"idempotencyKey\":\"send-30\",\"audience\":\"direct\"},\"leaseToken\":\"44d02880-3334-48cf-b2a9-1fa16b5f1e1a\",\"leaseUntil\":1790058989851,\"attempt\":1}]},\"cursor\":127,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "deliveries": [
+                {
+                  "message": {
+                    "version": 1,
+                    "id": "20271e6d-6ae7-4a46-98af-13ca67b9baf8",
+                    "sender": "agent-30",
+                    "recipient": "agent-31",
+                    "kind": "question",
+                    "body": "fixture handoff 30: inspect the assigned module and return evidence",
+                    "taskId": null,
+                    "threadId": "thread-30",
+                    "createdAt": 1790058959194,
+                    "expiresAt": null,
+                    "idempotencyKey": "send-30",
+                    "audience": "direct"
+                  },
+                  "leaseToken": "44d02880-3334-48cf-b2a9-1fa16b5f1e1a",
+                  "leaseUntil": 1790058989851,
+                  "attempt": 1
+                }
+              ]
+            },
+            "cursor": 127,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 12.57929999999942
+    },
+    {
+      "agent": 31,
+      "name": "swarm_inbox",
+      "arguments": {
+        "commandId": "ack-31",
+        "action": "ack",
+        "messageId": "20271e6d-6ae7-4a46-98af-13ca67b9baf8",
+        "leaseToken": "44d02880-3334-48cf-b2a9-1fa16b5f1e1a"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"ok\":true,\"data\":{\"value\":{\"messageId\":\"20271e6d-6ae7-4a46-98af-13ca67b9baf8\",\"state\":\"acknowledged\",\"acknowledgedAt\":1790058959861},\"cursor\":128,\"replayed\":false},\"error\":null}"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "data": {
+            "value": {
+              "messageId": "20271e6d-6ae7-4a46-98af-13ca67b9baf8",
+              "state": "acknowledged",
+              "acknowledgedAt": 1790058959861
+            },
+            "cursor": 128,
+            "replayed": false
+          },
+          "error": null
+        },
+        "isError": false
+      },
+      "elapsedMs": 8.67619999999988
+    }
+  ],
+  "limitations": "Real stdio catalog/bootstrap/send/fetch/ack. Trusted enrollment excluded from model calls. Explicit processing acknowledgment adds a call compared with legacy poll; no claim of reduced handoff calls. No inference or hidden host framing measured. Text results counted once; hosts may additionally include structuredContent."
+}

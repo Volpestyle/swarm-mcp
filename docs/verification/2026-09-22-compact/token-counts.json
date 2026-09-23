@@ -1,0 +1,54 @@
+{
+  "tokenizer": "tiktoken 0.12.0 / o200k_base",
+  "measurement": "Explicit call name/arguments and text-result tokens. Schema JSON counted separately. No hidden prompt framing, reasoning, caching adjustment or claim of a live model bill.",
+  "runs": [
+    {
+      "agents": 2,
+      "calls": 8,
+      "tools": 9,
+      "schemaTokensPerAgent": 3001,
+      "argumentTokens": 315,
+      "textResultTokens": 679,
+      "callsTokensTotal": 994,
+      "withSchemaPerAgentTotal": 6996,
+      "byTool": {
+        "swarm_inbox": {
+          "calls": 4,
+          "textResultTokens": 469
+        },
+        "swarm_send": {
+          "calls": 2,
+          "textResultTokens": 130
+        },
+        "swarm_sync": {
+          "calls": 2,
+          "textResultTokens": 80
+        }
+      }
+    },
+    {
+      "agents": 32,
+      "calls": 128,
+      "tools": 9,
+      "schemaTokensPerAgent": 3001,
+      "argumentTokens": 5112,
+      "textResultTokens": 11028,
+      "callsTokensTotal": 16140,
+      "withSchemaPerAgentTotal": 112172,
+      "byTool": {
+        "swarm_inbox": {
+          "calls": 64,
+          "textResultTokens": 7622
+        },
+        "swarm_send": {
+          "calls": 32,
+          "textResultTokens": 2126
+        },
+        "swarm_sync": {
+          "calls": 32,
+          "textResultTokens": 1280
+        }
+      }
+    }
+  ]
+}

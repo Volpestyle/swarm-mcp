@@ -27,6 +27,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -43,6 +44,11 @@ except ModuleNotFoundError:  # pragma: no cover - package import path for tests
 
 
 _WARNED_SKIP_REGISTRATION: set[str] = set()
+
+try:
+    import leased_writes
+except ModuleNotFoundError:
+    from . import leased_writes
 
 
 def _warn_skip_registration_once(env_prefix: str) -> None:
@@ -109,10 +115,9 @@ class HookCore:
        stdin file object. Plugin entry scripts can be three-line stubs that
        just call these.
 
-    The pre-tool hook is check-only: it inspects existing locks and denies
-    when a peer holds the target file. It does not acquire on behalf of the
-    write tool, so ``run_post_tool_use_hook`` is a no-op kept as a stable
-    entry point for plugin configs that still wire ``PostToolUse``.
+    With SWARM_COORDINATOR_CLIENT configured, pre-tool hooks atomically acquire
+    fenced leases and post-tool hooks release their own grants. Legacy sessions
+    retain check-only enforcement against explicitly declared peer locks.
     """
 
     def __init__(self, config: RuntimeConfig):
@@ -788,6 +793,10 @@ class HookCore:
         return "\n".join(lines)
 
     def run_session_start_hook(self, stdin) -> int:
+        # A coordinator launcher owns registration and context delivery. Never
+        # create a second legacy identity or inject obsolete bootstrap guidance.
+        if os.environ.get("SWARM_COORDINATOR_HOOK_OWNER") == "launcher":
+            return 0
         payload = self.read_hook_input(stdin)
         session_id = str(payload.get("session_id") or "")
         cwd = str(payload.get("cwd") or self.session_cwd())
@@ -875,13 +884,11 @@ class HookCore:
         return 0
 
     def run_pre_tool_use_hook(self, stdin) -> int:
-        """Check-only enforcement: deny when a peer holds a lock on a write target.
+        """Acquire coordinator leases when enabled; otherwise check legacy locks.
 
-        The hook never acquires a lock itself. Per-edit serialization isn't the
-        hazard worth catching (the race window is sub-millisecond and the
-        write tool's own anchor checks defend logical conflicts); what matters
-        is that a peer-declared critical section (``lock_file`` with a note)
-        actually blocks other peers' writes. This hook is what enforces that.
+        The legacy path never acquires a lock itself. Its coverage is limited
+        to peer-declared critical sections. The coordinator path acquires the
+        complete write set and denies missing or unrecognized path metadata.
 
         Same-instance locks are *not* conflicts — if this agent already
         declared a wider critical section, its own subsequent writes pass
@@ -894,6 +901,22 @@ class HookCore:
 
         tool_input = payload.get("tool_input")
         paths = self.write_paths_for_tool(tool_name, tool_input)
+        if os.environ.get("SWARM_COORDINATOR_HOOK_OWNER") == "launcher":
+            if (not leased_writes.enabled()
+                    or not os.environ.get("SWARM_COORDINATOR_ENDPOINT")
+                    or not os.environ.get("SWARM_SESSION_CAPABILITY")
+                    or not os.environ.get("SWARM_NATIVE_SESSION_ID")
+                    or payload.get("session_id") != os.environ["SWARM_NATIVE_SESSION_ID"]):
+                self.emit_block("swarm coordinator binding is incomplete or belongs to another native session")
+                return 0
+        if leased_writes.enabled():
+            try:
+                result = leased_writes.enter(payload, paths)
+                if result.get("warnings"):
+                    print("[swarm-mcp] logical overlap in another worktree; coordinate integration before merging", file=sys.stderr)
+            except Exception as error:
+                self.emit_block(f"swarm reservation denied {tool_name}: {error}")
+            return 0
         if not paths:
             return 0
 
@@ -943,13 +966,14 @@ class HookCore:
         return 0
 
     def run_post_tool_use_hook(self, stdin) -> int:
-        """No-op under check-only enforcement.
-
-        The pre-tool hook never acquires a lock, so there is nothing to
-        release. Kept as a stable entry point so plugin configs that still
-        wire ``PostToolUse`` to this core continue to load cleanly; new
-        plugin configs should omit the hook entirely.
-        """
+        """Release grants acquired for this tool call; legacy mode is a no-op."""
+        if leased_writes.enabled():
+            payload = self.read_hook_input(stdin)
+            if str(payload.get("tool_name") or "") in self.config.write_tools:
+                try:
+                    leased_writes.leave(payload)
+                except Exception as error:
+                    print(f"[swarm-mcp] reservation release failed; lease expiry/recovery remains available: {error}", file=sys.stderr)
         return 0
 
     def _resolve_instance_id(
@@ -976,6 +1000,8 @@ class HookCore:
         return None
 
     def run_session_end_hook(self, stdin) -> int:
+        if os.environ.get("SWARM_COORDINATOR_HOOK_OWNER") == "launcher":
+            return 0
         payload = self.read_hook_input(stdin)
         session_id = str(payload.get("session_id") or "")
         meta = self.read_session_meta(session_id)
