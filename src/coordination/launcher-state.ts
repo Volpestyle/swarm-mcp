@@ -42,7 +42,11 @@ async function privatePath(path: string, initialize = false) {
       `
 $ErrorActionPreference = 'Stop'
 $target = $env:SWARM_PRIVATE_STATE_PATH
-$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$sid = $identity.User
+# Objects created under an elevated administrator token default to the
+# Administrators group as owner; the token reports that default owner.
+$owners = @($sid.Value, $identity.Owner.Value)
 if ($env:SWARM_PRIVATE_STATE_INITIALIZE -eq '1') {
   $acl = [System.Security.AccessControl.DirectorySecurity]::new()
   $acl.SetOwner($sid)
@@ -55,7 +59,8 @@ if ($env:SWARM_PRIVATE_STATE_INITIALIZE -eq '1') {
   $directory.Create($acl)
 }
 $acl = if ([System.IO.Directory]::Exists($target)) { [System.IO.DirectoryInfo]::new($target).GetAccessControl() } else { [System.IO.FileInfo]::new($target).GetAccessControl() }
-if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value) { throw 'Launcher state has a different owner' }
+$owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+if ($owner -notin $owners) { throw "Launcher state has a different owner: $owner; expected $($owners -join ' or ')" }
 foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
   if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin @($sid.Value, 'S-1-5-18', 'S-1-5-32-544')) { throw 'Launcher state grants access to another principal' }
 }
