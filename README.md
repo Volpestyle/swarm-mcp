@@ -1,427 +1,120 @@
 # swarm-mcp
 
-Local coordination for coding agents. This branch contains the compact redesign
-candidate: one Node owner, durable acknowledged inboxes, fenced task attempts and
-nine MCP tools, with thin per-session adapters. Start with
-[candidate installation](docs/install-skill.md),
-[runtime support](docs/runtime-acceptance.md) and
-[reversible migration](docs/migration-cutover.md).
+Local coordination for coding agents. One coordinator process per profile owns
+the SQLite state: durable acknowledged inboxes, fenced task attempts, shared
+context, retained evidence and an ordered event log. Each agent session reaches
+it through a thin stdio MCP adapter that exposes nine tools, and trusted
+runtime launchers for Claude Code, OpenCode and Codex enroll sessions and
+deliver messages at safe turn boundaries. Nothing leaves the machine.
 
-The legacy entrypoints remain available during rollout. They launch one stdio
-server per session and share `~/.swarm-mcp/swarm.db`. The quickstart below describes
-that legacy interface; it does not install the compact owner. Candidate packaging
-and tests do not change an existing installation automatically.
+Version `2.0.0-rc.1` is on `main` (PR #9, 2026-09-23) and passes the full
+verification gate on hosted Windows and Ubuntu runners. It is not yet published
+to npm; build it from this checkout.
 
-[GitHub](https://github.com/Volpestyle/swarm-mcp)
+[Documentation index](docs/README.md) · [GitHub](https://github.com/Volpestyle/swarm-mcp)
 
----
+## Quick start
 
-## Legacy checkout quick start
+Requirements: Node 22, Bun 1.3.11, Python 3.12 (tests only), Windows or Linux.
 
-**New here? Read [`docs/quickstart.md`](./docs/quickstart.md) first.** It walks you from zero to two Claude Code sessions seeing each other in about five minutes, with the expected output at each step.
-
-The rest of this section is a condensed reference for non-Claude hosts. For a first-run walkthrough on a local clone, see [`docs/getting-started.md`](./docs/getting-started.md). For the broader modular architecture this repo is growing toward, read [`docs/control-plane.md`](./docs/control-plane.md). Backend and consumer config lives in [`docs/backend-configuration.md`](./docs/backend-configuration.md).
-
-Install dependencies:
-
-```sh
-cd /path/to/swarm-mcp
-bun install
+```powershell
+bun install --frozen-lockfile
+bun run build
+npm run verify:package
 ```
 
-Add the server to your coding agent using that host's MCP config format. These
-legacy examples use Bun. The candidate's built `dist/*.js` entrypoints target
-Node 22 with `better-sqlite3`; see the runtime support matrix before changing hosts.
+Then follow [installation](docs/installation.md): install the packaged skill,
+wire your host's launcher, and run the doctor to confirm the owner, adapter and
+skill agree:
 
-### Codex (`~/.codex/config.toml`)
-
-```toml
-[mcp_servers.swarm]
-command = "bun"
-args = ["run", "/path/to/swarm-mcp/src/index.ts"]
-cwd = "/path/to/swarm-mcp"
+```powershell
+node dist/coordination/client-cli.js doctor
 ```
-
-### opencode (`~/.config/opencode/opencode.json`)
-
-```json
-{
-  "mcp": {
-    "swarm": {
-      "type": "local",
-      "command": ["bun", "run", "/path/to/swarm-mcp/src/index.ts"],
-      "enabled": true
-    }
-  }
-}
-```
-
-### Claude Code (`~/.claude.json`)
-
-```json
-{
-  "mcpServers": {
-    "swarm": {
-      "command": "bun",
-      "args": ["run", "/path/to/swarm-mcp/src/index.ts"]
-    }
-  }
-}
-```
-
-Tool names are usually namespaced by the client using the server name. Depending on the host you may see `swarm_register`, `mcp__swarm__register`, or other variants. Use whichever form your host exposes.
-
-Call the swarm `register` tool first to join the swarm.
-
-### Install the packaged skill
-
-Mounting the MCP server makes the swarm tools available, but agents still benefit from the bundled `SKILL.md` workflow. If your host supports installable skills (Claude Code, OpenCode, Codex with skills, etc.), install [`skills/swarm-mcp`](./skills/swarm-mcp) for coordination. Symlink is recommended over copying so updates from `git pull` propagate automatically:
-
-```sh
-# In your consumer project root
-mkdir -p .agents/skills .claude/skills
-ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp .agents/skills/swarm-mcp
-ln -s ../../.agents/skills/swarm-mcp .claude/skills/swarm-mcp
-```
-
-Or install globally for all projects:
-
-```sh
-mkdir -p ~/.claude/skills
-ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp ~/.claude/skills/swarm-mcp
-```
-
-Then invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc., when starting role-specialized sessions. Full per-host install paths and copy-based alternatives live in [`docs/install-skill.md`](./docs/install-skill.md).
-
-### Further reading
-
-- [`docs/getting-started.md`](./docs/getting-started.md) -- beginner-friendly setup and verification walkthrough
-- [`docs/control-plane.md`](./docs/control-plane.md) -- modular agent workspace control-plane contracts and golden path
-- [`docs/backend-configuration.md`](./docs/backend-configuration.md) -- consumer config layers, spawner/backend selection, and future swarm-server switch shape
-- [`docs/agent-routing.md`](./docs/agent-routing.md) -- runtime-agnostic doctrine for swarm peers vs native subagents
-- [`docs/identity-boundaries.md`](./docs/identity-boundaries.md) -- work/personal launcher, config, MCP auth, and routing boundaries
-- [`env/`](./env) -- sourceable env-file templates for work/personal launchers and configured work trackers
-- [`docs/install-skill.md`](./docs/install-skill.md) -- host-specific install paths for the packaged `swarm-mcp` skill
-- [`docs/swarm-server.md`](./docs/swarm-server.md) -- Rust daemon for `swarm-ui`, mobile-style pairing, PTY streaming, and LAN access
-- [`docs/database-contracts.md`](./docs/database-contracts.md) -- `swarm.db` schema ownership and adoption contract
-- [`docs/design-batch-creation.md`](./docs/design-batch-creation.md) -- shipped-feature reference for `request_task_batch` (atomic multi-task creation with `$N` deps)
-- [`docs/design-routine-dispatch.md`](./docs/design-routine-dispatch.md) -- design for named multi-role workflows that compose `request_task_batch` + `dispatch`; not yet implemented
-- [`skills/swarm-mcp`](./skills/swarm-mcp) -- installable coordination skill — main `SKILL.md` plus role references (planner, implementer, reviewer, researcher, generalist, roles-and-teams, bootstrap, coordination, cli)
-- [`.agents/skills`](./.agents/skills) -- repo-internal skills used while developing this repository
-- [`integrations/hermes/`](./integrations/hermes/) and [`integrations/claude-code/`](./integrations/claude-code/) -- runtime plugins (lifecycle, peer-lock enforcement, `/swarm` slash command)
-
----
-
-## MCP server vs swarm-server
-
-The TypeScript `swarm-mcp` process is the stdio MCP server used by coding-agent hosts. It is enough for local multi-agent coordination through tools, resources, prompts, and the shared SQLite database. Its core job is the coordination bus: instance identity, tasks, messages, locks, KV, and best-effort wakeups.
-
-Spawner backends are adapters around that bus. The default adapter is `herdr`; `swarm-ui` remains available as a fallback/control-surface adapter. New terminal managers should plug in as spawner/workspace backends rather than changing the task/message/lock contract.
-
-The Rust `apps/swarm-server` daemon is a separate desktop/mobile control plane. It serves `swarm-ui` over a local Unix socket, exposes HTTPS/WSS on port 5444 for paired clients, manages PTYs, and reads the same `swarm.db`. It is not required for the basic MCP setup above. The current `apps/swarm-ios` workstream is Herdr-bridge first so Herdr remains the universal PTY owner; `swarm-server` remains useful reference material and the daemon for `swarm-ui`. See [`docs/swarm-server.md`](./docs/swarm-server.md).
-
-## Control-plane overview
-
-![Control-plane and backend configuration overview](./docs/diagrams/backend-configuration.png)
-
-Source: [`docs/diagrams/backend-configuration.mmd`](./docs/diagrams/backend-configuration.mmd). Backend selection and workspace identity conventions are centralized in [`docs/backend-configuration.md`](./docs/backend-configuration.md).
-
----
 
 ## How it works
 
-All sessions read and write to `~/.swarm-mcp/swarm.db` by default using WAL mode, auto-vacuum, and a 3s busy timeout. Bun uses `bun:sqlite`; Node uses `better-sqlite3`.
+| Part | Role |
+| --- | --- |
+| Coordinator owner (`dist/coordination/owner-cli.js`) | One Node process per profile. Serializes writes to `coordination.db`, commits state, events and receipts together, and serves an OS-local IPC endpoint (named pipe on Windows, Unix socket elsewhere). Started on demand by a launcher; never two accepted writers. |
+| MCP adapter (`dist/coordination/mcp-cli.js`) | Per-session stdio server. Opens no database and cannot choose an actor or scope; it forwards authorized commands to the owner and serves resources and subscriptions. Speaks MCP 2026-07-28 with tested legacy protocol support. |
+| Runtime launchers | Host-specific: Claude Code hook and MCP binding, OpenCode plugin, Codex resume path. They create private launcher state, enroll the session with a resume token, and deliver leased inbox messages at safe boundaries. |
+| Packaged skill (`skills/swarm-mcp`) | The workflow agents load: sync, own and hand off work, acknowledge deliveries, record evidence. Its `swarm-coordination/1` contract stamp is checked at startup. |
 
-Set `SWARM_DB_PATH` before launching the server if you want a different database location. Work/personal identity-separated setups should use separate paths, for example `~/.swarm-mcp-work/swarm.db` and `~/.swarm-mcp-personal/swarm.db`; see [`docs/identity-boundaries.md`](./docs/identity-boundaries.md).
-
-When you call `register`, the server starts a 10s heartbeat and a 5s notification poller.
-
-### Registration fields
-
-The `register` tool accepts these parameters. Only `directory` is required.
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `directory` | Yes | The live working directory for the current session. |
-| `scope` | No | Shared swarm boundary. Sessions in the same scope can see each other; different scopes are different swarms. Defaults to the detected git root, or to `directory` when no git root exists. Use a new scope only for a separate swarm; do not split frontend/backend inside one repo with scope. Use `team:` label tokens for that. |
-| `file_root` | No | Canonical base path for resolving relative file paths in `lock_file` and task `files`. Useful when disposable worktrees should share one logical file tree. |
-| `label` | No | Free-form identity text. Recommended convention: machine-readable space-separated tokens like `identity:work provider:codex-cli role:planner`. The `identity:` token should match the launcher/config root when using identity separation. The `role:` token is optional; if missing, the session is treated as a generalist. |
-
-### Task features
-
-Tasks support several features for building autonomous DAG-based workflows:
-
-| Feature | Description |
-|---------|-------------|
-| `priority` | Integer (default 0). Higher = more urgent. `list_tasks` returns tasks sorted by priority descending. Implementers can use `claim_next_task` to atomically claim the highest-priority compatible task. |
-| `depends_on` | Array of task IDs. A task with unmet dependencies starts as `blocked` and auto-transitions to `open` when all deps reach `done`. If any dependency fails, downstream tasks are auto-cancelled. |
-| `idempotency_key` | Unique string. If a task with this key already exists, `request_task` returns the existing task instead of creating a duplicate. Essential for crash-safe plan retries. |
-| `parent_task_id` | Optional parent task ID for tree-structured work tracking. |
-| `review_of_task_id` | Optional task ID that a `review` task is reviewing. Supports `$N` references inside `request_task_batch`. |
-| `fixes_task_id` | Optional task ID that a `fix` task addresses. Supports `$N` references inside `request_task_batch`. |
-| `progress_summary` / `progress_updated_at` | First-class progress fields maintained by `report_progress` so peers can inspect long-running work without interrupting. |
-| `blocked_reason` / `expected_next_update_at` | Optional progress metadata for work that is blocked or needs a follow-up heartbeat by a specific Unix timestamp. |
-| `approval_required` | If true, task starts in `approval_required` status and must be approved via `approve_task` before work begins. Use this for true approval gates, not routine code review. |
-
-Task statuses: `open`, `claimed`, `in_progress`, `done`, `failed`, `cancelled`, `blocked`, `approval_required`.
-
-### Session resets and prompt compaction
-
-If a host compacts context, starts a fresh window, or loses the previous bootstrap, rejoin the swarm the same way:
-
-1. Call `register` again.
-2. Rehydrate with `bootstrap`.
-3. For planners, also check `kv_get("owner/planner")` and `kv_get("plan/latest")`.
-
-The durable coordination state lives in the shared database, not in repeated per-tool prompt text.
-
----
-
-## Auto-cleanup
-
-| Data                                           | TTL        |
-| ---------------------------------------------- | ---------- |
-| Stale marker (no heartbeat)                    | 30 seconds |
-| Offline instance reclaim                       | 60 seconds |
-| Messages                                       | 1 hour     |
-| Completed/failed/cancelled tasks               | 24 hours   |
-| Events                                         | 24 hours   |
-| Orphaned `progress/` + `plan/<instance-id>` KV | 1 hour     |
-
-When a session reaches the offline reclaim window, claimed or in-progress tasks are released back to `open` and that session's file locks are removed.
-
-File locks stay exclusive and are cleared when the owning instance is reclaimed offline, deregisters, or completes the owning task.
-
-Run `swarm-mcp cleanup --dry-run --json` to inspect what the janitor would remove without mutating the shared database.
-
----
+Read [architecture](docs/architecture.md) for the decision record and
+guarantees, and [durable inboxes](docs/durable-inboxes.md),
+[session and task ownership](docs/session-and-task-ownership.md) and
+[worktree reservations](docs/worktree-reservations.md) for the contracts.
 
 ## Tools
 
-### Instance registry
+| Tool | Purpose |
+| --- | --- |
+| `swarm_sync` | Bootstrap or resume from an event cursor; optional bounded wait |
+| `swarm_find` | Page peers and tasks, or read one task with contract, owner and result |
+| `swarm_assign` | Persist a task contract and dependencies; returns a durable task ID |
+| `swarm_task` | Claim with `expectedVersion`; renew, progress, finish, cancel, retry, recover with `attemptId` and `fence` |
+| `swarm_send` | Typed question, blocker, decision request or completion notice on a thread |
+| `swarm_inbox` | Fetch a delivery lease; acknowledge processing or reject with a reason |
+| `swarm_wait` | Resume waiting on an existing task; timeout never cancels it |
+| `swarm_context` | Read, compare-and-set, append or tombstone small shared values |
+| `swarm_evidence` | Capture files or record results, decisions and annotations with provenance |
 
-| Tool              | Description                                                                                                          |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `register`        | Join the swarm. Starts heartbeat + notification poller. See [Registration fields](#registration-fields). |
-| `deregister`      | Leave the swarm gracefully. Releases tasks and locks.                                                                |
-| `bootstrap`       | Yield-checkpoint read for current instance, peers, unread messages, tasks, and configured work tracker metadata. |
-| `swarm_status`    | Compact coordination summary: peers, unread messages, assigned/claimable tasks, locks, warnings, planner ownership, and suggested next action. |
-| `list_instances`  | List all live instances.                                                                                             |
-| `remove_instance` | Forcefully remove another instance. Releases its tasks and locks.                                                    |
-| `whoami`          | Get this instance's swarm ID.                                                                                        |
+Every mutation carries a stable `commandId`; retrying with the same ID and
+payload returns the same receipt. Reading a message is not acknowledgment.
+Full semantics, budgets and resources: [compact API](docs/compact-api.md).
 
-### Messaging
+## Host support
 
-| Tool                | Description                                                                                                    |
-| ------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `send_message`      | Send a direct message to a specific instance by ID.                                                            |
-| `prompt_peer`       | Send a durable swarm message, then best-effort wake the target's workspace handle. Busy handles are not interrupted unless forced. |
-| `peek_peer`         | Read recent or visible terminal text from a target's published workspace handle when the backend supports it. |
-| `resolve_workspace_handle` | Map a transport-local workspace handle, such as a herdr pane, back to a swarm instance ID. |
-| `broadcast`         | Message all other instances in the swarm.                                                                      |
-| `poll_messages`     | Read unread messages and mark them as read.                                                            |
-| `wait_for_activity` | Block until new messages, task changes, KV changes, or instance changes arrive. Use only while actively monitoring a peer/dependency/review/lock, not as a generic idle loop. |
+| Host | Verified | Limitation |
+| --- | --- | --- |
+| OpenCode 1.4.3 | Installed-host lifecycle, autonomous idle-turn delivery, explicit ack, lease renewal | Delivery after a killed host and very large histories unproven |
+| Claude Code 2.1.278 | Launcher hook and MCP binding, delivery at turn start and post-tool, native ack, forced-kill resume | Delivers only at native boundaries; no idle wake |
+| Codex 0.155.1 | Native MCP isolation, existing-thread resume, lifecycle observation | Initial enrollment and automatic delivery unverified; degraded |
+| Hermes | In-process lifecycle code, 23 Python lifecycle tests | No installed host verified |
 
-### Task delegation
+Details and evidence: [runtime host support](docs/runtime-host-support.md).
 
-| Tool                 | Description                                                                                                               |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `request_task`       | Post a task (types: `review`, `implement`, `fix`, `test`, `research`, `other`). Use `review` for routine code review handoff. Supports `priority`, `depends_on`, `idempotency_key`, `parent_task_id`, `review_of_task_id`, `fixes_task_id`, and `approval_required`. |
-| `request_task_batch` | Create multiple tasks atomically in a single transaction. Supports `$N` references (1-indexed) for dependencies, parent links, review links, and fix links. |
-| `dispatch`           | Gateway-only: create/reuse a task, wake a matching live worker, or spawn through the configured spawner backend. Ordinary workers should not call this. Pass `completion_wait_seconds` only when the caller wants to wait for terminal task completion; default dispatch returns immediately after handoff/spawn. |
-| `claim_task`         | Start work on a specific task: assigns and transitions to `in_progress` in one call. Prevents double-claiming and blocks on unread messages until `poll_messages` (or explicit override). Also accepts tasks pre-assigned to you (status=`claimed`). |
-| `claim_next_task`    | Atomically pick and claim the highest-priority compatible task. Prefers tasks pre-assigned to you, then open unassigned tasks. Optional filters support task `types` and overlapping `files`. |
-| `report_progress`    | Update first-class progress fields on an `in_progress` task, including optional `blocked_reason` and `expected_next_update_at`. Use for multi-minute or blocked work. |
-| `complete_task`      | Complete a claimed task with structured JSON result fields: `summary`, `files_changed`, `tests`, and `followups`. Prefer this over `update_task` when you can provide structured handoff details. |
-| `update_task`        | Move a task to a terminal status (`done`, `failed`, `cancelled`). Auto-releases the actor's locks on the task's files. Use as a plain-string fallback or when structured completion is not useful. |
-| `approve_task`       | Approve a task in `approval_required` status. Transitions to `open`/`claimed` (or `blocked` if deps unmet).               |
-| `get_task`           | Get full details of a task.                                                                                               |
-| `list_tasks`         | Filter tasks by status, assignee, or requester. Sorted by priority (highest first).                                       |
+## Operations
 
-### File locking
+- **Diagnostics:** `client-cli.js doctor` and `swarm_sync` report owner and
+  client build, API, schema and skill contract. See
+  [startup compatibility](docs/startup-compatibility.md) and
+  [coordination diagnostics](docs/coordination-diagnostics.md).
+- **Migrating a legacy profile:** `migration-cli.js backup | verify | restore |
+  import` moves a legacy `swarm.db` onto a new coordinator profile reversibly.
+  See [migration and cutover](docs/migration-cutover.md).
+- **Packaging:** `npm run verify:package` checks the production allowlist. See
+  [package boundary](docs/packaging.md).
 
-| Tool             | Description                                                   |
-| ---------------- | ------------------------------------------------------------- |
-| `get_file_lock`  | Read active lock state for a file without acquiring a lock. |
-| `lock_file`      | Acquire a file lock. Re-entrant for the same instance by default; pass `exclusive=true` to conflict on any existing lock (including same-instance) for one-shot mutexes like spawn coordination. Locks auto-release on terminal `update_task` or `complete_task`. |
-| `unlock_file`    | Release a file lock early (before the task as a whole completes). |
+## Verification
 
-### Key-value store
-
-| Tool        | Description                                    |
-| ----------- | ---------------------------------------------- |
-| `kv_get`    | Get a value by key.                            |
-| `kv_set`    | Set a key-value pair visible to all instances. |
-| `kv_append` | Atomically append a JSON value to a KV array.  |
-| `kv_delete` | Delete a key.                                  |
-| `kv_list`   | List keys, optionally filtered by prefix.      |
-
----
-
-## CLI
-
-The same `swarm-mcp` binary exposes a non-MCP CLI that talks directly to `~/.swarm-mcp/swarm.db`. Use it from contexts that cannot speak MCP: shell scripts, helper scripts an agent invokes (e.g. a test harness or CLI referee), cron jobs, CI, an ad-hoc terminal for inspection/debugging, or to control a running `swarm-ui` app.
-
-Inside an MCP-enabled agent session, prefer the MCP tools for swarm coordination primitives (`register`, messages, tasks, locks, KV). The CLI is primarily for scripts, operator terminals, and the `swarm-ui` control surface.
-
-Launcher-managed sessions may set `SWARM_MCP_BIN` to a real command such as
-`bun run /path/to/swarm-mcp/src/cli.ts`. Agents should use that prefix instead
-of assuming `swarm-mcp` is installed on `PATH`.
-
-Setup helper:
-
-```sh
-swarm-mcp init --dir /path/to/project   # write .mcp.json and copy the packaged swarm-mcp skill
-swarm-mcp init --no-skills              # write only the MCP config
+```powershell
+bun scripts/verify-coordination.ts
 ```
 
-`init` writes a project `.mcp.json` entry that runs `npx -y swarm-mcp` and, unless `--no-skills` is passed, copies `skills/swarm-mcp` into `.claude/skills/`. Manual host-specific MCP configs are still useful when your host does not read `.mcp.json` or you want to run from a local clone.
+Runs typecheck, build, the Bun test suite (175 tests, 48 files) and the Python
+integration tests, and refuses a result if the source changed during the run.
+The same gate runs in CI on `ubuntu-latest` and `windows-latest` for every pull
+request. Retained evidence lives under `docs/verification/`; see
+[coordination verification](docs/coordination-verification.md) and
+[benchmarks](docs/coordination-benchmarks.md).
 
-Inspection:
+## Legacy interface
 
-```sh
-swarm-mcp inspect                    # unified dump of instances, tasks, kv, locks, recent messages
-swarm-mcp inspect --scope /path      # pin to an explicit scope
-swarm-mcp doctor                     # health report: binary, db, scope, skill/plugin install, env knobs (--json supported)
-swarm-mcp messages --from <who>      # peek (does not mark read)
-swarm-mcp cleanup --dry-run --json   # inspect cleanup without deleting
-swarm-mcp kv list --prefix pixel:
-swarm-mcp kv get pixel:turn
-```
+The original stdio server (`swarm-mcp` bin, `register`/`poll_messages` tools,
+shared `~/.swarm-mcp/swarm.db`, herdr and swarm-ui backends, `apps/swarm-server`)
+still ships in this package because existing profiles run on it. It is
+documented under [docs/legacy](docs/legacy/README.md) and is retired under
+Linear VUH-1360 once the live profile has moved to the coordinator. Do not point
+a legacy server at a coordinator database; the packaged `swarm-legacy-guard`
+refuses that.
 
-Writes (require identity — pass `--as <uuid | prefix | unique-label-substring>` or set `SWARM_MCP_INSTANCE_ID`; falls back to the sole live instance in scope):
+## Development
 
-```sh
-swarm-mcp send --to <who> "message text"
-swarm-mcp broadcast "status update"
-swarm-mcp kv set  <key> <value>
-swarm-mcp kv append <key> <json-value>
-swarm-mcp kv del  <key>
-swarm-mcp lock    <file> --note "why"
-swarm-mcp unlock  <file>
-```
-
-Swarm UI control:
-
-```sh
-swarm-mcp ui spawn /path/to/repo --harness codex --role planner
-swarm-mcp ui prompt --target role:planner "check the failing tests"
-swarm-mcp ui move --target bound:<instance-id> --x 120 --y 80
-swarm-mcp ui organize --kind grid
-swarm-mcp ui list
-```
-
-These commands enqueue work for a running `swarm-ui` app to claim and execute. If no desktop app is running, commands remain `pending` until one starts.
-
-Notes:
-
-- `swarm-mcp ui spawn`, `ui prompt`, `ui move`, and `ui organize` wait up to 5 seconds by default for the desktop app to claim + complete the command. Pass `--wait 0` to return immediately after enqueue.
-- `swarm-mcp dispatch` returns immediately after task handoff/spawn by default. Pass `--wait-for-completion <seconds>` when a gateway wrapper should wait for the task to become `done`, `failed`, or `cancelled`; JSON output includes a `completion` object with the terminal task or timeout snapshot.
-- `ui spawn --harness <name>` accepts any launcher alias defined for the calling profile (see `env/launchers.zsh.example`), or the canonical names `claude` / `codex` / `opencode` / `hermes` directly. Omit `--harness` for a plain shell. Pick the alias whose profile matches the worker you intend to spawn — see [identity boundaries](docs/identity-boundaries.md).
-- `dispatch` normalizes spawned worker harnesses through the requester's identity. The requester's profile env declares `SWARM_HARNESS_CLAUDE` / `_CODEX` / `_OPENCODE` / `_HERMES` aliases; generic harness requests resolve to those aliases at spawn time.
-- Identified `dispatch` / `ui spawn` callers must be registered with a `mode:gateway` label. Trusted operator shells can bypass that accidental-use guard with `SWARM_MCP_ALLOW_SPAWN=1`.
-- Use `swarm-mcp ui list` and `swarm-mcp ui get <id>` to inspect queued, running, completed, or failed UI commands.
-- `--target` accepts `bound:<instance-id>`, `instance:<instance-id>`, `pty:<pty-id>`, or a bare instance / PTY reference. Bare instance refs resolve by full UUID, unique UUID prefix, or unique label substring in scope. Bare PTY refs resolve by full PTY id, unique PTY id prefix, or a unique substring of the PTY command.
-- `ui move` persists layout into the shared `ui/layout` KV entry for the target scope, so changes survive refreshes and can be driven from either the desktop UI or the CLI.
-- `ui organize` currently supports only `--kind grid`.
-
-State, write, and UI subcommands accept `--json` for machine-readable output where shown by `swarm-mcp help`.
-
-Canonical helper-script pattern — a harness the agent invokes to do validation + state update + handoff in one shot:
-
-```js
-// harness.mjs — run as `node harness.mjs <partner-id>` by an agent
-import { execFileSync } from "node:child_process";
-const me = process.env.SWARM_MCP_INSTANCE_ID;
-const scope = process.env.SWARM_MCP_SCOPE;
-// ... validate and write artifacts ...
-execFileSync("swarm-mcp", ["kv", "set", "turn", JSON.stringify(next), "--scope", scope, "--as", me]);
-execFileSync("swarm-mcp", ["send", "--to", partner, "your turn", "--scope", scope, "--as", me]);
-```
-
-Security note: `--as` trusts the caller. The CLI will write as any live instance. Do not expose this binary to untrusted callers — the security model is the same as the underlying shared SQLite file.
-
----
-
-## Resources
-
-The server exposes 4 MCP resources. `swarm://inbox`, `swarm://tasks`, and `swarm://instances` are refreshed by the background poller when the host supports resource update notifications.
-
-| URI                        | Description                                |
-| -------------------------- | ------------------------------------------ |
-| `swarm://inbox`            | Unread messages for this instance.         |
-| `swarm://tasks`            | Tasks grouped by status, including open, claimed, in-progress, blocked, approval-required, done, failed, and cancelled. |
-| `swarm://instances`        | All active instances.                      |
-| `swarm://lock?file=...`    | Active lock state for a specific file.      |
-
----
-
-## Prompts
-
-The server exposes MCP prompts. Some hosts surface them directly, while others only expose tools and resources.
-
-| Prompt | Purpose |
-| ------ | ------- |
-| `setup` (often shown as `swarm:setup`) | Guides the agent through registration: call `register`, then `bootstrap`, then summarize swarm ID, active sessions, role labels, open tasks, and coordination risks. |
-| `protocol` (often shown as `swarm:protocol`) | Applies the recommended coordination workflow for the session: inspect lock state, use `lock_file` for deliberate critical sections, use messages/tasks for handoff, and inspect `role:` labels when choosing collaborators. |
-
----
-
-## Coordination doctrine
-
-For autonomous collaboration, agent doctrine lives in the bundled **`swarm-mcp` skill** rather than in copy-paste `AGENTS.md` snippets. The skill carries a short main `SKILL.md` plus on-demand references for each role:
-
-| Role | Reference |
-|------|-----------|
-| Generalist (no `role:` token) | [`skills/swarm-mcp/SKILL.md`](./skills/swarm-mcp/SKILL.md) |
-| Planner | [`skills/swarm-mcp/references/planner.md`](./skills/swarm-mcp/references/planner.md) |
-| Implementer | [`skills/swarm-mcp/references/implementer.md`](./skills/swarm-mcp/references/implementer.md) |
-| Reviewer | [`skills/swarm-mcp/references/reviewer.md`](./skills/swarm-mcp/references/reviewer.md) |
-| Researcher | [`skills/swarm-mcp/references/researcher.md`](./skills/swarm-mcp/references/researcher.md) |
-| Roles, teams, handoff patterns | [`skills/swarm-mcp/references/roles-and-teams.md`](./skills/swarm-mcp/references/roles-and-teams.md) |
-| Work tracker linkage | [`skills/swarm-mcp/references/work-trackers.md`](./skills/swarm-mcp/references/work-trackers.md) |
-| Bootstrap fields, KV/coordination, CLI | [`bootstrap.md`](./skills/swarm-mcp/references/bootstrap.md), [`coordination.md`](./skills/swarm-mcp/references/coordination.md), [`cli.md`](./skills/swarm-mcp/references/cli.md) |
-
-On hosts that support installable skills, invoke `/swarm-mcp planner`, `/swarm-mcp implementer`, etc. On hosts without skill support, point your `AGENTS.md` (or equivalent) at `skills/swarm-mcp/SKILL.md` — it doubles as a readable doctrine file.
-
-For runtime-agnostic routing doctrine that should always be loaded (not on-demand), see [`docs/agent-routing.md`](./docs/agent-routing.md). Runtime plugins ([`integrations/hermes/`](./integrations/hermes/), [`integrations/claude-code/`](./integrations/claude-code/)) automate registration, locking, and the `/swarm` slash command on top of the skill.
-
-If your host exposes MCP prompts, you can also use the built-in `protocol` prompt (often shown as `swarm:protocol`) to pull the workflow into a session on demand.
-
-## Skills
-
-This repo ships the reusable consumer skill at [`skills/swarm-mcp`](./skills/swarm-mcp). Repo-internal skills live under [`.agents/skills`](./.agents/skills) and are not packaged by default.
-
-Use `swarm-mcp` when your host supports installable `SKILL.md` workflows and you want agents to learn the swarm protocol more reliably. Invoke role-specific workflows with `/swarm-mcp planner`, `/swarm-mcp implementer`, `/swarm-mcp reviewer`, or `/swarm-mcp researcher`. For install locations, see [`docs/install-skill.md`](./docs/install-skill.md).
-
-Use skills in addition to minimal always-on instructions, not instead of them. A skill is a playbook; `AGENTS.md` is still the best place for ambient rules like "register early" and "check locks before editing."
-
-The skills do not mount the MCP server for you. They assume the `swarm` MCP tools are already available in the session.
-
----
-
-## Troubleshooting
-
-**Sessions can't see each other.** Check that both sessions registered with the same `scope` (or both defaulted to the same git root). Verify they are using the same database path (`~/.swarm-mcp/swarm.db` by default). Run `list_instances` in both sessions.
-
-**Tools aren't available after config change.** Most hosts only load MCP server changes at startup. Restart the application or start a fresh session after editing the MCP config.
-
-**File locks are stuck.** Stale locks are cleared automatically when the owning instance's heartbeat expires (30s). If you need to clear them manually, delete the row from the `context` table in the SQLite database, or restart the stuck session.
-
-**Inspecting the database directly.** The database is a standard SQLite file at `~/.swarm-mcp/swarm.db`. You can open it with any SQLite client (`bun` itself, `sqlite3`, DB Browser for SQLite, etc.) to inspect instances, tasks, messages, locks, and KV.
-
-**Wrong absolute path in server command.** The `bun run` command needs an absolute path to `src/index.ts`. Relative paths may resolve differently depending on how the host launches the process.
-
----
-
-## Security
-
-All sessions on the same machine share one SQLite file. Any process running as the same OS user can read and write to it. There is no authentication or authorization between sessions.
-
-This is intentional for a local development tool. Do not use swarm-mcp across trust boundaries or expose the database to untrusted users.
-
----
+- `bun run typecheck`, `bun test`, `bun run build`, `bun run diagrams`
+- Conventions for contributors and agents: [AGENTS.md](AGENTS.md)
+- Repo-internal skills: [.agents/skills](.agents/skills)
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](LICENSE)

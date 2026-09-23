@@ -1,9 +1,10 @@
 # Retained results, artifacts and shared context
 
-The candidate coordinator stores findings and small shared state in SQLite and
-artifact bytes beside the database in `<database>.artifacts`. These APIs are
-available through the authenticated local owner; the compact MCP surface is a
-separate delivery step. The live legacy database is not migrated by this change.
+The coordinator stores findings and small shared state in SQLite and artifact
+bytes beside the database in `<database>.artifacts`. These APIs are available
+through the authenticated local owner; the [compact API](compact-api.md) exposes
+them as `swarm_evidence`, `swarm_context` and the `swarm://context`,
+`swarm://findings` and `swarm://artifacts/<id>` resources.
 
 ## Publishing evidence
 
@@ -31,8 +32,9 @@ Query `findings` by task, file or kind with a sequence cursor and a page limit o
 that uncommitted files are unchanged. Artifact links report available, expired,
 missing or corrupt data; unknown references are explicitly marked. `artifact_read`
 returns base64 byte pages of at most 64 KiB and verifies content integrity before
-serving data. The store is locally trusted: this is corruption detection, not
-protection against a malicious process rewriting files during a read.
+serving data; the MCP resource pages the same bytes at 16 KiB. The store is
+locally trusted: this is corruption detection, not protection against a
+malicious process rewriting files during a read.
 
 ## Retention policy
 
@@ -52,10 +54,10 @@ TTL at creation, from 1 millisecond to 365 days.
 
 Expiry is a visibility/lifecycle policy, not physical deletion or secure erasure.
 Idempotency receipts retain original responses, including earlier small result
-values. No shutdown cleanup, automatic blob garbage collection, or total disk
-quota is implemented. Back up the database and adjacent artifact directory
-together; deleting blobs independently produces visible missing references. Do
-not manually purge history needed for replay or ownership fencing.
+values. There is no shutdown cleanup, automatic blob garbage collection, or total
+disk quota. Back up the database and adjacent artifact directory together;
+deleting blobs independently produces visible missing references. Do not
+manually purge history needed for replay or ownership fencing.
 
 ## Shared state under concurrency
 
@@ -69,3 +71,5 @@ are limited to 8 KiB: link logs, patches and reports as artifacts instead.
 `kv`, `kv_list` and `kv_history` expose author, version and timestamp with bounded
 pagination. Key listing supports a literal prefix. Findings, KV history and
 artifact metadata remain scoped to the authenticated coordinator profile.
+
+History: delivered under VUH-1336 (September 2026); merged in PR #9.

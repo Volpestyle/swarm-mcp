@@ -1,6 +1,8 @@
 # Identity Boundary Audit (VUH-43)
 
-Audit of the deployed launcher profiles, config roots, coordinator DB, herdr socket, and account-scoped MCP configs on `darwin/jamesvolpe` as of 2026-05-13, measured against the doctrine in [`identity-boundaries.md`](./identity-boundaries.md).
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
+Audit of the deployed launcher profiles, config roots, coordinator DB, herdr socket, and account-scoped MCP configs on `darwin/jamesvolpe` as of 2026-05-13, measured against the doctrine in [`identity-boundaries.md`](identity-boundaries.md).
 
 ## TL;DR
 

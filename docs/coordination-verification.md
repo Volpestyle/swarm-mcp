@@ -1,6 +1,6 @@
-# Coordination failure gate (VUH-1342)
+# Coordination verification gate
 
-Run `bun scripts/verify-coordination.ts` from the candidate checkout. The gate
+Run `bun scripts/verify-coordination.ts` from the repository checkout. The gate
 performs type checking, builds production entrypoints, runs every
 `coordination-*.test.ts` plus `mcp-protocol.test.ts`, then runs the shared
 Python/Hermes lifecycle tests. It creates a timestamped directory beneath
@@ -50,8 +50,8 @@ Inspect one accepted owner/result, explicit acknowledgment, busy/blocked deferra
 retained delivery across recovery and revoked old credentials. A successful host
 wake is not acknowledgment. Preserve failed captures, identify the actual host
 and tested source, and retain the support limitations in
-[runtime acceptance](runtime-acceptance.md). The existing captures there are
-reused evidence, not CI results or new host runs.
+[runtime host support](runtime-host-support.md). The captures there are retained
+evidence, not CI results.
 
 ## Retained evidence
 
@@ -68,10 +68,12 @@ README cites a removed capture, it names the commit that still holds it.
 with Node 22, Bun 1.3.11 and Python 3.12, retaining logs even on failure. Installed
 interactive hosts are optional smoke checks outside that automated fixture gate.
 Hosted execution: the repository was unarchived and the branch pushed on
-2026-09-23 (draft PR [#9](https://github.com/Volpestyle/swarm-mcp/pull/9)).
+2026-09-23 (PR [#9](https://github.com/Volpestyle/swarm-mcp/pull/9)).
 [Run 35834256999](https://github.com/Volpestyle/swarm-mcp/actions/runs/35834256999)
 passes the full gate and package verification on both runners; its manifests
 are retained in [2026-09-23-hosted-ci](verification/2026-09-23-hosted-ci/README.md)
 together with the four runner-specific defects the first runs exposed and the
 gate's 30s per-test default. Push-triggered runs are limited to `main`; a
 pull request runs the suite once per commit on its merge ref.
+
+History: delivered under VUH-1342 (September 2026); merged in PR #9.

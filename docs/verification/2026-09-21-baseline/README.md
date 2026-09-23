@@ -3,7 +3,7 @@
 > 20 raw captures named below were removed from the tree on 2026-09-23 (evidence prune); each remains in git history at `1fe258b`, e.g. `git show 1fe258b:docs/verification/2026-09-21-baseline/<file>`.
 
 VUH-1330 baseline sources: April `b446c18` and final upstream `b95f607`.
-See [the change map and maintenance decision](../../redesign-baseline.md).
+See [the change map and maintenance decision](../../history/2026-09-21-redesign-baseline.md).
 
 The `.log` files retain test output, including Windows PowerShell stderr
 formatting. Encoding was normalized to UTF-8 and trailing whitespace trimmed.
@@ -50,7 +50,7 @@ the barrier. No crash faults were injected.
 
 ## Follow-up architecture experiments
 
-The [selected architecture](../../coordination-architecture.md) records the
+The [selected architecture](../../architecture.md) records the
 comparison, supported matrix, guarantees and budgets. No production behavior was
 changed by these experiments.
 

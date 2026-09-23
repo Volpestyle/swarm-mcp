@@ -1,13 +1,10 @@
 # Reversible coordination cutover
 
-VUH-1344 is in progress. The compatibility launch guard, versioned legacy
-backup/restore and offline coordinator import below are implemented. An isolated
-Node-owner canary passed restart, reconnect, lease recovery and reconciled rollback.
-Production packaging, installation/skill guidance and startup diagnostics are
-prepared, and the hosted Windows/Ubuntu gate passes on the pushed branch
-([run 35834256999](https://github.com/Volpestyle/swarm-mcp/actions/runs/35834256999)).
-Release version/destination and publication authorization remain open. Do not
-switch a live profile merely because the isolated canary passed.
+This guide moves a legacy `swarm.db` profile onto a v2 coordinator profile
+reversibly: a checked legacy launch guard, a consistent versioned snapshot with
+restore, and an offline import into a new coordinator profile, with the snapshot
+retained as the rollback source. A live profile is switched only deliberately
+after the isolated canary; do not switch it merely because the canary passed.
 
 ## Database boundary
 
@@ -61,7 +58,7 @@ version is deliberately set to one.
 Historical source fixtures and their hashes/revisions live under
 `test/fixtures/legacy-baselines/`; tests do not depend on a full Git history in CI.
 Run `bun test test/coordination-legacy-guard.test.ts`. This is compatibility
-evidence, not yet a migration, rollback or publication claim.
+evidence, not a migration or rollback claim.
 
 ## Consistent legacy snapshot and restore
 
@@ -88,7 +85,7 @@ A failed/incomplete snapshot without a valid manifest is not restorable.
 The snapshot retains read and unread messages, tasks, annotations, locks,
 identities and all other legacy tables as historical data. Restoring this file
 does not resolve side effects performed after the snapshot. Before an actual
-rollback, stop candidate writers, retain their audit evidence, reconcile any
+rollback, stop coordinator writers, retain their audit evidence, reconcile any
 post-cutover effects and deliberately select the restored legacy path through
 the checked launcher. Active legacy ownership is not valid coordinator authority;
 unfinished imported tasks remain blocked on an explicit reconciliation task.
@@ -122,7 +119,7 @@ old process presence is not evidence of a current recipient identity.
 ```
 
 ```powershell
-node dist/coordination/migration-cli.js import C:/isolated-cutover/snapshot-001 C:/isolated-cutover/candidate-001 C:/isolated-cutover/plan.json
+node dist/coordination/migration-cli.js import C:/isolated-cutover/snapshot-001 C:/isolated-cutover/coordinator-001 C:/isolated-cutover/plan.json
 ```
 
 Choose the target scope/actor IDs from the intended trusted runtime enrollment;
@@ -130,12 +127,12 @@ the importer does not enroll sessions. `taskController` becomes the creator of
 imported tasks and their reviews, retaining the ability to cancel or retry them;
 it grants scheduling authority, never a live execution attempt. The original
 requester remains historical provenance. All scoped source rows need a mapping,
-including historical instances. The schema-11 candidate includes the complete
-source rows in `legacy_records`, linked by `legacy_imports` to the snapshot hash
-and plan. Original SQLite bytes remain in the verified snapshot. Binary values
-in archived JSON use a base64 wrapper.
+including historical instances. The schema-11 coordinator profile includes the
+complete source rows in `legacy_records`, linked by `legacy_imports` to the
+snapshot hash and plan. Original SQLite bytes remain in the verified snapshot.
+Binary values in archived JSON use a base64 wrapper.
 
-| Source data | Candidate behavior |
+| Source data | Coordinator behavior |
 | --- | --- |
 | Unread direct/broadcast message | Explicit recipients receive pending `legacy.message` deliveries; fresh lease and acknowledgment required |
 | Read message | Archived only; historical read state is not a new processing acknowledgment |
@@ -172,8 +169,10 @@ of directory operations on every filesystem.
 `test/coordination-legacy-import.test.ts` exercises both pinned baselines, normal
 delivery/ack, blocked claims and explicit reconciliation through the real core.
 It also runs a Node importer and abruptly terminates it before transaction commit
-and before publication: neither candidate can start. Combined migration tests
+and before publication: neither coordinator can start. Combined migration tests
 cover both scheduling authority and lease ownership. The
 [isolated canary evidence](verification/2026-09-22-migration/README.md) verifies
 runtime restart/lease recovery and explicit rollback reconciliation over the
 production Node owner. It does not establish an installed-host or live cutover.
+
+History: delivered under VUH-1344 (September 2026); merged in PR #9.

@@ -1,10 +1,12 @@
 # Swarm Server
 
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
 `swarm-server` is the Rust daemon for the desktop and mobile control plane. It is separate from the TypeScript `swarm-mcp` stdio MCP server.
 
 Use `swarm-mcp` when coding-agent hosts need MCP tools. Use `swarm-server` when `swarm-ui` or a paired client needs snapshots, PTY streaming, pairing, leases, or LAN access. The current `apps/swarm-ios` workstream is Herdr-bridge first, so this daemon is not the primary iOS app backend.
 
-`swarm-server` is not currently registered as a `swarm-mcp` workspace or spawner backend. For the current backend matrix and the intended future config switch to `swarm-server`, see [`backend-configuration.md`](./backend-configuration.md).
+`swarm-server` is not currently registered as a `swarm-mcp` workspace or spawner backend. For the current backend matrix and the intended future config switch to `swarm-server`, see [`backend-configuration.md`](backend-configuration.md).
 
 ## Responsibilities
 

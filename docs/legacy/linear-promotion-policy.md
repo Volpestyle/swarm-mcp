@@ -1,7 +1,9 @@
 # Linear promotion policy
 
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
 Historical legacy design only. The compact candidate uses the
-[current packaged policy](../skills/swarm-mcp/references/work-trackers.md);
+[current packaged policy](../../skills/swarm-mcp/references/work-trackers.md);
 the automatic closure/backstop rules below do not apply to it.
 
 **Status:** v0 — adopted; cross-references [VUH-35](https://linear.app/vuhlp/issue/VUH-35).
@@ -20,7 +22,7 @@ because that's the implementation we're shipping; everywhere it appears, read it
 
 ## 1. The boundary we're enforcing
 
-From [`control-plane.md`](./control-plane.md):
+From [`control-plane.md`](control-plane.md):
 
 > Work trackers should not hold worker heartbeats, file locks, pane handles, or
 > high-churn peer messages. Those belong in the Coordinator. Workers may update the
@@ -52,8 +54,8 @@ Explicit always wins. Implicit predicates below only fire when the operator did 
 
 ### 2.2 Tracker-backed gateway dispatch (default-on for medium/large work)
 
-When the gateway routes via `dispatch` (see [`agent-routing.md`](./agent-routing.md) §Prefer-swarm-peers
-and [`integrations/hermes/SPEC.md`](../integrations/hermes/SPEC.md) §7), the task is promoted
+When the gateway routes via `dispatch` (see [`agent-routing.md`](agent-routing.md) §Prefer-swarm-peers
+and [`integrations/hermes/SPEC.md`](../../integrations/hermes/SPEC.md) §7), the task is promoted
 when **all** of these hold:
 
 - A `config/work_tracker/<identity>` row exists for the requester's identity (the runtime
@@ -75,7 +77,7 @@ find it from their phone tomorrow.
 ### 2.3 Routine dispatch produces a task graph
 
 Routine dispatch (`/release-check`, `/review-branch`, etc. — see
-[`design-routine-dispatch.md`](./design-routine-dispatch.md)) expands one operator
+[`design-routine-dispatch.md`](design-routine-dispatch.md)) expands one operator
 intent into multiple role-specific tasks. The routine declares promotion shape:
 
 - **Parent-only**: one Linear issue for the routine, child swarm tasks stay ephemeral.
@@ -234,7 +236,7 @@ Promotion must be safe under operator retry (Telegram resends, gateway restarts,
 S7-style spawn races).
 
 - The bridge keys its create-or-link by `task.idempotency_key`. The existing
-  contract in [`integrations/hermes/SPEC.md`](../integrations/hermes/SPEC.md) §5.5 calls for stable
+  contract in [`integrations/hermes/SPEC.md`](../../integrations/hermes/SPEC.md) §5.5 calls for stable
   semantic keys for tracker-backed work; this policy formalizes that:
   `tracker:<provider>:<identifier-or-intent-hash>:<role-stage>`, e.g.
   `linear:VUH-20:implement` or `linear:intent-9f3a:review:<implementation-task-id>`.
@@ -255,7 +257,7 @@ S7-style spawn races).
 ## 7. Identity enforcement
 
 Promotion respects the identity-boundary rules in
-[`identity-boundaries.md`](./identity-boundaries.md). Concretely:
+[`identity-boundaries.md`](identity-boundaries.md). Concretely:
 
 - A task labeled `identity:work` only promotes via the `linear_work` MCP and
   writes its binding row under `tracker/linear/work/<task_id>`.
@@ -317,10 +319,10 @@ implementations will produce.
 
 ## 9. References
 
-- [`control-plane.md`](./control-plane.md) — Coordinator vs WorkTracker contract.
-- [`agent-routing.md`](./agent-routing.md) — dispatch routing and identity invariants.
-- [`identity-boundaries.md`](./identity-boundaries.md) — `identity:work` vs `identity:personal` separation.
-- [`integrations/hermes/SPEC.md`](../integrations/hermes/SPEC.md) — gateway routing (§7), no-double-spawn and tracker-backed idempotency keys (§5.5).
-- [`design-routine-dispatch.md`](./design-routine-dispatch.md) — routine task graphs.
+- [`control-plane.md`](control-plane.md) — Coordinator vs WorkTracker contract.
+- [`agent-routing.md`](agent-routing.md) — dispatch routing and identity invariants.
+- [`identity-boundaries.md`](identity-boundaries.md) — `identity:work` vs `identity:personal` separation.
+- [`integrations/hermes/SPEC.md`](../../integrations/hermes/SPEC.md) — gateway routing (§7), no-double-spawn and tracker-backed idempotency keys (§5.5).
+- [`design-routine-dispatch.md`](design-routine-dispatch.md) — routine task graphs.
 - `src/work_tracker.ts` — `config/work_tracker/<identity>` KV contract.
 - Linear cluster: VUH-35 (this doc), VUH-36 (create/link), VUH-37 (status mirror), VUH-38 (completion comment).

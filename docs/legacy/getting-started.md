@@ -1,6 +1,8 @@
 # Getting Started
 
-> Looking for the fastest path? See [`quickstart.md`](./quickstart.md). This page covers the local-clone development setup and per-host details.
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
+> Looking for the fastest path? See [`quickstart.md`](quickstart.md). This page covers the local-clone development setup and per-host details.
 
 This guide gets you from a fresh clone to two coding-agent sessions that can see each other and exchange messages through `swarm-mcp`.
 
@@ -10,7 +12,7 @@ It assumes:
 - Your coding agent host supports custom stdio MCP servers.
 - You want a simple local setup using the default shared database at `~/.swarm-mcp/swarm.db`.
 
-This guide uses the default local backend setup. For consumer backend/profile configuration and account separation, see [`backend-configuration.md`](./backend-configuration.md) and [`identity-boundaries.md`](./identity-boundaries.md).
+This guide uses the default local backend setup. For consumer backend/profile configuration and account separation, see [`backend-configuration.md`](backend-configuration.md) and [`identity-boundaries.md`](identity-boundaries.md).
 
 ## 1. Install Bun
 
@@ -114,7 +116,7 @@ mkdir -p ~/.claude/skills
 ln -s /absolute/path/to/swarm-mcp/skills/swarm-mcp ~/.claude/skills/swarm-mcp
 ```
 
-Per-host paths and a copy-based alternative are in [`docs/install-skill.md`](./install-skill.md).
+Per-host paths and a copy-based alternative are in [`docs/install-skill.md`](../installation.md).
 
 ## 5. Restart your coding agent host
 
@@ -132,7 +134,7 @@ Use:
 
 Do not use `scope` to split frontend/backend inside one repo. Keep one shared scope and use `label` tokens like `team:frontend` and `team:backend` if you want soft grouping inside the same swarm.
 
-See the README's [Registration fields](../README.md#registration-fields) section for the full field reference.
+See the README's [Registration fields](../../README.md#registration-fields) section for the full field reference.
 
 The tool returns your swarm instance ID and registration details.
 
@@ -180,9 +182,9 @@ You can also test shared coordination tools:
 
 Once the MCP server is working, install the bundled coordination skill and let it carry the doctrine. The skill's main `SKILL.md` is the generalist guide; `skills/swarm-mcp/references/` holds role-specific workflows (planner, implementer, reviewer, researcher) and the roles-and-teams reference for multi-team setups.
 
-Install with the steps in [`docs/install-skill.md`](./install-skill.md), then invoke role-specialized sessions with `/swarm-mcp planner`, `/swarm-mcp implementer`, `/swarm-mcp reviewer`, or `/swarm-mcp researcher`. Hosts without installable-skill support can point their `AGENTS.md` (or equivalent) directly at [`skills/swarm-mcp/SKILL.md`](../skills/swarm-mcp/SKILL.md) — it doubles as a readable doctrine file.
+Install with the steps in [`docs/install-skill.md`](../installation.md), then invoke role-specialized sessions with `/swarm-mcp planner`, `/swarm-mcp implementer`, `/swarm-mcp reviewer`, or `/swarm-mcp researcher`. Hosts without installable-skill support can point their `AGENTS.md` (or equivalent) directly at [`skills/swarm-mcp/SKILL.md`](../../skills/swarm-mcp/SKILL.md) — it doubles as a readable doctrine file.
 
-For runtime-agnostic routing rules that should be always-on (not on-demand), see [`docs/agent-routing.md`](./agent-routing.md).
+For runtime-agnostic routing rules that should be always-on (not on-demand), see [`docs/agent-routing.md`](agent-routing.md).
 
 The minimum collaboration loop is:
 
@@ -192,8 +194,8 @@ The minimum collaboration loop is:
 - Call `lock_file` only for deliberate critical sections wider than one write tool call; plugin-supported runtimes enforce peer-held locks at write time
 - Call `broadcast`, `send_message`, `request_task`, or `update_task` when handing work off
 
-For troubleshooting tips, see the [Troubleshooting](../README.md#troubleshooting) section in the README.
+For troubleshooting tips, see the [Troubleshooting](../../README.md#troubleshooting) section in the README.
 
 ## Desktop and mobile access
 
-The setup above is only for the stdio MCP server. The desktop UI, PTY control, mobile-style pairing, and LAN streaming use the separate Rust `swarm-server` daemon. It is not required for basic MCP coordination. See [`docs/swarm-server.md`](./swarm-server.md) when you need `swarm-ui`. The current `apps/swarm-ios` workstream is Herdr-bridge first so Herdr remains the PTY owner.
+The setup above is only for the stdio MCP server. The desktop UI, PTY control, mobile-style pairing, and LAN streaming use the separate Rust `swarm-server` daemon. It is not required for basic MCP coordination. See [`docs/swarm-server.md`](swarm-server.md) when you need `swarm-ui`. The current `apps/swarm-ios` workstream is Herdr-bridge first so Herdr remains the PTY owner.

@@ -1,5 +1,7 @@
 # Bootstrap
 
+> Legacy interface reference (`register`/`bootstrap`/`poll_messages` tools). With the compact coordinator, follow [SKILL.md](../SKILL.md) and [compact examples](compact-examples.md) instead; this file is kept for hosts still on the legacy server.
+
 Use this reference when a session needs to join the swarm correctly.
 
 ## Register First

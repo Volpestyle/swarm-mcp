@@ -1,5 +1,7 @@
 # swarm.db contracts
 
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
 `swarm.db` is bootstrapped from the SQL files in `sql/`:
 
 - `sql/swarm_db_bootstrap.sql` creates tables and sets `PRAGMA user_version`.

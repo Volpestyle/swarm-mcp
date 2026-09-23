@@ -1,17 +1,19 @@
-# MCP v2 compatibility (candidate)
+# MCP protocol compatibility
 
-The stdio entry uses `@modelcontextprotocol/server` 2.0.0 with `serveStdio`
+Both stdio entries use `@modelcontextprotocol/server` 2.0.0 with `serveStdio`
 and explicit `legacy: "serve"`. The application identity remains separate from
-protocol negotiation. The existing application handlers are transitional; the
-compact coordinator-backed API is tracked in VUH-1338.
+protocol negotiation. This page covers the protocol-level behavior verified
+against the legacy `swarm-mcp` entry; the coordinator-backed nine-tool adapter
+is described in the [compact API](compact-api.md), whose tests run the same
+modern and legacy client modes.
 
 ## Verified matrix
 
-`test/mcp-protocol.test.ts` launches the real entry with disposable databases.
-The SDK 2.0.0 client is tested in both legacy-handshake mode and pinned
-2026-07-28 mode. Both discover tools/resources/prompts, register an application
-session and read its inbox. Raw modern results carry `resultType`, server identity
-and private cache hints; legacy results omit modern-only fields.
+`test/mcp-protocol.test.ts` launches the real legacy entry with disposable
+databases. The SDK 2.0.0 client is tested in both legacy-handshake mode and
+pinned 2026-07-28 mode. Both discover tools/resources/prompts, register an
+application session and read its inbox. Raw modern results carry `resultType`,
+server identity and private cache hints; legacy results omit modern-only fields.
 
 Task-resource subscriptions deliver the selected resource, stop after unsubscribe,
 and permit cancellation of an active activity wait. Disconnect stops instance
@@ -35,7 +37,8 @@ processed using the pinned codec; callers must reconnect to negotiate a revision
 
 These subprocess tests do not establish installed Codex, Claude, Hermes or
 OpenCode host support, or that receiving a notification wakes a model. Runtime
-delivery and wake behavior are separate VUH-1339 acceptance checks.
+delivery and wake behavior are verified per host in
+[runtime host support](runtime-host-support.md).
 
 ## Tasks extension decision
 
@@ -44,12 +47,14 @@ models deferred results of tool calls, negotiated through the
 `io.modelcontextprotocol/tasks` capability. It does not supply Swarm's worker
 ownership, attempt fences, dependencies or file reservations.
 
-Do not advertise this extension in the current adapter. Coordination commands
-return durable acceptance promptly; agents retrieve application task state through
-the Swarm API. A future genuinely long-running tool may add a separate negotiated
+The adapters do not advertise this extension. Coordination commands return
+durable acceptance promptly; agents retrieve application task state through the
+Swarm API. A future genuinely long-running tool may add a separate negotiated
 extension handle linked to the application attempt. It must persist acceptance
 before returning a handle and define how protocol cancellation maps to cooperative
 application cancellation. Merely renaming Swarm tasks into protocol tasks would
 conflate two different lifecycles.
 
 Serving reference: [official stdio guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/stdio.md).
+
+History: delivered under VUH-1337 (September 2026); merged in PR #9.

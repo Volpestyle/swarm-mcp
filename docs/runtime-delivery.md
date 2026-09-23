@@ -1,6 +1,6 @@
 # Runtime delivery contract
 
-Acceptance evidence and supported limits: [VUH-1339 audit](runtime-acceptance.md).
+Per-host evidence and supported limits: [runtime host support](runtime-host-support.md).
 
 The production owner runs as `node dist/coordination/owner-cli.js <config.json>`.
 Its private config contains `databasePath` and a generated `launcherSecret` of at
@@ -14,12 +14,14 @@ stable agent ID, worktree, resume secret and request ID. Identical enrollment
 replay returns the original capability; a new request ID advances the session
 generation and fences the older capability. Owner restart preserves this state.
 Enrollment is disabled unless the owner explicitly installs the callback.
+
 `ensureCoordinator` first tries the configured endpoint. Only missing/refused
 local endpoints trigger a hidden detached Node owner. Startup uses bounded
 backoff (five seconds by default), and simultaneous launchers converge through
 exclusive pipe binding. Errors clean up only the child that invocation launched;
 an existing owner is never killed from a PID file. Config requires an absolute
 database path, and launcher clients still authenticate enrollment before use.
+
 `ownerState` and `agentState` create private launcher state under an absolute
 directory whose parent the launcher owns. Windows creates the directory with a
 restrictive ACL atomically and verifies owner/access rules on directories and
@@ -42,14 +44,16 @@ enrollment; choose a new one for an actual host restart/resume. A bootstrap with
 the returned session capability verifies it is still current before returning.
 Only the endpoint and session capability are returned in the child environment;
 owner and resume secrets remain in launcher state. OpenCode V1 lifecycle hooks
-now use this composition; startup reconciliation, delivery/wake hooks and other
-hosts have evidence and remaining limits in `docs/runtime-host-support.md`.
+use this composition; startup reconciliation, delivery/wake hooks and other
+hosts have evidence and remaining limits in
+[runtime host support](runtime-host-support.md).
 
 `RuntimeDelivery` consumes an authenticated coordinator request function and a
 trusted host adapter. It has no spawn or terminal-injection API. Enrollment and
 session capabilities belong to the launcher; the adapter is bound to one actor.
-OpenCode and Claude Code have
-installed-host evidence; the shared core alone is not proof of host delivery.
+OpenCode and Claude Code have installed-host evidence; Codex automatic delivery
+and Hermes actual-host delivery are unverified. The shared core alone is not
+proof of host delivery.
 
 Host observations carry a state, source evidence and observation timestamp:
 
@@ -94,3 +98,5 @@ host adapters: busy/degraded states, duplicate hints, concurrent boundaries,
 explicit processing acknowledgment, failed wake/backoff, uncertain admission,
 driver replacement, callback timeout and backlog preservation. Installed-host
 evidence is recorded separately under `docs/verification/2026-09-22-runtime`.
+
+History: delivered under VUH-1339 (September 2026); merged in PR #9.

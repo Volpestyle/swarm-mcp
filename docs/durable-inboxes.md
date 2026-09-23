@@ -31,7 +31,7 @@ Expired deliveries are never leased. Expiration records and lease recovery are
 materialized by the recipient's next fetch or explicit `inbox.sweep`; an offline
 recipient's snapshot can still say pending with an elapsed `expiresAt` until that
 sweep. Rows remain visible; there is no one-hour deletion or legacy cleanup path
-against this separate database.
+against this database.
 
 Leases default to 30 seconds (maximum two minutes). Rejection or lease expiry
 schedules exponential backoff, capped at one minute. Defaults are five attempts,
@@ -46,15 +46,16 @@ State changes and notification hints omit message bodies and lease tokens.
 Service-provided authorization determines scope and actor, including when a
 caller adds unexpected identity fields to its command.
 
-## Compatibility and rollout
+## Legacy compatibility
 
-This module does not silently change legacy `poll_messages`. Existing consumers
-still have legacy fetch-means-read behavior until the adapter/migration work in
-VUH-1338 and VUH-1344. The durable API requires explicit acknowledgment; an old
-consumer cannot be represented as having processed work merely because it polled.
-Keep legacy and durable delivery modes explicit during migration, with no
-automatic acknowledgment bridge. Session generations and supported resume are
-supplied by VUH-1334; this layer retains deliveries under stable recipient IDs.
+The legacy adapter's `poll_messages` keeps its fetch-means-read behavior against
+the legacy store; this module does not change it. The durable API requires
+explicit acknowledgment: an old consumer cannot be represented as having
+processed work merely because it polled, and there is no automatic
+acknowledgment bridge between the two delivery modes. The compact `swarm_inbox`
+tool exposes fetch/ack ([compact API](compact-api.md)); session generations and
+resume come from [session and task ownership](session-and-task-ownership.md).
+This layer retains deliveries under stable recipient IDs.
 
 Verification: `bun test test/coordination-inbox.test.ts
 test/coordination-core.test.ts test/coordination-ipc.test.ts` covers command replay,
@@ -63,3 +64,5 @@ backoff/dead-letter state, fanout quotas, authorization, schema migration rollba
 and IPC. Separate Bun and Node workers exit after committed fetch/ack commands
 before returning responses; eight simultaneous processes compete for one retained
 delivery after the first consumer crashes.
+
+History: delivered under VUH-1333 (September 2026); merged in PR #9.

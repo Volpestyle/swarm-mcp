@@ -1,4 +1,4 @@
-# Execution routing (VUH-1340)
+# Execution routing
 
 ## OpenCode native provider
 
@@ -17,7 +17,7 @@ external evidence. Cooperative stop uses the enrolled worker's fenced result.
 
 SDK transport-fixture tests cover inherited permission rules, delayed enrollment,
 coordinator reopen, wrong-parent rejection, single assignment and response loss
-without another create. The installed OpenCode 1.4.3 probe now verifies native
+without another create. The installed OpenCode 1.4.3 probe verifies native
 creation, plugin enrollment, autonomous delivery, a fenced result, explicit
 acknowledgment and capacity release. See the retained
 [capture and reproduction](verification/2026-09-22-dispatch/README.md).
@@ -34,7 +34,10 @@ current enrolled session, verifying the workspace. It never creates the identity
 file or rotates enrollment. If the plugin has not enrolled yet, dispatch remains
 uncertain and retries the retained child ID. A real local HTTP/SDK integration
 test supplies delayed plugin enrollment and verifies one create, one assignment
-and unchanged generation; this is not an installed OpenCode execution claim.
+and unchanged generation; the installed-host probe above is the execution
+evidence.
+
+## Route selection
 
 Use the lowest-overhead authorized execution path that satisfies the task's
 requirements. Native runtime messaging is sufficient when its host, workspace,
@@ -45,13 +48,15 @@ unconditional preference.
 `selectExecutionRoute` evaluates trusted launcher/runtime declarations against
 scope, canonical worktree, optional host, required capabilities, durable lifetime,
 fresh idle evidence and per-route/global concurrency budgets. Role labels confer
-neither capabilities nor authority. A missing capability remains an explicit
+neither capabilities nor authority. A missing capability is an explicit
 blocker; selection never creates an agent or changes the task contract.
 
 Selection alone is advisory. The trusted runner below composes atomic intent and
 capacity reservation, provisioning reconciliation and task binding. OpenCode
 native children and already-enrolled independent peers have concrete adapters. Only the
 coordinator's fenced task attempt establishes an accepted owner.
+
+## Dispatch intents and provisioning
 
 Schema 9 adds `dispatch_intents`. The trusted write transaction reserves an
 intent and creates its task atomically. Scope-wide intent identity spans requesting
@@ -103,8 +108,8 @@ replacement dispatch intent, token or route fields.
 The runner tests use a real coordinator store and a controlled provider fixture:
 external acceptance followed by response loss or timeout, coordinator reopen,
 temporarily invisible external state, then reconciliation. Both finish with one
-start, one task and one attempt. This is not installed-host provisioning evidence.
-The concrete adapters and authenticated API are described below and above.
+start, one task and one attempt. This is not installed-host provisioning evidence;
+that comes from the per-provider probes.
 
 `existingPeerProvider` binds a trusted, already-enrolled session incarnation; it
 does not spawn or enroll another process. Recovery resolves that same configured
@@ -115,7 +120,7 @@ or cancelled attempt establishes that dispatch work ended; an abandoned lease
 does not. Cancellation before binding is also safe because binding cannot claim
 the cancelled task. The shared peer process itself remains running.
 
-The runner now queues one `task.assigned` envelope in the binding transaction,
+The runner queues one `task.assigned` envelope in the binding transaction,
 containing the contract and task/attempt/fence references. Inbox backpressure
 rolls back ownership too, so an accepted attempt cannot lose its assignment.
 Reconciliation of an existing binding does not queue a second message. Workers
@@ -160,7 +165,7 @@ Confirmed stop closes the matching pending-cancellation attempt and releases its
 reservation atomically. Late success is rejected once cancellation is requested.
 The regression exercises stop timeout, coordinator reopen, pending stop, confirmed
 stop, repeated cancellation and pre-start cancellation using a controlled provider.
-Concrete host adapters must still implement and prove their stop-token fencing.
+Each concrete host adapter must implement and prove its own stop-token fencing.
 
 ## Authenticated service boundary
 
@@ -238,16 +243,18 @@ The referenced historical tickets are inputs, not execution dependencies:
 
 | Source | Finding |
 | --- | --- |
-| VUH-12 / `src/tasks.ts` | Legacy task `idempotency_key` deduplicates retries. Its S7 layer-1 assertion passes on this machine. Preserve stable intent identity in the new task/dispatch path. |
-| VUH-13 / `src/dispatch.ts` | Existing dispatch checks a synthetic spawn lock before acquiring an exclusive lock, creates the task before spawning and reconciles the spawned instance. Both S7 race cases currently fail at the gateway authorization check on Windows, before spawn. They do not establish no-double-spawn here. |
+| VUH-12 / `src/tasks.ts` | Legacy task `idempotency_key` deduplicates retries. Its S7 layer-1 assertion passes on this machine. The new task/dispatch path preserves stable intent identity. |
+| VUH-13 / `src/dispatch.ts` | Existing dispatch checks a synthetic spawn lock before acquiring an exclusive lock, creates the task before spawning and reconciles the spawned instance. Both S7 race cases fail at the gateway authorization check on Windows, before spawn. They do not establish no-double-spawn here. |
 | VUH-16 / Hermes | No `subagent_stop` bridge was found in the inspected Python integration. Native completion must use the coordinator's current attempt/fence, rather than a second legacy task assignment. |
-| VUH-27 | First-class spawn intent was proposed but remains a historical Backlog item. The redesign needs a durable dispatch intent instead of using file-reservation paths as spawn state. |
+| VUH-27 | First-class spawn intent was proposed but remains a historical Backlog item. The redesign uses a durable dispatch intent instead of file-reservation paths as spawn state. |
 
 Legacy dispatch selects workers through role/generalist labels and accepts a
 gateway label as authority. These are not suitable sources of trusted routing
-capabilities or launch authorization in the redesign. Keep legacy compatibility
-separate from the new control plane.
+capabilities or launch authorization, so the legacy path stays separate from
+the coordinator's control plane.
 
-Fresh validation: two routing tests / nine assertions and TypeScript pass.
-The legacy S7 run is one pass / two failures; no physical agent was spawned
+Validation of this audit: two routing tests / nine assertions and TypeScript
+pass. The legacy S7 run is one pass / two failures; no physical agent was spawned
 (the fixture uses a counting fake spawner).
+
+History: delivered under VUH-1340 (September 2026); merged in PR #9.

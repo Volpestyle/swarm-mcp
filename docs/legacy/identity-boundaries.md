@@ -1,5 +1,7 @@
 # Identity and Auth Boundaries
 
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
 Workers from different isolation boundaries must be separated by launcher profile, config root, MCP server names, OAuth/token storage, and swarm labels. The model should not have to remember which account is safe to use; the wrong account's tools should not be loaded in that process.
 
 > **The hard boundary is the launched process and its config root, not a label.** Each profile's launcher starts a worker against a specific config root, which loads only same-identity account-scoped MCPs. Swarm `identity:` labels are routing and audit metadata; they do not authorize anything by themselves. Anything that needs strong account isolation must come from the launcher and config root, not from a label.
@@ -11,7 +13,7 @@ A swarm-mcp "profile" is the canonical isolation boundary. Profile names are use
 - A coordinator DB path (`SWARM_DB_PATH`) — keeps coordination state isolated.
 - A herdr socket (`HERDR_SOCKET_PATH`) — keeps live pane control isolated.
 - Account-scoped MCP config roots (one per runtime) — keeps OAuth/tokens isolated.
-- A set of launcher aliases — your shell function names for that profile's agents (see [`../env/launchers.zsh.example`](../env/launchers.zsh.example) and the `swarm_define_profile` generator).
+- A set of launcher aliases — your shell function names for that profile's agents (see [`../env/launchers.zsh.example`](../../env/launchers.zsh.example) and the `swarm_define_profile` generator).
 - An `identity:<profile>` token used on the wire.
 
 ### Example: work + personal
@@ -69,7 +71,7 @@ lead launcher selects the same account/config root and also enables gateway
 behavior plus a discoverable planner role.
 
 Launcher functions should source per-profile env files instead of embedding all
-configuration inline. The repo ships templates in [`../env/`](../env/) — start
+configuration inline. The repo ships templates in [`../env/`](../../env) — start
 from `profile.env.example` (generic, one copy per profile) or from
 `personal.env.example` / `work.env.example` (pre-filled examples of a common
 two-profile pattern):
@@ -218,7 +220,7 @@ The hard boundary is the process launched from the right profile:
 
 If profile coordination data must also be isolated, use separate `SWARM_DB_PATH` values or separate OS users. A `scope` or `identity:` label alone is not a credential boundary; every same-user process with access to the shared swarm database can read and write coordination state.
 
-For an example of layering process-internal fences (write-safe-root env var, allowlist terminal hook) on top of the launcher boundary — useful when both identities share a single user account and you want accidental cross-identity touches blocked loudly — see [`identity-defense-in-depth.md`](./identity-defense-in-depth.md). That doc walks through a personal Hermes example end-to-end and notes how to adapt to other runtimes.
+For an example of layering process-internal fences (write-safe-root env var, allowlist terminal hook) on top of the launcher boundary — useful when both identities share a single user account and you want accidental cross-identity touches blocked loudly — see [`identity-defense-in-depth.md`](identity-defense-in-depth.md). That doc walks through a personal Hermes example end-to-end and notes how to adapt to other runtimes.
 
 Hermes needs one extra setup step when it launches `swarm-mcp` as an MCP server: Hermes may scrub the parent process environment before spawning MCP children. Put the identity and DB path directly on the `swarm` MCP server entry as well as in the launcher/profile environment:
 

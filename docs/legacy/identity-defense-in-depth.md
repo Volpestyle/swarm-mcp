@@ -1,6 +1,8 @@
 # Defense-in-Depth Within One Identity
 
-[`identity-boundaries.md`](./identity-boundaries.md) covers the hard boundary:
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
+[`identity-boundaries.md`](identity-boundaries.md) covers the hard boundary:
 launcher + config root + MCP loadout. That stops the wrong account-scoped
 tools from being mounted in a worker process. It does not stop a worker, once
 started, from `cd`-ing into a different identity's repo and acting on files

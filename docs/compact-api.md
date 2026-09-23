@@ -1,14 +1,15 @@
 # Compact coordinator API
 
-Run `node dist/coordination/mcp-cli.js` with a trusted launcher's
-`SWARM_COORDINATOR_ENDPOINT` and `SWARM_SESSION_CAPABILITY`. The adapter opens no
-database and cannot choose an actor or scope from model-supplied arguments. The
-Node owner authorizes every operation. Trusted runtime launchers supply automatic
-enrollment; see [runtime delivery](runtime-delivery.md) and
+Run `node dist/coordination/mcp-cli.js` (packaged as `swarm-coordinator-mcp`)
+with a trusted launcher's `SWARM_COORDINATOR_ENDPOINT` and
+`SWARM_SESSION_CAPABILITY`. The adapter opens no database and cannot choose an
+actor or scope from model-supplied arguments. The Node owner authorizes every
+operation. Trusted runtime launchers supply automatic enrollment; see
+[runtime delivery](runtime-delivery.md) and
 [startup compatibility](startup-compatibility.md).
-The legacy `swarm-mcp` entry remains available while migration is completed.
-See the [complete legacy tool mapping and migration boundaries](compact-api-migration.md)
-before changing a client configuration.
+The legacy `swarm-mcp` entry still ships with its own store and tool surface.
+See the [legacy caller compatibility mapping](compact-api-migration.md) before
+changing a client configuration.
 
 | Tool | Common path |
 | --- | --- |
@@ -46,8 +47,7 @@ readers that exceed it must narrow their query or use artifact references.
 These are data budgets, not total wire-frame sizes: the compatibility text
 envelope duplicates structuredContent and JSON escaping adds overhead. Error
 messages are truncated to 1,024 characters. Artifact bytes remain separately
-paged at 16 KiB. Oversized existing records from earlier candidate builds are
-not rewritten; this is not a migration of an installed legacy database.
+paged at 16 KiB. Oversized records written by earlier builds are not rewritten.
 
 Task details include the authoritative scope and creator, parsed contract fields,
 dependency IDs, current attempt owner/fence/lease and parsed completion evidence.
@@ -76,8 +76,8 @@ the adapter so the host can reconnect rather than silently miss notifications.
 
 The adapter caps concurrent waits at eight. Each wait uses its own authenticated
 IPC connection so cancelling it tears down that owner-side wait without disrupting
-other calls. Normal requests share a connection. A disconnected adapter currently
-requires reconnection by its launcher; automatic recovery is not claimed.
+other calls. Normal requests share a connection. A disconnected adapter requires
+reconnection by its launcher; it does not recover automatically.
 
 `test/coordination-mcp.test.ts` exercises the actual bundled Node adapter through
 modern and legacy MCP clients and a separate Node owner, covering nine-tool discovery,
@@ -86,5 +86,4 @@ fetch and explicit acknowledgment, shared context, capture/source removal,
 multi-page artifact reconstruction, annotation freshness, resource opt-in,
 unsubscribe and prompt shutdown with a held observer. Fixtures use disposable databases.
 
-The installed legacy runtime remains unchanged; package preparation and migration
-do not switch its profile or tool surface automatically.
+History: delivered under VUH-1338 (September 2026); merged in PR #9.

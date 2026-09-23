@@ -1,5 +1,7 @@
 # Agent workspace control plane
 
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
 This repo is the reference implementation of a modular agent workspace control plane: a narrow waist that lets human interfaces, agent runtimes, workspace controllers, and work trackers interoperate without hard-coding each other.
 
 `swarm-mcp` is the first coordination backend for that control plane. It is not the whole concept. The control-plane contract is the thing adapters should converge on.
@@ -32,9 +34,9 @@ The first concrete stack is:
 
 This stack is the golden path, not the boundary of the system.
 
-Auth and account separation are part of the control plane. Each stack uses a free-form launcher profile, config root, and account-scoped MCP names as the tool visibility boundary; swarm identity labels provide routing and audit metadata. See [`identity-boundaries.md`](./identity-boundaries.md).
+Auth and account separation are part of the control plane. Each stack uses a free-form launcher profile, config root, and account-scoped MCP names as the tool visibility boundary; swarm identity labels provide routing and audit metadata. See [`identity-boundaries.md`](identity-boundaries.md).
 
-Consumer backend selection spans host MCP config, launcher profiles, spawner env, and workspace identity publication. See [`backend-configuration.md`](./backend-configuration.md) for the current herdr/swarm-ui setup and the intended future swarm-server switch shape.
+Consumer backend selection spans host MCP config, launcher profiles, spawner env, and workspace identity publication. See [`backend-configuration.md`](backend-configuration.md) for the current herdr/swarm-ui setup and the intended future swarm-server switch shape.
 
 ## Narrow Waist
 
@@ -144,7 +146,7 @@ First implementation: the `dispatch` path uses a registered spawner backend. The
 
 Spawn dedupe has two valid ownership models:
 
-- **Requester-held mutex (current):** the requester/gateway creates an idempotent task, checks live workers, guards spawn with a synthetic Coordinator lock, invokes herdr, then explicitly releases the lock when the worker registers and claims/binds the task. This is the Hermes v0.4 path described in [`../integrations/hermes/SPEC.md §5.5`](../integrations/hermes/SPEC.md#55-no-double-spawn-invariant-gateway-fast-dispatch).
+- **Requester-held mutex (current):** the requester/gateway creates an idempotent task, checks live workers, guards spawn with a synthetic Coordinator lock, invokes herdr, then explicitly releases the lock when the worker registers and claims/binds the task. This is the Hermes v0.4 path described in [`../integrations/hermes/SPEC.md §5.5`](../../integrations/hermes/SPEC.md#55-no-double-spawn-invariant-gateway-fast-dispatch).
 - **Coordinator-owned spawn request (future):** the Coordinator exposes a first-class `request_spawn` primitive and owns the spawn mutex server-side. This may be cleaner later, but it is not required for the first stack.
 
 Boundary: the Spawner may call herdr, a cloud runner, SSH, or a sandbox provider, but it must report back through the Coordinator. Do not introduce a second PTY owner for the same worker; the first stack routes physical spawning through herdr. New terminal managers should implement the spawner/workspace backend contracts instead of adding product-specific branches to task, lock, message, or KV code.
@@ -242,5 +244,5 @@ This is the first integration target. New abstractions should be justified by ma
 - Which control-plane contract deserves the first stable interface package?
 - Should spawn/adoption become a first-class Coordinator primitive instead of adapter convention?
 - Should spawn/adoption mutexes become dedicated Coordinator resources instead of synthetic file locks?
-- Which cross-adapter configuration belongs in repo config, user profile, launcher env, or Coordinator KV after the current [`backend-configuration.md`](./backend-configuration.md) split hardens?
+- Which cross-adapter configuration belongs in repo config, user profile, launcher env, or Coordinator KV after the current [`backend-configuration.md`](backend-configuration.md) split hardens?
 - What is the minimum remote herdr bridge needed before the iOS app feels useful?

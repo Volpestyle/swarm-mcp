@@ -56,14 +56,15 @@ After trusted session enrollment, the launcher supplies:
 
 `bun run build` produces the client; the package exposes it as
 `swarm-coordinator-client`. The helper reads an operation from stdin and returns
-JSON over stdout. It never prints credentials. Enrollment and runtime installation
-remain in VUH-1339; the opt-in variables do not switch the live legacy database.
+JSON over stdout. It never prints credentials. Enrollment and the launcher side
+of this wiring are described in [runtime delivery](runtime-delivery.md); these
+variables do not touch the legacy database.
 
 The shared pre-tool hook acquires all recognized paths, checks current grants,
 and denies the write if acquisition or validation fails. An enabled hook also
 denies missing path metadata or stable tool-call IDs. PostToolUse releases its
 new grants. Lost post events leave bounded leases for recovery. Legacy sessions
-without the opt-in client retain their old check-only behavior.
+without the client variables retain their old check-only behavior.
 
 For multi-step shell edits and Git integration, run
 `python integrations/_shared/leased_command.py --kind integration --reason
@@ -75,7 +76,7 @@ renew the task lease; the runtime adapter owns that responsibility.
 
 ## Coverage and limits
 
-| Write path | Coverage in this change |
+| Write path | Coverage |
 | --- | --- |
 | Claude-style Write/Edit/MultiEdit/NotebookEdit | Recognized path fields; atomic pre-acquisition and post-release. |
 | Codex-style apply_patch hook payload | Add/update/delete and both rename forms; entire patch write set acquired together. |
@@ -83,12 +84,14 @@ renew the task lease; the runtime adapter owns that responsibility.
 | Arbitrary shell, Python, terminal or editor writes | Uncovered unless explicitly wrapped. No shell-command guessing. |
 | Nested tool calls or unrecognized tool names | Uncovered unless the host emits a supported write event. |
 | Hermes in-process write tools | Existing behavior; coordinator lease integration remains runtime-adapter work. |
-| Actual Claude/Codex hook delivery | Subprocess contract tested here; installed-host lifecycle validation belongs to VUH-1339. |
+| Actual Claude/Codex hook delivery | Subprocess contract tested here; installed-host evidence and limits are in [runtime host support](runtime-host-support.md). |
 
 These are cooperative reservations, not kernel filesystem locks. A host that does
 not emit/enforce hooks can bypass them. A single host write outliving its lease,
 OS suspension, symlink retargeting after the check, hard-link aliases, and detached
 descendants of a wrapped shell command are not universally fenced. Use isolated
-worktrees to contain those gaps; never advertise universal filesystem enforcement.
-Long-running critical sections should use the renewing wrapper rather than relying
-on a pre-tool lease alone.
+worktrees to contain those gaps; universal filesystem enforcement is not
+provided. Long-running critical sections should use the renewing wrapper rather
+than relying on a pre-tool lease alone.
+
+History: delivered under VUH-1335 (September 2026); merged in PR #9.

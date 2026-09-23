@@ -1,5 +1,7 @@
 # Roles And Teams
 
+> Legacy interface reference (`register`/`bootstrap`/`poll_messages` tools). With the compact coordinator, follow [SKILL.md](../SKILL.md) and [compact examples](compact-examples.md) instead; this file is kept for hosts still on the legacy server.
+
 `swarm-mcp` does not have first-class `role` or `team` fields.
 
 Use label conventions instead.

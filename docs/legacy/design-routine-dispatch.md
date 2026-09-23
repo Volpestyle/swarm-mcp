@@ -1,5 +1,7 @@
 # Design: Routine Dispatch
 
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
 > **Status: not yet implemented.** Plumbing exists (`request_task_batch`,
 > `dispatch`); the orchestration layer that composes them into named,
 > reusable, multi-role workflows is the missing piece. This doc captures the
@@ -185,12 +187,12 @@ server. Integrations bind it to their preferred operator surface.
 
 ## Relationship to other primitives
 
-- **`request_task_batch`** ([design](./design-batch-creation.md)): the atomic
+- **`request_task_batch`** ([design](design-batch-creation.md)): the atomic
   graph-creation primitive. Routines call this.
 - **`dispatch`**: the single-task wake-or-spawn primitive. Routines call this
   once per leaf (or call it internally as part of `request_task_batch` if a
   future enhancement combines them).
-- **Hermes SPEC §7.5** ([link](../integrations/hermes/SPEC.md)): the original
+- **Hermes SPEC §7.5** ([link](../../integrations/hermes/SPEC.md)): the original
   framing of routine dispatch as the user-facing command layer above
   single-intent dispatch. This doc generalizes that framing across runtimes.
 

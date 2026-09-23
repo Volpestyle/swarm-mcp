@@ -1,5 +1,7 @@
 # Swarm Profile Env Files
 
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../docs/README.md).
+
 A swarm-mcp "profile" is a named isolation boundary you pick (e.g. `personal`,
 `work`, `client-x`, `main`). Each profile gets its own env file declaring the
 identity token it uses on the wire, its coordinator DB, its herdr socket, and

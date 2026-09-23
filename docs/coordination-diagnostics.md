@@ -1,4 +1,4 @@
-# Coordination diagnostics (VUH-1341)
+# Coordination diagnostics
 
 With the launcher's existing session environment, run:
 
@@ -9,8 +9,8 @@ swarm-coordinator-client inspect <taskId>
 
 Both issue a read-only authenticated `inspect` operation. The JSON stdin interface
 also accepts `{"op":"inspect","filter":{"messageId":"…","limit":5}}`.
-Actor and scope come from the session capability, not request fields. No new MCP
-tool or dashboard is required.
+Actor and scope come from the session capability, not request fields. No
+separate MCP tool or dashboard is involved.
 
 The report includes supported modern/legacy protocol versions, dated adapter
 coverage, delivery attempts and acknowledgment state, task ownership/leases,
@@ -52,14 +52,17 @@ Unknown credential failures are not attributed to an arbitrary scope.
 The installed OpenCode probe retained in
 [`verification/2026-09-22-dispatch/diagnostics-native.json`](verification/2026-09-22-dispatch/diagnostics-native.json)
 shows one accepted wake correlated to one task/attempt/session, one delivery and
-one acknowledgment. The scripted endpoint received two model requests, as before
-telemetry. That capture predates the additional session/generation fields on
-lease/ack audit rows; those fields have direct inbox/IPC regression coverage.
+one acknowledgment. The scripted endpoint received two model requests, the same
+count as before telemetry was added. That capture predates the additional
+session/generation fields on lease/ack audit rows; those fields have direct
+inbox/IPC regression coverage.
 
-Fresh checks: diagnostics tests exercise a real competing SQLite writer,
+Regression coverage: diagnostics tests exercise a real competing SQLite writer,
 scope isolation, content/token omission, stale observations, acknowledgment
 latency and deduplicated wake records. IPC tests execute the built Node `doctor`
 CLI with no stdin and verify request scope cannot override authorization. Inbox
 tests retain lease/ack behavior across Node/Bun crashes and concurrent consumers.
-TypeScript and production builds pass. Runtime limitations remain in
-[the support matrix](runtime-host-support.md); diagnostics do not upgrade them.
+TypeScript and production builds pass. Runtime limitations are stated in
+[runtime host support](runtime-host-support.md); diagnostics do not upgrade them.
+
+History: delivered under VUH-1341 (September 2026); merged in PR #9.

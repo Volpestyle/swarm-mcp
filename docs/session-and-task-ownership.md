@@ -80,6 +80,10 @@ direct dependents atomically. Failed/cancelled prerequisites keep dependents
 blocked with a reason; successful retry opens them. Completed tasks are immutable
 and cannot be retried in place. Create a new task for new work.
 
-The legacy MCP tools, CLI and live database are not cut over by this core change.
-VUH-1338 exposes the new command surface; VUH-1339 wires launcher secrets and
-runtime observations/renewals; VUH-1344 owns legacy migration and rollout.
+The [compact API](compact-api.md) exposes this command surface as `swarm_task`
+and `swarm_assign`; trusted launchers supply resume secrets and runtime
+observations/renewals ([runtime delivery](runtime-delivery.md)). The legacy
+MCP tools and their database are separate and are moved by the
+[migration and cutover](migration-cutover.md) procedure, not by this core.
+
+History: delivered under VUH-1334 (September 2026); merged in PR #9.

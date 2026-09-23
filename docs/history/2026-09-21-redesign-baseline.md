@@ -1,5 +1,8 @@
 # Swarm MCP supported baseline and change map
 
+Historical record of the baseline selection made on 2026-09-21; the redesign it
+describes was merged in PR #9 on 2026-09-23. Kept for provenance; not maintained.
+
 Recorded September 21, 2026 (America/Chicago). Delivery: VUH-1330.
 
 ## Decision: retain final upstream as the redesign base

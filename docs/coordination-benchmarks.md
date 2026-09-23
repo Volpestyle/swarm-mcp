@@ -1,11 +1,11 @@
-# Coordination benchmark acceptance
+# Coordination benchmarks
 
-VUH-1343 evidence is complete for the selected Windows fixtures. This is a
-benchmark result, not publication, migration acceptance or hosted CI evidence.
-The selected benchmark implementation matched the full local failure gate at
-`074b1ef`; its acceptance archive was completed at `71e3dd3`. Later rollout work
-adds migration and startup compatibility. The context recheck below covers the
-resulting bootstrap metadata change without relabeling earlier measurements.
+Benchmark evidence covers the selected Windows fixtures. These are local
+benchmark results, not hosted CI evidence. The benchmark implementation matched
+the full local failure gate at `074b1ef`; its evidence archive was completed at
+`71e3dd3`. Migration and startup compatibility landed afterwards; the context
+recheck below covers the resulting bootstrap metadata change without relabeling
+earlier measurements.
 
 | Requirement | Inspected evidence |
 |---|---|
@@ -21,7 +21,7 @@ resulting bootstrap metadata change without relabeling earlier measurements.
 
 | Budget | Evidence/result |
 |---|---|
-| No silent accepted-message loss or superseded-owner mutations | [Failure gate](coordination-verification.md) and retained exact `074b1ef` gate; consumer captures account for every accepted message and explicit quota rejection |
+| No silent accepted-message loss or superseded-owner mutations | [Verification gate](coordination-verification.md) and retained exact `074b1ef` gate; consumer captures account for every accepted message and explicit quota rejection |
 | 2/8/32 delivery p95 <=100 ms, p99 <=250 ms | p95 8/10/32 ms; p99 8/15/89 ms |
 | 32-agent throughput >=250/sec and 384/384 accepted | 281.94/sec, all accepted and durably acknowledged, no busy errors |
 | 32-agent idle CPU <=2% of one core over 60 seconds | 1.57%; held adapter waits, no model-driven idle polling |
@@ -40,15 +40,19 @@ resulting bootstrap metadata change without relabeling earlier measurements.
 
 Each verifier accepts paths to fresh captures and exits nonzero on failure.
 Archived captures pass; negative checks reject missing acknowledgments, excessive
-latency and excessive adapter memory. The separate failure gate covers crashes,
-stale ownership and protocol semantics. None of these local results claims a
-hosted CI execution or replaces VUH-1344's isolated canary and rollback proof.
-## Release-candidate context recheck
+latency and excessive adapter memory. The separate verification gate covers
+crashes, stale ownership and protocol semantics. These local results are not
+hosted CI executions and do not replace the isolated migration canary and
+rollback proof in the [cutover guide](migration-cutover.md).
 
-The rollout adds compatibility metadata to bootstrap. At runtime revision
-`4621877`, real stdio captures for 2 and 32 agents measured 2,870 schema tokens
-plus 73 instruction tokens, maximum sync text 103 tokens, and three manual
-handoff calls after sync. The catalog remains below its 3,000-token budget.
-See the [rollout capture and provenance](verification/2026-09-22-rollout/README.md).
-The earlier latency/CPU/host measurements below remain historical evidence at
-their stated revisions; this is a context recheck, not a rerun of those campaigns.
+## Context recheck at 2.0.0-rc.1
+
+Bootstrap carries compatibility metadata. At runtime revision `4621877`, real
+stdio captures for 2 and 32 agents measured 2,870 schema tokens plus 73
+instruction tokens, maximum sync text 103 tokens, and three manual handoff calls
+after sync. The catalog remains below its 3,000-token budget. See the
+[rc.1 capture and provenance](verification/2026-09-22-rollout/README.md). The
+earlier latency/CPU/host measurements above remain evidence at their stated
+revisions; this is a context recheck, not a rerun of those campaigns.
+
+History: delivered under VUH-1343 (September 2026); merged in PR #9.

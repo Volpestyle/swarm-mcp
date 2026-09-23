@@ -1,14 +1,16 @@
 # Backend Configuration
 
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
 This doc explains where consumer configuration lives for `swarm-mcp`, workspace backends, spawners, and runtime integrations.
 
 The short version: agents should keep using swarm tools (`dispatch`, `prompt_peer`, `peek_peer`, tasks, messages). Backend selection belongs to launcher/config, not to normal agent reasoning.
 
 ## Mental Model
 
-![Control-plane and backend configuration overview](./diagrams/backend-configuration.png)
+![Control-plane and backend configuration overview](../diagrams/backend-configuration.png)
 
-Source: [`docs/diagrams/backend-configuration.mmd`](./diagrams/backend-configuration.mmd). Render with `bun run diagrams`.
+Source: [`docs/diagrams/backend-configuration.mmd`](../diagrams/backend-configuration.mmd). Render with `bun run diagrams`.
 
 Durable coordination uses swarm `instance_id` and state in `swarm.db`. Workspace handles such as herdr `pane_id` or a future swarm-server `pty_id` are transport-local and live behind workspace identity rows.
 
@@ -37,7 +39,7 @@ Work tracker selection is separate from workspace/backend selection. Runtime hoo
 | Alternate spawner backend | `swarm-ui` | `SWARM_SPAWNER=swarm-ui`, `SWARM_DISPATCH_SPAWNER=swarm-ui`, or `dispatch(... spawner: "swarm-ui")` |
 | `swarm-server` backend | Not active as a `swarm-mcp` backend yet | Requires new backend implementations before config can select it |
 
-`swarm-server` exists today as the Rust desktop/mobile daemon. It is documented in [`swarm-server.md`](./swarm-server.md), but it is not yet registered as a `swarm-mcp` workspace backend or spawner backend.
+`swarm-server` exists today as the Rust desktop/mobile daemon. It is documented in [`swarm-server.md`](swarm-server.md), but it is not yet registered as a `swarm-mcp` workspace backend or spawner backend.
 
 The same adapter family may provide both capabilities. Keeping the contracts separate lets a gateway use one backend to request creation, then let workers publish whatever workspace handle they actually receive for later wakeups.
 

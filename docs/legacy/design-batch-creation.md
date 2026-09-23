@@ -1,10 +1,12 @@
 # Design: `request_task_batch`
 
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
 > **Status: shipped.** Tool registered in `src/index.ts` (`request_task_batch`),
 > impl in `src/tasks.ts` (`requestBatch`), covered by ~15 cases in
 > `test/swarm.test.ts`. The intended consumer layer — multi-role routines that
 > compose this primitive — is **not yet implemented**; see
-> [`design-routine-dispatch.md`](./design-routine-dispatch.md).
+> [`design-routine-dispatch.md`](design-routine-dispatch.md).
 
 Originally item #6 from the improvement list. This doc captures the API shape, reference semantics, error handling, and transaction behavior of the atomic batch task creation primitive as it shipped.
 

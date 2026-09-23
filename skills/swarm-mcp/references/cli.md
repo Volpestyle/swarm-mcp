@@ -1,5 +1,7 @@
 # Swarm CLI
 
+> Legacy interface reference (`register`/`bootstrap`/`poll_messages` tools). With the compact coordinator, follow [SKILL.md](../SKILL.md) and [compact examples](compact-examples.md) instead; this file is kept for hosts still on the legacy server.
+
 The `swarm-mcp` CLI has three uses:
 
 1. Read/write shared swarm state from contexts that cannot speak MCP
@@ -85,7 +87,7 @@ Swarm UI control:
 |--|--|
 | `swarm-mcp ui list [--scope P] [--status S] [--limit N]` | List queued/running/completed UI commands. |
 | `swarm-mcp ui get <id>` | Inspect one UI command, including result/error. |
-| `swarm-mcp ui spawn <cwd> [--harness H] [--role R] [--label L] [--scope P] [--wait N]` | Ask a running `swarm-ui` app to spawn a new PTY/node. `--harness <name>` accepts the canonical names `claude`/`codex`/`opencode`/`hermes` or any launcher alias your profile defines via `swarm_define_profile` (see [`identity-boundaries`](../../../docs/identity-boundaries.md)). Omit `--harness` for a plain shell. |
+| `swarm-mcp ui spawn <cwd> [--harness H] [--role R] [--label L] [--scope P] [--wait N]` | Ask a running `swarm-ui` app to spawn a new PTY/node. `--harness <name>` accepts the canonical names `claude`/`codex`/`opencode`/`hermes` or any launcher alias your profile defines via `swarm_define_profile` (see [`identity-boundaries`](../../../docs/legacy/identity-boundaries.md)). Omit `--harness` for a plain shell. |
 | `swarm-mcp ui prompt --target T <content...> [--no-enter] [--scope P] [--wait N]` | Forward input to a node's PTY. |
 | `swarm-mcp ui move --target T --x X --y Y [--scope P] [--wait N]` | Move a node and persist layout. |
 | `swarm-mcp ui organize [--kind grid] [--scope P] [--wait N]` | Auto-organize the scope's canvas layout. |

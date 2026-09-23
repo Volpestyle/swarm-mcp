@@ -1,5 +1,7 @@
 # Gateway Workflow
 
+> Legacy interface reference (`register`/`bootstrap`/`poll_messages` tools). With the compact coordinator, follow [SKILL.md](../SKILL.md) and [compact examples](compact-examples.md) instead; this file is kept for hosts still on the legacy server.
+
 Use this reference only when the session is explicitly a gateway/lead/conductor, normally labeled `mode:gateway` plus a routing role such as `role:planner`.
 
 Ordinary workers should not spawn agents. They claim tasks, message the planner/gateway, or continue locally when safe.

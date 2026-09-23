@@ -1,8 +1,10 @@
 # Agent routing for swarm-mcp coordination
 
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
 Runtime-agnostic core for any agent (Hermes, Claude Code, Codex, OpenCode, …) joined to a swarm-mcp coordination fabric. Each runtime carries a thin adapter layer in a repo-owned runtime prompt (`integrations/*/SOUL.md`) or equivalent host config naming its native subagent tool and any plugin-shipped tools. This doc covers what is shared.
 
-For the integration plugin contract per runtime, see [`../integrations/<runtime>/SPEC.md`](../integrations/). For launcher / config-root / MCP-suffix identity conventions, see [`./identity-boundaries.md`](./identity-boundaries.md). For role doctrine (planner / implementer / reviewer / researcher / generalist flows), load the bundled `swarm-mcp` skill.
+For the integration plugin contract per runtime, see [`../integrations/<runtime>/SPEC.md`](../../integrations). For launcher / config-root / MCP-suffix identity conventions, see [`./identity-boundaries.md`](identity-boundaries.md). For role doctrine (planner / implementer / reviewer / researcher / generalist flows), load the bundled `swarm-mcp` skill.
 
 ## Prefer swarm peers over native subagents
 
@@ -52,18 +54,18 @@ Your profile may or may not have direct MCP servers for account-scoped resources
 
 Work tracker selection is config-driven. Runtime hooks publish the configured tracker to `config/work_tracker/<identity>` and `bootstrap` returns it when present. Use that tracker for the repo/scope and `identity:<profile>` boundary, then verify that the matching MCP is available. Do not substitute a different tracker just because that MCP is loaded.
 
-The runtime-specific config file enumerates which MCPs your profile actually loads. The general profile identity rules (launcher binaries, config roots, MCP suffix conventions) live in [`./identity-boundaries.md`](./identity-boundaries.md).
+The runtime-specific config file enumerates which MCPs your profile actually loads. The general profile identity rules (launcher binaries, config roots, MCP suffix conventions) live in [`./identity-boundaries.md`](identity-boundaries.md).
 
 ## Plugin status by runtime
 
 | Runtime | Plugin | Status | Capabilities |
 |---|---|---|---|
-| Hermes | [`integrations/hermes/`](../integrations/hermes/) | v0.3 | Auto-register / -deregister, peer-lock check on write, `/swarm`, herdr identity publish for MCP `prompt_peer` |
-| Claude Code | [`integrations/claude-code/`](../integrations/claude-code/) | v0.2 | Auto-register / -deregister, peer-lock check on write, `/swarm`, herdr identity publish, gateway conductor mode via `SWARM_CC_ROLE=gateway` |
-| Codex CLI | [`integrations/codex/plugins/swarm/`](../integrations/codex/plugins/swarm/) | v0.2 | Auto-register / -deregister, peer-lock check on `apply_patch`, `/swarm`, herdr identity publish, gateway conductor mode via `SWARM_CODEX_ROLE=gateway` |
+| Hermes | [`integrations/hermes/`](../../integrations/hermes) | v0.3 | Auto-register / -deregister, peer-lock check on write, `/swarm`, herdr identity publish for MCP `prompt_peer` |
+| Claude Code | [`integrations/claude-code/`](../../integrations/claude-code) | v0.2 | Auto-register / -deregister, peer-lock check on write, `/swarm`, herdr identity publish, gateway conductor mode via `SWARM_CC_ROLE=gateway` |
+| Codex CLI | [`integrations/codex/plugins/swarm/`](../../integrations/codex/plugins/swarm) | v0.2 | Auto-register / -deregister, peer-lock check on `apply_patch`, `/swarm`, herdr identity publish, gateway conductor mode via `SWARM_CODEX_ROLE=gateway` |
 | OpenCode / others | none yet | — | Participate ad-hoc via the swarm-mcp skill + MCP tools |
 
-The Claude Code and Codex plugins share their runtime-agnostic core in [`integrations/_shared/swarm_hook_core.py`](../integrations/_shared/swarm_hook_core.py); each plugin's `_common.py` only carries the runtime-specific bits (write-tool name, path extractor, env-var prefix, label token).
+The Claude Code and Codex plugins share their runtime-agnostic core in [`integrations/_shared/swarm_hook_core.py`](../../integrations/_shared/swarm_hook_core.py); each plugin's `_common.py` only carries the runtime-specific bits (write-tool name, path extractor, env-var prefix, label token).
 
 Gateway-capable Claude Code and Codex lead aliases should surface both pieces
 of state: `mode:gateway` for behavior and `role:planner` for routing. The

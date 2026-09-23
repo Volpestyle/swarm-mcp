@@ -79,7 +79,7 @@ Wait only while responsible for a result, dependency or review. Use event waits
 and runtime delivery instead of an idle model polling loop. Host support is
 specific: OpenCode has verified autonomous delivery; Claude delivers at native
 boundaries; Codex automatic delivery and actual Hermes-host behavior remain
-unverified in the candidate. Discover and verify a new installed host before
+unverified. Discover and verify a new installed host before
 raising its support level.
 
 - Read [compact examples](references/compact-examples.md) for exact payloads and receipts.

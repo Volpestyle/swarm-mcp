@@ -1,5 +1,7 @@
 # Work Trackers
 
+> Legacy interface reference (`register`/`bootstrap`/`poll_messages` tools). With the compact coordinator, follow [SKILL.md](../SKILL.md) and [compact examples](compact-examples.md) instead; this file is kept for hosts still on the legacy server.
+
 Use this reference when swarm work should be linked to a human-facing tracker such as Linear, Jira, GitHub Issues, or another configured system.
 
 ## Current Contract

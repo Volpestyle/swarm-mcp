@@ -1,8 +1,10 @@
 # Quickstart
 
+> Legacy interface documentation. This describes the original stdio server and shared `swarm.db`, still shipped but retired under VUH-1360 once the live profile runs on the v2 coordinator. Current documentation starts at [docs/README.md](../README.md).
+
 Get two Claude Code sessions in the same repo seeing each other in about five minutes.
 
-This is the fast path: one developer, one machine, no identity split. If you want to hack on swarm-mcp itself instead of consuming it, follow [`getting-started.md`](./getting-started.md) for the local-clone setup.
+This is the fast path: one developer, one machine, no identity split. If you want to hack on swarm-mcp itself instead of consuming it, follow [`getting-started.md`](getting-started.md) for the local-clone setup.
 
 ## 1. Get the `swarm-mcp` CLI on `PATH`
 
@@ -81,7 +83,7 @@ call `register` if anything looks off.
 > per-runtime equivalent) are intentionally **not** registered — raw
 > binaries stay out of the swarm so an unlabeled instance can't defeat
 > the cross-identity boundary. For multi-identity setups, define profile
-> launchers per [`../env/README.md`](../env/README.md) and use those
+> launchers per [`../env/README.md`](../../env/README.md) and use those
 > aliases instead of exporting `AGENT_IDENTITY` by hand.
 
 Expected `register` response (paraphrased):
@@ -139,10 +141,10 @@ That's it. You have two Claude Code sessions coordinating through the shared swa
 
 ## Next steps
 
-- [`identity-boundaries.md`](./identity-boundaries.md) — separating profile/account stacks on the same machine.
+- [`identity-boundaries.md`](identity-boundaries.md) — separating profile/account stacks on the same machine.
 - `/swarm-mcp planner`, `/swarm-mcp implementer`, `/swarm-mcp reviewer`, `/swarm-mcp researcher` — role-specialized doctrine from the bundled skill.
-- [`swarm-server.md`](./swarm-server.md) — the Rust daemon behind `swarm-ui`, mobile pairing, and PTY streaming.
-- [`getting-started.md`](./getting-started.md) — local-clone development setup and per-host MCP config (Codex, OpenCode, custom Claude Code paths).
-- [`agent-routing.md`](./agent-routing.md) — when to delegate to swarm peers vs native subagents.
+- [`swarm-server.md`](swarm-server.md) — the Rust daemon behind `swarm-ui`, mobile pairing, and PTY streaming.
+- [`getting-started.md`](getting-started.md) — local-clone development setup and per-host MCP config (Codex, OpenCode, custom Claude Code paths).
+- [`agent-routing.md`](agent-routing.md) — when to delegate to swarm peers vs native subagents.
 
-Other hosts (Codex CLI, OpenCode, Hermes) participate the same way — see [`getting-started.md`](./getting-started.md) for per-host MCP configs and the [integrations](../integrations/) directory for runtime-specific plugins.
+Other hosts (Codex CLI, OpenCode, Hermes) participate the same way — see [`getting-started.md`](getting-started.md) for per-host MCP configs and the [integrations](../../integrations) directory for runtime-specific plugins.
