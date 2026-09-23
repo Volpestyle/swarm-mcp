@@ -20,12 +20,14 @@ rollback canary. Current context capture stays within the selected catalog budge
 Prior latency, failure, host and memory evidence remains linked from the project
 acceptance docs; it is not represented as newly rerun at every documentation commit.
 
-Review boundaries: hosted Windows/Ubuntu CI still needs to run. OpenCode and
+Review boundaries: OpenCode and
 Claude have the documented installed-host support; Codex automatic delivery and
 actual Hermes-host behavior remain degraded/unverified. Rollback requires explicit
 reconciliation of post-snapshot side effects. No live installation was changed.
 
-Selected destination: `Volpestyle/swarm-mcp`, branch
-`redesign/coordination-core`, target `main`. The remote is archived. The next
-proposed action is to unarchive it, push this branch and open a draft PR with CI.
-That action does not merge the redesign, publish to npm or activate a live profile.
+Destination: `Volpestyle/swarm-mcp`, branch `redesign/coordination-core`,
+target `main`. The repository was unarchived and the branch pushed on
+2026-09-23; draft PR [#9](https://github.com/Volpestyle/swarm-mcp/pull/9) carries
+this description and a passing Windows/Ubuntu gate
+([evidence](verification/2026-09-23-hosted-ci/README.md)). Merging, npm
+publication and live profile activation remain separate decisions.

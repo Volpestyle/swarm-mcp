@@ -19,7 +19,7 @@ still at `b95f607c7692fc931cf398ccc09374bfc6b56b88`.
 | Compact skill, lifecycle, worktrees and routing guidance | Validated packaged `SKILL.md`, compact payload examples matched to real tool schemas, explicit legacy-mode routing, installed-file contract check with host-context limitation |
 | Optional tracker policy | Packaged tracker reference reuses VUH-35–38; one writer/version rule, uncertain-write reconciliation, no automatic worker-completed-to-issue-Done mapping |
 | Context budget after bootstrap compatibility metadata | [Tokenizer output](context-rc1-tokens.json): 2- and 32-agent real stdio captures, nine tools, 2,870 schema tokens + 73 instructions, max sync text 103 tokens, three manual handoff calls after sync |
-| Hosted CI | Not run. Prepared Windows/Ubuntu workflow includes the full gate and npm package verification; remote authorization remains required |
+| Hosted CI | Not run at this revision. Passed on 2026-09-23 at `0ab6b90` after four runner-specific fixes; see [2026-09-23-hosted-ci](../2026-09-23-hosted-ci/README.md) |
 
 The clean artifact is retained locally as
 `dist/release/swarm-mcp-2.0.0-rc.1.tgz`, SHA-256

@@ -4,8 +4,10 @@ VUH-1344 is in progress. The compatibility launch guard, versioned legacy
 backup/restore and offline coordinator import below are implemented. An isolated
 Node-owner canary passed restart, reconnect, lease recovery and reconciled rollback.
 Production packaging, installation/skill guidance and startup diagnostics are
-prepared. Hosted CI, release version/destination and publication authorization
-remain open. Do not switch a live profile merely because the isolated canary passed.
+prepared, and the hosted Windows/Ubuntu gate passes on the pushed branch
+([run 35834256999](https://github.com/Volpestyle/swarm-mcp/actions/runs/35834256999)).
+Release version/destination and publication authorization remain open. Do not
+switch a live profile merely because the isolated canary passed.
 
 ## Database boundary
 

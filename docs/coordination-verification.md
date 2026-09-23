@@ -58,6 +58,11 @@ reused evidence, not CI results or new host runs.
 `.github/workflows/coordination.yml` runs this same gate on Windows and Ubuntu
 with Node 22, Bun 1.3.11 and Python 3.12, retaining logs even on failure. Installed
 interactive hosts are optional smoke checks outside that automated fixture gate.
-The workflow is prepared locally. No hosted CI execution is claimed until this
-candidate has an authorized writable remote and an inspected Actions run; the
-currently archived origin has not been changed or pushed to.
+Hosted execution: the repository was unarchived and the branch pushed on
+2026-09-23 (draft PR [#9](https://github.com/Volpestyle/swarm-mcp/pull/9)).
+[Run 35834256999](https://github.com/Volpestyle/swarm-mcp/actions/runs/35834256999)
+passes the full gate and package verification on both runners; its manifests
+are retained in [2026-09-23-hosted-ci](verification/2026-09-23-hosted-ci/README.md)
+together with the four runner-specific defects the first runs exposed and the
+gate's 30s per-test default. Push-triggered runs are limited to `main`; a
+pull request runs the suite once per commit on its merge ref.

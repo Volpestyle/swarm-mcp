@@ -4,9 +4,10 @@ This checkout is local release candidate `2.0.0-rc.1`, not a published release.
 The package and compact MCP application advertise that version. It is not an MCP
 protocol revision or proof that an installed host is using the candidate. The
 selected continuation is the existing `Volpestyle/swarm-mcp` repository and its
-`redesign/coordination-core` branch; its archived remote needs explicit unarchive/
-push authorization before hosted CI or a review PR can run. No registry
-publication or live configuration change is implied by preparing this candidate.
+`redesign/coordination-core` branch, unarchived and pushed on 2026-09-23 with
+draft PR [#9](https://github.com/Volpestyle/swarm-mcp/pull/9) and a passing
+Windows/Ubuntu gate. No registry publication or live configuration change is
+implied by preparing this candidate.
 
 The package uses an explicit production-file allowlist. It contains built CLI,
 owner, MCP, migration and runtime adapter modules, shared legacy SQL, the consumer
@@ -50,6 +51,6 @@ state for inspection and emits only a credential-free report.
 The [installation guide](install-skill.md), packaged skill,
 [startup diagnostics](startup-compatibility.md) and
 [optional tracker policy](linear-promotion-policy.md) describe the current
-candidate. Remaining rollout gates: authorize the selected repository's unarchive/
-candidate-branch push, inspect hosted CI, then obtain publication authorization
-for any registry release or live switch. The live installation is unchanged.
+candidate. Remaining rollout gates: review and merge the draft PR, then obtain publication
+authorization for any registry release or live switch. The live installation is
+unchanged.
