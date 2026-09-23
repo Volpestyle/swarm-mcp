@@ -1,5 +1,7 @@
 # Native-only and actual adapter memory comparison
 
+> 8 raw captures named below were removed from the tree on 2026-09-23 (evidence prune); each remains in git history at `1fe258b`, e.g. `git show 1fe258b:docs/verification/2026-09-22-native-memory/<file>`.
+
 Final runs use `fc03f51`, with empty source diffs recorded in each memory sample.
 They ran sequentially on Windows 10.0.26200, i9-14900KF, 32 logical CPUs and
 34,034,339,840 bytes RAM. Bun 1.3.11 drives the fixtures; redesigned stdio

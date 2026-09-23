@@ -53,6 +53,15 @@ and tested source, and retain the support limitations in
 [runtime acceptance](runtime-acceptance.md). The existing captures there are
 reused evidence, not CI results or new host runs.
 
+## Retained evidence
+
+Each `docs/verification/<date>-<topic>/` directory keeps its `README.md`, the
+gate `manifest.json` and the few result files a document links. Raw captures,
+benchmark dumps and full logs belong to the CI run artifacts (retained per run)
+or to git history, never to the tree: PR #9 carried 8 MB of them and they made
+up 86% of its 211k added lines. `docs/verification/**/raw/` is ignored. When a
+README cites a removed capture, it names the commit that still holds it.
+
 ## CI delivery
 
 `.github/workflows/coordination.yml` runs this same gate on Windows and Ubuntu

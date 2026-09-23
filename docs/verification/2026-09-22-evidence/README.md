@@ -1,5 +1,7 @@
 # VUH-1336 verification
 
+> 1 raw capture named below were removed from the tree on 2026-09-23 (evidence prune); each remains in git history at `1fe258b`, e.g. `git show 1fe258b:docs/verification/2026-09-22-evidence/<file>`.
+
 Candidate branch: `redesign/coordination-core`, based on `a59a8b7`.
 All fixtures use isolated databases; the configured legacy runtime is unchanged.
 

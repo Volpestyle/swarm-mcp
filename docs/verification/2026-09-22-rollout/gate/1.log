@@ -1,3 +1,0 @@
-$ node scripts/generate-protocol-types.mjs && tsc --noEmit
-wrote C:\Users\volpe\swarm-mcp-redesign\src\generated\protocol.ts
-wrote C:\Users\volpe\swarm-mcp-redesign\apps\swarm-ui\src\lib\generated\protocol.ts

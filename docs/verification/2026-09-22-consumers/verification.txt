@@ -1,2 +1,0 @@
-Consumer evidence passed: exact acknowledgment, quota, replay and peer progress.
-Scope: isolated IPC fixtures; not process-crash, host-wake or full release proof.

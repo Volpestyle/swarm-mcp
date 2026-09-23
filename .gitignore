@@ -15,3 +15,7 @@ __pycache__/
 .env
 .env.*
 env/*.local
+
+# Raw verification captures stay in run artifacts or git history, not the tree.
+# Retain the manifest and README of each evidence directory only.
+docs/verification/**/raw/
