@@ -1,5 +1,7 @@
 # Consumer disconnect, saturation and slow processing
 
+> 6 raw captures named below were removed from the tree on 2026-09-23 (evidence prune); each remains in git history at `1fe258b`, e.g. `git show 1fe258b:docs/verification/2026-09-22-consumers/<file>`.
+
 Measured on the Windows machine described in the [ring benchmark campaign](../2026-09-22-benchmarks/README.md).
 All three final runs use committed harness revision `ba82e2a`; the source diff
 hash is empty, and the production Node owner bundle is unchanged from that

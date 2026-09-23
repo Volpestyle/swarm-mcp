@@ -1,5 +1,7 @@
 # Legacy migration and isolated cutover evidence
 
+> 7 raw captures named below were removed from the tree on 2026-09-23 (evidence prune); each remains in git history at `1fe258b`, e.g. `git show 1fe258b:docs/verification/2026-09-22-migration/<file>`.
+
 Production revision: `8a1a0b5`. Windows x64, Node 22.14.0, Bun 1.3.11.
 The [final gate manifest](gate/manifest.json) records an unchanged source tree
 through the run. Typecheck, production build, 171 TypeScript tests / 1,436

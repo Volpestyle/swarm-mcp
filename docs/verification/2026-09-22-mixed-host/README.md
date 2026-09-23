@@ -1,5 +1,7 @@
 # Actual OpenCode / Claude round trip
 
+> 6 raw captures named below were removed from the tree on 2026-09-23 (evidence prune); each remains in git history at `1fe258b`, e.g. `git show 1fe258b:docs/verification/2026-09-22-mixed-host/<file>`.
+
 Committed harness `da55211`, OpenCode 1.4.3, Claude Code 2.1.278, Node 22.14.0,
 Bun 1.3.11, on the same Windows machine as the
 [ring](../2026-09-22-benchmarks/README.md) and

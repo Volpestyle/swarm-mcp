@@ -1,5 +1,7 @@
 # Dispatch MCP verification
 
+> 3 raw captures named below were removed from the tree on 2026-09-23 (evidence prune); each remains in git history at `1fe258b`, e.g. `git show 1fe258b:docs/verification/2026-09-22-dispatch/<file>`.
+
 Actual Node owner and stdio clients, two-agent context capture; tokenizer:
 `tiktoken==0.12.0`, `o200k_base`. See `token-counts.json` for exact catalog and
 instruction counts. This counts explicit JSON/text, not hidden model framing or

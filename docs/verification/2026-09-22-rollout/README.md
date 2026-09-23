@@ -1,5 +1,7 @@
 # Release candidate 2.0.0-rc.1
 
+> 6 raw captures named below were removed from the tree on 2026-09-23 (evidence prune); each remains in git history at `1fe258b`, e.g. `git show 1fe258b:docs/verification/2026-09-22-rollout/<file>`.
+
 Runtime/source revision: `4621877`. Local Windows x64 verification used Node
 22.14.0 and Bun 1.3.11. No registry publication, GitHub push/unarchive or live
 profile switch occurred. The selected continuation is `Volpestyle/swarm-mcp`,
