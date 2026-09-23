@@ -1,6 +1,9 @@
 name: Coordination regression gate
 on:
+  # Branches with a pull request are covered by pull_request; a bare push
+  # trigger ran the same suite twice per commit and doubled flake exposure.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:

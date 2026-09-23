@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { build } from "esbuild";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CoordinationClient } from "../src/coordination/ipc";
@@ -248,7 +248,12 @@ test("simultaneous launchers converge on one owner and reuse it without spawning
         return result;
       }),
     );
-    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+    // Report the reason so a hosted-runner rejection is diagnosable.
+    expect(
+      results.flatMap((result) =>
+        result.status === "rejected" ? [String(result.reason)] : [],
+      ),
+    ).toEqual([]);
     const input = {
       scope: "test",
       agentId: "alice",
@@ -314,3 +319,67 @@ test("owner startup reports a missing runtime without an endless retry loop", as
   }).catch((error) => error);
   expect(result).toMatchObject({ code: "ENOENT" });
 });
+
+test("launcher keeps connecting after its own candidate owner exits", async () => {
+  mkdirSync(resolve("dist/test"), { recursive: true });
+  const dir = mkdtempSync(resolve("dist/test/owner-race-"));
+  const output = join(dir, "owner.mjs");
+  await build({
+    entryPoints: ["src/coordination/owner-cli.ts"],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node22",
+    packages: "external",
+    outfile: output,
+  });
+  const root = mkdtempSync(join(tmpdir(), "swarm-owner-race-"));
+  const config = join(root, "owner.json");
+  writeFileSync(
+    config,
+    JSON.stringify({
+      databasePath: join(root, "db"),
+      launcherSecret: randomBytes(32).toString("hex"),
+    }),
+    { mode: 0o600 },
+  );
+  // A candidate that lost the endpoint race exits non-zero before the winner
+  // accepts connections. The marker lets the test order those two events.
+  const loser = join(dir, "loser.mjs");
+  const marker = join(root, "loser-exited");
+  writeFileSync(
+    loser,
+    `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "");\nprocess.exit(1);\n`,
+  );
+  const pending = ensureCoordinator({
+    configPath: config,
+    nodePath: Bun.which("node")!,
+    ownerPath: loser,
+    timeoutMs: 20000,
+  });
+  pending.catch(() => {});
+  while (!existsSync(marker)) await delay(20);
+  // Long enough for the launcher to observe that exit across several
+  // connect attempts before any owner listens.
+  await delay(1500);
+  const winner = Bun.spawn({
+    cmd: [Bun.which("node")!, output, config],
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  try {
+    const reader = winner.stdout.getReader();
+    const first = await reader.read();
+    reader.releaseLock();
+    if (!first.value) throw new Error(await new Response(winner.stderr).text());
+    const result = await pending;
+    try {
+      expect(result.launched?.exitCode).toBe(1);
+      expect(await result.client.request({ op: "compatibility" })).toBeTruthy();
+    } finally {
+      result.client.close();
+    }
+  } finally {
+    winner.kill();
+  }
+}, 30000);

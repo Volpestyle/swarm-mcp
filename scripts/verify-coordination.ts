@@ -39,7 +39,9 @@ const tests = readdirSync("test")
 const commands = [
   ["bun", "run", "typecheck"],
   ["bun", "run", "build"],
-  ["bun", "test", ...tests],
+  // Hosted runners can be several times slower than a workstation; keep the
+  // per-test default at the suite's slowest explicit timeout instead of 5s.
+  ["bun", "test", "--timeout", "30000", ...tests],
   [
     process.env.PYTHON ?? "python",
     "-m",

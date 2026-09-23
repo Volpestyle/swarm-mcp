@@ -25,6 +25,7 @@ export async function ensureCoordinator(options: {
   const deadline = Date.now() + timeoutMs;
   let launched: ChildProcess | undefined;
   let spawnError: Error | undefined;
+  let exited: number | undefined;
   let backoff = 25;
   try {
     while (true) {
@@ -50,12 +51,16 @@ export async function ensureCoordinator(options: {
         if (code !== "ENOENT" && code !== "ECONNREFUSED") throw error;
       }
       if (spawnError) throw spawnError;
-      if (launched?.exitCode != null)
-        throw new Error(
-          `Coordinator owner exited during startup (${launched.exitCode})`,
-        );
+      // A candidate that lost the endpoint race exits non-zero while the
+      // winner may not accept connections yet; keep connecting until the
+      // deadline and report the exit only if no owner ever answers.
+      if (launched?.exitCode != null) exited ??= launched.exitCode;
       if (Date.now() >= deadline)
-        throw new Error("Coordinator owner startup timed out");
+        throw new Error(
+          exited == null
+            ? "Coordinator owner startup timed out"
+            : `Coordinator owner exited during startup (${exited}) and no owner answered before the deadline`,
+        );
       if (!launched) {
         launched = spawn(
           options.nodePath,
