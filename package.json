@@ -11,7 +11,8 @@
     "swarm-coordinator-mcp": "./dist/coordination/mcp-cli.js",
     "swarm-coordinator-owner": "./dist/coordination/owner-cli.js",
     "swarm-coordinator-maintenance": "./dist/coordination/maintenance-cli.js",
-    "swarm-claude": "./dist/coordination/claude-launch-cli.js"
+    "swarm-claude": "./dist/coordination/claude-launch-cli.js",
+    "swarm-codex": "./dist/coordination/codex-launch-cli.js"
   },
   "files": [
     "dist/coordination/client-cli.js",
@@ -21,6 +22,7 @@
     "dist/coordination/claude-hook-cli.js",
     "dist/coordination/claude-launcher.js",
     "dist/coordination/claude-launch-cli.js",
+    "dist/coordination/codex-launch-cli.js",
     "dist/coordination/codex-launcher.js",
     "dist/coordination/dispatch-runner.js",
     "dist/coordination/opencode-dispatch.js",
