@@ -15,6 +15,9 @@ import type {
 } from "../src/coordination/dispatch";
 
 for (const failure of ["lost-response", "timeout"] as const)
+  // Hosted windows-latest stalled this test once for >5s (run 35831235965)
+  // where it normally takes ~250ms; allow a slow shared runner rather than
+  // failing the gate on bun's 5s default.
   test(`${failure} reconciles one task/worker across coordinator reopen without another start`, async () => {
     const path = join(mkdtempSync(join(tmpdir(), "dispatch-runner-")), "db");
     let store = await CoordinationStore.open({ path });
@@ -256,4 +259,4 @@ for (const failure of ["lost-response", "timeout"] as const)
     } finally {
       store.close();
     }
-  });
+  }, 20000);
