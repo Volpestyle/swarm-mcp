@@ -44,8 +44,10 @@ test("runtime launcher composes private state, owner startup, replay and fenced 
     first.environment.SWARM_SESSION_CAPABILITY,
   );
   try {
+    expect(first.environment.SWARM_SCOPE).toBe(first.scope);
     expect(Object.keys(first.environment).sort()).toEqual([
       "SWARM_COORDINATOR_ENDPOINT",
+      "SWARM_SCOPE",
       "SWARM_SESSION_CAPABILITY",
     ]);
     const retry = await enrollRuntime(options);

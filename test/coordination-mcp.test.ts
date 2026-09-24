@@ -4,7 +4,8 @@ import { mkdirSync, mkdtempSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { Client } from "@modelcontextprotocol/client";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { createCoordinatorMcp } from "../src/coordination/mcp";
 import {
   StdioClientTransport,
   getDefaultEnvironment,
@@ -102,6 +103,8 @@ for (const mode of ["modern", "legacy"] as const)
       const taskSubscription = await listen("swarm://tasks");
       expect(catalog.tools).toHaveLength(9);
       expect(catalog.tools.every((t) => t.outputSchema)).toBe(true);
+      const detailed = await client.readResource({ uri: "swarm://schemas/swarm_task" });
+      expect(JSON.parse((detailed.contents[0] as { text: string }).text).anyOf).toBeDefined();
       for (const name of ["swarm_task", "swarm_context", "swarm_inbox"])
         expect(
           catalog.tools.find((t) => t.name === name)!.annotations!
@@ -116,7 +119,7 @@ for (const mode of ["modern", "legacy"] as const)
         expect(response.isError).toBe(false);
         return (response.structuredContent as any).data;
       };
-      expect((await call("swarm_sync", {})).actor).toBe("alice");
+      expect(await call("swarm_sync", {})).toMatchObject({ actor: "alice", recipientGeneration: true });
       const assignment = {
         commandId: "assign",
         title: "verify",
@@ -219,31 +222,35 @@ for (const mode of ["modern", "legacy"] as const)
       expect(
         (await call("swarm_wait", { taskId, timeoutMs: 0 })).waitState,
       ).toBe("terminal");
-      await call("swarm_send", {
-        commandId: "send",
-        recipient: "alice",
-        kind: "completion_notice",
-        body: "verified",
-        threadId: taskId,
-        taskId,
-      });
-      const fetched = await call("swarm_inbox", {
-        commandId: "fetch",
-        action: "fetch",
-        consumer: "test",
-      });
-      const delivery = fetched.value.deliveries[0];
-      expect(delivery.message).toMatchObject({
-        taskId,
-        threadId: taskId,
-        kind: "completion_notice",
-      });
-      await call("swarm_inbox", {
-        commandId: "ack",
-        action: "ack",
-        messageId: delivery.message.id,
-        leaseToken: delivery.leaseToken,
-      });
+      for (const kind of ["completion_notice", "reply"]) {
+        await call("swarm_send", {
+          commandId: `send-${kind}`,
+          recipient: "alice",
+          recipientGeneration: 1,
+          kind,
+          body: "verified",
+          threadId: taskId,
+          taskId,
+        });
+        const fetched = await call("swarm_inbox", {
+          commandId: `fetch-${kind}`,
+          action: "fetch",
+          consumer: "test",
+        });
+        const delivery = fetched.value.deliveries[0];
+        expect(delivery.message).toMatchObject({
+          recipientGeneration: 1,
+          taskId,
+          threadId: taskId,
+          kind,
+        });
+        await call("swarm_inbox", {
+          commandId: `ack-${kind}`,
+          action: "ack",
+          messageId: delivery.message.id,
+          leaseToken: delivery.leaseToken,
+        });
+      }
       expect(
         (
           await call("swarm_inbox", {
@@ -293,6 +300,13 @@ for (const mode of ["modern", "legacy"] as const)
         uri = JSON.parse(page.text).nextUri;
       }
       expect(Buffer.concat(chunks).toString()).toBe(report);
+      const evidencePage = await call("swarm_evidence", { action: "read", commandId: "read-report", artifactId: capture.value.artifactId });
+      expect(Buffer.from(evidencePage.data, "base64").toString()).toBe(report.slice(0, 32768));
+      writeFileSync(join(root, "instructions.md"), "Preference 🐑");
+      const instructions = await call("swarm_evidence", { action: "capture", commandId: "capture-instructions", path: "instructions.md", summary: "Instructions", mediaType: "text/markdown" });
+      const instructionPage = await call("swarm_evidence", { action: "read", commandId: "read-instructions", artifactId: instructions.value.artifactId });
+      expect(instructionPage.text).toBe("Preference 🐑");
+      expect(instructionPage.data).toBeNull();
       const revision = "a".repeat(40);
       await call("swarm_evidence", {
         action: "record",
@@ -332,10 +346,12 @@ for (const mode of ["modern", "legacy"] as const)
       const routed = {
         ...assignment,
         commandId: "routed",
+        contract: { ...assignment.contract, instructions: [instructions.value.uri] },
         routing: { capabilities: ["code"], durable: true },
       };
       const dispatched = await call("swarm_assign", routed);
       expect(dispatched.status).toBe("bound");
+      expect((await call("swarm_find", { kind: "task", taskId: dispatched.taskId })).contract.instructions).toEqual([instructions.value.uri]);
       expect((await call("swarm_assign", routed)).attemptId).toBe(
         dispatched.attemptId,
       );
@@ -357,3 +373,28 @@ for (const mode of ["modern", "legacy"] as const)
       expect(Date.now() - closingAt).toBeLessThan(1500);
     }
   }, 15000);
+
+test("pinned MCP sends refuse owners without generation fencing", async () => {
+  const requested: string[] = [];
+  const server = createCoordinatorMcp(async (operation) => {
+    requested.push(operation.op);
+    if (operation.op === "bootstrap") return {};
+    throw new Error("A pinned message must never reach this older owner");
+  });
+  const client = new Client({ name: "pin-compatibility", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await client.callTool({ name: "swarm_send", arguments: {
+      commandId: "pinned", recipient: "peer", recipientGeneration: 1,
+      kind: "question", body: "For one session", threadId: "contact",
+    } });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("generation fencing");
+    expect(requested).toEqual(["bootstrap"]);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});

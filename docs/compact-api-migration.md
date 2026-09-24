@@ -56,6 +56,8 @@ candidate's redundant `ok` field and null placeholders have been removed. Legacy
 parsers must change; do not parse English success text or assume snake_case
 fields. Task detail is normalized; command receipts currently retain core
 result shapes `{value,cursor,replayed}`.
+The catalog describes the common envelope; detailed output schemas are available
+at `swarm://schemas/<tool-name>` and enforced by the server.
 
 Use a unique commandId per logical mutation. After uncertain acceptance, retry
 the same ID and payload. Fetch replay returns its original receipt; use a new ID
@@ -67,7 +69,8 @@ Task creation does not imply ownership or completion. Claim requires an observed
 version and returns an attempt fence used by subsequent writes. Wait timeout or
 disconnect never cancels execution; cancellation is a separate mutation.
 
-Held and immediate compact event reads return at most 20 events. Resume from the
-returned cursor to drain the rest. Event pages also stop at 96 KiB of UTF-8 JSON.
+Held and immediate compact event reads return at most 20 relevant events, skipping
+lease/transport maintenance and unrelated work. Resume from the returned cursor
+to drain the rest, including when a page is empty. Event pages also stop at 96 KiB of UTF-8 JSON.
 Tools offering cancellation, shared-value deletion/replacement, or delivery
 acknowledgment advertise destructiveHint. Fetch/ack are not read-only.

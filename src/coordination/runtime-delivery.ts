@@ -179,3 +179,31 @@ export class RuntimeDelivery {
     }
   }
 }
+
+
+/** A live host keeps its own unexpired attempts leased, independently of model
+ * turns. This never claims, recovers or changes an attempt's fence. */
+export async function renewTaskLeases(actor: string, request: Request): Promise<void> {
+  for (const status of ["running", "cancel_requested"]) {
+    let cursor = 0;
+    for (;;) {
+      const page = await request({ op: "tasks", filter: { owner: actor, status, cursor, limit: 50 } }) as {
+        items: Array<{ id: string }>; cursor: number;
+      };
+      for (const item of page.items) {
+        const task = await request({ op: "task_detail", taskId: item.id }) as {
+          owner: { actor: string; active: boolean; attemptId: string; fence: number } | null;
+        };
+        if (!task.owner?.active || task.owner.actor !== actor) continue;
+        try {
+          await request({ op: "command", command: { id: randomUUID(), type: "task.renew",
+            payload: { taskId: item.id, attemptId: task.owner.attemptId, fence: task.owner.fence } } });
+        } catch (error) {
+          if ((error as { code?: string }).code !== "stale_attempt") throw error;
+        }
+      }
+      if (page.items.length < 50) break;
+      cursor = page.cursor;
+    }
+  }
+}

@@ -27,7 +27,7 @@ export type TaskCommand =
   | {
       id: string;
       type: "task.claim";
-      payload: { taskId: string; expectedVersion: number; leaseMs?: number };
+      payload: { taskId: string; expectedVersion: number; leaseMs?: number; progressTimeoutMs?: number };
     }
   | {
       id: string;
@@ -66,6 +66,7 @@ export type Attempt = {
   created_at: number;
   ended_at: number | null;
   progress_at: number | null;
+  progress_timeout_ms: number;
   result: string | null;
   reason: string | null;
 };
@@ -227,6 +228,7 @@ export class TaskTransaction {
       taskId: string;
       expectedVersion: number;
       leaseMs?: number;
+      progressTimeoutMs?: number;
     },
     reservedIntent?: string,
   ) {
@@ -251,6 +253,10 @@ export class TaskTransaction {
     positive(payload.expectedVersion, "expectedVersion");
     const duration = payload.leaseMs ?? 60000;
     positive(duration, "leaseMs", 300000);
+    const progressTimeout = payload.progressTimeoutMs ?? 900000;
+    positive(progressTimeout, "progressTimeoutMs", 86400000);
+    if (progressTimeout < 60000)
+      throw new CoordinationError("invalid_input", "Progress timeout must be at least 60000 ms");
     if (
       task.version !== payload.expectedVersion ||
       task.status !== "open" ||
@@ -262,10 +268,10 @@ export class TaskTransaction {
       );
     const id = randomUUID(),
       fence = task.attempt_counter + 1,
-      until = this.at + duration;
+      until = this.at + Math.min(duration, progressTimeout);
     this.db
       .prepare(
-        "INSERT INTO task_attempts(id,task_id,actor,session_id,generation,fence,lease_until,state,created_at) VALUES(?,?,?,?,?,?,?,'running',?)",
+        "INSERT INTO task_attempts(id,task_id,actor,session_id,generation,fence,lease_until,state,created_at,progress_timeout_ms) VALUES(?,?,?,?,?,?,?,'running',?,?)",
       )
       .run(
         id,
@@ -276,6 +282,7 @@ export class TaskTransaction {
         fence,
         until,
         this.at,
+        progressTimeout,
       );
     this.db
       .prepare(
@@ -293,6 +300,7 @@ export class TaskTransaction {
       attemptId: id,
       fence,
       leaseUntil: until,
+      progressDeadline: this.at + progressTimeout,
     };
   }
   private owned(ref: AttemptRef) {
@@ -325,8 +333,13 @@ export class TaskTransaction {
     const { task, attempt } = this.owned(payload),
       duration = payload.leaseMs ?? 60000;
     positive(duration, "leaseMs", 300000);
-    // Renewals never shorten a lease or stand in for meaningful progress.
-    const until = Math.max(attempt.lease_until, this.at + duration);
+    // Liveness renewals cannot extend progress or cancellation deadlines.
+    const deadline = task.status === "cancel_requested"
+      ? task.updated_at + 60000
+      : (attempt.progress_at ?? attempt.created_at) + attempt.progress_timeout_ms;
+    const until = Math.min(Math.max(attempt.lease_until, this.at + duration), deadline);
+    if (until <= this.at)
+      throw new CoordinationError("stale_attempt", "Task progress deadline expired");
     this.db
       .prepare("UPDATE task_attempts SET lease_until=? WHERE id=?")
       .run(until, attempt.id);
@@ -345,17 +358,21 @@ export class TaskTransaction {
   progress(payload: AttemptRef & { note: string }) {
     const { task, attempt } = this.owned(payload);
     requireText(payload.note, "note", 2048);
+    const progressDeadline = this.at + attempt.progress_timeout_ms;
+    const until = Math.min(Math.max(attempt.lease_until, this.at + 60000),
+      task.status === "cancel_requested" ? task.updated_at + 60000 : progressDeadline);
     this.db
-      .prepare("UPDATE task_attempts SET progress_at=? WHERE id=?")
-      .run(this.at, attempt.id);
+      .prepare("UPDATE task_attempts SET progress_at=?,lease_until=? WHERE id=?")
+      .run(this.at, until, attempt.id);
     this.db
       .prepare("UPDATE sessions SET progress_at=? WHERE id=?")
       .run(this.at, attempt.session_id);
     this.change("task.progress", task.id, {
       attemptId: attempt.id,
       note: payload.note,
+      leaseUntil: until,
     });
-    return { attemptId: attempt.id, progressAt: this.at };
+    return { attemptId: attempt.id, progressAt: this.at, leaseUntil: until, progressDeadline };
   }
   finish(
     payload: AttemptRef & {
@@ -418,6 +435,9 @@ export class TaskTransaction {
         "UPDATE tasks SET status=?,version=version+1,updated_at=?,reason='creator_cancelled' WHERE id=?",
       )
       .run(status, this.at, task.id);
+    if (task.current_attempt)
+      this.db.prepare("UPDATE task_attempts SET lease_until=min(lease_until,?) WHERE id=?")
+        .run(this.at + 60000, task.current_attempt);
     this.change(`task.${status}`, task.id, { version: task.version + 1 });
     this.propagate(task.id);
     return { task: { ...this.task(task.id) } };

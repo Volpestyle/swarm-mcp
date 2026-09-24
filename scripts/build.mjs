@@ -1,7 +1,7 @@
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 
 execFileSync(process.execPath, ["scripts/generate-protocol-types.mjs"], { stdio: "inherit" });
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
@@ -22,3 +22,8 @@ await build({ entryPoints: entries, bundle: true, platform: "node", format: "esm
   outdir: "dist", packages: "external", loader: { ".sql": "text" }, banner: { js: "#!/usr/bin/env node" },
   define: { SWARM_BUILD: JSON.stringify({ revision, sourceDigest: hash.digest("hex"), packageVersion: pkg.version,
     sdkVersion: pkg.dependencies["@modelcontextprotocol/server"] }) }, logLevel: "info" });
+
+execFileSync(process.execPath, ["node_modules/typescript/bin/tsc", "-p", "tsconfig.runtime.json"], { stdio: "inherit" });
+for (const path of files("dist/types").filter(path => path.endsWith(".d.ts"))) {
+  writeFileSync(path, readFileSync(path, "utf8").replace(/(from \"|import\(\")(\.\.?\/[^\"]+)(\")/g, (_, before, specifier, after) => before + (specifier.endsWith(".js") ? specifier : specifier + ".js") + after));
+}

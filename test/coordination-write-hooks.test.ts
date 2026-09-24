@@ -16,7 +16,7 @@ let credentials: {
   bob: string;
   carol: string;
 };
-const python = Bun.which("python")!;
+const python = (Bun.which("python3") ?? Bun.which("python"))!;
 const pre = resolve("integrations/claude-code/hooks/pre_tool_use.py"),
   post = resolve("integrations/claude-code/hooks/post_tool_use.py");
 const clients: CoordinationClient[] = [];

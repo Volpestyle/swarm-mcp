@@ -185,6 +185,9 @@ export async function importLegacy(directory: string, destination: string, input
       db.exec("COMMIT");
     } catch (error) { db.exec("ROLLBACK"); throw error; }
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    // Publish one self-contained file; a renamed WAL database needs new sidecars
+    // before read-only clients can inspect it. Normal owner startup enables WAL.
+    db.exec("PRAGMA journal_mode=DELETE");
   } finally { db.close(); }
   const fd = openSync(join(destination, "import.json"), "wx", 0o600);
   try { writeFileSync(fd, JSON.stringify({ version: 1, ...summary, plan }, null, 2) + "\n"); fsyncSync(fd); }

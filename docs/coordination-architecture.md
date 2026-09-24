@@ -73,7 +73,7 @@ calls and asynchronous artifact imports remain outside these batches. Shutdown
 rejects commands that have not entered a transaction. This reduces physical
 durable commits without weakening acceptance semantics or waiting for a batch to
 fill. Node/Bun crash fixtures cover exits before and after the outer commit.
-- Coordinator restarts acquire a new persisted authority epoch. All write paths validate that epoch, including an old service process that resumes after replacement. Local singleton IPC ownership and database epoch checks prevent two accepted writers.
+- Service authority follows the exclusive local endpoint. Startup, stale-socket recovery, shutdown and offline maintenance serialize through a separate SQLite OS lock; process death releases it. A reachable owner is never replaced. Session generations and attempt fences reject superseded actors inside committing transactions. Same-user direct database or socket manipulation remains outside the API trust boundary.
 - Use one injected clock authority for expiry decisions and monotonic elapsed time for live timers. Test clock jumps and restart behavior. Model-provided timestamps are metadata, not lease authority.
 
 ## Boundaries and trust

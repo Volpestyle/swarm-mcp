@@ -47,15 +47,15 @@ TTL at creation, from 1 millisecond to 365 days.
 | Message | Pending delivery expires through inbox fetch/sweep | Envelope and delivery outcomes remain inspectable; expiry does not recall an acknowledged message |
 | Completed task | Current task/attempt reads omit result values and report expired | Status, dependencies, fences and attempt history remain |
 | Finding/annotation | Retrieval labels it expired | Summary, revision, provenance and links remain visible |
-| Artifact | Byte retrieval stops and links report expired | Metadata and content-addressed bytes remain stored |
+| Artifact | Byte retrieval stops and links report expired | Metadata remains; offline maintenance can collect unreferenced bytes |
 | Shared KV | Current value is hidden and version remains | Prior revisions and tombstones remain; reset requires the current version |
 
-Expiry is a visibility/lifecycle policy, not physical deletion or secure erasure.
-Idempotency receipts retain original responses, including earlier small result
-values. No shutdown cleanup, automatic blob garbage collection, or total disk
-quota is implemented. Back up the database and adjacent artifact directory
-together; deleting blobs independently produces visible missing references. Do
-not manually purge history needed for replay or ownership fencing.
+Expiry controls visibility; physical collection is an explicit offline operation.
+The owner enforces database and artifact capacity limits. Offline maintenance
+compacts old response bodies while retaining command identities, advances event
+retention floors, and collects unreferenced expired/orphan blobs. It preserves
+accepted unread messages and control history. See [storage maintenance](storage-maintenance.md)
+for limits, replay errors, reference protection and backup requirements.
 
 ## Shared state under concurrency
 

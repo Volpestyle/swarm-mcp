@@ -1,5 +1,8 @@
 # Getting Started
 
+This guide configures the legacy interface. For acknowledged delivery and fenced
+ownership, start with the [compact installation guide](install-skill.md).
+
 > Looking for the fastest path? See [`quickstart.md`](./quickstart.md). This page covers the local-clone development setup and per-host details.
 
 This guide gets you from a fresh clone to two coding-agent sessions that can see each other and exchange messages through `swarm-mcp`.
@@ -132,7 +135,7 @@ Use:
 
 Do not use `scope` to split frontend/backend inside one repo. Keep one shared scope and use `label` tokens like `team:frontend` and `team:backend` if you want soft grouping inside the same swarm.
 
-See the README's [Registration fields](../README.md#registration-fields) section for the full field reference.
+See the README's [Registration fields](legacy-reference.md#registration-fields) section for the full field reference.
 
 The tool returns your swarm instance ID and registration details.
 
@@ -192,7 +195,7 @@ The minimum collaboration loop is:
 - Call `lock_file` only for deliberate critical sections wider than one write tool call; plugin-supported runtimes enforce peer-held locks at write time
 - Call `broadcast`, `send_message`, `request_task`, or `update_task` when handing work off
 
-For troubleshooting tips, see the [Troubleshooting](../README.md#troubleshooting) section in the README.
+For troubleshooting tips, see the [Troubleshooting](legacy-reference.md#troubleshooting) section in the README.
 
 ## Desktop and mobile access
 

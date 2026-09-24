@@ -8,7 +8,9 @@ import type { Attempt } from "./tasks";
 
 export type ArtifactImport = {
   id: string;
-  path: string;
+  /** Exactly one source: a worktree path or at most 32 KiB of canonical base64. */
+  path?: string;
+  data?: string;
   summary: string;
   mediaType?: string;
   ttlMs?: number;
@@ -47,6 +49,7 @@ export type ArtifactRow = {
   source_path: string;
   created_at: number;
   expires_at: number | null;
+  collected_at?: number | null;
 };
 type FindingRow = {
   seq: number;
@@ -333,6 +336,8 @@ export class EvidenceTransaction {
           "not_found",
           "Artifact is outside this scope",
         );
+      if (artifact.collected_at != null)
+        throw new CoordinationError("artifact_collected", "Artifact bytes were collected; capture a new artifact");
     }
     const id = randomUUID(),
       expiresAt = expiry(this.at, input.ttlMs);
@@ -407,6 +412,8 @@ export class EvidenceTransaction {
         "forbidden",
         "Only the author/creator may change retention",
       );
+    if (input.kind === "artifact" && row.collected_at != null)
+      throw new CoordinationError("artifact_collected", "Collected artifacts cannot be restored; capture a new artifact");
     if (
       input.kind === "task" &&
       !["completed", "failed", "cancelled"].includes(row.status as string)

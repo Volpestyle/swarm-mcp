@@ -12,7 +12,7 @@ export function taskDetail(
   requireText(taskId, "taskId");
   const row = db
     .prepare(
-      `SELECT t.*, a.actor AS owner, a.fence, a.lease_until,
+      `SELECT t.*, a.actor AS owner, a.fence, a.lease_until,a.progress_at,a.created_at AS attempt_created_at,a.progress_timeout_ms,
       a.state AS attempt_state, s.state AS session_state,
       (SELECT json_group_array(dependency_id) FROM task_dependencies WHERE task_id=t.id) AS dependencies
     FROM tasks t LEFT JOIN task_attempts a ON a.id=t.current_attempt
@@ -24,6 +24,9 @@ export function taskDetail(
         owner: string | null;
         fence: number | null;
         lease_until: number | null;
+        progress_at: number | null;
+        attempt_created_at: number;
+        progress_timeout_ms: number;
         attempt_state: string | null;
         session_state: string | null;
         dependencies: string;
@@ -54,6 +57,8 @@ export function taskDetail(
             attemptId: row.current_attempt!,
             fence: row.fence!,
             leaseUntil: row.lease_until!,
+            progressAt: row.progress_at,
+            progressDeadline: (row.progress_at ?? row.attempt_created_at) + row.progress_timeout_ms,
             active:
               row.attempt_state === "running" &&
               row.session_state === "active" &&
@@ -174,8 +179,8 @@ export function taskSummaries(
 export function bootstrap(db: Sqlite, scope: string, actor: string) {
   const cursor = (
     db
-      .prepare("SELECT coalesce(max(id),0) AS cursor FROM events WHERE scope=?")
-      .get(scope) as { cursor: number }
+      .prepare("SELECT max(coalesce((SELECT max(id) FROM events WHERE scope=?),0),coalesce((SELECT floor FROM event_retention WHERE scope=?),0)) AS cursor")
+      .get(scope, scope) as { cursor: number }
   ).cursor;
   const inbox = db
     .prepare(

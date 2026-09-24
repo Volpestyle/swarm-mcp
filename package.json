@@ -2,14 +2,17 @@
   "name": "swarm-mcp",
   "version": "2.0.0-rc.1",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "swarm-mcp": "./dist/cli.js",
     "swarm-legacy-guard": "./dist/legacy-guard-cli.js",
     "swarm-coordinator-migrate": "./dist/coordination/migration-cli.js",
     "swarm-coordinator-client": "./dist/coordination/client-cli.js",
     "swarm-coordinator-mcp": "./dist/coordination/mcp-cli.js",
-    "swarm-coordinator-owner": "./dist/coordination/owner-cli.js"
+    "swarm-coordinator-owner": "./dist/coordination/owner-cli.js",
+    "swarm-coordinator-maintenance": "./dist/coordination/maintenance-cli.js"
   },
   "files": [
     "dist/cli.js",
@@ -19,6 +22,7 @@
     "dist/coordination/migration-cli.js",
     "dist/coordination/mcp-cli.js",
     "dist/coordination/owner-cli.js",
+    "dist/coordination/maintenance-cli.js",
     "dist/coordination/claude-hook-cli.js",
     "dist/coordination/claude-launcher.js",
     "dist/coordination/codex-launcher.js",
@@ -30,7 +34,11 @@
     "skills/README.md",
     "bun.lock",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "dist/coordination/runtime.js",
+    "dist/types",
+    "dist/coordination/herdr-worker-cli.js",
+    "docs/runtime-embedding.md"
   ],
   "scripts": {
     "start": "node dist/cli.js",
@@ -54,7 +62,7 @@
     "@opencode-ai/sdk": "1.4.3",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
-    "better-sqlite3": "^11.7.0",
+    "better-sqlite3": "13.0.3",
     "zod": "4.2.0"
   },
   "devDependencies": {
@@ -64,5 +72,13 @@
     "bun-types": "^1.3.11",
     "esbuild": "^0.24.2",
     "typescript": "^5.9.3"
-  }
+  },
+  "exports": {
+    "./runtime": {
+      "types": "./dist/types/coordination/runtime.d.ts",
+      "import": "./dist/coordination/runtime.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "license": "MIT"
 }

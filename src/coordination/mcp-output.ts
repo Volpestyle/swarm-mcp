@@ -26,6 +26,8 @@ const task = z.looseObject({
       attemptId: z.string(),
       fence: z.number(),
       leaseUntil: z.number(),
+      progressAt: z.number().nullable(),
+      progressDeadline: z.number(),
       active: z.boolean(),
     })
     .nullable(),
@@ -45,6 +47,9 @@ const dataSchemas = {
       scope: z.string(),
       actor: z.string(),
       compatibility: object,
+      dispatchConfigReload: z.boolean().optional(),
+      recipientGeneration: z.boolean().optional(),
+      messageSessionIdentity: z.boolean().optional(),
       eventCursor: z.number(),
       tasks: page,
       inbox: z.array(z.object({ state: z.string(), count: z.number() })),
@@ -66,11 +71,14 @@ const dataSchemas = {
     }),
   }),
   swarm_context: z.union([receipt, shared]),
-  swarm_evidence: receipt,
+  swarm_evidence: z.union([receipt, z.looseObject({ status: z.string(), nextOffset: z.number().optional() })]),
 } as const;
 
 export type CompactToolName = keyof typeof dataSchemas;
-export function outputSchema(name: CompactToolName) {
-  // MCP isError is authoritative; this schema describes successful results.
-  return z.object({ data: dataSchemas[name] });
+export function outputSchema(name?: CompactToolName) {
+  // Some clients validate structured errors too; retain their useful diagnosis.
+  return z.union([
+    z.object({ data: name ? dataSchemas[name] : object }),
+    z.object({ error: z.object({ code: z.string(), message: z.string(), retryable: z.boolean() }) }),
+  ]);
 }

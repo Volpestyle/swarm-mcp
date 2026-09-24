@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { compatibility } from "./compatibility";
+import { limitDatabase, storageLimits, storageError, type StorageLimits } from "./storage";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { inspectCoordination, type DiagnosticFilter } from "./diagnostics";
@@ -306,8 +307,11 @@ export class CoordinationStore {
       committed = true;
     } catch (error) {
       this.recordError(scope, error);
-      if (began && !committed) this.db.exec("ROLLBACK");
-      throw error;
+      if (began && !committed) {
+        try { this.db.exec("ROLLBACK"); }
+        catch { if ((error as { code?: string }).code !== "storage_full") throw error; }
+      }
+      throw storageError(error);
     } finally {
       this.batchState = undefined;
     }
@@ -376,6 +380,7 @@ export class CoordinationStore {
     clock?: () => number;
     fault?: FaultHook;
     inboxPolicy?: Partial<InboxPolicy>;
+    storage?: Partial<StorageLimits>;
   }) {
     if (existsSync(join(dirname(options.path), "import.pending")))
       throw new CoordinationError("import_incomplete", "Import did not finish; retain its evidence and import into a fresh directory");
@@ -384,11 +389,13 @@ export class CoordinationStore {
       const policy = { ...DEFAULT_INBOX_POLICY, ...options.inboxPolicy };
       validateInboxPolicy(policy);
       migrate(db, options.fault);
+      const limits = storageLimits(options.storage);
+      limitDatabase(db, limits.databaseBytes);
       return new CoordinationStore(
         db,
         options.clock ?? Date.now,
         policy,
-        new ArtifactFiles(options.path),
+        new ArtifactFiles(options.path, limits.artifactBytes),
         options.fault,
       );
     } catch (error) {
@@ -434,18 +441,27 @@ export class CoordinationStore {
   ): CommandResult<Json> | undefined {
     const cached = this.db
       .prepare(
-        "SELECT fingerprint,result,cursor FROM commands WHERE scope=? AND actor=? AND command_id=?",
+        "SELECT fingerprint,result,cursor,pruned FROM commands WHERE scope=? AND actor=? AND command_id=?",
       )
       .get(command.scope, command.actor, command.id) as
-      { fingerprint: string; result: string; cursor: number } | undefined;
+      { fingerprint: string; result: string; cursor: number; pruned: number } | undefined;
     if (!cached) return undefined;
     if (cached.fingerprint !== fingerprint)
       throw new CoordinationError(
         "idempotency_conflict",
         "Command ID was already used with different content",
       );
+    if (cached.pruned)
+      throw new CoordinationError("replay_expired", "Command was accepted but its response was pruned; reconcile current state without recreating the operation");
+    const value = JSON.parse(cached.result);
+    if (command.type === "inbox.fetch" && value.deliveries.some(
+      (delivery: { message: { recipientGeneration?: number } }) =>
+        delivery.message.recipientGeneration !== undefined &&
+        delivery.message.recipientGeneration !== command.generation,
+    ))
+      throw new CoordinationError("stale_recipient", "Fetch belongs to a previous recipient session; use a new command ID");
     return {
-      value: JSON.parse(cached.result),
+      value,
       cursor: cached.cursor,
       replayed: true,
     };
@@ -515,7 +531,7 @@ export class CoordinationStore {
         );
       this.db
         .prepare(
-          "INSERT INTO commands(scope,actor,command_id,fingerprint,result,cursor,created_at) VALUES(?,?,?,?,?,?,?)",
+          "INSERT INTO commands(scope,actor,command_id,fingerprint,result,cursor,created_at,type) VALUES(?,?,?,?,?,?,?,?)",
         )
         .run(
           command.scope,
@@ -525,6 +541,7 @@ export class CoordinationStore {
           serialized,
           tx.cursor,
           tx.at,
+          command.type,
         );
       this.fault?.("before_command_commit");
       this.db.exec(batch ? "RELEASE coordinator_command" : "COMMIT");
@@ -533,12 +550,13 @@ export class CoordinationStore {
     } catch (error) {
       this.recordError(command.scope, error);
       if (began && !committed) {
-        if (batch) {
+        try { if (batch) {
           this.db.exec("ROLLBACK TO coordinator_command");
           this.db.exec("RELEASE coordinator_command");
-        } else this.db.exec("ROLLBACK");
+        } else this.db.exec("ROLLBACK"); }
+        catch { if ((error as { code?: string }).code !== "SQLITE_FULL") throw error; }
       }
-      throw error;
+      throw storageError(error);
     } finally {
       this.executing = false;
     }
@@ -711,7 +729,7 @@ export class CoordinationStore {
     this.ensureOpen();
     this.db.exec("BEGIN");
     try {
-      const result = { ...bootstrap(this.db, scope, actor), compatibility };
+      const result = { ...bootstrap(this.db, scope, actor), compatibility, recipientGeneration: true, messageSessionIdentity: true };
       this.db.exec("COMMIT");
       return result;
     } catch (error) {
@@ -758,6 +776,7 @@ export class CoordinationStore {
     scope: string,
     after = 0,
     limit = 100,
+    actor?: string,
   ): { items: Event[]; cursor: number } {
     this.ensureOpen();
     requireText(scope, "scope");
@@ -772,11 +791,25 @@ export class CoordinationStore {
         "invalid_input",
         "Invalid event cursor or page limit",
       );
+    const floor = (this.db.prepare("SELECT floor FROM event_retention WHERE scope=?").get(scope) as { floor: number } | undefined)?.floor ?? 0;
+    if (after < floor) throw new CoordinationError("resync_required", "Event history was pruned; bootstrap again with swarm_sync without a cursor");
+    const highWater = actor === undefined ? Number.MAX_SAFE_INTEGER
+      : Math.max(floor, (this.db.prepare("SELECT coalesce(max(id),0) AS cursor FROM events WHERE scope=?").get(scope) as { cursor: number }).cursor);
+    // Audit consumers retain the complete stream. Model sync includes owned work,
+    // addressed mail and shared context, never transport/lease maintenance.
+    const relevant = actor === undefined ? "" : `AND e.type NOT IN ('task.lease_renewed','session.observed','reservation.renewed') AND (
+      e.actor=? OR json_extract(e.payload,'$.recipient')=?
+      OR EXISTS (SELECT 1 FROM json_each(e.payload,'$.recipients') WHERE value=?)
+      OR (e.type LIKE 'task.%' AND EXISTS (SELECT 1 FROM tasks t WHERE t.id=e.entity_id AND t.scope=e.scope AND
+        (t.creator=? OR EXISTS (SELECT 1 FROM task_attempts a WHERE a.task_id=t.id AND a.actor=?))))
+      OR e.type LIKE 'context.%' OR e.type LIKE 'finding.%' OR e.type LIKE 'artifact.%'
+      OR (e.type='retention.changed' AND json_extract(e.payload,'$.kind') IN ('finding','artifact'))
+    )`;
     const rows = this.db
       .prepare(
-        "SELECT * FROM events WHERE scope=? AND id>? ORDER BY id LIMIT ?",
+        `SELECT e.* FROM events e WHERE e.scope=? AND e.id>? AND e.id<=? ${relevant} ORDER BY e.id LIMIT ?`,
       )
-      .all(scope, after, limit) as Array<
+      .all(scope, after, highWater, ...(actor === undefined ? [] : [actor, actor, actor, actor, actor]), limit) as Array<
       Omit<Event, "payload"> & { payload: string }
     >;
     const items: Event[] = [];
@@ -795,7 +828,8 @@ export class CoordinationStore {
       items.push(event);
       bytes += size;
     }
-    return { items, cursor: items.at(-1)?.id ?? after };
+    return { items, cursor: actor !== undefined && items.length === rows.length && rows.length < limit
+      ? Math.max(after, highWater) : items.at(-1)?.id ?? after };
   }
 
   subscribe(listener: (cursor: number) => void): () => void {

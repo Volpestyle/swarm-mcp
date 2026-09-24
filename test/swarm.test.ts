@@ -165,6 +165,17 @@ describe("messages", () => {
 });
 
 describe("cleanup", () => {
+  test("age and offline reclamation preserve unread messages", () => {
+    const worker = registry.register("/tmp/worker", "identity:personal role:implementer", "/tmp/inbox-retention");
+    const old = Math.floor(Date.now() / 1000) - cleanup.CLEANUP_POLICY.messageTtlSecs - 10;
+    for (const read of [0, 1]) db.run("INSERT INTO messages(scope,sender,recipient,content,created_at,read) VALUES(?,?,?,?,?,?)",
+      [worker.scope, "sender", worker.id, read ? "processed" : "pending", old, read]);
+    expect(cleanup.runCleanup({ scope: worker.scope, mode: "manual", dryRun: true }).messages_deleted).toBe(1);
+    expect(cleanup.runCleanup({ scope: worker.scope, mode: "manual" }).messages_deleted).toBe(1);
+    db.run("UPDATE instances SET heartbeat=? WHERE id=?", [Math.floor(Date.now() / 1000) - cleanup.CLEANUP_POLICY.instanceReclaimAfterSecs - 10, worker.id]);
+    cleanup.runCleanup({ scope: worker.scope, mode: "manual" });
+    expect(messages.peek(worker.id, worker.scope)).toMatchObject([{ content: "pending" }]);
+  });
   test("removes internal spawn locks once their dispatch task is terminal", () => {
     const scope = "/tmp/scope-a";
     const gateway = registry.register(

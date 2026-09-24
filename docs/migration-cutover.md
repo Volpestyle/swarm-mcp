@@ -162,7 +162,10 @@ unreadable active records; retain the snapshot and resolve those records before
 retrying. No record is silently dropped to satisfy a limit.
 
 `import.pending` blocks coordinator startup throughout construction. All imported
-rows commit together in `importing.db`; the flushed `import.json` report is written
+rows commit together in `importing.db`. The importer checkpoints WAL, selects
+a self-contained journal format and closes the candidate before renaming it, so
+read-only inspection needs no newly created sidecars. Owner startup enables WAL.
+The flushed `import.json` report is written
 before the database is renamed to `coordination.db`, and the pending marker is
 removed last. A failed or interrupted directory is retained for inspection and
 must not be activated or repaired by simply deleting the marker. Retry into a

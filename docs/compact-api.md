@@ -29,19 +29,23 @@ summary, evidence and explicit limitations (an empty limitations list is allowed
 
 Successful tools return `{data}` and matching JSON text for compatible hosts.
 Failures set MCP `isError` and return `{error}` with code, message and retryable
-flag. Fetch/ack and task mutations are not marked read-only. Output schemas cover
-receipt cursor/replay metadata, paginated results, bootstrap state, normalized
-task ownership, shared-key status and bounded wait outcomes/references. Variable
-command values and page entries remain extensible objects. Wait references can
+flag. The catalog publishes the common data/error envelope. Detailed per-tool
+result schemas are available at `swarm://schemas/<tool-name>`; the server validates
+successful results against those full schemas before returning them. Keeping
+details on demand saves catalog tokens without dropping runtime validation.
+Fetch/ack and task mutations are not marked read-only. Wait references can
 be read directly as task resources. Identifier and text length bounds are stated
 once in server instructions and enforced by runtime validation. The nine-tool
 catalog is covered by the retained [context budget evidence](coordination-benchmarks.md).
 Bootstrap also carries the owner API/schema/skill contract and build descriptor.
+`swarm_send` accepts optional `recipientGeneration` from `swarm_find` peer
+discovery to address one active session. See the [durable inbox contract](durable-inboxes.md)
+for restart, replay and expiry semantics; omission retains durable actor mail.
 
 Payload budgets use UTF-8 JSON bytes. Command result values and event payloads
 are limited to 64 KiB inside the write transaction; excess rolls back state,
-events and receipt together. Event reads stop at 96 KiB and advance the cursor
-only through returned rows. Compact tools and JSON resources cap data at 128 KiB;
+events and receipt together. Event reads stop at 96 KiB; targeted sync advances
+past skipped events but never past an unreturned relevant row. Compact tools and JSON resources cap data at 128 KiB;
 readers that exceed it must narrow their query or use artifact references.
 These are data budgets, not total wire-frame sizes: the compatibility text
 envelope duplicates structuredContent and JSON escaping adds overhead. Error
@@ -88,3 +92,14 @@ unsubscribe and prompt shutdown with a held observer. Fixtures use disposable da
 
 The installed legacy runtime remains unchanged; package preparation and migration
 do not switch its profile or tool surface automatically.
+
+Resumed `swarm_sync` filters to the actor's work, addressed messages and shared
+context/evidence. Lease renewals and transport observations are omitted. Its
+cursor advances over skipped events, even when the page is empty; a held wait
+does not finish for unrelated activity. The host IPC audit stream remains complete.
+After offline event retention, `resync_required` means bootstrap without a cursor.
+
+Task claims accept `progressTimeoutMs` (one minute to 24 hours, default 15 minutes).
+Only meaningful progress extends that deadline; a host timer cannot keep a stalled
+attempt alive indefinitely. Cancellation caps the remaining lease at one minute.
+Expiry fences coordinator writes; it does not prove external processes stopped.

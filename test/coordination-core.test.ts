@@ -78,6 +78,24 @@ afterEach(() => {
 });
 
 describe("coordination command boundary", () => {
+  test("targeted sync skips unrelated maintenance, advances cursors and retains addressed work", async () => {
+    const { store, core } = await open();
+    const other = { scope: actor.scope, actor: "bob" };
+    for (let i = 0; i < 25; i++) store.execute({ ...other, id: `noise-${i}`, type: "test.event", payload: {} }, tx => {
+      tx.event("task.lease_renewed", "unrelated", {}); return {};
+    });
+    const empty = core.events(actor, 0, 20, true);
+    expect(empty.items).toEqual([]);
+    expect(empty.cursor).toBe(25);
+    const waiting = core.waitForEvents(actor, empty.cursor, 1000, undefined, 20, true);
+    core.command(other, { id: "unrelated", type: "task.create", payload: { title: "other work" } });
+    core.command(other, { id: "mail", type: "message.send", payload: { recipient: actor.actor, kind: "reply", body: "Requested answer" } });
+    const received = await waiting;
+    expect(received.items.map(e => e.type)).toEqual(["message.accepted"]);
+    expect(received.cursor).toBe(27);
+    expect(core.events(actor, 0, 100).items).toHaveLength(27);
+    expect(core.events(actor, received.cursor, 20, true).items).toEqual([]);
+  });
   test("oversized receipts and events roll back before acceptance", async () => {
     const { core, store } = await open();
     const input = { ...actor, ...create };
@@ -242,6 +260,30 @@ describe("coordination command boundary", () => {
 });
 
 describe("real process persistence and migration", () => {
+  test("journal-mode contention retries without hiding other startup errors", async () => {
+    const db = await openSqlite(fixture());
+    let upgrades = 0;
+    let code = "SQLITE_BUSY";
+    const contended: Sqlite = {
+      prepare: (sql) => db.prepare(sql),
+      close: () => db.close(),
+      exec: (sql) => {
+        if (sql === "PRAGMA journal_mode = WAL" && ++upgrades <= 2)
+          throw Object.assign(new Error("journal upgrade failed"), { code });
+        db.exec(sql);
+      },
+    };
+    try {
+      migrate(contended);
+      expect(upgrades).toBe(3);
+      upgrades = 0;
+      code = "SQLITE_READONLY";
+      expect(() => migrate(contended)).toThrow("journal upgrade failed");
+      expect(upgrades).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
   test("identity inspection stays consistent when another connection commits migration between reads", async () => {
     const path = fixture(),
       reader = await openSqlite(path);

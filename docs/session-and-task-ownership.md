@@ -55,7 +55,7 @@ work continues. No cleanup infers task failure merely from absent model activity
 | create | Dependencies already exist in the same scope | open, or blocked while any dependency is incomplete |
 | claim | open, dependencies completed, expected version, current session | running with a new attempt and fence |
 | renew | Current actor/session/attempt/fence and unexpired lease | Extend lease, without implying progress |
-| progress | Same current-ownership checks | Record attempt/session progress and note |
+| progress | Same current-ownership checks | Record progress and note, extend the progress deadline and renew the short lease |
 | finish | Current ownership; valid outcome | completed or failed; retain attempt result/reason |
 | cancel | Creator and expected version; open/blocked/running | cancelled immediately, or cancel_requested during work |
 | finish cancelled | Current ownership and cancel_requested | cancelled; preserve cancellation attempt |
@@ -68,8 +68,15 @@ per task. Fences increase across retry and recovery. Completion from a replaced
 attempt cannot overwrite the accepted result, even if its session remains valid.
 Repeat recovery after the attempt is detached is a harmless no-op.
 
-Leases default to 60 seconds and may be requested up to five minutes. Renewals
-never shorten them. A replayed claim/renew receipt reports its original deadline;
+Leases default to 60 seconds and may be requested up to five minutes. Every
+attempt also has a progress timeout (15 minutes by default, configurable at claim
+from one minute to 24 hours). The latest progress report, or claim time before
+the first report, anchors this deadline. Host renewals cannot extend past it.
+An accepted progress report also renews the lease for at least 60 seconds within
+the applicable deadline, so reporting near expiry does not race the host timer.
+Task detail exposes `owner.progressAt` and `owner.progressDeadline`.
+Cancellation caps the lease at one minute after the request, including renewals.
+A replayed claim/renew receipt reports its original deadline;
 clients must check that deadline rather than treating replay as a fresh renewal.
 Recovering a healthy current lease is rejected. A cancellation request rejects
 late success: the worker must acknowledge cancellation or expire for recovery.

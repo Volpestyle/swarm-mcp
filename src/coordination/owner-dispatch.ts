@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { herdrDispatchProvider } from "./herdr-dispatch";
 import type { DispatchConfiguration } from "./core";
 import type { CoordinationStore } from "./store";
 import { existingPeerProvider } from "./dispatch-runner";
@@ -19,10 +20,23 @@ const identity = z
     generation: z.number().int().positive(),
   })
   .strict();
+const herdrRoute = z.object({
+      id, enabled: z.boolean().default(true), stateDirectory: z.string().refine(isAbsolute), profile: id,
+      socketPath: z.string().refine(isAbsolute), herdrPath: z.string().refine(isAbsolute),
+      nodePath: z.string().refine(isAbsolute), workerPath: z.string().refine(isAbsolute),
+      claudePath: z.string().refine(isAbsolute), capabilities: z.array(id).max(64),
+      capacity: z.number().int().min(0).max(64),
+      mcpServers: z.record(z.string().min(1).max(128), z.object({
+        command: z.string().min(1).max(4096), args: z.array(z.string().max(4096)).max(64),
+        env: z.record(z.string(), z.string()).optional(),
+      }).strict()).refine(servers => !Object.hasOwn(servers, "swarm"), "swarm is reserved").optional(),
+    }).strict();
+
 export const ownerDispatchSchema = z
   .object({
     maximum: z.number().int().min(0).max(64),
     observationMaxAgeMs: z.number().int().min(1).max(60000),
+    herdr: z.union([herdrRoute, z.array(herdrRoute).max(64)]).optional(),
     opencode: z
       .array(
         z
@@ -71,10 +85,11 @@ export const ownerDispatchSchema = z
   })
   .strict()
   .superRefine((config, context) => {
+    const herdr = config.herdr ? (Array.isArray(config.herdr) ? config.herdr : [config.herdr]) : [];
     if (
-      new Set([...config.peers, ...config.opencode].map((peer) => peer.id))
+      new Set([...config.peers, ...config.opencode, ...herdr].map((peer) => peer.id))
         .size !==
-      config.peers.length + config.opencode.length
+      config.peers.length + config.opencode.length + herdr.length
     )
       context.addIssue({
         code: "custom",
@@ -96,6 +111,7 @@ export function ownerDispatch(
   input: OwnerDispatch,
 ): DispatchConfiguration {
   const config = ownerDispatchSchema.parse(input);
+  const herdr = config.herdr ? (Array.isArray(config.herdr) ? config.herdr : [config.herdr]) : [];
   return (requester) => {
     const peers = config.peers.filter(
       (peer) => peer.worker.scope === requester.scope,
@@ -196,6 +212,12 @@ export function ownerDispatch(
         },
       });
     });
+    for (const route of herdr) routes.push({
+      id: route.id, path: "peer", scope: requester.scope, host: "claude-code",
+      worktree: canonicalPath(store.worktree(requester).root), capabilities: route.capabilities,
+      durable: true, capacity: route.capacity, overhead: 10, active: 0,
+      authorized: route.enabled, availability: route.enabled ? "idle" : "disconnected", observedAt: Date.now(),
+    });
     return {
       policy: {
         routes,
@@ -205,6 +227,7 @@ export function ownerDispatch(
       },
       providers: [
         ...nativeProviders,
+        ...herdr.map(route => herdrDispatchProvider(store, requester, route)),
         ...peers.map((peer) =>
           existingPeerProvider({
             store,

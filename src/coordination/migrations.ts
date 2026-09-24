@@ -3,7 +3,7 @@ import { CoordinationError } from "./errors";
 
 // A separate application identity prevents accidental adoption of legacy swarm.db.
 export const APPLICATION_ID = 0x53574d32;
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 14;
 export type FaultPoint =
   | "before_migration_commit"
   | "before_command_commit"
@@ -161,6 +161,17 @@ const migrations = [
     ordinal INTEGER NOT NULL, record TEXT NOT NULL,
     PRIMARY KEY(import_id,source_table,ordinal)
   );`,
+  `ALTER TABLE inbox_deliveries ADD COLUMN recipient_generation INTEGER
+    CHECK(recipient_generation IS NULL OR recipient_generation > 0);`,
+  `ALTER TABLE inbox_messages ADD COLUMN sender_generation INTEGER
+    CHECK(sender_generation IS NULL OR sender_generation > 0);`,
+  `ALTER TABLE task_attempts ADD COLUMN progress_timeout_ms INTEGER NOT NULL DEFAULT 900000
+    CHECK(progress_timeout_ms BETWEEN 60000 AND 86400000);
+   ALTER TABLE commands ADD COLUMN pruned INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE commands ADD COLUMN type TEXT;
+   ALTER TABLE artifacts ADD COLUMN collected_at INTEGER;
+   CREATE TABLE event_retention (scope TEXT PRIMARY KEY, floor INTEGER NOT NULL);
+   CREATE INDEX command_retention ON commands(created_at);`,
 ];
 
 function version(db: Sqlite): number {
@@ -209,7 +220,22 @@ export function migrate(db: Sqlite, fault?: FaultHook) {
   }
   // journal_mode is outside the migration transaction; the application identity,
   // DDL and version are committed together. FULL durability is not negotiable.
-  db.exec("PRAGMA journal_mode = WAL");
+  // Concurrent journal-mode upgrades can return BUSY without invoking SQLite's
+  // busy handler. Retry outside a transaction, bounded by the same timeout.
+  const deadline = performance.now() + 5000;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (;;) {
+    try {
+      db.exec("PRAGMA journal_mode = WAL");
+      break;
+    } catch (error) {
+      if (
+        (error as { code?: string })?.code !== "SQLITE_BUSY" ||
+        performance.now() >= deadline
+      ) throw error;
+      Atomics.wait(pause, 0, 0, 10);
+    }
+  }
   db.exec("PRAGMA synchronous = FULL");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("BEGIN IMMEDIATE");

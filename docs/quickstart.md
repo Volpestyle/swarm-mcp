@@ -1,4 +1,7 @@
-# Quickstart
+# Legacy quickstart
+
+This guide configures the legacy interface. For acknowledged delivery and fenced
+ownership, start with the [compact installation guide](install-skill.md).
 
 Get two Claude Code sessions in the same repo seeing each other in about five minutes.
 

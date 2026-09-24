@@ -11,7 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { canonicalPath } from "../src/coordination/worktrees";
 import { ownerDispatchSchema } from "../src/coordination/owner-dispatch";
 
-test("production Node owner resumes durable launcher enrollment after restart", async () => {
+test.each(["SIGTERM", "SIGKILL"] as const)("production Node owner resumes durable launcher enrollment after %s", async (signal) => {
   mkdirSync(resolve("dist/test"), { recursive: true });
   const output = join(mkdtempSync(resolve("dist/test/owner-")), "owner.mjs");
   await build({
@@ -203,7 +203,7 @@ test("production Node owner resumes durable launcher enrollment after restart", 
       }
     } finally {
       for (const client of clients) client.close();
-      child.kill();
+      child.kill(signal);
       await child.exited;
     }
   }

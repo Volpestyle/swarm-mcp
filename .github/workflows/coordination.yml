@@ -28,6 +28,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: bun install --frozen-lockfile
+      - run: python -m pip install tiktoken==0.12.0
       - run: bun scripts/verify-coordination.ts
       - run: npm run verify:package
       - uses: actions/upload-artifact@v4

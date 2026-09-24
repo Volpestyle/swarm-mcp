@@ -70,6 +70,84 @@ test("restart adoption preserves identity and inbox but supersedes old session c
   ).toThrow("superseded");
   expect(store.session(first.scope, first.sessionId)!.state).toBe("superseded");
 });
+for (const ending of ["replace", "session.suspend", "session.close"] as const)
+  test(`generation-pinned messages expire on ${ending} without retargeting or losing durable mail`, async () => {
+    const env = await fixture();
+    const first = env.store.openSession(env.enrollment);
+    const sender = env.store.openSession({ ...env.enrollment, agentId: "sender" });
+    const isolated = env.store.openSession({ ...env.enrollment, scope: "another-scope" });
+    expect(env.core.bootstrap(sender).recipientGeneration).toBe(true);
+    const pinned = {
+      id: "pinned",
+      type: "message.send" as const,
+      payload: { recipient: first.actor, recipientGeneration: first.generation, kind: "reply", body: "only this session" },
+    };
+    const receipt = env.core.command(sender, pinned);
+    const messageId = (receipt.value as { messageId: string }).messageId;
+    env.core.command(first, { ...pinned, id: "pending" });
+    env.core.command(isolated, { ...pinned, id: "isolated" });
+    const lease = (env.core.command(first, {
+      id: "fetch", type: "inbox.fetch", payload: { consumer: "contact", limit: 1 },
+    }).value as { deliveries: Array<{ message: { recipientGeneration: number }; leaseToken: string }> }).deliveries[0]!;
+    expect(lease.message.recipientGeneration).toBe(1);
+    env.core.command(sender, {
+      id: "durable", type: "message.send",
+      payload: { recipient: first.actor, kind: "reply", body: "survives replacement" },
+    });
+    if (ending !== "replace") {
+      env.core.command(first, { id: "end", type: ending, payload: {} });
+      expect(() => env.core.command(sender, { ...pinned, id: "closed-send" })).toThrow("Recipient session");
+    }
+    env.store.close();
+    const store = await env.open();
+    const core = new CoordinationCore(store);
+    const second = store.openSession({ ...env.enrollment, requestId: "replacement" });
+    expect(core.inbox(second).items.map((item) => item.message.body)).toEqual(["survives replacement"]);
+    const deliveries = core.command(second, {
+      id: "replacement-fetch", type: "inbox.fetch", payload: { consumer: "replacement" },
+    }).value as { deliveries: Array<{ message: { body: string } }> };
+    expect(deliveries.deliveries.map((item) => item.message.body)).toEqual(["survives replacement"]);
+    expect(core.inbox(isolated).items).toHaveLength(1);
+    expect(() => core.command(second, {
+      id: "fetch", type: "inbox.fetch", payload: { consumer: "contact", limit: 1 },
+    })).toThrow("previous recipient session");
+    expect(core.messageStatus(sender, messageId).deliveries[0]).toMatchObject({
+      state: "expired", recipientGeneration: 1, error: "recipient_session_ended", leaseUntil: null,
+    });
+    expect(core.command(sender, pinned)).toMatchObject({ value: receipt.value, replayed: true });
+    expect(() => core.command(sender, { ...pinned, id: "late-send" })).toThrow("Recipient session");
+    expect(() => core.command(second, {
+      id: "old-ack", type: "inbox.ack", payload: { messageId, leaseToken: lease.leaseToken },
+    })).toThrow("Delivery does not belong");
+    expect(() => core.command(sender, {
+      ...pinned, payload: { ...pinned.payload, recipientGeneration: second.generation },
+    })).toThrow();
+    core.command(sender, { ...pinned, id: "new-session", payload: { ...pinned.payload, recipientGeneration: second.generation } });
+    expect(core.inbox(second).items.at(-1)!.message.recipientGeneration).toBe(2);
+    for (const generation of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])
+      expect(() => core.command(sender, { ...pinned, id: `invalid-${generation}`, payload: { ...pinned.payload, recipientGeneration: generation } })).toThrow("recipientGeneration must be");
+  });
+test("schema 11 inboxes migrate without pinning or losing existing deliveries", async () => {
+  const env = await fixture();
+  const first = env.store.openSession(env.enrollment);
+  env.core.command(first, {
+    id: "legacy-mail", type: "message.send",
+    payload: { recipient: first.actor, kind: "reply", body: "durable before migration" },
+  });
+  env.store.close();
+  const db = new Database(env.path);
+  db.exec("ALTER TABLE inbox_deliveries DROP COLUMN recipient_generation; ALTER TABLE inbox_messages DROP COLUMN sender_generation; ALTER TABLE task_attempts DROP COLUMN progress_timeout_ms; ALTER TABLE commands DROP COLUMN pruned; ALTER TABLE commands DROP COLUMN type; ALTER TABLE artifacts DROP COLUMN collected_at; DROP TABLE event_retention; DROP INDEX command_retention; PRAGMA user_version=11");
+  db.close();
+  const migrated = await env.open();
+  const second = migrated.openSession({ ...env.enrollment, requestId: "after-migration" });
+  const core = new CoordinationCore(migrated);
+  expect(core.inbox(second).items[0]!.message).toMatchObject({ body: "durable before migration" });
+  expect(core.inbox(second).items[0]!.message.recipientGeneration).toBeUndefined();
+  expect(core.command(second, {
+    id: "pinned-after-migration", type: "message.send",
+    payload: { recipient: second.actor, recipientGeneration: second.generation, kind: "reply", body: "pinned" },
+  }).replayed).toBe(false);
+});
 test("lost enrollment response replays without a new incarnation or persisted plaintext secrets", async () => {
   const { store, enrollment, path } = await fixture();
   const first = store.openSession(enrollment);
@@ -186,4 +264,30 @@ test("transport, runtime and progress observations remain independent through lo
   });
   expect(resumed.generation).toBe(2);
   expect(env.store.authorize(resumed.capability).actor).toBe(session.actor);
+});
+
+test("thread-filtered fetch preserves ordinary mail and records the original sender session", async () => {
+  const env = await fixture();
+  const sender = env.store.openSession(env.enrollment);
+  const recipient = env.store.openSession({ ...env.enrollment, agentId: "recipient" });
+  const send = (id: string, threadId: string) => env.core.command(sender, {
+    id, type: "message.send", payload: {
+      recipient: recipient.actor, kind: "reply", body: id, threadId,
+      senderGeneration: 999,
+    },
+  } as never);
+  const ordinary = send("captain-mail", "ordinary");
+  send("contact-mail", "contact");
+  env.store.openSession({ ...env.enrollment, requestId: "replacement" });
+  expect(env.core.bootstrap(recipient).messageSessionIdentity).toBe(true);
+  expect(env.core.command(recipient, {
+    id: "no-threads", type: "inbox.fetch", payload: { consumer: "contact", threadIds: [] },
+  }).value).toEqual({ deliveries: [] });
+  const fetched = env.core.command(recipient, {
+    id: "contact-only", type: "inbox.fetch", payload: { consumer: "contact", threadIds: ["contact"] },
+  }).value as { deliveries: Array<{ message: { senderGeneration: number; body: string } }> };
+  expect(fetched.deliveries.map((entry) => entry.message)).toMatchObject([
+    { body: "contact-mail", senderGeneration: 1 },
+  ]);
+  expect(env.core.messageStatus(recipient, (ordinary.value as { messageId: string }).messageId).deliveries[0]).toMatchObject({ state: "pending", attempts: 0 });
 });

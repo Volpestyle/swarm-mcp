@@ -239,6 +239,7 @@ export class SessionTransaction {
           "UPDATE sessions SET state='superseded',ended_at=? WHERE scope=? AND agent_id=? AND state IN ('active','suspended')",
         )
         .run(this.at, input.scope, input.agentId);
+      this.expireInbox(input.scope, input.agentId);
     }
     const id = randomUUID();
     this.db
@@ -322,10 +323,24 @@ export class SessionTransaction {
         "UPDATE sessions SET state=?,ended_at=?,runtime_state='unavailable' WHERE id=?",
       )
       .run(state, this.at, context.sessionId);
+    this.expireInbox(context.scope, context.actor);
     this.change(`session.${state}`, context.sessionId, {
       generation: context.generation,
     });
     return { sessionId: context.sessionId, state };
+  }
+  private expireInbox(scope: string, actor: string) {
+    const deliveries = this.db.prepare(
+      "SELECT d.message_id,d.attempts FROM inbox_deliveries d JOIN inbox_messages m ON m.id=d.message_id WHERE m.scope=? AND d.recipient=? AND d.recipient_generation IS NOT NULL AND d.state IN ('pending','leased')",
+    ).all(scope, actor) as Array<{ message_id: string; attempts: number }>;
+    for (const delivery of deliveries) {
+      this.db.prepare(
+        "UPDATE inbox_deliveries SET state='expired',lease_token=NULL,lease_until=NULL,last_error='recipient_session_ended' WHERE message_id=? AND recipient=?",
+      ).run(delivery.message_id, actor);
+      this.change("delivery.expired", delivery.message_id, {
+        recipient: actor, attempts: delivery.attempts, reason: "recipient_session_ended",
+      });
+    }
   }
   private context(): SessionContext {
     if (!this.command.sessionId || !this.command.generation)

@@ -10,6 +10,7 @@ import { join, resolve } from "node:path";
 import { strict as assert } from "node:assert";
 import { processMemory } from "./fixtures/process-memory";
 import { setTimeout as delay } from "node:timers/promises";
+import { CoordinationClient } from "../src/coordination/ipc";
 
 // Actual Node owner and stdio adapters; enrollment happens outside model calls.
 const count = Number(process.argv[2]);
@@ -124,6 +125,23 @@ try {
       leaseToken: delivery.leaseToken,
     });
   }
+  // Separate from the handoff transcript: exercise a resumed model sync while
+  // another actor generates real task/lease traffic through the owner.
+  const beforeNoise = await clients[0]!.callTool({ name: "swarm_sync", arguments: {} });
+  assert.notEqual(beforeNoise.isError, true);
+  const cursor = (beforeNoise.structuredContent as any).data.eventCursor;
+  const worker = await CoordinationClient.connect(endpoint, capabilities[1]);
+  try {
+    const created: any = await worker.request({ op: "command", command: { id: "noise-create", type: "task.create", payload: { title: "Unrelated work" } } });
+    const owned: any = await worker.request({ op: "command", command: { id: "noise-claim", type: "task.claim", payload: { taskId: created.value.task.id, expectedVersion: 1 } } });
+    for (let i = 0; i < 40; i++) await worker.request({ op: "command", command: { id: `noise-${i}`, type: "task.renew", payload: {
+      taskId: created.value.task.id, attemptId: owned.value.attemptId, fence: owned.value.fence,
+    } } });
+  } finally { worker.close(); }
+  const deltaResult = await clients[0]!.callTool({ name: "swarm_sync", arguments: { cursor } });
+  assert.notEqual(deltaResult.isError, true);
+  assert.deepEqual((deltaResult.structuredContent as any).data.items, []);
+  assert.ok((deltaResult.structuredContent as any).data.cursor > cursor);
   await delay(2000);
   const memory = processMemory([...transports.map(transport => transport.pid!), owner.pid]);
   writeFileSync(
@@ -137,6 +155,7 @@ try {
         toolSchema,
         toolCalls: transcript.length,
         transcript,
+        deltaCheck: { before: cursor, result: deltaResult, unrelatedRenewals: 40 },
         memory,
         memoryRoles: { owner: owner.pid, adapters: transports.map(transport => transport.pid) },
         limitations:

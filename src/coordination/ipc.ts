@@ -1,5 +1,6 @@
 import { createServer, createConnection, type Socket } from "node:net";
 import { createHash } from "node:crypto";
+import { mkdirSync, lstatSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
   CoordinationCore,
@@ -13,6 +14,7 @@ import type { PeerFilter, TaskFilter } from "./queries";
 import type { Enrollment } from "./sessions";
 import type { DiagnosticFilter } from "./diagnostics";
 import { compatibility, MODERN_PROTOCOL } from "./compatibility";
+import { listenLocal, withEndpointLock } from "./endpoint";
 
 const MAX_FRAME_BYTES = 65536;
 export type Operation =
@@ -39,8 +41,8 @@ export type Operation =
   | { op: "kv_history"; key: string; cursor?: number; limit?: number }
   | { op: "inbox"; cursor?: number; limit?: number; activeOnly?: boolean }
   | { op: "message_status"; messageId: string }
-  | { op: "events"; cursor: number; limit?: number }
-  | { op: "watch"; cursor: number; timeoutMs: number; limit?: number };
+  | { op: "events"; cursor: number; limit?: number; relevant?: boolean }
+  | { op: "watch"; cursor: number; timeoutMs: number; limit?: number; relevant?: boolean };
 
 export function localEndpoint(databasePath: string): string {
   const path = resolve(databasePath);
@@ -48,9 +50,17 @@ export function localEndpoint(databasePath: string): string {
     .update(process.platform === "win32" ? path.toLowerCase() : path)
     .digest("hex")
     .slice(0, 24);
-  return process.platform === "win32"
-    ? `\\\\.\\pipe\\swarm-mcp-${key}`
-    : join(dirname(path), `swarm-${key}.sock`);
+  if (process.platform === "win32") return `\\\\.\\pipe\\swarm-mcp-${key}`;
+  const besideDatabase = join(dirname(path), `swarm-${key}.sock`);
+  // macOS sockaddr_un permits 103 path bytes. Deep state roots and its default
+  // temporary directory routinely exceed that; keep the same hashed identity.
+  if (Buffer.byteLength(besideDatabase) <= 100) return besideDatabase;
+  const directory = `/tmp/swarm-mcp-${process.getuid!()}`;
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const stat = lstatSync(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid!() || (stat.mode & 0o077) !== 0)
+    throw new Error("Short socket directory must be private and owned by this user");
+  return join(directory, `swarm-${key}.sock`);
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -70,6 +80,7 @@ export async function serveCoordination(options: {
   /** Optional launcher-or-session authentication for metadata discovery. */
   authorizeProbe?: (capability: string) => void;
   maxPending?: number;
+  dispatchConfigReload?: boolean;
 }) {
   if (process.platform === "win32" && typeof Bun !== "undefined") {
     throw new CoordinationError(
@@ -192,7 +203,7 @@ export async function serveCoordination(options: {
             };
             break;
           case "bootstrap":
-            result = options.core.bootstrap(actor);
+            result = { ...options.core.bootstrap(actor), dispatchConfigReload: options.dispatchConfigReload === true };
             break;
           case "peers":
           case "tasks":
@@ -326,6 +337,7 @@ export async function serveCoordination(options: {
               actor,
               raw.cursor as number,
               raw.limit as number | undefined,
+              raw.relevant as boolean | undefined,
             );
             break;
           case "inbox":
@@ -347,6 +359,7 @@ export async function serveCoordination(options: {
               raw.timeoutMs as number,
               disconnected.signal,
               raw.limit as number | undefined,
+              raw.relevant as boolean | undefined,
             );
             break;
           default:
@@ -394,14 +407,7 @@ export async function serveCoordination(options: {
       if (Buffer.byteLength(buffer) > MAX_FRAME_BYTES) socket.destroy();
     });
   });
-  await new Promise<void>((resolve, reject) => {
-    const failed = (error: Error) => reject(error);
-    server.once("error", failed);
-    server.listen(options.endpoint, () => {
-      server.off("error", failed);
-      resolve();
-    });
-  });
+  await listenLocal(server, options.endpoint);
   return {
     endpoint: options.endpoint,
     async close() {
@@ -416,9 +422,9 @@ export async function serveCoordination(options: {
           ),
         );
       for (const socket of sockets) socket.destroy();
-      await new Promise<void>((resolve, reject) =>
+      await withEndpointLock(options.endpoint, () => new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
-      );
+      ));
     },
   };
 }

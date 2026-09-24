@@ -432,7 +432,7 @@ describe("CLI dispatch spawn authority", () => {
     const result = runCli(join(dir, "swarm.db"), ["dispatch", "--help"]);
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("swarm-mcp dispatch");
+    expect(result.stdout).toContain("dispatch <title...>");
     expect(result.stderr).toBe("");
   });
 

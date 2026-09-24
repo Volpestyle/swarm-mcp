@@ -158,7 +158,7 @@ function releaseInstances(ids: string[], dryRun = false): ReleaseResult {
     )
     .get(...ids) as { count: number };
   const messageRows = db
-    .query(`SELECT COUNT(*) AS count FROM messages WHERE recipient IN (${slots})`)
+    .query(`SELECT COUNT(*) AS count FROM messages WHERE recipient IN (${slots}) AND read = 1`)
     .get(...ids) as { count: number };
   const identityRows = identityRowsForInstances(ids);
 
@@ -179,7 +179,7 @@ function releaseInstances(ids: string[], dryRun = false): ReleaseResult {
       `DELETE FROM context WHERE type = 'lock' AND instance_id IN (${slots})`,
       ids,
     );
-    db.run(`DELETE FROM messages WHERE recipient IN (${slots})`, ids);
+    db.run(`DELETE FROM messages WHERE recipient IN (${slots}) AND read = 1`, ids);
     for (const row of identityRows) {
       db.run("DELETE FROM kv WHERE scope = ? AND key = ?", [row.scope, row.key]);
       touchScope(row.scope);
@@ -360,14 +360,14 @@ function cleanupMessages(options: CleanupOptions) {
     .query(
       `SELECT scope, COUNT(*) AS count
        FROM messages
-       WHERE created_at < ?${scoped.clause}
+       WHERE read = 1 AND created_at < ?${scoped.clause}
        GROUP BY scope`,
     )
     .all(cutoff, ...scoped.args) as Array<{ scope: string; count: number }>;
   if (!rows.length) return 0;
   if (options.dryRun) return sum(rows);
 
-  db.run(`DELETE FROM messages WHERE created_at < ?${scoped.clause}`, [
+  db.run(`DELETE FROM messages WHERE read = 1 AND created_at < ?${scoped.clause}`, [
     cutoff,
     ...scoped.args,
   ]);

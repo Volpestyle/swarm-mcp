@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { renewTaskLeases } from "../src/coordination/runtime-delivery";
 import { CoordinationStore, type Task } from "../src/coordination/store";
 import { CoordinationCore, type CoreCommand } from "../src/coordination/core";
 const stores: CoordinationStore[] = [];
@@ -574,3 +575,62 @@ for (const runtime of ["bun", "node"] as const)
     expect(replies.filter((r) => r.error === "conflict")).toHaveLength(7);
     expect(env.core.attempts(env.alice, task.id)).toHaveLength(1);
   });
+
+
+test("heartbeats cannot outlive progress or cancellation deadlines; explicit progress extends healthy work", async () => {
+  const f = await fixture();
+  const task = f.create();
+  const claim = f.core.command(f.bob, { id: "bounded-claim", type: "task.claim", payload: {
+    taskId: task.id, expectedVersion: task.version, leaseMs: 60000, progressTimeoutMs: 120000,
+  } }).value as any;
+  const ref = { taskId: task.id, attemptId: claim.attemptId, fence: claim.fence };
+  for (let i = 0; i < 3; i++) {
+    f.advance(30000);
+    f.core.command(f.bob, { id: `renew-${i}`, type: "task.renew", payload: ref });
+  }
+  expect(f.core.taskDetail(f.bob, task.id).owner!.leaseUntil).toBe(121000);
+  f.core.command(f.bob, { id: "progress", type: "task.progress", payload: { ...ref, note: "Build completed; running integration tests" } });
+  expect(f.core.taskDetail(f.bob, task.id).owner!.leaseUntil).toBe(151000);
+  for (let i = 0; i < 3; i++) {
+    f.advance(30000);
+    f.core.command(f.bob, { id: `renew-again-${i}`, type: "task.renew", payload: ref });
+  }
+  f.advance(30000);
+  expect(() => f.core.command(f.bob, { id: "expired", type: "task.renew", payload: ref })).toThrow("expired");
+  expect(f.core.command(f.alice, { id: "recover", type: "task.recover", payload: { taskId: task.id } }).value).toMatchObject({ recovered: true });
+  const cancelled = f.create();
+  const attempt = f.claim(cancelled, f.bob, 300000);
+  f.core.command(f.alice, { id: "cancel", type: "task.cancel", payload: { taskId: cancelled.id, expectedVersion: attempt.task.version } });
+  const until = f.core.taskDetail(f.bob, cancelled.id).owner!.leaseUntil;
+  f.advance(30000);
+  f.core.command(f.bob, { id: "cancel-renew", type: "task.renew", payload: { taskId: cancelled.id, attemptId: attempt.attemptId, fence: attempt.fence, leaseMs: 300000 } });
+  expect(f.core.taskDetail(f.bob, cancelled.id).owner!.leaseUntil).toBe(until);
+  f.advance(30000);
+  expect(f.core.command(f.alice, { id: "cancel-recover", type: "task.recover", payload: { taskId: cancelled.id } }).value).toMatchObject({ task: { status: "cancelled" } });
+});
+
+test("a live host renews only its current unexpired task attempts without claiming or recovering", async () => {
+  const f = await fixture();
+  const task = f.create();
+  const owned = f.claim(task);
+  const request = async (operation: any) => {
+    if (operation.op === "tasks") return f.core.taskSummaries(f.bob, operation.filter);
+    if (operation.op === "task_detail") return f.core.taskDetail(f.bob, operation.taskId);
+    return f.core.command(f.bob, operation.command);
+  };
+  f.advance(50);
+  await renewTaskLeases(f.bob.actor, request);
+  f.advance(1000);
+  expect(f.core.taskDetail(f.bob, task.id).owner).toMatchObject({ active: true, attemptId: owned.attemptId, fence: owned.fence });
+  const lease = f.core.taskDetail(f.bob, task.id).owner!.leaseUntil;
+  await renewTaskLeases(f.carol.actor, request);
+  expect(f.core.taskDetail(f.bob, task.id).owner!.leaseUntil).toBe(lease);
+  const expired = f.create();
+  const old = f.claim(expired);
+  f.advance(101);
+  await renewTaskLeases(f.bob.actor, request);
+  expect(f.core.taskDetail(f.bob, expired.id).owner).toMatchObject({ active: false, attemptId: old.attemptId, fence: old.fence, leaseUntil: old.leaseUntil });
+  f.core.command(f.bob, { id: "finish-live", type: "task.finish", payload: { taskId: task.id, attemptId: owned.attemptId, fence: owned.fence, outcome: "completed", result: { summary: "done", evidence: ["checked"], limitations: [] } } });
+  await renewTaskLeases(f.bob.actor, request);
+  expect(f.core.taskDetail(f.bob, task.id).status).toBe("completed");
+});

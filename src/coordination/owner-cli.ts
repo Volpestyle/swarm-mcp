@@ -10,14 +10,20 @@ async function main() {
   if (!path)
     throw new Error("Usage: swarm-coordinator-owner <private-config.json>");
   const config = readOwnerConfig(path);
-  const store = await CoordinationStore.open({ path: config.databasePath });
+  const store = await CoordinationStore.open({ path: config.databasePath, storage: config.storage });
   const isLauncher = launcherCredential(config.launcherSecret);
   try {
     const service = await serveCoordination({
       endpoint: localEndpoint(config.databasePath),
+      dispatchConfigReload: true,
       core: new CoordinationCore(
         store,
-        config.dispatch ? ownerDispatch(store, config.dispatch) : undefined,
+        requester => {
+          const current = readOwnerConfig(path);
+          if (current.databasePath !== config.databasePath || current.launcherSecret !== config.launcherSecret)
+            throw new Error("Owner identity changed; dispatch configuration refused");
+          return ownerDispatch(store, current.dispatch ?? { maximum: 0, observationMaxAgeMs: 60000, peers: [] })(requester);
+        },
       ),
       authorize: (capability) => store.authorize(capability),
       enroll: launcherEnrollment(store, config.launcherSecret),

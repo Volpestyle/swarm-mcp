@@ -12,7 +12,7 @@ export async function enrollRuntime(options: {
   nodePath: string;
   ownerPath: string;
   identity: Parameters<typeof launcherIdentity>[0];
-  host: "codex" | "claude-code" | "hermes" | "opencode";
+  host: "codex" | "claude-code" | "hermes" | "opencode" | "pi";
   hostSessionId: string;
   incarnation: string;
   label?: string;
@@ -22,7 +22,7 @@ export async function enrollRuntime(options: {
   const skill = inspectSkill(skillPath);
   requireText(options.incarnation, "incarnation");
   requireText(options.hostSessionId, "hostSessionId", 4096);
-  if (!["codex", "claude-code", "hermes", "opencode"].includes(options.host))
+  if (!["codex", "claude-code", "hermes", "opencode", "pi"].includes(options.host))
     throw new Error("Unknown runtime host");
   const identity = launcherIdentity(options.identity);
   const owner = await ownerState(options.stateDirectory);
@@ -78,6 +78,7 @@ export async function enrollRuntime(options: {
       environment: {
         SWARM_COORDINATOR_ENDPOINT: endpoint,
         SWARM_SESSION_CAPABILITY: session.capability,
+        SWARM_SCOPE: session.scope,
         ...(skillPath ? { SWARM_SKILL_PATH: skillPath } : {}),
       },
       launchedOwner: connected.launched,

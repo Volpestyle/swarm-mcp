@@ -7,6 +7,8 @@ export type TaskContract = {
   acceptanceCriteria: string[];
   expectedArtifacts: string[];
   constraints: string[];
+  /** Immutable, scope-visible instruction artifacts, in reading order. */
+  instructions?: string[];
 };
 
 export function validateTaskContract(input: TaskContract): TaskContract {
@@ -40,6 +42,13 @@ export function validateTaskContract(input: TaskContract): TaskContract {
     ),
     expectedArtifacts: list(input.expectedArtifacts, "expectedArtifacts"),
     constraints: list(input.constraints, "constraints"),
+    ...(input.instructions === undefined ? {} : {
+      instructions: list(input.instructions, "instructions").map((uri) => {
+        if (!/^swarm:\/\/artifacts\/[a-zA-Z0-9-]{1,128}$/.test(uri))
+          throw new CoordinationError("invalid_input", "Instructions must be Swarm artifact URIs");
+        return uri;
+      }),
+    }),
   };
   if (Buffer.byteLength(JSON.stringify(contract)) > 8192)
     throw new CoordinationError(

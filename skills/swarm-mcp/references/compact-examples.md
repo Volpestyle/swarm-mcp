@@ -73,6 +73,26 @@ Retry a lost response with the same command ID. The next logical fetch uses a
 new ID; replaying an old fetch returns its earlier receipt. Runtime-delivered
 envelopes already carry a lease, so they do not need a second fetch to process.
 
+Answer a question with `swarm_send`, retaining its thread:
+
+```json
+{"commandId":"answer-parser-1","recipient":"requester-actor-id","kind":"reply","body":"Use the existing parser contract.","threadId":"original-thread-id"}
+```
+
+To target one active session, add `recipientGeneration` from that peer's
+`swarm_find` result. A stale generation fails; do not drop the field to force
+delivery. Omit it intentionally for mail that should survive an actor restart.
+
 For a durable result, `swarm_wait` with `{"taskId":"returned-task-id","timeoutMs":30000}`
 returns a terminal, timeout or interrupted result plus a resumable task reference.
 Read current state and continue waiting by that task ID; don't recreate it.
+
+After accepting a terminal dispatch, release its allocation with `swarm_task`:
+
+```json
+{"commandId":"release-parser-1","action":"cancel","taskId":"returned-task-id","intentId":"parser-fix-1"}
+```
+
+This preserves a completed outcome; the provider must verify its fenced terminal
+attempt before returning `released`. A timeout or missing worker never proves it
+stopped. Keep the original intent while cancellation remains uncertain.

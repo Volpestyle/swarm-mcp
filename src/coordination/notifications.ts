@@ -4,6 +4,7 @@ import type { Event } from "./store";
 export function changedResources(events: Event[], actor: string): string[] {
   const uris = new Set<string>();
   for (const event of events) {
+    if (["task.lease_renewed", "session.observed", "reservation.renewed"].includes(event.type)) continue;
     const payload =
       event.payload &&
       typeof event.payload === "object" &&

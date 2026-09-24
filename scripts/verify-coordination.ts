@@ -49,6 +49,8 @@ const commands = [
     "integrations.hermes.test_lifecycle",
     "integrations._shared.test_swarm_hook_core",
   ],
+  ["bun", "scripts/measure-compact-context.ts", "32", join(output, "context.json")],
+  [process.env.PYTHON ?? "python", "scripts/verify-context-budget.py", join(output, "context.json")],
 ];
 let failed = false;
 for (const [index, command] of commands.entries()) {

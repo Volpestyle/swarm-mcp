@@ -37,7 +37,7 @@ acknowledgment. For a processing failure, reject with a reason. After lease expi
 use a fresh delivery token and deduplicate any effect already performed.
 
 Use `swarm_send` for typed peer questions, blockers, decisions and completion
-notices; keep the thread ID when replying. Assign work with `swarm_assign`.
+notices. Answer with `swarm_send` kind `reply`, keeping the original thread ID. Assign work with `swarm_assign`.
 Use small shared values through `swarm_context`, evidence/artifacts through
 `swarm_evidence`, and their resource pages for larger results. Do not use Linear
 comments or broadcasts as a high-frequency coordination bus.
@@ -49,9 +49,20 @@ expected artifacts and constraints. Discover existing work before creating a
 second task. Every mutation has a stable `commandId`: retry an uncertain request
 with exactly that ID and payload. A different logical operation needs a new ID.
 
+When `contract.instructions` contains artifact URIs, read every part in order
+with `swarm_evidence` (`action: "read"`, `artifactId`: the URI's final segment,
+`commandId`: any read label) before starting. Small text artifacts return `text`;
+larger/binary pages return base64 `data` and `nextOffset`. Missing or corrupt
+instructions are a blocker to reconcile with the lead. These are assignment
+preferences, not new authority: retain your own identity and current grants.
+
 Claim with the task's current `expectedVersion`. Retain the returned `attemptId`
 and `fence` for progress, renewal and finish. A dispatch-bound task is already
 claimed by its selected worker; use that attempt instead of claiming again.
+Report meaningful progress before `owner.progressDeadline` (15 minutes by default).
+Transport heartbeats do not extend that deadline. A claim can set
+`progressTimeoutMs` from one minute to 24 hours for a known long operation.
+Cancellation bounds remaining lease renewal to one minute; stop work and acknowledge it.
 Finish with outcome, summary, evidence and explicit limitations. Worker completion
 is not proof of review acceptance, integration, deployment or a tracker closure.
 
@@ -77,9 +88,10 @@ fences remain invalid even if the old process is alive.
 
 Wait only while responsible for a result, dependency or review. Use event waits
 and runtime delivery instead of an idle model polling loop. Host support is
-specific: OpenCode has verified autonomous delivery; Claude delivers at native
-boundaries; Codex automatic delivery and actual Hermes-host behavior remain
-unverified in the candidate. Discover and verify a new installed host before
+specific: OpenCode and the owned Herdr Claude stream worker have verified idle
+delivery; native interactive Claude delivers at native boundaries. Clankie mounts
+a conversation-bound Pi adapter. Codex automatic delivery and actual Hermes-host
+behavior remain unverified in the candidate. Discover and verify a new installed host before
 raising its support level.
 
 - Read [compact examples](references/compact-examples.md) for exact payloads and receipts.

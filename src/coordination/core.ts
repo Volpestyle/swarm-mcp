@@ -76,6 +76,9 @@ export class CoordinationCore {
             result: this.command(item.context, item.command),
           };
         } catch (error) {
+          // SQLITE_FULL can roll back the outer transaction, not just its
+          // savepoint. Never continue a batch after losing that transaction.
+          if ((error as { code?: string }).code === "storage_full") throw error;
           return { ok: false as const, error };
         }
       }),
@@ -238,6 +241,7 @@ export class CoordinationCore {
               command.payload,
               [command.payload.recipient],
               "direct",
+              command.payload.recipientGeneration,
             );
           case "message.announce":
             return tx.inbox.send(
@@ -302,11 +306,20 @@ export class CoordinationCore {
     if (input.mediaType !== undefined)
       requireText(input.mediaType, "mediaType", 128);
     expiry(this.store.now(), input.ttlMs);
-    const source = mapWorktreeFile(this.store.worktree(context), input.path);
-    const captured = await this.store.artifactFiles.capture(
-      context.scope,
-      source.physical,
-    );
+    if ((input.path === undefined) === (input.data === undefined))
+      throw new CoordinationError("invalid_input", "Provide exactly one artifact path or data");
+    let source: { physical: string | Buffer; logical: string };
+    if (input.data !== undefined) {
+      if (typeof input.data !== "string" || input.data.length > 43692)
+        throw new CoordinationError("invalid_input", "Inline artifacts are at most 32 KiB");
+      const bytes = Buffer.from(input.data, "base64");
+      if (bytes.length > 32768 || bytes.toString("base64") !== input.data)
+        throw new CoordinationError("invalid_input", "Artifact data must be canonical base64, at most 32 KiB");
+      source = { physical: bytes, logical: "inline" };
+    } else {
+      source = mapWorktreeFile(this.store.worktree(context), input.path!);
+    }
+    const captured = await this.store.artifactFiles.capture(context.scope, source.physical);
     return this.store.execute(command, (tx) =>
       tx.evidence.artifact(input, captured, source.logical),
     );
@@ -315,6 +328,7 @@ export class CoordinationCore {
     this.store.assertContext(context);
     const row = this.store.artifact(context.scope, id);
     if (!row) return { artifactId: id, status: "missing_reference" };
+    if (row.collected_at != null) return { artifactId: id, status: "collected" };
     const physical = await this.store.artifactFiles.inspect(context.scope, row);
     this.store.assertContext(context);
     const current = this.store.artifact(context.scope, id)!;
@@ -356,6 +370,7 @@ export class CoordinationCore {
     const row = this.store.artifact(context.scope, id);
     if (!row)
       return { artifactId: id, status: "missing_reference", data: null };
+    if (row.collected_at != null) return { artifactId: id, status: "collected", data: null };
     if (row.expires_at !== null && row.expires_at <= this.store.now())
       return { artifactId: id, status: "expired", data: null };
     const result = await this.store.artifactFiles.read(
@@ -440,9 +455,10 @@ export class CoordinationCore {
     this.store.assertContext(context);
     return this.store.messageStatus(context.scope, context.actor, id);
   }
-  events(context: ActorContext, cursor = 0, limit = 100) {
+  events(context: ActorContext, cursor = 0, limit = 100, relevant = false) {
     this.store.assertContext(context);
-    return this.store.events(context.scope, cursor, limit);
+    if (typeof relevant !== "boolean") throw new CoordinationError("invalid_input", "relevant must be boolean");
+    return this.store.events(context.scope, cursor, limit, relevant ? context.actor : undefined);
   }
 
   waitForEvents(
@@ -451,13 +467,19 @@ export class CoordinationCore {
     timeoutMs: number,
     signal?: AbortSignal,
     limit = 100,
+    relevant = false,
   ) {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30000)
       throw new CoordinationError(
         "invalid_input",
         "Wait must be between 1 and 30000 milliseconds",
       );
-    const read = () => this.events(context, cursor, limit);
+    let resumeCursor = cursor;
+    const read = () => {
+      const page = this.events(context, resumeCursor, limit, relevant);
+      if (!page.items.length) resumeCursor = page.cursor;
+      return page;
+    };
     read(); // Validate before installing any listener.
     return new Promise<ReturnType<CoordinationCore["events"]>>(
       (resolve, reject) => {

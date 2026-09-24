@@ -413,3 +413,20 @@ for (const runtime of ["bun", "node"] as const)
         "available",
       );
     });
+
+
+test("inline artifacts validate bytes, replay immutably and preserve scope boundaries", async () => {
+  const e = await fixture();
+  const data = Buffer.from("Owner preferences 🐑\n".repeat(1000)).toString("base64");
+  const input = { id: "inline-doctrine", data, summary: "Selected instructions", mediaType: "text/markdown" };
+  const captured = await e.core.importArtifact(e.actor, input);
+  expect((await e.core.importArtifact(e.actor, input)).replayed).toBe(true);
+  const page = await e.core.readArtifact(e.actor, id(captured));
+  expect(page.data).toBe(data);
+  await expect(e.core.importArtifact(e.actor, { ...input, data: "YQ==" })).rejects.toThrow("different");
+  for (const invalid of [{ data: "%%%" }, { data: "YQ" }, { data, path: "x" }, {}, { data: Buffer.alloc(32769).toString("base64") }]) {
+    await expect(e.core.importArtifact(e.actor, { id: "invalid", summary: "invalid", ...invalid })).rejects.toThrow();
+  }
+  const other = e.store.openSession({ scope: "other", agentId: "bob", requestId: "other", resumeToken: randomBytes(32).toString("hex"), worktree: { root: e.root, repository: e.root } });
+  expect((await e.core.artifact(other, id(captured))).status).toBe("missing_reference");
+});

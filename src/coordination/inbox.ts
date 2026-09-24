@@ -22,7 +22,7 @@ export type InboxCommand =
   | {
       id: string;
       type: "message.send";
-      payload: SendPayload & { recipient: string };
+      payload: SendPayload & { recipient: string; recipientGeneration?: number };
     }
   | {
       id: string;
@@ -32,7 +32,7 @@ export type InboxCommand =
   | {
       id: string;
       type: "inbox.fetch";
-      payload: { consumer: string; limit?: number; leaseMs?: number };
+      payload: { consumer: string; limit?: number; leaseMs?: number; threadIds?: string[] };
     }
   | {
       id: string;
@@ -62,6 +62,7 @@ type Row = {
   id: string;
   scope: string;
   sender: string;
+  sender_generation: number | null;
   envelope_version: number;
   kind: string;
   body: string;
@@ -74,6 +75,7 @@ type Row = {
   max_attempts: number;
   backoff_ms: number;
   recipient: string;
+  recipient_generation: number | null;
   state: State;
   attempts: number;
   consumer: string | null;
@@ -84,7 +86,8 @@ type Row = {
   last_error: string | null;
 };
 const selection =
-  "SELECT m.*,d.recipient,d.state,d.attempts,d.consumer,d.lease_token,d.lease_until,d.next_attempt_at,d.acknowledged_at,d.last_error FROM inbox_messages m JOIN inbox_deliveries d ON d.message_id=m.id";
+  "SELECT m.*,d.recipient,d.recipient_generation,d.state,d.attempts,d.consumer,d.lease_token,d.lease_until,d.next_attempt_at,d.acknowledged_at,d.last_error FROM inbox_messages m JOIN inbox_deliveries d ON d.message_id=m.id";
+const currentRecipient = "(d.recipient_generation IS NULL OR EXISTS (SELECT 1 FROM sessions s JOIN agents a ON a.scope=s.scope AND a.id=s.agent_id WHERE s.scope=m.scope AND s.agent_id=d.recipient AND s.generation=d.recipient_generation AND s.generation=a.generation AND s.state='active'))";
 
 function integer(value: number, name: string, min: number, max: number) {
   if (!Number.isSafeInteger(value) || value < min || value > max)
@@ -98,7 +101,9 @@ function envelope(row: Row) {
     version: row.envelope_version,
     id: row.id,
     sender: row.sender,
+    ...(row.sender_generation === null ? {} : { senderGeneration: row.sender_generation }),
     recipient: row.recipient,
+    ...(row.recipient_generation === null ? {} : { recipientGeneration: row.recipient_generation }),
     kind: row.kind,
     body: row.body,
     taskId: row.task_id,
@@ -113,6 +118,7 @@ function disposition(row: Row) {
   return {
     messageId: row.id,
     recipient: row.recipient,
+    ...(row.recipient_generation === null ? {} : { recipientGeneration: row.recipient_generation }),
     state: row.state,
     attempts: row.attempts,
     nextAttemptAt: row.next_attempt_at,
@@ -136,7 +142,7 @@ export function readInbox(
     throw new CoordinationError("invalid_input", "activeOnly must be boolean");
   const rows = db
     .prepare(
-      `${selection} WHERE m.scope=? AND d.recipient=? AND m.seq>? ${activeOnly ? "AND d.state IN ('pending','leased')" : ""} ORDER BY m.seq LIMIT ?`,
+      `${selection} WHERE m.scope=? AND d.recipient=? AND ${currentRecipient} AND m.seq>? ${activeOnly ? "AND d.state IN ('pending','leased')" : ""} ORDER BY m.seq LIMIT ?`,
     )
     .all(scope, actor, after, limit) as Row[];
   return {
@@ -177,6 +183,7 @@ export class InboxTransaction {
     payload: SendPayload,
     recipients: string[],
     audience: "direct" | "announcement",
+    recipientGeneration?: number,
   ) {
     requireText(payload.kind, "kind", 64);
     requireText(payload.body, "body", 16384);
@@ -192,8 +199,18 @@ export class InboxTransaction {
       );
     integer(recipients.length, "recipient count", 1, 100);
     const unique = [...new Set(recipients)];
+    for (const recipient of unique) requireText(recipient, "recipient");
+    if (recipientGeneration !== undefined) {
+      integer(recipientGeneration, "recipientGeneration", 1, Number.MAX_SAFE_INTEGER);
+      if (audience !== "direct" || unique.length !== 1)
+        throw new CoordinationError("invalid_input", "Recipient generation requires a direct message");
+      const session = this.db.prepare(
+        "SELECT 1 FROM sessions s JOIN agents a ON a.scope=s.scope AND a.id=s.agent_id WHERE s.scope=? AND s.agent_id=? AND s.generation=? AND s.generation=a.generation AND s.state='active'",
+      ).get(this.command.scope, unique[0]!, recipientGeneration);
+      if (!session)
+        throw new CoordinationError("stale_recipient", "Recipient session is suspended, closed or replaced");
+    }
     for (const recipient of unique) {
-      requireText(recipient, "recipient");
       const pending = this.db
         .prepare(
           "SELECT count(*) AS n FROM inbox_deliveries d JOIN inbox_messages m ON m.id=d.message_id WHERE m.scope=? AND d.recipient=? AND d.state IN ('pending','leased') AND (m.expires_at IS NULL OR m.expires_at>?)",
@@ -208,7 +225,7 @@ export class InboxTransaction {
     const id = randomUUID();
     this.db
       .prepare(
-        "INSERT INTO inbox_messages(id,scope,sender,envelope_version,kind,body,task_id,thread_id,created_at,expires_at,idempotency_key,audience,max_attempts,backoff_ms) VALUES(?,?,?,1,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO inbox_messages(id,scope,sender,envelope_version,kind,body,task_id,thread_id,created_at,expires_at,idempotency_key,audience,max_attempts,backoff_ms,sender_generation) VALUES(?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)",
       )
       .run(
         id,
@@ -224,13 +241,14 @@ export class InboxTransaction {
         audience,
         this.policy.maxAttempts,
         this.policy.backoffMs,
+        this.command.generation ?? null,
       );
     for (const recipient of unique)
       this.db
         .prepare(
-          "INSERT INTO inbox_deliveries(message_id,recipient,state,next_attempt_at) VALUES(?,?,'pending',?)",
+          "INSERT INTO inbox_deliveries(message_id,recipient,state,next_attempt_at,recipient_generation) VALUES(?,?,'pending',?,?)",
         )
-        .run(id, recipient, this.at);
+        .run(id, recipient, this.at, recipientGeneration ?? null);
     this.change("message.accepted", id, {
       recipients: unique,
       audience,
@@ -247,7 +265,7 @@ export class InboxTransaction {
     const row = this.db
       .prepare(`${selection} WHERE m.scope=? AND m.id=? AND d.recipient=?`)
       .get(this.command.scope, id, this.command.actor) as Row | undefined;
-    if (!row)
+    if (!row || (row.recipient_generation !== null && row.recipient_generation !== this.command.generation))
       throw new CoordinationError(
         "not_found",
         "Delivery does not belong to this recipient",
@@ -298,22 +316,30 @@ export class InboxTransaction {
     return { examined: rows.length };
   }
 
-  fetch(payload: { consumer: string; limit?: number; leaseMs?: number }) {
+  fetch(payload: { consumer: string; limit?: number; leaseMs?: number; threadIds?: string[] }) {
     requireText(payload.consumer, "consumer");
     const limit = payload.limit ?? 10,
       leaseMs = payload.leaseMs ?? 30000;
     integer(limit, "limit", 1, 50);
     integer(leaseMs, "leaseMs", 1, 120000);
+    if (payload.threadIds !== undefined) {
+      if (!Array.isArray(payload.threadIds)) throw new CoordinationError("invalid_input", "threadIds must be an array");
+      integer(payload.threadIds.length, "thread count", 0, 1000);
+      for (const thread of payload.threadIds) requireText(thread, "threadId");
+    }
+    const threads = payload.threadIds === undefined ? "" : payload.threadIds.length
+      ? `AND m.thread_id IN (${payload.threadIds.map(() => "?").join(",")})` : "AND 0";
     this.sweep();
     const rows = this.db
       .prepare(
-        `${selection} WHERE m.scope=? AND d.recipient=? AND d.state='pending' AND d.next_attempt_at<=? AND (m.expires_at IS NULL OR m.expires_at>?) ORDER BY d.next_attempt_at,m.seq LIMIT ?`,
+        `${selection} WHERE m.scope=? AND d.recipient=? AND ${currentRecipient} AND d.state='pending' AND d.next_attempt_at<=? AND (m.expires_at IS NULL OR m.expires_at>?) ${threads} ORDER BY d.next_attempt_at,m.seq LIMIT ?`,
       )
       .all(
         this.command.scope,
         this.command.actor,
         this.at,
         this.at,
+        ...(payload.threadIds ?? []),
         limit,
       ) as Row[];
     const deliveries = rows.map((row) => {

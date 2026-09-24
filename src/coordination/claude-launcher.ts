@@ -56,6 +56,7 @@ export async function prepareClaudeLaunch(
     clientPath?: string;
     mcpPath?: string;
     settings?: Settings;
+    mcpServers?: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
     resume?: boolean;
   },
 ) {
@@ -77,11 +78,13 @@ export async function prepareClaudeLaunch(
   const mcpPath =
     options.mcpPath ?? join(dirname(options.hookPath), "mcp-cli.js");
   shellPath(mcpPath);
+  if (options.mcpServers && Object.hasOwn(options.mcpServers, "swarm"))
+    throw new Error("The swarm MCP server is reserved for the enrolled runtime");
   const mcp = JSON.stringify({
-    mcpServers: { swarm: { command: options.nodePath, args: [mcpPath] } },
+    mcpServers: { ...options.mcpServers, swarm: { command: options.nodePath, args: [mcpPath] } },
   });
   // Leave room for Windows argument escaping and the caller's remaining flags.
-  if (Buffer.byteLength(serialized) > 8 * 1024)
+  if (Buffer.byteLength(serialized) + Buffer.byteLength(mcp) > 8 * 1024)
     throw new Error("Claude additional settings exceed 8 KiB");
   const enrolled = await enrollRuntime({ ...options, host: "claude-code" });
   return {

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, link, unlink, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { CoordinationError } from "./errors";
+import { artifactFiles, DEFAULT_STORAGE } from "./storage";
 
 const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
 export type CapturedArtifact = { digest: string; bytes: number };
@@ -11,8 +12,9 @@ export type CapturedArtifact = { digest: string; bytes: number };
 export class ArtifactFiles {
   readonly root: string;
   private activeCaptures = 0;
+  private reservedBytes = 0;
   private readonly verified = new Map<string, string>();
-  constructor(databasePath: string) {
+  constructor(databasePath: string, private readonly maximumBytes = DEFAULT_STORAGE.artifactBytes) {
     this.root = resolve(databasePath + ".artifacts");
   }
   path(scope: string, digest: string) {
@@ -24,7 +26,7 @@ export class ArtifactFiles {
       digest,
     );
   }
-  async capture(scope: string, source: string): Promise<CapturedArtifact> {
+  async capture(scope: string, source: string | Buffer): Promise<CapturedArtifact> {
     if (this.activeCaptures >= 4)
       throw new CoordinationError(
         "overloaded",
@@ -39,7 +41,7 @@ export class ArtifactFiles {
   }
   private async captureFile(
     scope: string,
-    source: string,
+    source: string | Buffer,
   ): Promise<CapturedArtifact> {
     const directory = join(
       this.root,
@@ -47,24 +49,39 @@ export class ArtifactFiles {
     );
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const temporary = join(directory, `.capture-${randomUUID()}`);
-    const input = await open(source, "r");
+    const input = typeof source === "string" ? await open(source, "r") : undefined;
     let output: Awaited<ReturnType<typeof open>> | undefined;
+    let reserved = 0;
     try {
-      const before = await input.stat({ bigint: true });
-      if (!before.isFile() || before.size > BigInt(MAX_ARTIFACT_BYTES))
+      const before = await input?.stat({ bigint: true });
+      if (before && (!before.isFile() || before.size > BigInt(MAX_ARTIFACT_BYTES)))
         throw new CoordinationError(
           "artifact_too_large",
           "Artifact must be a regular file no larger than 64 MiB",
         );
+      const required = before ? Number(before.size) : (source as Buffer).length;
+      if (required > MAX_ARTIFACT_BYTES)
+        throw new CoordinationError("artifact_too_large", "Artifact must be no larger than 64 MiB");
+      const used = artifactFiles(this.root).reduce((sum, file) => sum + file.bytes, 0);
+      if (used + this.reservedBytes + required > this.maximumBytes) {
+        throw new CoordinationError("storage_full", "Artifact limit reached; run offline maintenance or raise the limit");
+      }
+      reserved = required;
+      this.reservedBytes += reserved;
       output = await open(temporary, "wx", 0o600);
       const hash = createHash("sha256"),
         buffer = Buffer.alloc(65536);
       let bytes = 0;
-      while (true) {
+      if (Buffer.isBuffer(source)) {
+        hash.update(source);
+        bytes = source.length;
+        await output.writeFile(source);
+      }
+      while (input) {
         const { bytesRead } = await input.read(buffer, 0, buffer.length, null);
         if (!bytesRead) break;
         bytes += bytesRead;
-        if (bytes > MAX_ARTIFACT_BYTES)
+        if (bytes > reserved)
           throw new CoordinationError(
             "artifact_too_large",
             "Artifact grew beyond 64 MiB",
@@ -73,11 +90,11 @@ export class ArtifactFiles {
         hash.update(chunk);
         await output.writeFile(chunk);
       }
-      const after = await input.stat({ bigint: true });
+      const after = await input?.stat({ bigint: true });
       if (
-        before.size !== after.size ||
+        before && after && (before.size !== after.size ||
         before.mtimeNs !== after.mtimeNs ||
-        BigInt(bytes) !== after.size
+        BigInt(bytes) !== after.size)
       )
         throw new CoordinationError(
           "artifact_changed",
@@ -109,8 +126,9 @@ export class ArtifactFiles {
       }
       return { digest, bytes };
     } finally {
+      this.reservedBytes -= reserved;
       await output?.close();
-      await input.close();
+      await input?.close();
       await unlink(temporary).catch((error) => {
         if (error.code !== "ENOENT") throw error;
       });

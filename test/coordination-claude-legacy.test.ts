@@ -75,7 +75,7 @@ test("legacy Claude entrypoints use launcher lifecycle and coordinator write lea
   const run = async (file: string) => {
     const child = Bun.spawn({
       cmd: [
-        Bun.which("python")!,
+        (Bun.which("python3") ?? Bun.which("python"))!,
         resolve(`integrations/claude-code/hooks/${file}.py`),
       ],
       cwd: root,

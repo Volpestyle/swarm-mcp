@@ -1,0 +1,11 @@
+flowchart LR
+  Agent["Independent agent sessions"] --> MCP["Thin MCP adapters<br/>9 tools; targeted sync"]
+  Runtime["Trusted host adapters<br/>enrollment and safe delivery"] --> Owner
+  MCP --> Owner["One local owner<br/>authorization and transactions"]
+  Owner --> DB[("SQLite<br/>inboxes, attempts, receipts, events")]
+  Owner --> Blobs[("Immutable artifacts")]
+  Owner --> Provider["Execution providers<br/>native runtime / Herdr / peers"]
+  Provider --> Agent
+  Admin["Offline maintenance<br/>exclusive endpoint lock"] --> DB
+  Admin --> Blobs
+  Agent --> Tracker["Human work tracker<br/>results and evidence"]
