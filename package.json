@@ -6,7 +6,7 @@
     "node": ">=22"
   },
   "bin": {
-    "swarm-mcp": "./dist/cli.js",
+    "swarm-mcp": "./dist/coordination/mcp-cli.js",
     "swarm-legacy-guard": "./dist/legacy-guard-cli.js",
     "swarm-coordinator-migrate": "./dist/coordination/migration-cli.js",
     "swarm-coordinator-client": "./dist/coordination/client-cli.js",
@@ -15,8 +15,6 @@
     "swarm-coordinator-maintenance": "./dist/coordination/maintenance-cli.js"
   },
   "files": [
-    "dist/cli.js",
-    "dist/index.js",
     "dist/legacy-guard-cli.js",
     "dist/coordination/client-cli.js",
     "dist/coordination/migration-cli.js",
@@ -29,7 +27,6 @@
     "dist/coordination/dispatch-runner.js",
     "dist/coordination/opencode-dispatch.js",
     "dist/coordination/opencode-plugin.js",
-    "sql",
     "skills/swarm-mcp",
     "skills/README.md",
     "bun.lock",
@@ -41,21 +38,15 @@
     "docs/runtime-embedding.md"
   ],
   "scripts": {
-    "start": "node dist/cli.js",
-    "dev:server": "cargo run --manifest-path apps/swarm-server/Cargo.toml",
-    "dev:ui": "cd apps/swarm-ui && SWARM_UI_MANAGE_DAEMON=0 bunx tauri dev",
-    "dev:ui:managed": "cd apps/swarm-ui && bunx tauri dev",
+    "start": "node dist/coordination/mcp-cli.js",
     "diagrams": "node scripts/render-mermaid.mjs",
-    "generate:protocol": "node scripts/generate-protocol-types.mjs",
     "build": "node scripts/build.mjs",
     "verify:package": "node scripts/verify-package.mjs",
-    "check:ui": "cd apps/swarm-ui && bun run check && bun run build",
-    "test:server": "cargo test --manifest-path apps/swarm-server/Cargo.toml",
-    "test:tauri": "cargo test --manifest-path apps/swarm-ui/src-tauri/Cargo.toml",
-    "typecheck": "node scripts/generate-protocol-types.mjs && tsc --noEmit",
-    "test": "node scripts/generate-protocol-types.mjs && bun test && python3 -m unittest integrations.hermes.test_lifecycle integrations._shared.test_swarm_hook_core",
-    "check": "bun run typecheck && bun run test && bun run build && bun run check:ui && bun run test:server && bun run test:tauri",
-    "prepack": "bun run build"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --timeout 30000 && python3 -m unittest integrations._shared.test_swarm_hook_core",
+    "check": "bun run typecheck && bun run test && bun run build && npm run verify:package",
+    "prepack": "bun run build",
+    "verify:install": "bun scripts/probe-package-install.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",

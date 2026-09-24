@@ -1,9 +1,10 @@
 # Coordination failure gate (VUH-1342)
 
 Run `bun scripts/verify-coordination.ts` from the candidate checkout. The gate
-performs type checking, builds production entrypoints, runs every
-`coordination-*.test.ts` plus `mcp-protocol.test.ts`, then runs the shared
-Python/Hermes lifecycle tests. It creates a timestamped directory beneath
+type-checks production code, tests and TypeScript scripts (including unused
+locals/parameters), builds production entrypoints, and runs every
+`test/*.test.ts`, then runs the shared Python write-hook tests and the
+32-agent MCP context budget check. It creates a timestamped directory beneath
 `dist/verification/coordination` with full output and a manifest containing the
 revision, working-tree fingerprint, platform, runtime versions, commands, exit
 codes and durations. A source change during verification invalidates the run.
@@ -24,7 +25,7 @@ editing loaded test files prevents attribution to one source revision.
 | Renewal exits before/after commit in Node and Bun; one renewal event after replay; stale completion; lease recovery; cancellations/dependency cascades | `coordination-tasks` |
 | Restart adoption, capability fencing, profile boundaries, transport vs runtime evidence | `coordination-sessions`, `coordination-runtime-launcher` |
 | One dispatch effect; retained uncertainty; cancellation proof; native-to-peer fence change | `coordination-dispatch*`, `coordination-owner*` |
-| Real modern/legacy stdio, resources/subscriptions, output schemas, metadata negotiation, repeated cancelled waits | `coordination-mcp*`, `mcp-protocol` |
+| Real modern/legacy stdio, resources/subscriptions, output schemas, repeated cancelled waits | `coordination-mcp*` |
 | Disconnect cleanup, resumed waits, authorization, real Node CLI | `coordination-ipc` |
 | Safe delivery boundaries, host snapshots/reconnect, wake uncertainty, deduplication | runtime, inbox-observer, OpenCode, Claude and Codex tests |
 | Worktree/file isolation and real subprocess write hooks | worktrees, reservations and write-hooks tests |

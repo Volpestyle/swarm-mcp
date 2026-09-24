@@ -68,7 +68,7 @@ const client = await CoordinationClient.connect(
   sender.environment.SWARM_COORDINATOR_ENDPOINT,
   sender.environment.SWARM_SESSION_CAPABILITY,
 );
-let child: ReturnType<typeof Bun.spawn> | undefined;
+let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;
 let timeout: ReturnType<typeof setTimeout> | undefined;
 try {

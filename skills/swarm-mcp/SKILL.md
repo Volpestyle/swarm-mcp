@@ -13,13 +13,10 @@ metadata:
 
 Optional role: planner, implementer, reviewer, researcher or generalist.
 
-Discover the mounted tools before choosing a workflow. `swarm_sync`,
-`swarm_assign` and `swarm_inbox` identify the compact coordinator. If only
-`register`, `bootstrap` and `poll_messages` are present, use
-[legacy workflow](references/legacy-workflow.md). If neither interface is
-available, report the missing integration and continue independently only where
-that fits the user's task. Do not invent tool names or repair live configuration
-as a side effect of joining.
+Use the coordinator tools: `swarm_sync`, `swarm_assign` and
+`swarm_inbox`. If they are unavailable, report the missing trusted runtime
+integration and continue independently only where that fits the user's task.
+Do not invent tool names or repair live configuration as a side effect of joining.
 
 ## Resume and communicate
 
@@ -68,7 +65,7 @@ is not proof of review acceptance, integration, deployment or a tracker closure.
 
 Use the configured worktree for edits. Separate worktrees are the normal isolation
 boundary; runtime write hooks and explicit reservations protect declared critical
-sections. The compact tool catalog has no legacy `lock_file` action. Use the
+sections. Use the
 trusted reservation/integration path configured by the launcher when needed;
 never assume file locks migrate as valid new reservations.
 
@@ -90,11 +87,11 @@ Wait only while responsible for a result, dependency or review. Use event waits
 and runtime delivery instead of an idle model polling loop. Host support is
 specific: OpenCode and the owned Herdr Claude stream worker have verified idle
 delivery; native interactive Claude delivers at native boundaries. Clankie mounts
-a conversation-bound Pi adapter. Codex automatic delivery and actual Hermes-host
-behavior remain unverified in the candidate. Discover and verify a new installed host before
+a conversation-bound Pi adapter. Codex automatic delivery remains unverified. Other hosts require their own
+trusted runtime integration. Discover and verify a new installed host before
 raising its support level.
 
-- Read [compact examples](references/compact-examples.md) for exact payloads and receipts.
+- Read [examples](references/examples.md) for exact payloads and receipts.
 - Read [work trackers](references/work-trackers.md) only when durable human-facing work is explicitly tracked.
 - A configured `SWARM_SKILL_PATH` lets startup validate this file's contract stamp.
   It does not prove what instructions the host actually loaded. On a code/config/

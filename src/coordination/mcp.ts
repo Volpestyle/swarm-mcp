@@ -4,7 +4,7 @@ import { CoordinationError } from "./errors";
 import type { Operation } from "./ipc";
 import type { Json } from "./store";
 import { boundedJson, MCP_DATA_BYTES } from "./payload-limits";
-import { outputSchema, type CompactToolName } from "./mcp-output";
+import { outputSchema, type ToolName } from "./mcp-output";
 import { SERVER_VERSION, MODERN_PROTOCOL } from "./compatibility";
 const subscriptions = new WeakMap<McpServer, Set<string>>();
 const observableResources = new Set([
@@ -115,7 +115,7 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
     },
   );
   function tool<S extends z.ZodRawShape>(
-    name: CompactToolName,
+    name: ToolName,
     description: string,
     shape: S,
     readOnly: boolean,
@@ -643,9 +643,9 @@ export function createCoordinatorMcp(request: CoordinatorRequest) {
   server.registerResource(
     "tool-schema",
     new ResourceTemplate("swarm://schemas/{tool}", { list: undefined }),
-    { description: "Detailed tool result schema; the compact catalog publishes the common data/error envelope." },
+    { description: "Detailed tool result schema; the tool catalog publishes the common data/error envelope." },
     async (uri, variables) => {
-      const name = String(variables.tool) as CompactToolName;
+      const name = String(variables.tool) as ToolName;
       if (!["swarm_sync", "swarm_find", "swarm_assign", "swarm_task", "swarm_send", "swarm_inbox", "swarm_wait", "swarm_context", "swarm_evidence"].includes(name))
         throw new CoordinationError("not_found", "Unknown tool schema");
       return { contents: [{ uri: uri.href, mimeType: "application/schema+json", text: JSON.stringify(z.toJSONSchema(outputSchema(name))) }] };

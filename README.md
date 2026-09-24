@@ -4,14 +4,14 @@ Durable local coordination between independent coding-agent sessions: acknowledg
 messages, fenced task ownership, shared context and retained evidence. Native
 runtimes own their children; Swarm coordinates across session boundaries.
 
-## Start with the compact coordinator
+## Get started
 
 The candidate uses one Node owner per isolated database/profile and nine MCP
 tools. Trusted launchers enroll sessions and supply capabilities; MCP adapters do
 not open the database or select their own identity.
 
 - [Install and enroll](docs/install-skill.md)
-- [Compact API](docs/compact-api.md) and [consumer skill](skills/swarm-mcp/SKILL.md)
+- [Swarm API](docs/api.md) and [consumer skill](skills/swarm-mcp/SKILL.md)
 - [Host support and limitations](docs/runtime-host-support.md)
 - [Embed in a runtime or dispatch through Herdr](docs/runtime-embedding.md)
 - [Storage limits and offline maintenance](docs/storage-maintenance.md)
@@ -22,9 +22,9 @@ existing swarm or switch live host configuration.
 
 ## Boundaries
 
-![Compact coordination boundaries](docs/diagrams/compact-coordination.png)
+![Coordination boundaries](docs/diagrams/coordination.png)
 
-[Diagram source](docs/diagrams/compact-coordination.mmd).
+[Diagram source](docs/diagrams/coordination.mmd).
 
 Swarm owns durable acceptance, acknowledgment, attempts, reservations and evidence.
 Host adapters own safe context delivery; workspace providers own execution.
@@ -35,16 +35,15 @@ Automatic delivery varies by host. File reservations are cooperative. One local
 OS user/profile is the trust boundary; this is not a distributed or hostile
 multi-tenant service. See the [architecture decision](docs/coordination-architecture.md).
 
-## Legacy compatibility
+## Entrypoints
 
-`swarm-mcp`, `swarm-mcp init` and `swarm-mcp install` retain the legacy entrypoint.
-It uses a separate `swarm.db` and consumes messages on read. New deployments
-should use the compact launcher path above. Do not split a swarm across stores.
+`swarm-mcp` and `swarm-coordinator-mcp` serve the same Swarm API. Both require
+the endpoint and session capability supplied by a trusted runtime launcher.
+See [runtime embedding](docs/runtime-embedding.md) for enrollment and launch options.
 
-The [legacy reference](docs/legacy-reference.md), [legacy quickstart](docs/quickstart.md)
-and [feature migration map](docs/compact-api-migration.md) describe existing setups.
-The Rust desktop/mobile control plane is an optional consumer, documented in
-[swarm-server](docs/swarm-server.md); it is not the compact coordination owner.
+Offline migration commands preserve historical data without importing live
+ownership. See [migration](docs/migration-cutover.md) and the
+[application boundary decision](docs/coordination-architecture.md#application-boundary).
 
 ## Development
 

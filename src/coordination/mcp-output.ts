@@ -74,8 +74,8 @@ const dataSchemas = {
   swarm_evidence: z.union([receipt, z.looseObject({ status: z.string(), nextOffset: z.number().optional() })]),
 } as const;
 
-export type CompactToolName = keyof typeof dataSchemas;
-export function outputSchema(name?: CompactToolName) {
+export type ToolName = keyof typeof dataSchemas;
+export function outputSchema(name?: ToolName) {
   // Some clients validate structured errors too; retain their useful diagnosis.
   return z.union([
     z.object({ data: name ? dataSchemas[name] : object }),

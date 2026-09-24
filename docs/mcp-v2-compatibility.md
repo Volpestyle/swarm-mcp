@@ -1,55 +1,21 @@
-# MCP v2 compatibility (candidate)
+# MCP transport compatibility
 
-The stdio entry uses `@modelcontextprotocol/server` 2.0.0 with `serveStdio`
-and explicit `legacy: "serve"`. The application identity remains separate from
-protocol negotiation. The existing application handlers are transitional; the
-compact coordinator-backed API is tracked in VUH-1338.
+The coordinator uses MCP SDK 2.0.0 `serveStdio` with `legacy: "serve"`.
+Modern 2026-07-28 negotiation and the legacy MCP handshake both expose the same
+nine-tool [Swarm API](api.md). Transport compatibility does not select a different
+application API, database or authorization model.
 
-## Verified matrix
+`test/coordination-mcp.test.ts` exercises both protocol modes against a real Node
+owner: discovery, authenticated task/message operations, schemas, resource
+subscriptions, cancellation and disconnect. Modern clients use `subscriptions/listen`;
+legacy clients use resource subscribe/unsubscribe. Resource changes are hints to
+read durable state, never evidence that a model processed a message.
 
-`test/mcp-protocol.test.ts` launches the real entry with disposable databases.
-The SDK 2.0.0 client is tested in both legacy-handshake mode and pinned
-2026-07-28 mode. Both discover tools/resources/prompts, register an application
-session and read its inbox. Raw modern results carry `resultType`, server identity
-and private cache hints; legacy results omit modern-only fields.
+The adapter bounds concurrent waits to eight and subscriptions to sixteen.
+Cancelling a tool request releases its wait connection without cancelling the
+application task. Adapter shutdown closes its client, observer and wait sockets.
 
-Task-resource subscriptions deliver the selected resource, stop after unsubscribe,
-and permit cancellation of an active activity wait. Disconnect stops instance
-timers and closes the serving handle; stdin EOF is handled explicitly because the
-SDK transport does not itself bind EOF to close. Tests require client closure
-before its forced-termination fallback. Subscriptions are capped at 16 per modern
-connection; the legacy URI set has three supported resources. Activity waits have
-a 60-second maximum and a 30-second default (including legacy zero values).
-
-Resource values have private, zero-TTL caching. Stable tool/resource/prompt
-catalogs and discovery use private 60-second caching. The SDK supplies wire
-envelopes; application callbacks do not hand-assemble protocol-only fields.
-
-Inbox notifications are also tested with an independent peer subprocess sending
-to the registered recipient while only the inbox resource is subscribed. Raw
-requests verify rejection of an unsupported opening revision, missing request
-metadata and malformed metadata, followed by successful valid requests. The SDK
-pins the era at connection establishment: it does not renegotiate on subsequent
-version strings. In SDK 2.0.0 a later well-formed unsupported revision string is
-processed using the pinned codec; callers must reconnect to negotiate a revision.
-
-These subprocess tests do not establish installed Codex, Claude, Hermes or
-OpenCode host support, or that receiving a notification wakes a model. Runtime
-delivery and wake behavior are separate VUH-1339 acceptance checks.
-
-## Tasks extension decision
-
-The [MCP Tasks specification](https://tasks.extensions.modelcontextprotocol.io/specification/draft/tasks)
-models deferred results of tool calls, negotiated through the
-`io.modelcontextprotocol/tasks` capability. It does not supply Swarm's worker
-ownership, attempt fences, dependencies or file reservations.
-
-Do not advertise this extension in the current adapter. Coordination commands
-return durable acceptance promptly; agents retrieve application task state through
-the Swarm API. A future genuinely long-running tool may add a separate negotiated
-extension handle linked to the application attempt. It must persist acceptance
-before returning a handle and define how protocol cancellation maps to cooperative
-application cancellation. Merely renaming Swarm tasks into protocol tasks would
-conflate two different lifecycles.
-
-Serving reference: [official stdio guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/serving/stdio.md).
+The optional MCP Tasks extension is not advertised. Swarm task ownership,
+attempt fences and cooperative cancellation belong to the application contract;
+a transport task handle does not supply those guarantees. Host lifecycle and
+automatic delivery support are documented [separately](runtime-host-support.md).

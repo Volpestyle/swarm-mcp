@@ -1,7 +1,7 @@
+import { gitDiffHash } from "./fixtures/source-state";
 import { appendFileSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { spawn, execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 
 const output = join(
   resolve(process.argv[2] ?? "dist/verification/coordination"),
@@ -14,9 +14,7 @@ const manifest = {
   startedAt: new Date().toISOString(),
   revision: git("rev-parse", "HEAD"),
   workingTree: git("status", "--porcelain"),
-  diffSha256: createHash("sha256")
-    .update(git("diff", "HEAD", "--"))
-    .digest("hex"),
+  diffSha256: gitDiffHash(),
   platform: process.platform,
   arch: process.arch,
   node: execFileSync("node", ["--version"], { encoding: "utf8" }).trim(),
@@ -31,8 +29,7 @@ const manifest = {
 const tests = readdirSync("test")
   .filter(
     (name) =>
-      (name.startsWith("coordination-") && name.endsWith(".test.ts")) ||
-      name === "mcp-protocol.test.ts",
+      name.endsWith(".test.ts"),
   )
   .sort()
   .map((name) => `./test/${name}`);
@@ -46,10 +43,9 @@ const commands = [
     process.env.PYTHON ?? "python",
     "-m",
     "unittest",
-    "integrations.hermes.test_lifecycle",
     "integrations._shared.test_swarm_hook_core",
   ],
-  ["bun", "scripts/measure-compact-context.ts", "32", join(output, "context.json")],
+  ["bun", "scripts/measure-mcp-context.ts", "32", join(output, "context.json")],
   [process.env.PYTHON ?? "python", "scripts/verify-context-budget.py", join(output, "context.json")],
 ];
 let failed = false;
@@ -94,9 +90,7 @@ for (const [index, command] of commands.entries()) {
 const finalSource = {
   revision: git("rev-parse", "HEAD"),
   workingTree: git("status", "--porcelain"),
-  diffSha256: createHash("sha256")
-    .update(git("diff", "HEAD", "--"))
-    .digest("hex"),
+  diffSha256: gitDiffHash(),
 };
 const sourceChanged =
   finalSource.revision !== manifest.revision ||

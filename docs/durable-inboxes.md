@@ -27,7 +27,7 @@ admit direct-chat replies while their main agent is busy without consuming its
 work messages.
 
 Bootstrap advertises `recipientGeneration: true`. Clients requiring this boundary
-must refuse owners without it; the compact MCP adapter performs that check before
+must refuse owners without it; the MCP adapter performs that check before
 forwarding a pinned send. Unknown, ended or replaced recipients return
 `stale_recipient`, with no message committed.
 
@@ -73,15 +73,11 @@ State changes and notification hints omit message bodies and lease tokens.
 Service-provided authorization determines scope and actor, including when a
 caller adds unexpected identity fields to its command.
 
-## Compatibility and rollout
+## Migration and verification
 
-This module does not silently change legacy `poll_messages`. Existing consumers
-still have legacy fetch-means-read behavior until the adapter/migration work in
-VUH-1338 and VUH-1344. The durable API requires explicit acknowledgment; an old
-consumer cannot be represented as having processed work merely because it polled.
-Keep legacy and durable delivery modes explicit during migration, with no
-automatic acknowledgment bridge. Session generations and supported resume are
-supplied by VUH-1334; this layer retains deliveries under stable recipient IDs.
+Historical polling does not establish processing acknowledgment. Offline import
+preserves unread messages as pending deliveries requiring a fresh lease and
+explicit acknowledgment. Session generations come from trusted runtime enrollment.
 
 Verification: `bun test test/coordination-inbox.test.ts test/coordination-sessions.test.ts
 test/coordination-core.test.ts test/coordination-ipc.test.ts` covers command replay,

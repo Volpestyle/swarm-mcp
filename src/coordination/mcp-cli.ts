@@ -7,6 +7,12 @@ import type { Event } from "./store";
 import { assertCompatibleOwner, inspectSkill } from "./compatibility";
 
 async function main() {
+  const args = process.argv.slice(2);
+  if (args.length === 1 && ["--help", "-h"].includes(args[0]!)) {
+    console.log("Usage: swarm-mcp\nServe the Swarm MCP API using SWARM_COORDINATOR_ENDPOINT and SWARM_SESSION_CAPABILITY supplied by a trusted runtime launcher.");
+    return;
+  }
+  if (args.length) throw new Error("Usage: swarm-mcp (no subcommands); use a trusted runtime launcher for enrollment and swarm-coordinator-migrate for offline migration");
   const endpoint = process.env.SWARM_COORDINATOR_ENDPOINT;
   const capability = process.env.SWARM_SESSION_CAPABILITY;
   if (!endpoint || !capability)

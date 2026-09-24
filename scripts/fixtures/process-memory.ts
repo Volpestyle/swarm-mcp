@@ -1,6 +1,6 @@
+import { gitDiffHash } from "./source-state";
 import { execFileSync } from "node:child_process";
 import { cpus, totalmem, release } from "node:os";
-import { createHash } from "node:crypto";
 
 /** Point-in-time working/private memory for explicit fixture-owned processes. */
 export function processMemory(pids: number[]) {
@@ -14,7 +14,7 @@ export function processMemory(pids: number[]) {
   return { supported: true, platform: process.platform, observedAt: Date.now(), processes: rows,
     environment: { cpu: cpus()[0]?.model, logicalCpus: cpus().length, physicalMemoryBytes: totalmem(), release: release() },
     source: { revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
-      diffSha256: createHash("sha256").update(execFileSync("git", ["diff", "HEAD", "--"])).digest("hex") },
+      diffSha256: gitDiffHash() },
     totalWorkingSetBytes: rows.reduce((sum, row) => sum + row.WorkingSet64, 0),
     totalPrivateBytes: rows.reduce((sum, row) => sum + row.PrivateMemorySize64, 0),
     limitation: "Point-in-time Windows working/private memory, not unique physical memory. Peaks belong to each process lifetime, not necessarily this workload." };

@@ -41,7 +41,7 @@ resulting bootstrap metadata change without relabeling earlier measurements.
   cursor. The ordinary manual handoff remains send/fetch/ack. This is token
   accounting, not provider billing or a latency campaign.
 
-- `scripts/verify-coordination-budgets.py`: selected ring, resource and compact-API budgets; reconstructs latency/throughput from samples.
+- `scripts/verify-coordination-budgets.py`: selected ring, resource and API budgets; reconstructs latency/throughput from samples.
 - `scripts/verify-consumer-benchmarks.py`: accepted-message accounting, quota, recovery and healthy-peer progress.
 - `scripts/verify-adapter-budgets.py`: actual adapter memory and bounded native/mixed-host behavior.
 

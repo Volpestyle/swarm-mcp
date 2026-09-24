@@ -9,7 +9,27 @@ import { assertCompatibleOwner, compatibility, inspectSkill } from "../src/coord
 import { CoordinationClient } from "../src/coordination/ipc";
 import { readOwnerConfig } from "../src/coordination/owner-config";
 
+test("MCP entrypoint explains enrollment and refuses retired subcommands", async () => {
+  for (const [args, expectedCode, message] of [
+    [["--help"], 0, "trusted runtime launcher"],
+    [["init"], 1, "no subcommands"],
+    [[], 1, "endpoint and session capability are required"],
+  ] as const) {
+    const child = Bun.spawn({
+      cmd: [process.execPath, resolve("src/coordination/mcp-cli.ts"), ...args],
+      env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("SWARM_"))),
+      stdin: "ignore", stdout: "pipe", stderr: "pipe",
+    });
+    const [code, stdout, stderr] = await Promise.all([
+      child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
+    ]);
+    expect(code).toBe(expectedCode);
+    expect(stdout + stderr).toContain(message);
+  }
+});
+
 test("contract and configured skill validation distinguish stale, missing and unobserved", () => {
+  expect(compatibility.serverVersion).toBe(JSON.parse(readFileSync("package.json", "utf8")).version);
   expect(() => assertCompatibleOwner(null)).toThrow("Owner API/schema/skill contract differs");
   expect(() => assertCompatibleOwner({ ...compatibility, apiVersion: 999 })).toThrow();
   expect(inspectSkill().status).toBe("not_configured");

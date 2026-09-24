@@ -231,23 +231,3 @@ native-result rejection and idempotent reassignment/completion. This proves the
 coordinator contract. Separate installed-native and peer-process probes establish
 each provider's delivery path; an installed-host cross-provider handoff is not
 claimed by the controlled handoff test.
-
-## Legacy implementation audit
-
-The referenced historical tickets are inputs, not execution dependencies:
-
-| Source | Finding |
-| --- | --- |
-| VUH-12 / `src/tasks.ts` | Legacy task `idempotency_key` deduplicates retries. Its S7 layer-1 assertion passes on this machine. Preserve stable intent identity in the new task/dispatch path. |
-| VUH-13 / `src/dispatch.ts` | Existing dispatch checks a synthetic spawn lock before acquiring an exclusive lock, creates the task before spawning and reconciles the spawned instance. Both S7 race cases currently fail at the gateway authorization check on Windows, before spawn. They do not establish no-double-spawn here. |
-| VUH-16 / Hermes | No `subagent_stop` bridge was found in the inspected Python integration. Native completion must use the coordinator's current attempt/fence, rather than a second legacy task assignment. |
-| VUH-27 | First-class spawn intent was proposed but remains a historical Backlog item. The redesign needs a durable dispatch intent instead of using file-reservation paths as spawn state. |
-
-Legacy dispatch selects workers through role/generalist labels and accepts a
-gateway label as authority. These are not suitable sources of trusted routing
-capabilities or launch authorization in the redesign. Keep legacy compatibility
-separate from the new control plane.
-
-Fresh validation: two routing tests / nine assertions and TypeScript pass.
-The legacy S7 run is one pass / two failures; no physical agent was spawned
-(the fixture uses a counting fake spawner).

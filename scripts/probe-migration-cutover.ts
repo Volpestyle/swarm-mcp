@@ -1,3 +1,4 @@
+import { gitDiffHash } from "./fixtures/source-state";
 import assert from "node:assert/strict";
 import { randomBytes, createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -16,14 +17,14 @@ const output = resolve(process.argv[2] ?? "dist/verification/migration-canary.js
 const root = mkdtempSync(join(tmpdir(), "swarm-migration-canary-"));
 const report: Record<string, unknown> = {
   revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
-  sourceDiffSha256: createHash("sha256").update(execFileSync("git", ["diff", "HEAD", "--"])).digest("hex"),
+  sourceDiffSha256: gitDiffHash(),
   workingTree: execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim(),
   harnessSha256: createHash("sha256").update(readFileSync(import.meta.filename)).digest("hex"),
   ownerBundleSha256: createHash("sha256").update(readFileSync(resolve("dist/coordination/owner-cli.js"))).digest("hex"),
   startedAt: new Date().toISOString(), platform: process.platform, node: execFileSync("node", ["--version"], { encoding: "utf8" }).trim(),
   bun: Bun.version, root, method: "isolated imported fixture over production Node owner IPC",
 };
-let child: ReturnType<typeof Bun.spawn> | undefined;
+let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
 const clients: CoordinationClient[] = [];
 async function stop() {
   for (const client of clients.splice(0)) client.close();
@@ -58,7 +59,7 @@ try {
   const launcherSecret = randomBytes(32).toString("hex"), config = join(root, "owner.json");
   writeFileSync(config, JSON.stringify({ databasePath: join(destination, "coordination.db"), launcherSecret }), { mode: 0o600 });
   async function start() {
-    child = Bun.spawn({ cmd: ["node", resolve("dist/coordination/owner-cli.js"), config], stdout: "pipe", stderr: "pipe" });
+    child = Bun.spawn({ cmd: ["node", resolve("dist/coordination/owner-cli.js"), config], stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
     let ready = "";
     while (!ready.includes("\n")) {

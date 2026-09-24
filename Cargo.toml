@@ -1,9 +1,0 @@
-[workspace]
-members = [
-    "apps/swarm-server",
-    "apps/swarm-ui/src-tauri",
-    "crates/swarm-protocol",
-    "crates/swarm-schema",
-    "crates/swarm-state",
-]
-resolver = "2"

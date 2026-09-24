@@ -1,13 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 const output = resolve(process.argv[2] ?? "dist/verification/package-install.json");
 const root = mkdtempSync(join(tmpdir(), "swarm-package-install-"));
 const node = Bun.which("node")!;
-const npmCli = join(dirname(node), "node_modules/npm/bin/npm-cli.js");
+const npmCli = process.env.npm_execpath;
+if (!npmCli) throw new Error("Run npm run verify:install so npm supplies its CLI path");
 const report: Record<string, unknown> = { root, startedAt: new Date().toISOString(),
   revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   workingTree: execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim() };

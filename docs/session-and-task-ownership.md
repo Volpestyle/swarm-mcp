@@ -87,6 +87,6 @@ direct dependents atomically. Failed/cancelled prerequisites keep dependents
 blocked with a reason; successful retry opens them. Completed tasks are immutable
 and cannot be retried in place. Create a new task for new work.
 
-The legacy MCP tools, CLI and live database are not cut over by this core change.
-VUH-1338 exposes the new command surface; VUH-1339 wires launcher secrets and
-runtime observations/renewals; VUH-1344 owns legacy migration and rollout.
+Trusted runtime launchers supply enrollment and availability observations.
+See [migration](migration-cutover.md) for importing historical data without
+resurrecting live ownership.

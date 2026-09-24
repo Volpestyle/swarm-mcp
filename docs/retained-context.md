@@ -2,8 +2,8 @@
 
 The candidate coordinator stores findings and small shared state in SQLite and
 artifact bytes beside the database in `<database>.artifacts`. These APIs are
-available through the authenticated local owner; the compact MCP surface is a
-separate delivery step. The live legacy database is not migrated by this change.
+available through the authenticated local owner and MCP evidence/context tools.
+Existing databases require explicit offline migration.
 
 ## Publishing evidence
 

@@ -35,18 +35,6 @@ test("read-only guard rejects coordinator identity even at a legacy version", as
   expect(readFileSync(path)).toEqual(before);
 });
 
-test("current legacy entrypoint rejects coordinator before bootstrap writes", async () => {
-  const path = join(mkdtempSync(join(tmpdir(), "legacy-entry-")), "coordination.db");
-  const store = await CoordinationStore.open({ path }); store.close();
-  const before = readFileSync(path);
-  const child = Bun.spawn({ cmd: [process.execPath, resolve("src/db.ts")],
-    env: { ...process.env, SWARM_DB_PATH: path }, stdout: "pipe", stderr: "pipe" });
-  const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
-  expect(code).not.toBe(0);
-  expect(stderr).toContain("legacy_database_incompatible");
-  expect(readFileSync(path)).toEqual(before);
-});
-
 for (const revision of ["b446c18", "b95f607"]) {
   test(`historical ${revision} initializes its fixture but cannot touch coordinator through guard`, async () => {
     const root = mkdtempSync(join(tmpdir(), "legacy-baseline-"));

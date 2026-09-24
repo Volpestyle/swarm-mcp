@@ -16,7 +16,7 @@ export async function mixedClaude(
     mcpPath: resolve("dist/coordination/mcp-cli.js"),
   });
   const requests: any[] = [], calls: any[] = [];
-  let child: ReturnType<typeof Bun.spawn> | undefined;
+  let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
   let lease: any;
   let step = 0;
   let memory: ReturnType<typeof processMemory> | undefined;

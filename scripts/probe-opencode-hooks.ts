@@ -276,7 +276,7 @@ export const Probe = async ({directory, client, serverUrl}) => {
   return {...hooks, event: async (input) => { record(input.event); }};
 };`,
 );
-const env = {
+const env: Record<string, string | undefined> = {
   ...process.env,
   XDG_CONFIG_HOME: join(root, "config"),
   XDG_DATA_HOME: join(root, "data"),
@@ -316,7 +316,7 @@ const env = {
 // Do not inherit server authentication or an explicit external config path.
 for (const key of Object.keys(env)) {
   if (key.startsWith("SWARM_") && key !== "SWARM_PROBE_EVENTS")
-    delete (env as Record<string, string | undefined>)[key];
+    delete env[key];
 }
 delete env.OPENCODE_CONFIG;
 delete env.OPENCODE_SERVER_PASSWORD;

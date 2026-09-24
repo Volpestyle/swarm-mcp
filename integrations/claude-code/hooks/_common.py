@@ -1,11 +1,4 @@
-"""Claude-Code-specific HookCore wiring.
-
-The runtime-agnostic core lives in ``integrations/_shared/swarm_hook_core.py``;
-this file just supplies the Claude-Code-flavored ``RuntimeConfig`` (label
-token, env-var prefix, scratch dir, write-tool set, and the ``file_path``-style
-path extractor) and exposes a singleton ``core`` for the entry scripts to
-call.
-"""
+"""Host-specific write tools and path extraction for coordinator reservations."""
 
 from __future__ import annotations
 
@@ -59,11 +52,7 @@ def _extract_paths(tool_name: str, tool_input: object) -> list[str]:
 
 core = HookCore(
     RuntimeConfig(
-        runtime_name="claude-code",
-        env_prefix="CC",
-        scratch_dir_name="swarm-cc",
         write_tools=_WRITE_TOOLS,
         extract_paths=_extract_paths,
-        soul_path=_PLUGIN_ROOT / "SOUL.md",
     )
 )

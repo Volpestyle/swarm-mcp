@@ -1,3 +1,4 @@
+import { version } from "../../package.json";
 import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { SCHEMA_VERSION } from "./migrations";
@@ -9,7 +10,7 @@ const build: Build = typeof SWARM_BUILD === "undefined"
   ? { revision: null, sourceDigest: null, packageVersion: "development-unidentified", sdkVersion: "development-unidentified" }
   : SWARM_BUILD!;
 export const SKILL_CONTRACT = "swarm-coordination/1";
-export const SERVER_VERSION = "2.0.0-rc.1";
+export const SERVER_VERSION = version;
 export const MODERN_PROTOCOL = "2026-07-28";
 export const compatibility = Object.freeze({ apiVersion: 1, skillContract: SKILL_CONTRACT,
   schemaVersion: SCHEMA_VERSION, serverVersion: SERVER_VERSION, modernProtocol: MODERN_PROTOCOL, build });
@@ -34,7 +35,7 @@ export function inspectSkill(path?: string) {
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content)?.[1] ?? "";
   const contract = /^\s*coordination-contract:\s*([a-z0-9/-]+)\s*$/m.exec(frontmatter)?.[1];
   if (contract !== SKILL_CONTRACT)
-    throw new CoordinationError("skill_mismatch", `Configured skill lacks ${SKILL_CONTRACT}; update that copy before using the compact coordinator`);
+    throw new CoordinationError("skill_mismatch", `Configured skill lacks ${SKILL_CONTRACT}; update that copy before using the coordinator`);
   return { status: "file_verified" as const, expectedContract: SKILL_CONTRACT, path,
     limitation: "Configured file only; host-loaded instructions are not observable" };
 }

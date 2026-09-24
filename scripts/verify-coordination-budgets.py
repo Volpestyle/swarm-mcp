@@ -1,4 +1,4 @@
-"""Enforce measured IPC and compact-API budgets; not a complete release gate."""
+"""Enforce measured IPC and API budgets; not a complete release gate."""
 import argparse
 import json
 import math

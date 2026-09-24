@@ -9,9 +9,8 @@ the distinction between supported paths, degraded modes and later rollout work.
 | Host | Evidence | Current limitation |
 | --- | --- | --- |
 | OpenCode 1.4.3 | Installed-host lifecycle/restart, busy/blocked gating, post-tool and autonomous idle-turn delivery, explicit ack, retained-context deduplication and autonomous metadata-only refresh after real lease expiry | Killed/resumed-host delivery, uncertain wake recovery and large-history enrollment remain open |
-| Claude Code 2.1.278 | Trusted-launcher hook/MCP binding, installed-host turn-start/post-tool delivery and native MCP ack, session-end closure, transcript-based deduplication, real lease expiry and forced-kill/native-resume recovery from a saved transcript | Legacy-plugin rollout and recovery before the first saved transcript remain open; delivery only at native boundaries, no idle wake implementation |
+| Claude Code 2.1.278 | Trusted-launcher hook/MCP binding, installed-host turn-start/post-tool delivery and native MCP ack, session-end closure, transcript-based deduplication, real lease expiry and forced-kill/native-resume recovery from a saved transcript | Recovery before the first saved transcript remains open; delivery only at native boundaries, no idle wake implementation |
 | Codex 0.155.1 | Native MCP isolation; composed resume/lifecycle observation and archive revocation; owner-driven model-context delivery and retained-context lease renewal | Initial enrollment, autonomous delivery and rewritten-history recovery remain unverified. Fixture hooks are untrusted. Automatic integration remains degraded |
-| Hermes | Existing in-process lifecycle implementation inspected; 23 Python lifecycle tests pass | No `hermes` executable on this PATH or `hermes_cli` module in the inspected Python. Actual-host delivery is unverified |
 
 Codex's two-thread probe also verifies distinct per-thread MCP credentials in one
 app server: the second actor cannot fetch the first actor's message, and its
@@ -51,10 +50,9 @@ commands and remaining work. Codex lifecycle-only captures make no model request
 its context-delivery capture uses a scripted localhost Responses endpoint.
 
 For another environment, discover the native host executable/version and relevant
-installed API first. For Hermes also inspect the intended virtual environment or
-explicit installation path. Run the existing lifecycle tests, then a disposable
-actual-host probe before raising its support level. A missing executable in this
-environment is not a claim that Hermes lacks the required hooks.
+installed API first. Run the lifecycle tests and a disposable actual-host probe
+before raising its support level. Other hosts can use trusted enrollment with
+manual MCP coordination; this package makes no automatic-delivery claim for them.
 
 When automatic delivery is unverified or unavailable, retain durable inbox work
 and expose that limitation. Do not substitute process liveness for idle evidence,

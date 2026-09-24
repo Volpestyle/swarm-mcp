@@ -108,7 +108,6 @@ function env(actor: "alice" | "bob" | "carol") {
     ]),
     SWARM_COORDINATOR_ENDPOINT: credentials.endpoint,
     SWARM_SESSION_CAPABILITY: credentials[actor],
-    SWARM_MCP_DIRECTORY: actor === "carol" ? peer : main,
   };
 }
 async function run(
@@ -119,6 +118,7 @@ async function run(
 ) {
   const proc = Bun.spawn({
     cmd: argv,
+    cwd: actor === "carol" ? peer : main,
     env: { ...env(actor), ...overrides },
     stdin: input === undefined ? "ignore" : new Blob([input]),
     stdout: "pipe",
@@ -283,10 +283,10 @@ test("Codex rename hook reserves source and destination atomically", async () =>
   const alice = await connect("alice"),
     bob = await connect("bob");
   const codexPre = resolve(
-      "integrations/codex/plugins/swarm/hooks/pre_tool_use.py",
+      "integrations/codex/hooks/pre_tool_use.py",
     ),
     codexPost = resolve(
-      "integrations/codex/plugins/swarm/hooks/post_tool_use.py",
+      "integrations/codex/hooks/post_tool_use.py",
     );
   const held = (await alice.request({
     op: "command",

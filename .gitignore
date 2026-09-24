@@ -1,9 +1,6 @@
 node_modules/
 dist/
 target/
-crates/*/target/
-apps/swarm-ui/src-tauri/target/
-apps/swarm-server/target/
 nvim.log
 excalidraw.log
 *.db
@@ -14,7 +11,6 @@ __pycache__/
 *.pyc
 .env
 .env.*
-env/*.local
 
 # Raw verification captures stay in run artifacts or git history, not the tree.
 # Retain the manifest and README of each evidence directory only.

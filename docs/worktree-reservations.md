@@ -56,14 +56,20 @@ After trusted session enrollment, the launcher supplies:
 
 `bun run build` produces the client; the package exposes it as
 `swarm-coordinator-client`. The helper reads an operation from stdin and returns
-JSON over stdout. It never prints credentials. Enrollment and runtime installation
-remain in VUH-1339; the opt-in variables do not switch the live legacy database.
+JSON over stdout. It never prints credentials. Trusted runtime launchers supply enrollment; the variables do not initialize or
+convert a database.
 
 The shared pre-tool hook acquires all recognized paths, checks current grants,
 and denies the write if acquisition or validation fails. An enabled hook also
 denies missing path metadata or stable tool-call IDs. PostToolUse releases its
-new grants. Lost post events leave bounded leases for recovery. Legacy sessions
-without the opt-in client retain their old check-only behavior.
+new grants. Lost post events leave bounded leases for recovery. Missing enrollment
+denies known writes. Relative file paths use the host process working directory.
+
+Wire `PreToolUse` and `PostToolUse` to the corresponding `pre_tool_use.py` and
+`post_tool_use.py` in `integrations/claude-code/hooks` or `integrations/codex/hooks`,
+using the absolute Python executable and script paths in native host settings.
+Keep the checkout layout so the scripts can locate `integrations/_shared`.
+These hooks own reservations only; the runtime adapter owns session lifecycle.
 
 For multi-step shell edits and Git integration, run
 `python integrations/_shared/leased_command.py --kind integration --reason
@@ -82,7 +88,7 @@ renew the task lease; the runtime adapter owns that responsibility.
 | Explicit leased_command subprocess | Cooperative critical section with renewal and direct-child termination on loss. |
 | Arbitrary shell, Python, terminal or editor writes | Uncovered unless explicitly wrapped. No shell-command guessing. |
 | Nested tool calls or unrecognized tool names | Uncovered unless the host emits a supported write event. |
-| Hermes in-process write tools | Existing behavior; coordinator lease integration remains runtime-adapter work. |
+| Other hosts | Require a trusted reservation integration before claiming write coverage. |
 | Actual Claude/Codex hook delivery | Subprocess contract tested here; installed-host lifecycle validation belongs to VUH-1339. |
 
 These are cooperative reservations, not kernel filesystem locks. A host that does

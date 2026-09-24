@@ -30,8 +30,7 @@ starting its child. Only application ID zero with schema version zero or one is
 accepted. Coordinator identity is rejected even if its version was accidentally
 lowered to one. Missing legacy destinations are allowed so historical code can
 initialize a fresh legacy database. No SQL pragmas or migrations are applied by
-the guard. The current legacy entrypoint also runs the guard before opening its
-write connection.
+the guard. The guard is an explicit rollback wrapper for a separately retained historical binary.
 
 ```powershell
 node dist/legacy-guard-cli.js C:/isolated-cutover/legacy.db -- C:/Users/volpe/.bun/bin/bun.exe run C:/isolated-checkout/src/index.ts
@@ -54,8 +53,7 @@ wrapper require equivalent checks or must remain pointed at the legacy snapshot.
 `test/coordination-legacy-guard.test.ts` runs the actual pinned April and final
 upstream database modules. Each initializes an isolated legacy fixture. Both
 Node and Bun guard launchers reject the coordinator before running either old
-module, with its database bytes unchanged. The current legacy entrypoint also
-rejects before bootstrap. An application-ID test covers a coordinator whose
+module, with its database bytes unchanged. An application-ID test covers a coordinator whose
 version is deliberately set to one.
 
 Historical source fixtures and their hashes/revisions live under

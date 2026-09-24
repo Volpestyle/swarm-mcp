@@ -139,15 +139,11 @@ args = [${JSON.stringify(mcpWrapperPath)}]
 env_vars = ["SWARM_COORDINATOR_ENDPOINT", "SWARM_SESSION_CAPABILITY"]
 `,
 );
-const configured = JSON.parse(
-  readFileSync("integrations/codex/plugins/swarm/hooks.json", "utf8"),
-);
-for (const groups of Object.values(configured.hooks) as Array<
-  Array<{ hooks: Array<{ command: string }> }>
->)
-  for (const group of groups)
-    for (const hook of group.hooks)
-      hook.command = "node -e \"process.stdout.write('{}')\"";
+const configured = {
+  hooks: Object.fromEntries(["PreToolUse", "PostToolUse"].map(event => [event,
+    [{ hooks: [{ type: "command", command: "node -e \"process.stdout.write('{}')\"" }] }],
+  ])),
+};
 writeFileSync(join(home, "hooks.json"), JSON.stringify(configured));
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
@@ -232,13 +228,13 @@ try {
     loaded.errors.length ||
     loaded.hooks.length !== Object.keys(configured.hooks).length ||
     !loaded.hooks.some(
-      (hook: { eventName: string }) => hook.eventName === "sessionEnd",
+      (hook: { eventName: string }) => hook.eventName === "preToolUse",
     ) ||
     loaded.hooks.some(
       (hook: { eventName: string }) => hook.eventName === "stop",
     )
   )
-    throw new Error("Codex hook lifecycle mapping was not loaded correctly");
+    throw new Error("Codex write-hook mapping was not loaded correctly");
   const started = await call("thread/start", {
     cwd: root,
     model: "fixture",

@@ -1,6 +1,6 @@
 # Startup compatibility diagnostics
 
-The candidate advertises a compact API version, schema version, skill contract,
+The candidate advertises a Swarm API version, schema version, skill contract,
 MCP application/protocol version and build descriptor. The production build
 embeds the package/SDK versions, Git revision and a SHA-256 over source, SQL,
 manifest, lockfile and build script. A docs-only commit can change revision while
@@ -48,5 +48,5 @@ rewrite its database, delete retained identity files or silently switch profiles
 `test/coordination-compatibility.test.ts` builds two distinct clients/owners,
 verifies rejection before any session is enrolled, and proves the existing owner
 remains reachable. It also covers authentication, stale skill files, unknown
-config versions and MCP startup refusal. Full compact MCP tests exercise successful
+config versions and MCP startup refusal. Full MCP tests exercise successful
 bootstrap and workflow calls in both modern and legacy protocol modes.

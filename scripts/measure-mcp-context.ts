@@ -1,114 +1,173 @@
+import { Client } from "@modelcontextprotocol/client";
 import {
   StdioClientTransport,
   getDefaultEnvironment,
 } from "@modelcontextprotocol/client/stdio";
-import { Client } from "@modelcontextprotocol/client";
-import { processMemory } from "./fixtures/process-memory";
-import { setTimeout as delay } from "node:timers/promises";
-
-// Real stdio MCP calls against disposable servers. No model invocation or host billing claim.
-import { mkdtempSync } from "node:fs";
+import { build } from "esbuild";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { strict as assert } from "node:assert";
+import { processMemory } from "./fixtures/process-memory";
+import { setTimeout as delay } from "node:timers/promises";
+import { CoordinationClient } from "../src/coordination/ipc";
+
+// Actual Node owner and stdio adapters; enrollment happens outside model calls.
 const count = Number(process.argv[2]);
-if (![2, 8, 32].includes(count)) throw new Error("Expected 2, 8 or 32 agents");
+const output = process.argv[3];
+if (![2, 8, 32].includes(count) || !output)
+  throw new Error(
+    "Usage: bun scripts/measure-mcp-context.ts 2|8|32 output.json",
+  );
+mkdirSync(resolve("dist/test"), { recursive: true });
+const bundle = mkdtempSync(resolve("dist/test/context-"));
+await build({
+  entryPoints: [
+    "scripts/fixtures/context-owner.ts",
+    "src/coordination/mcp-cli.ts",
+  ],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node22",
+  packages: "external",
+  outdir: bundle,
+  outbase: ".",
+});
 const fixture = mkdtempSync(join(tmpdir(), "swarm-mcp-context-"));
+const owner = Bun.spawn({
+  cmd: [
+    Bun.which("node")!,
+    join(bundle, "scripts/fixtures/context-owner.js"),
+    join(fixture, "db"),
+    String(count),
+  ],
+  stdout: "pipe",
+  stderr: "pipe",
+});
 const clients: Client[] = [];
 const transports: StdioClientTransport[] = [];
-const ids: string[] = [];
-const transcript: Array<{
-  agent: number;
-  name: string;
-  arguments: unknown;
-  result: unknown;
-  elapsedMs: number;
-}> = [];
-let schema: unknown;
-const call = async (
-  agent: number,
-  name: string,
-  args: Record<string, unknown>,
-) => {
-  const start = performance.now();
-  const result = await clients[agent]!.callTool({ name, arguments: args });
-  assert.notEqual(result.isError, true, JSON.stringify(result));
-  transcript.push({
-    agent,
-    name,
-    arguments: args,
-    result,
-    elapsedMs: performance.now() - start,
-  });
-  return result;
-};
-const text = (result: any) =>
-  result.content
-    .filter((item: any) => item.type === "text")
-    .map((item: any) => item.text);
+const transcript: Array<Record<string, unknown>> = [];
 try {
-  for (let agent = 0; agent < count; agent++) {
+  const reader = owner.stdout.getReader();
+  let line = "";
+  while (!line.includes("\n")) {
+    const chunk = await reader.read();
+    if (chunk.done) throw new Error(await new Response(owner.stderr).text());
+    line += new TextDecoder().decode(chunk.value);
+  }
+  reader.releaseLock();
+  const { endpoint, capabilities } = JSON.parse(line);
+  for (const capability of capabilities) {
     const client = new Client({
-      name: "baseline-context-measurement",
+      name: "mcp-context-measurement",
       version: "1",
     });
     clients.push(client);
     const transport = new StdioClientTransport({
-        command: process.execPath,
-        args: ["run", resolve("src/index.ts")],
-        cwd: process.cwd(),
+        command: Bun.which("node")!,
+        args: [join(bundle, "src/coordination/mcp-cli.js")],
         stderr: "pipe",
         env: {
           ...getDefaultEnvironment(),
-          SWARM_DB_PATH: join(fixture, "swarm.db"),
-          AGENT_IDENTITY: "benchmark",
+          SWARM_COORDINATOR_ENDPOINT: endpoint,
+          SWARM_SESSION_CAPABILITY: capability,
         },
       });
     transports.push(transport);
     await client.connect(transport);
-    if (agent === 0) schema = await client.listTools();
-    const result = await call(agent, "register", {
-      directory: fixture,
-      scope: fixture,
-      label: `identity:benchmark role:implementer agent:${agent}`,
-    });
-    ids.push(JSON.parse(text(result)[0]!).id);
   }
+  const toolSchema = await clients[0]!.listTools();
+  const call = async (
+    agent: number,
+    name: string,
+    args: Record<string, unknown>,
+  ) => {
+    const start = performance.now();
+    const result = await clients[agent]!.callTool({ name, arguments: args });
+    assert.notEqual(result.isError, true, JSON.stringify(result));
+    transcript.push({
+      agent,
+      name,
+      arguments: args,
+      result,
+      elapsedMs: performance.now() - start,
+    });
+    return (result.structuredContent as any).data;
+  };
   for (let agent = 0; agent < count; agent++)
-    await call(agent, "bootstrap", {});
+    await call(agent, "swarm_sync", {});
   for (let agent = 0; agent < count; agent++)
-    await call(agent, "send_message", {
-      recipient: ids[(agent + 1) % count],
-      content: `fixture handoff ${agent}: inspect the assigned module and return evidence`,
+    await call(agent, "swarm_send", {
+      commandId: `send-${agent}`,
+      recipient: `agent-${(agent + 1) % count}`,
+      kind: "question",
+      threadId: `thread-${agent}`,
+      body: `fixture handoff ${agent}: inspect the assigned module and return evidence`,
     });
   for (let agent = 0; agent < count; agent++) {
-    const result = await call(agent, "poll_messages", {});
+    const receipt = await call(agent, "swarm_inbox", {
+      commandId: `fetch-${agent}`,
+      action: "fetch",
+      consumer: "measurement",
+    });
     assert.ok(
-      JSON.stringify(result).includes(
+      JSON.stringify(receipt).includes(
         `fixture handoff ${(agent + count - 1) % count}:`,
       ),
       "Peer message missing",
     );
+    const delivery = receipt.value.deliveries[0];
+    await call(agent, "swarm_inbox", {
+      commandId: `ack-${agent}`,
+      action: "ack",
+      messageId: delivery.message.id,
+      leaseToken: delivery.leaseToken,
+    });
   }
+  // Separate from the handoff transcript: exercise a resumed model sync while
+  // another actor generates real task/lease traffic through the owner.
+  const beforeNoise = await clients[0]!.callTool({ name: "swarm_sync", arguments: {} });
+  assert.notEqual(beforeNoise.isError, true);
+  const cursor = (beforeNoise.structuredContent as any).data.eventCursor;
+  const worker = await CoordinationClient.connect(endpoint, capabilities[1]);
+  try {
+    const created: any = await worker.request({ op: "command", command: { id: "noise-create", type: "task.create", payload: { title: "Unrelated work" } } });
+    const owned: any = await worker.request({ op: "command", command: { id: "noise-claim", type: "task.claim", payload: { taskId: created.value.task.id, expectedVersion: 1 } } });
+    for (let i = 0; i < 40; i++) await worker.request({ op: "command", command: { id: `noise-${i}`, type: "task.renew", payload: {
+      taskId: created.value.task.id, attemptId: owned.value.attemptId, fence: owned.value.fence,
+    } } });
+  } finally { worker.close(); }
+  const deltaResult = await clients[0]!.callTool({ name: "swarm_sync", arguments: { cursor } });
+  assert.notEqual(deltaResult.isError, true);
+  assert.deepEqual((deltaResult.structuredContent as any).data.items, []);
+  assert.ok((deltaResult.structuredContent as any).data.cursor > cursor);
   await delay(2000);
-  const memory = processMemory(transports.map(transport => transport.pid!));
-  console.log(
+  const memory = processMemory([...transports.map(transport => transport.pid!), owner.pid]);
+  writeFileSync(
+    output,
     JSON.stringify(
       {
         count,
         fixture,
         server: clients[0]!.getServerVersion(),
-        toolSchema: schema,
+        instructions: clients[0]!.getInstructions(),
+        toolSchema,
         toolCalls: transcript.length,
         transcript,
+        deltaCheck: { before: cursor, result: deltaResult, unrelatedRenewals: 40 },
         memory,
+        memoryRoles: { owner: owner.pid, adapters: transports.map(transport => transport.pid) },
         limitations:
-          "Real stdio discovery/register/bootstrap/send/poll. Count tool-call arguments and textual results with a named tokenizer; schemas may be loaded once per agent or deferred by the host. Excludes hidden host prompt framing, reasoning tokens, model inference and native host delivery integration.",
+          "Real stdio catalog/bootstrap/send/fetch/ack. Trusted enrollment excluded from model calls. Explicit processing acknowledgment adds a call compared with legacy poll; no claim of reduced handoff calls. No inference or hidden host framing measured. Text results counted once; hosts may additionally include structuredContent.",
       },
       null,
       2,
     ),
   );
+  console.log(output);
 } finally {
   await Promise.allSettled(clients.map((client) => client.close()));
+  owner.kill();
+  await owner.exited;
 }

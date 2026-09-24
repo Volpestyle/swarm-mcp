@@ -1,4 +1,4 @@
-"""Fresh compact MCP token gate. Requires the same pinned tokenizer as captures."""
+"""Fresh MCP token gate. Requires the same pinned tokenizer as captures."""
 import json
 import sys
 from pathlib import Path

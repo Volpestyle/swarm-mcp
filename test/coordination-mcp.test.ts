@@ -12,9 +12,9 @@ import {
 } from "@modelcontextprotocol/client/stdio";
 
 for (const mode of ["modern", "legacy"] as const)
-  test(`compact MCP executes durable workflows through the Node owner (${mode})`, async () => {
+  test(`Swarm MCP executes durable workflows through the Node owner (${mode})`, async () => {
     mkdirSync(resolve("dist/test"), { recursive: true });
-    const dir = mkdtempSync(resolve("dist/test/compact-"));
+    const dir = mkdtempSync(resolve("dist/test/mcp-"));
     await build({
       entryPoints: [
         "test/fixtures/coordination-service.ts",
@@ -28,7 +28,7 @@ for (const mode of ["modern", "legacy"] as const)
       outdir: dir,
       outbase: ".",
     });
-    const root = mkdtempSync(join(tmpdir(), "swarm-compact-"));
+    const root = mkdtempSync(join(tmpdir(), "swarm-mcp-"));
     const owner = Bun.spawn({
       cmd: [
         Bun.which("node")!,
@@ -40,7 +40,7 @@ for (const mode of ["modern", "legacy"] as const)
       stderr: "pipe",
     });
     const client = new Client(
-      { name: "compact-test", version: "1" },
+      { name: "mcp-test", version: "1" },
       {
         versionNegotiation: {
           mode: mode === "modern" ? { pin: "2026-07-28" } : "legacy",

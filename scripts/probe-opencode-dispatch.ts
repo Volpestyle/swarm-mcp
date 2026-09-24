@@ -1,3 +1,4 @@
+import { gitDiffHash } from "./fixtures/source-state";
 import { build } from "esbuild";
 import { Database } from "bun:sqlite";
 import {
@@ -458,7 +459,7 @@ try {
           userPromptInvocations: 1, automaticOpenCodeWakes: true,
           limitation: "One explicit Claude user turn after question persisted; no Claude idle-wake claim. Scripted model endpoints exercise actual hosts, not reasoning quality." } : undefined,
         source: { revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
-          diffSha256: createHash("sha256").update(execFileSync("git", ["diff", "HEAD", "--"])).digest("hex"),
+          diffSha256: gitDiffHash(),
           hashes: Object.fromEntries(["scripts/probe-opencode-dispatch.ts", "scripts/fixtures/mixed-claude.ts", "scripts/fixtures/runtime-mixed-question.ts", "dist/coordination/owner-cli.js"].map(path => [path, createHash("sha256").update(readFileSync(path)).digest("hex")])),
           opencodeVersion: execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(),
           claudeVersion: claudeBinary ? execFileSync(claudeBinary, ["--version"], { encoding: "utf8" }).trim() : undefined },

@@ -1,3 +1,4 @@
+import { gitDiffHash } from "./fixtures/source-state";
 import {
   mkdtempSync,
   mkdirSync,
@@ -273,9 +274,7 @@ if (worker) {
     workingTree: execFileSync("git", ["status", "--porcelain"], {
       encoding: "utf8",
     }).trim(),
-    diffSha256: createHash("sha256")
-      .update(execFileSync("git", ["diff", "HEAD", "--"]))
-      .digest("hex"),
+    diffSha256: gitDiffHash(),
     ownerBundleSha256: createHash("sha256")
       .update(readFileSync(resolve("dist/coordination/owner-cli.js")))
       .digest("hex"),
