@@ -47,6 +47,9 @@ Earlier migration-fixture failures remain in the migration evidence archive.
 
 ## Reproduction
 
+Run these historical commands from an isolated checkout of `bf910a1`.
+Use [the current gate](../../coordination-verification.md) for current-source checks.
+
 ```powershell
 bun install --frozen-lockfile
 bun scripts/verify-coordination.ts

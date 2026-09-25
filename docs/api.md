@@ -7,8 +7,6 @@ Node owner authorizes every operation. Trusted runtime launchers supply automati
 enrollment; see [runtime delivery](runtime-delivery.md) and
 [startup compatibility](startup-compatibility.md).
 `swarm-mcp` and `swarm-coordinator-mcp` expose this same API.
-See the [complete legacy tool mapping and migration boundaries](api-migration.md)
-before changing a client configuration.
 
 | Tool | Common path |
 | --- | --- |
@@ -51,7 +49,7 @@ These are data budgets, not total wire-frame sizes: the compatibility text
 envelope duplicates structuredContent and JSON escaping adds overhead. Error
 messages are truncated to 1,024 characters. Artifact bytes remain separately
 paged at 16 KiB. Oversized existing records from earlier candidate builds are
-not rewritten; this is not a migration of an installed legacy database.
+not rewritten.
 
 Task details include the authoritative scope and creator, parsed contract fields,
 dependency IDs, current attempt owner/fence/lease and parsed completion evidence.
@@ -90,7 +88,7 @@ fetch and explicit acknowledgment, shared context, capture/source removal,
 multi-page artifact reconstruction, annotation freshness, resource opt-in,
 unsubscribe and prompt shutdown with a held observer. Fixtures use disposable databases.
 
-Package preparation and offline migration do not switch installed host profiles.
+Package preparation does not switch installed host profiles.
 
 Resumed `swarm_sync` filters to the actor's work, addressed messages and shared
 context/evidence. Lease renewals and transport observations are omitted. Its

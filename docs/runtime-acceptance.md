@@ -27,7 +27,7 @@ reconstruction are not proven. These are explicit support limits, not claims of
 message acknowledgment, exactly-once effects or successful recovery.
 
 The broader [failure gate](coordination-verification.md),
-[benchmarks](coordination-benchmarks.md) and [migration checks](migration-cutover.md)
+[benchmarks](coordination-benchmarks.md) and [package checks](release-packaging.md)
 cover persistence and packaging separately from installed-host delivery.
 
 Reproduce the focused regression run:

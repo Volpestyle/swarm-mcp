@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { build } from "esbuild";
 import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CoordinationStore, type Json } from "../src/coordination/store";
@@ -367,15 +367,22 @@ describe("real process persistence and migration", () => {
     },
   );
 
-  test("legacy and newer databases are refused without rewriting their version", async () => {
-    const legacy = fixture();
-    const db = new Database(legacy);
-    db.exec("CREATE TABLE instances(id TEXT); PRAGMA user_version=1;");
+  test("incomplete profiles are refused before creating a database", async () => {
+    const path = fixture();
+    writeFileSync(join(path, "..", "import.pending"), "incomplete");
+    await expect(CoordinationStore.open({ path })).rejects.toThrow("incomplete imported state");
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test("foreign and newer databases are refused without rewriting their version", async () => {
+    const foreign = fixture();
+    const db = new Database(foreign);
+    db.exec("CREATE TABLE foreign_data(id TEXT); PRAGMA user_version=1;");
     db.close();
-    await expect(CoordinationStore.open({ path: legacy })).rejects.toThrow(
-      "migrate a copy",
+    await expect(CoordinationStore.open({ path: foreign })).rejects.toThrow(
+      "Not a coordinator database",
     );
-    const verify = new Database(legacy, { readonly: true });
+    const verify = new Database(foreign, { readonly: true });
     expect(verify.query("PRAGMA application_id").get()).toEqual({
       application_id: 0,
     });

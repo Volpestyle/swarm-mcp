@@ -46,7 +46,8 @@ schema 1, but left schema 11's import tables behind. `843882e` replaces this wit
 a fixed schema-1 SQL fixture and checks preserved task data plus migration rollback.
 The failed trace is kept rather than rewritten as a passing run.
 
-Reproduce from the candidate checkout:
+Reproduce from an isolated checkout of `bf910a1`, which contains the harness
+and pinned source fixtures used by this historical workflow:
 
 ```powershell
 bun install --frozen-lockfile

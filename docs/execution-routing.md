@@ -76,7 +76,7 @@ same-scope worker session in one transaction. Binding claims the task for that
 worker with the existing attempt/fence mechanism; a duplicate result returns the
 same attempt, and another worker is rejected. Ordinary task claims cannot bypass
 an unreleased dispatch reservation. Native completion uses the same worker-bound
-`task.finish` command and stable command ID, not a parallel legacy task record.
+`task.finish` command and stable command ID.
 
 The dispatch regression runs two independent Node processes against one database.
 Exactly one creates a reservation/task; both receive the same task ID. Reopening

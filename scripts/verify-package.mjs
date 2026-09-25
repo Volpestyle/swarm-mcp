@@ -14,7 +14,7 @@ const [pack] = JSON.parse(execFileSync(process.execPath,
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
 const paths = new Set(pack.files.map(file => file.path));
 assert.equal(pkg.bin["swarm-mcp"], pkg.bin["swarm-coordinator-mcp"], "Swarm commands must use one coordinator");
-for (const retired of ["dist/cli.js", "dist/index.js", "sql/swarm_db_bootstrap.sql"])
+for (const retired of ["dist/cli.js", "dist/index.js", "sql/swarm_db_bootstrap.sql", "dist/legacy-guard-cli.js", "dist/coordination/migration-cli.js"])
   assert.ok(!paths.has(retired), `Retired implementation shipped: ${retired}`);
 for (const path of paths) {
   assert.ok(path === "package.json" || path === "README.md" || path === "docs/runtime-embedding.md" || path === "LICENSE" || path === "skills/README.md" || path === "bun.lock" ||

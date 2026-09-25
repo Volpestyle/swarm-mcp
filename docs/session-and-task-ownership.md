@@ -88,5 +88,3 @@ blocked with a reason; successful retry opens them. Completed tasks are immutabl
 and cannot be retried in place. Create a new task for new work.
 
 Trusted runtime launchers supply enrollment and availability observations.
-See [migration](migration-cutover.md) for importing historical data without
-resurrecting live ownership.

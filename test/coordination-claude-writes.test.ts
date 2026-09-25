@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { build } from "esbuild";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { prepareClaudeLaunch } from "../src/coordination/claude-launcher";
@@ -10,7 +10,7 @@ import { CoordinationClient } from "../src/coordination/ipc";
 
 test("Claude write hooks use the trusted launcher binding", async () => {
   mkdirSync(resolve("dist/test"), { recursive: true });
-  const bundles = mkdtempSync(resolve("dist/test/claude-legacy-"));
+  const bundles = mkdtempSync(resolve("dist/test/claude-writes-"));
   for (const [source, file] of [
     ["owner-cli", "owner.mjs"],
     ["client-cli", "client.mjs"],
@@ -25,14 +25,8 @@ test("Claude write hooks use the trusted launcher binding", async () => {
       format: "esm",
       packages: "external",
     });
-  const root = mkdtempSync(join(tmpdir(), "claude-legacy-"));
+  const root = mkdtempSync(join(tmpdir(), "claude-writes-"));
   const sessionId = randomUUID();
-  const marker = join(root, "legacy-was-called");
-  const trap = join(root, "legacy-trap.mjs");
-  writeFileSync(
-    trap,
-    `import {writeFileSync} from "node:fs";writeFileSync(${JSON.stringify(marker)},"called");`,
-  );
   const launch = await prepareClaudeLaunch({
     stateDirectory: join(root, "private"),
     nodePath: Bun.which("node")!,
@@ -54,15 +48,11 @@ test("Claude write hooks use the trusted launcher binding", async () => {
     launch.environment.SWARM_COORDINATOR_ENDPOINT,
     launch.environment.SWARM_SESSION_CAPABILITY,
   );
-  const quoted = (path: string) =>
-    "'" + path.replaceAll("\\", "/").replaceAll("'", "'\\''") + "'";
   const environment = {
     ...Object.fromEntries(
       Object.entries(process.env).filter(([key]) => !key.startsWith("SWARM_")),
     ),
     ...launch.environment,
-    AGENT_IDENTITY: "fixture",
-    SWARM_MCP_BIN: `${quoted(Bun.which("node")!)} ${quoted(trap)}`,
   };
   const payload = {
     session_id: sessionId,
@@ -106,7 +96,6 @@ test("Claude write hooks use the trusted launcher binding", async () => {
     expect(active.length).toBe(1);
     expect(await run("post_tool_use")).toBe("");
     expect(await client.request({ op: "reservations" })).toEqual([]);
-    expect(existsSync(marker)).toBe(false);
   } finally {
     client.close();
     if (launch.launchedOwner) {

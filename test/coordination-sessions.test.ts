@@ -131,7 +131,7 @@ test("schema 11 inboxes migrate without pinning or losing existing deliveries", 
   const env = await fixture();
   const first = env.store.openSession(env.enrollment);
   env.core.command(first, {
-    id: "legacy-mail", type: "message.send",
+    id: "schema-11-mail", type: "message.send",
     payload: { recipient: first.actor, kind: "reply", body: "durable before migration" },
   });
   env.store.close();

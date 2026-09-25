@@ -16,7 +16,7 @@ admitted runtime effects cannot be recalled. Omit the field for durable actor ma
 that survives recipient restart; announcements retain that durable behavior.
 
 Envelopes also record `senderGeneration` from the authenticated session at send
-time. It never changes when that actor restarts; legacy sessionless messages omit
+time. It never changes when that actor restarts; messages without a recorded session omit
 it. Bootstrap advertises `messageSessionIdentity: true` for consumers that need
 this provenance. Caller-supplied identity fields cannot override it.
 
@@ -55,8 +55,7 @@ recipient inactivity. Explicit `ttlMs` ranges from one millisecond to 30 days.
 Expired deliveries are never leased. Expiration records and lease recovery are
 materialized by the recipient's next fetch or explicit `inbox.sweep`; an offline
 recipient's snapshot can still say pending with an elapsed `expiresAt` until that
-sweep. Unpinned rows remain visible; there is no one-hour deletion or legacy cleanup path
-against this separate database.
+sweep. Unpinned rows remain visible.
 
 Leases default to 30 seconds (maximum two minutes). Rejection or lease expiry
 schedules exponential backoff, capped at one minute. Defaults are five attempts,
@@ -73,11 +72,7 @@ State changes and notification hints omit message bodies and lease tokens.
 Service-provided authorization determines scope and actor, including when a
 caller adds unexpected identity fields to its command.
 
-## Migration and verification
-
-Historical polling does not establish processing acknowledgment. Offline import
-preserves unread messages as pending deliveries requiring a fresh lease and
-explicit acknowledgment. Session generations come from trusted runtime enrollment.
+## Verification
 
 Verification: `bun test test/coordination-inbox.test.ts test/coordination-sessions.test.ts
 test/coordination-core.test.ts test/coordination-ipc.test.ts` covers command replay,

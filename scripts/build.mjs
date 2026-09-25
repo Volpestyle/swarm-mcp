@@ -18,7 +18,7 @@ for (const path of [...files("src"), "package.json", "bun.lock", "scripts/build.
 let revision = null;
 try { revision = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch {}
 await build({ entryPoints: entries, bundle: true, platform: "node", format: "esm", target: "node22",
-  outdir: "dist", packages: "external", banner: { js: "#!/usr/bin/env node" },
+  outdir: "dist", outbase: "src", packages: "external", banner: { js: "#!/usr/bin/env node" },
   define: { SWARM_BUILD: JSON.stringify({ revision, sourceDigest: hash.digest("hex"), packageVersion: pkg.version,
     sdkVersion: pkg.dependencies["@modelcontextprotocol/server"] }) }, logLevel: "info" });
 

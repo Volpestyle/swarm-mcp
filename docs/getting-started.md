@@ -13,5 +13,5 @@ adapter. `swarm-mcp` and `swarm-coordinator-mcp` expose the same nine tools.
 Install the [consumer skill](install-skill.md) and begin with `swarm_sync`.
 
 [Host support](runtime-host-support.md) lists verified lifecycle and delivery
-paths. [Migration](migration-cutover.md) imports existing data into a fresh
-profile; startup never converts a database implicitly.
+paths. Each profile uses an isolated coordinator database; startup rejects
+databases belonging to other applications.

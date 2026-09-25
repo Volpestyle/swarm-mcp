@@ -1,7 +1,7 @@
 import type { Sqlite } from "./sqlite";
 import { CoordinationError } from "./errors";
 
-// A separate application identity prevents accidental adoption of legacy swarm.db.
+// Application identity prevents accidental adoption of another application's database.
 export const APPLICATION_ID = 0x53574d32;
 export const SCHEMA_VERSION = 14;
 export type FaultPoint =
@@ -12,6 +12,7 @@ export type FaultPoint =
   | "after_batch_commit";
 export type FaultHook = (point: FaultPoint) => void;
 
+// Keep numbered migrations stable so existing profiles retain their data.
 const migrations = [
   `CREATE TABLE commands (
     scope TEXT NOT NULL, actor TEXT NOT NULL, command_id TEXT NOT NULL,
@@ -194,7 +195,7 @@ function checkIdentity(db: Sqlite) {
   ) {
     throw new CoordinationError(
       "incompatible_database",
-      "Not a coordinator database; migrate a copy explicitly instead of opening the legacy database",
+      "Not a coordinator database; use a separate coordinator profile",
     );
   }
   if (version(db) > SCHEMA_VERSION) {

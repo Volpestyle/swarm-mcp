@@ -90,7 +90,11 @@ Desktop/mobile products have independent repositories and are not build dependen
 A single application boundary is preferred over maintaining two writable stores
 or transparent translation. Destructive reads and unfenced ownership cannot preserve
 the acknowledgment and attempt contracts, and two defaults can split peers across
-unrelated state. Legacy support is confined to [offline migration](migration-cutover.md),
-a read-only launch guard for an explicitly selected historical binary, and pinned
-migration fixtures. They preserve data and rollback safety without exposing a second
-live API. MCP transport compatibility is independent of this application decision.
+unrelated state. The package supports coordinator profiles only: enrollment,
+execution, diagnostics and offline maintenance all use the same application model.
+
+Database application identity checks reject foreign stores. Numbered coordinator
+schema migrations remain stable, including historical table definitions, so
+existing profiles retain their data and upgrade safely. An incomplete-import marker
+blocks startup rather than exposing partial state. MCP transport compatibility is
+independent of the application model and supports the handshakes used by current hosts.

@@ -15,7 +15,6 @@ not open the database or select their own identity.
 - [Host support and limitations](docs/runtime-host-support.md)
 - [Embed in a runtime or dispatch through Herdr](docs/runtime-embedding.md)
 - [Storage limits and offline maintenance](docs/storage-maintenance.md)
-- [Migration and rollback](docs/migration-cutover.md)
 
 This is a local release candidate. Building or installing it does not migrate an
 existing swarm or switch live host configuration.
@@ -41,8 +40,7 @@ multi-tenant service. See the [architecture decision](docs/coordination-architec
 the endpoint and session capability supplied by a trusted runtime launcher.
 See [runtime embedding](docs/runtime-embedding.md) for enrollment and launch options.
 
-Offline migration commands preserve historical data without importing live
-ownership. See [migration](docs/migration-cutover.md) and the
+Each profile uses its own coordinator database. See the
 [application boundary decision](docs/coordination-architecture.md#application-boundary).
 
 ## Development

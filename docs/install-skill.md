@@ -31,8 +31,8 @@ loaded it; restart/reload the host according to its native skill discovery.
 
 MCP configuration is supplied per session by the trusted runtime adapter,
 not by putting a shared capability into a global `.mcp.json`. The Node owner uses
-a separate profile's `coordination.db`. Do not point it at a legacy `swarm.db`;
-follow [migration/canary guidance](migration-cutover.md) before activating old data.
+each profile's isolated `coordination.db`. Startup rejects databases belonging
+to other applications.
 
 The built modules expose the tested launcher/plugin compositions:
 

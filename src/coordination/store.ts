@@ -383,7 +383,7 @@ export class CoordinationStore {
     storage?: Partial<StorageLimits>;
   }) {
     if (existsSync(join(dirname(options.path), "import.pending")))
-      throw new CoordinationError("import_incomplete", "Import did not finish; retain its evidence and import into a fresh directory");
+      throw new CoordinationError("import_incomplete", "Profile contains incomplete imported state; use a separate coordinator profile");
     const db = await openSqlite(options.path);
     try {
       const policy = { ...DEFAULT_INBOX_POLICY, ...options.inboxPolicy };

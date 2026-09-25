@@ -7,17 +7,13 @@
   },
   "bin": {
     "swarm-mcp": "./dist/coordination/mcp-cli.js",
-    "swarm-legacy-guard": "./dist/legacy-guard-cli.js",
-    "swarm-coordinator-migrate": "./dist/coordination/migration-cli.js",
     "swarm-coordinator-client": "./dist/coordination/client-cli.js",
     "swarm-coordinator-mcp": "./dist/coordination/mcp-cli.js",
     "swarm-coordinator-owner": "./dist/coordination/owner-cli.js",
     "swarm-coordinator-maintenance": "./dist/coordination/maintenance-cli.js"
   },
   "files": [
-    "dist/legacy-guard-cli.js",
     "dist/coordination/client-cli.js",
-    "dist/coordination/migration-cli.js",
     "dist/coordination/mcp-cli.js",
     "dist/coordination/owner-cli.js",
     "dist/coordination/maintenance-cli.js",

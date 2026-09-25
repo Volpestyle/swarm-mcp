@@ -5,7 +5,7 @@ source digest and SDK version through [startup diagnostics](startup-compatibilit
 Package preparation does not publish a release or activate a live profile.
 
 The production-file allowlist ships coordinator executables, runtime exports and
-type declarations, the offline migration/rollback tools, consumer skill, lockfile,
+type declarations, consumer skill, lockfile,
 runtime guide, README and license. `swarm-mcp` and `swarm-coordinator-mcp` point to
 the same MCP entrypoint. `swarm-mcp/runtime` is the public embedding export.
 Generated test state, host probe captures and development dependencies are excluded.
