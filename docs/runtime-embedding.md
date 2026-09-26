@@ -112,3 +112,43 @@ admission. Changing or clearing a limit never replaces existing dispatch receipt
 Both counts belong to a coordinator scope. Separate coordinators sharing one
 runtime can jointly exceed a configured runtime capacity; there is no shared
 machine-wide counter.
+
+
+## Herdr stream worker readiness and health
+
+A Herdr pane and `started` launch record are physical evidence only. Dispatch
+pins the enrolled worker before launching it, then waits for that worker's first
+actual harness-to-Swarm MCP request. That authenticated request atomically claims
+the task with the current session/generation and commits the binding and assignment.
+The requester reads back the same attempt/fence before returning `bound`.
+A lost reply reconciles the same intent; it does not launch another worker.
+Existing-peer and OpenCode providers retain their existing protocols.
+
+Herdr routes accept `readinessTimeoutMs` (1,000–60,000; default 60,000). Startup
+returns `uncertain` with typed `reasons`, the original `intentId`, provisioning
+`token`, `taskId`, `routeId` and reconciliation guidance. Reasons include
+`coordinator_version_mismatch`, `worker_mcp_unavailable`, `worker_claim_failed`,
+`worker_readiness_timeout` and `worker_startup_failed`. These are failures to
+establish readiness, not proof of termination: capacity and receipts stay retained.
+The provisioning token identifies a receipt; it is not an enrollment capability.
+
+The MCP child publishes a private launch-local health record every five seconds
+after an authenticated coordinator round-trip. The wrapper checks it independently
+of model/tool activity, including process death and a 15-second freshness bound.
+On MCP loss it stops inbox admission and sends `blocked:mcp_disconnected` through
+its separate coordinator connection to the task creator. It does not release the
+attempt or acknowledge pending mail. The wrapper is the only inbox consumer;
+its Claude hooks do not independently fetch mail. The health record is observation,
+not authority or readiness proof, and contains no credential or model text.
+
+Task heartbeat renewal never extends the progress deadline. The wrapper sends a
+`blocked:stale_progress` notice when it expires; `swarm_find` diagnostics expose
+`signal: stale_progress` with `progressDeadline`, even if the wrapper disappears.
+Health notices retain task/attempt/fence identity and reject replaced attempts.
+A disconnected coordinator can delay reporting; it cannot turn missing health
+into success. Host exits before the MCP starts may be known only by the bounded
+readiness timeout. Do not automatically redispatch these uncertain receipts.
+
+Install a new build only after holding dispatch and reconciling/draining every
+live or uncertain worker. A package replacement is not an owner upgrade. This
+change does not implement an install lock or immutable runtime generations.

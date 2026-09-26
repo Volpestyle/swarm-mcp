@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { createServer } from "node:net";
 import { build } from "esbuild";
-import { mkdtemp, writeFile, readFile, readdir, mkdir, cp } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, readdir, mkdir, cp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { execFileSync } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { Database } from "bun:sqlite";
 import { realpathSync } from "node:fs";
 import { ownerState } from "../src/coordination/launcher-state";
@@ -21,12 +21,14 @@ test("long Unix state paths retain private, short, distinct endpoints", () => {
   expect(endpoint).not.toBe(localEndpoint(join(root, "two.db")));
 });
 
-for (const { lostResponse, started, project = false } of [
+for (const { lostResponse, started, project = false, mismatch = false, stream = false } of [
   { lostResponse: false, started: true },
   { lostResponse: true, started: true },
   { lostResponse: false, started: false },
   { lostResponse: false, started: true, project: true },
-]) test(`Herdr reconciles one token (lost response: ${lostResponse}, receipt: ${started}, project: ${project})`, async () => {
+  { lostResponse: false, started: true, mismatch: true },
+  { lostResponse: false, started: true, stream: true },
+]) test(`Herdr reconciles one token (lost response: ${lostResponse}, receipt: ${started}, project: ${project}, mismatch: ${mismatch}, stream: ${stream})`, async () => {
   if (process.platform === "win32") return; // Herdr's local Unix transport.
   await mkdir(resolve("dist/test"), { recursive: true });
   const packageRoot = await mkdtemp(resolve("dist/test/herdr-"));
@@ -34,6 +36,8 @@ for (const { lostResponse, started, project = false } of [
   await cp("skills/swarm-mcp", join(packageRoot, "skills/swarm-mcp"), { recursive: true });
   await build({ entryPoints: ["owner-cli", "claude-hook-cli", "client-cli", "mcp-cli", "herdr-worker-cli"].map(name => `src/coordination/${name}.ts`),
     bundle: true, platform: "node", format: "esm", packages: "external", outdir: dist });
+  if (mismatch) await build({ entryPoints: ["src/coordination/mcp-cli.ts"], bundle: true, platform: "node", format: "esm", packages: "external", outfile: join(dist, "mismatched-mcp.js"),
+    define: { SWARM_BUILD: JSON.stringify({ revision: "wrong", sourceDigest: "wrong", packageVersion: "test", sdkVersion: "test" }) } });
   const root = realpathSync(await mkdtemp("/tmp/swarm-herdr-test-"));
   let selected = root;
   const repository = join(root, "project");
@@ -58,6 +62,9 @@ if (args[0] === 'workspace') console.log(JSON.stringify({result:{root_pane:{pane
 else if (args[0] === 'pane' && args[1] === 'get') console.log(JSON.stringify({result:{pane_id:args[2]}}));
 else process.exit(2);
 `, { mode: 0o700 });
+  const wrapperProcesses: ReturnType<typeof spawn>[] = [];
+  const fakeClaude = join(root, "claude-fixture");
+  if (stream) await writeFile(fakeClaude, "#!/usr/bin/env node\n" + await readFile("test/fixtures/stream-worker-harness.cjs", "utf8"), { mode: 0o700 });
   const layouts: any[] = [];
   const runtime = () => createServer(socket => {
     let buffer = "";
@@ -69,10 +76,18 @@ else process.exit(2);
       layouts.push(request);
       const target = request.params.root.command[2];
       const record = JSON.parse(await readFile(target, "utf8"));
-      if (started) {
+      if (stream) {
+        const child = spawn(Bun.which("node")!, [join(dist, "herdr-worker-cli.js"), target], { env: { ...process.env, HERDR_PANE_ID: "w1:p2" }, stdio: ["ignore", "pipe", "pipe"] });
+        child.stdout.resume(); child.stderr.resume(); wrapperProcesses.push(child);
+      } else if (started) {
         record.started = true;
         record.paneId = "w1:p2";
         await writeFile(target, JSON.stringify(record));
+      }
+      if (mismatch && started) {
+        const child = spawn(Bun.which("node")!, [join(dist, "mismatched-mcp.js")], { env: { ...process.env, ...record.environment }, stdio: ["pipe", "pipe", "pipe"] });
+        child.stdout.resume(); child.stderr.resume();
+        await new Promise<void>((resolve) => child.once("exit", () => resolve()));
       }
       if (lostResponse) socket.destroy();
       else {
@@ -85,8 +100,8 @@ else process.exit(2);
   const server = runtime(), secondServer = runtime();
   await new Promise<void>(resolve => server.listen(join(root, "herdr.sock"), resolve));
   await new Promise<void>(resolve => secondServer.listen(join(root, "second.sock"), resolve));
-  const firstRoute = { id: "herdr", stateDirectory: root,
-    profile: "test", socketPath: join(root, "herdr.sock"), herdrPath: herdr, claudePath: Bun.which("node")!,
+  const firstRoute = { id: "herdr", stateDirectory: root, readinessTimeoutMs: stream ? 10000 : 1000,
+    profile: "test", socketPath: join(root, "herdr.sock"), herdrPath: herdr, claudePath: stream ? fakeClaude : Bun.which("node")!,
     nodePath: Bun.which("node")!, workerPath: join(dist, "herdr-worker-cli.js"), capabilities: ["code"], capacity: 1,
     ...(project ? { workspaces: [{ kind: "repository" as const, path: join(repository, ".git") }] } : {}),
     mcpServers: { connected_tools: { command: "clankie", args: ["mcp", "--swarm"], env: { CLANKIE_CONTROL_PLANE_URL: "http://127.0.0.1:4310" } } } };
@@ -114,9 +129,32 @@ else process.exit(2);
     expect(rejected).toMatchObject({ status: "blocked", requestedWorktree: join(root, "unapproved"), reasons: ["capability:code", "worktree"],
       routes: expect.arrayContaining([expect.objectContaining({ routeId: "herdr", allowedWorktrees: expect.arrayContaining([root, selected]), reasons: ["worktree"] })]) });
     expect((await readdir(root)).filter(name => /^herdr-.*[.]json$/.test(name))).toHaveLength(0);
+    const dispatchAt = Date.now();
     const first = await client.request({ op: "dispatch", input: { action: "assign", intent } });
+    if (stream) {
+      expect(first).toMatchObject({ status: "bound" });
+      const launch = (await readdir(root)).find(name => /^herdr-.*[.]json$/.test(name))!;
+      const healthPath = `${join(root, launch)}.mcp-health`;
+      const health = JSON.parse(await readFile(healthPath, "utf8"));
+      expect(health.state).toBe("ready");
+      // Kill only the real owned test MCP; the wrapper and harness survive.
+      process.kill(health.pid, "SIGKILL");
+      const deadline = Date.now() + 5000;
+      let notified = false;
+      while (Date.now() < deadline) {
+        const inbox = await client.request({ op: "command", command: { id: `health-fetch-${Date.now()}`, type: "inbox.fetch", payload: { consumer: "lead" } } });
+        if (JSON.stringify(inbox).includes("blocked:mcp_disconnected")) { notified = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      expect(notified).toBe(true);
+      expect(wrapperProcesses[0]!.exitCode).toBeNull();
+      expect(await client.request({ op: "dispatch", input: { action: "assign", intent } })).toMatchObject({ status: "uncertain", reasons: ["worker_mcp_unavailable"] });
+      expect(layouts).toHaveLength(1);
+      return;
+    }
     // Neither CLI acceptance nor a receipt alone proves a running worker.
     expect(first).toMatchObject({ status: "uncertain" });
+    if (mismatch) { expect(first).toMatchObject({ reasons: ["coordinator_version_mismatch"], intentId: intent.intentId }); expect(Date.now() - dispatchAt).toBeLessThan(5000); }
     const launch = (await readdir(root)).find(name => /^herdr-.*[.]json$/.test(name))!;
     const worker = JSON.parse(await readFile(join(root, launch), "utf8"));
     expect(worker.environment.SWARM_SCOPE).toBe(enrolled.scope);
@@ -135,8 +173,14 @@ else process.exit(2);
       worker.paneId = "w1:p2";
       await writeFile(join(root, launch), JSON.stringify(worker));
     }
+    if (mismatch) await rm(`${join(root, launch)}.mcp-health`);
     const connected = await CoordinationClient.connect(worker.environment.SWARM_COORDINATOR_ENDPOINT, worker.environment.SWARM_SESSION_CAPABILITY);
     await connected.request({ op: "command", command: { id: "online", type: "session.observe", payload: { runtime: "available" } } });
+    // Availability alone must never authorize coordinator-side claiming.
+    expect(await client.request({ op: "dispatch", input: { action: "assign", intent } })).toMatchObject({ status: "uncertain" });
+    await connected.request({ op: "command", command: { id: "ready", type: "dispatch.workerReady", payload: {
+      intentId: intent.intentId, token: worker.token, externalId: worker.paneId,
+    } } });
     connected.close();
     if (project) await writeFile(owner.configPath, JSON.stringify({ ...owner, dispatch: { ...dispatch,
       herdr: [{ ...firstRoute, workspaces: [{ kind: "repository", path: join(root, "removed-repo") }, { kind: "directory", path: join(root, "removed-dir") }] }, secondRoute],
@@ -166,8 +210,12 @@ else process.exit(2);
       secondWorker.paneId = "w1:p2";
       await writeFile(join(root, secondLaunch), JSON.stringify(secondWorker));
     }
+    if (mismatch) await rm(`${join(root, secondLaunch)}.mcp-health`);
     const secondConnection = await CoordinationClient.connect(secondWorker.environment.SWARM_COORDINATOR_ENDPOINT, secondWorker.environment.SWARM_SESSION_CAPABILITY);
     await secondConnection.request({ op: "command", command: { id: "online", type: "session.observe", payload: { runtime: "available" } } });
+    await secondConnection.request({ op: "command", command: { id: "ready", type: "dispatch.workerReady", payload: {
+      intentId: secondIntent.intentId, token: secondWorker.token, externalId: secondWorker.paneId,
+    } } });
     secondConnection.close();
     expect(await client.request({ op: "dispatch", input: { action: "assign", intent: secondIntent } })).toMatchObject({ status: "bound" });
     expect(layouts).toHaveLength(2);
@@ -180,5 +228,5 @@ else process.exit(2);
     await expect(retargeted.find(worker.token, new AbortController().signal)).rejects.toThrow(/runtime identity/);
     await expect(retargeted.stop!(worker.token, new AbortController().signal)).rejects.toThrow(/runtime identity/);
     expect((await readFile(log, "utf8")).trim().split("\n").map(line => JSON.parse(line)).filter(args => args[0] === "workspace")).toHaveLength(2);
-  } finally { client.close(); enrolled.launchedOwner?.kill(); server.close(); secondServer.close(); }
+  } finally { for (const child of wrapperProcesses) { child.kill(); await new Promise(resolve => child.once("exit", resolve)); } client.close(); enrolled.launchedOwner?.kill(); server.close(); secondServer.close(); }
 }, 30000);

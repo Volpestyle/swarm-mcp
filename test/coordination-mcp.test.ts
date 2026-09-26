@@ -398,3 +398,22 @@ test("pinned MCP sends refuse owners without generation fencing", async () => {
     await server.close();
   }
 });
+
+test("swarm_assign preserves typed readiness failure and reconciliation identifiers end to end", async () => {
+  const failure = { status: "uncertain", reasons: ["coordinator_version_mismatch"], taskId: "task", intentId: "dispatch", token: "provisioning-receipt", routeId: "herdr", recovery: "Reconcile the same intent" };
+  const server = createCoordinatorMcp(async operation => {
+    expect(operation.op).toBe("dispatch");
+    return failure;
+  });
+  const client = new Client({ name: "readiness-failure", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(b); await client.connect(a);
+    const result = await client.callTool({ name: "swarm_assign", arguments: {
+      commandId: "dispatch", title: "Work", contract: { objective: "Work", worktree: "/work", acceptanceCriteria: ["Done"], constraints: [], expectedArtifacts: [] },
+      routing: { capabilities: ["code"], durable: false },
+    } });
+    expect(result.structuredContent).toEqual({ data: failure });
+    expect(JSON.stringify(result.content)).not.toContain('"bound"');
+  } finally { await client.close(); await server.close(); }
+});

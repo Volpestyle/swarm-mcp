@@ -24,6 +24,7 @@ const herdrRoute = z.object({
       id, enabled: z.boolean().default(true), stateDirectory: z.string().refine(isAbsolute), profile: id,
       socketPath: z.string().refine(isAbsolute), herdrPath: z.string().refine(isAbsolute),
       nodePath: z.string().refine(isAbsolute), workerPath: z.string().refine(isAbsolute),
+      readinessTimeoutMs: z.number().int().min(1000).max(60000).optional(),
       claudePath: z.string().refine(isAbsolute), capabilities: z.array(id).max(64),
       capacity: z.number().int().min(0).nullable().default(null),
       workspaces: z.array(z.object({ kind: z.enum(["repository", "directory"]), path: z.string().max(4096).refine(isAbsolute) }).strict()).max(32).optional(),

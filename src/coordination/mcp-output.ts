@@ -11,6 +11,10 @@ const dispatch = z.looseObject({
   status: z.string(),
   taskId: z.string().optional(),
   reasons: z.array(z.string()).optional(),
+  intentId: z.string().optional(),
+  token: z.string().optional(),
+  routeId: z.string().optional(),
+  recovery: z.string().optional(),
 });
 const task = z.looseObject({
   taskId: z.string(),

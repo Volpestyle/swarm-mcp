@@ -12,6 +12,9 @@ import { canonicalPath, discoverWorktree, executionWorktrees, type ExecutionWork
 import { realpathSync, statSync } from "node:fs";
 import { prepareClaudeLaunch } from "./claude-launcher";
 
+import { CoordinationError } from "./errors";
+import { readWorkerHealth } from "./worker-health";
+
 const exec = promisify(execFile);
 export interface HerdrRoute {
   id: string;
@@ -25,11 +28,14 @@ export interface HerdrRoute {
   claudePath: string;
   capabilities: string[];
   capacity: number | null;
+  readinessTimeoutMs?: number;
   workspaces?: ExecutionWorkspace[];
   mcpServers?: Parameters<typeof prepareClaudeLaunch>[0]["mcpServers"];
 }
 export interface HerdrWorkerRecord {
   token: string;
+  intentId?: string;
+  taskId?: string;
   routeFingerprint?: string;
   paneId?: string;
   worker: ProvisionedWorker["worker"];
@@ -92,14 +98,21 @@ export function herdrDispatchProvider(store: CoordinationStore, requester: Sessi
     if (!record?.paneId || !record.started) return null;
     await run(["pane", "get", record.paneId], signal);
     store.assertContext(record.worker);
-    const session = store.session(requester.scope, record.worker.sessionId);
-    if (!session || !["available", "busy"].includes(session.runtime_state)) return null;
+    const health = readWorkerHealth(path(token), record);
+    if (health?.state === "blocked") throw new CoordinationError(health.reason ?? "worker_mcp_unavailable", "Worker MCP startup/health failed; reconcile the retained launch");
+    if (!record.intentId) throw new CoordinationError("worker_claim_failed", "Legacy physical receipt has no worker readiness proof");
+    const ready = store.dispatchReady(requester, { intentId: record.intentId, token, worker: record.worker });
+    if (!ready.ready) return null;
+    if (ready.externalId !== record.paneId) throw new CoordinationError("worker_claim_failed", "Claim pane does not match launch receipt");
     return { externalId: record.paneId, worker: record.worker };
+
   };
   return {
     routeId: route.id,
+    requiresWorkerReady: true,
+    readinessTimeoutMs: route.readinessTimeoutMs ?? 60000,
     authorized: () => { try { store.assertContext(requester); return route.enabled !== false; } catch { return false; } },
-    async start({ token, intent }, signal) {
+    async start({ token, taskId, intent }, signal) {
       const parent = store.worktree(requester);
       let directory: string;
       try {
@@ -122,9 +135,13 @@ export function herdrDispatchProvider(store: CoordinationStore, requester: Sessi
       });
       if (prepared.scope !== requester.scope) throw new Error("Herdr route profile does not match requester scope");
       const record: HerdrWorkerRecord = {
-        token, routeFingerprint: fingerprint, worker: { scope: prepared.scope, actor: prepared.actor, sessionId: prepared.sessionId, generation: prepared.generation },
+        token, intentId: intent.intentId, taskId, routeFingerprint: fingerprint, worker: { scope: prepared.scope, actor: prepared.actor, sessionId: prepared.sessionId, generation: prepared.generation },
         command: route.claudePath, args: prepared.arguments, environment: prepared.environment, cwd: worktree.root,
       };
+      record.environment.SWARM_WORKER_LAUNCH = path(token);
+      record.environment.SWARM_STREAM_WORKER = "1";
+      store.execute({ ...requester, id: randomUUID(), type: "dispatch.expectWorker", payload: { token } },
+        tx => tx.dispatch.expectWorker({ intentId: intent.intentId, token, worker: record.worker }));
       // Exclusive publication precedes every external side effect.
       await writeFile(path(token), JSON.stringify(record), { flag: "wx", mode: 0o600 });
       signal.throwIfAborted();

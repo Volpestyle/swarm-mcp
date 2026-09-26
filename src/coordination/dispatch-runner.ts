@@ -1,3 +1,4 @@
+import { CoordinationError } from "./errors";
 import { randomUUID } from "node:crypto";
 import { CoordinationStore, type Json } from "./store";
 import type { SessionContext } from "./sessions";
@@ -12,6 +13,8 @@ export interface ProvisionedWorker {
  * find returning null is uncertainty, not permission for another start. */
 export interface DispatchProvider {
   routeId: string;
+  requiresWorkerReady?: boolean;
+  readinessTimeoutMs?: number;
   authorized(): boolean;
   start(
     input: { token: string; taskId: string; intent: DispatchIntent },
@@ -157,7 +160,7 @@ async function bounded<T>(
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
           controller.abort();
-          reject(new Error("Provider outcome is uncertain"));
+          reject(new CoordinationError("provider_timeout", "Provider outcome is uncertain"));
         }, timeoutMs);
       }),
     ]);
@@ -230,7 +233,7 @@ export async function runDispatchIntent(options: {
   if (!provision.token) throw new Error("Dispatch has no provisioning token");
   let external: ProvisionedWorker | null;
   try {
-    external = await bounded(timeoutMs, (signal) =>
+    external = await bounded(options.timeoutMs ?? (provider.requiresWorkerReady ? provider.readinessTimeoutMs ?? 60000 : timeoutMs), (signal) =>
       !begun.replayed && provision.start
         ? provider.start(
             { token: provision.token!, taskId: provision.taskId, intent },
@@ -238,11 +241,12 @@ export async function runDispatchIntent(options: {
           )
         : provider.find(provision.token!, signal),
     );
-  } catch {
+  } catch (error) {
     return {
       status: "uncertain",
       taskId: provision.taskId,
       routeId: provision.routeId,
+      ...(provider.requiresWorkerReady ? { reasons: [error instanceof CoordinationError ? (error.code === "provider_timeout" ? "worker_readiness_timeout" : error.code) : "worker_startup_failed"], intentId: intent.intentId, token: provision.token, recovery: "Reconcile this same intent and token; timeout does not prove the worker stopped" } : {}),
     };
   }
   if (!external)
@@ -251,6 +255,18 @@ export async function runDispatchIntent(options: {
       taskId: provision.taskId,
       routeId: provision.routeId,
     };
+  if (provider.requiresWorkerReady) {
+    try {
+      const ready = store.dispatchReady(requester, { intentId: intent.intentId, token: provision.token, worker: external.worker });
+      if (!ready.ready || ready.externalId !== external.externalId)
+        throw new CoordinationError("worker_claim_failed", "Provider has no verified worker claim");
+    } catch (error) {
+      return { status: "uncertain", taskId: provision.taskId, routeId: provision.routeId,
+        intentId: intent.intentId, token: provision.token,
+        reasons: [error instanceof CoordinationError && error.code === "worker_mcp_unavailable" ? error.code : "worker_claim_failed"],
+        recovery: "Reconcile the retained worker claim; do not provision another attempt" };
+    }
+  }
   // bind validates route, current worker session, scope and the recorded token.
   const binding = {
     intentId: intent.intentId,

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import type { HerdrWorkerRecord } from "./herdr-dispatch";
+import { publishWorkerHealth, workerFailure } from "./worker-health";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { CoordinationClient } from "./ipc";
 import { CoordinationError } from "./errors";
@@ -32,9 +35,40 @@ async function main() {
   const waits = new Set<CoordinationClient>();
   let closing = false,
     activeWaits = 0;
+  const launchPath = process.env.SWARM_WORKER_LAUNCH;
+  const launch: HerdrWorkerRecord | undefined = launchPath ? JSON.parse(readFileSync(launchPath, "utf8")) : undefined;
+  let readiness: Promise<unknown> | undefined;
+  let ready = false;
+  let checkingHealth = false;
+  publishWorkerHealth(launchPath, "connected");
+  const heartbeat = setInterval(() => {
+    if (closing || checkingHealth || !launch) return;
+    checkingHealth = true;
+    void client.request({ op: "bootstrap" }).then(state => {
+      assertCompatibleOwner((state as { compatibility?: unknown }).compatibility);
+      publishWorkerHealth(launchPath, ready ? "ready" : "connected");
+    }).catch(error => {
+      publishWorkerHealth(launchPath, "blocked", workerFailure(error));
+      close(workerFailure(error));
+    }).finally(() => { checkingHealth = false; });
+  }, 5000);
+  heartbeat.unref();
   const server = createCoordinatorMcp(async (operation, signal) => {
     if (closing)
       throw new CoordinationError("disconnected", "Adapter is closing");
+    // Only a request received from the actual harness MCP transport can commit
+    // this claim. Bootstrap/heartbeat and the independent wrapper cannot do it.
+    if (launch && !ready) {
+      readiness ??= client.request({ op: "command", command: {
+        id: `worker-ready-${launch.token}`, type: "dispatch.workerReady",
+        payload: { intentId: launch.intentId!, token: launch.token, externalId: launch.paneId! },
+      } }).then(result => {
+        ready = true;
+        publishWorkerHealth(launchPath, "ready");
+        return result;
+      }).catch(error => { readiness = undefined; close("worker_claim_failed"); throw error; });
+      await readiness;
+    }
     if (operation.op !== "watch" && operation.op !== "task_wait")
       return client.request(operation);
     if (activeWaits >= 8)
@@ -97,20 +131,23 @@ async function main() {
       maxSubscriptions: 16,
     },
   );
-  const close = () => {
+  const close = (reason = "worker_mcp_unavailable") => {
     if (closing) return;
     closing = true;
+    clearInterval(heartbeat);
+    publishWorkerHealth(launchPath, "blocked", reason);
     client.close();
     observer.close();
     for (const waiter of waits) waiter.close();
     void handle.close();
   };
-  server.server.onclose = close;
+  server.server.onclose = () => close();
   process.stdin.once("end", close);
   process.once("SIGINT", close);
   process.once("SIGTERM", close);
 }
 main().catch((error) => {
+  try { publishWorkerHealth(process.env.SWARM_WORKER_LAUNCH, "blocked", workerFailure(error)); } catch {}
   console.error("swarm coordinator MCP:", error.message);
   process.exitCode = 1;
 });

@@ -526,7 +526,7 @@ export class CoordinationClient {
       const timeout =
         operation.op === "watch" || operation.op === "task_wait"
           ? Math.min(operation.timeoutMs, 30000) + 1000
-          : 10000;
+          : operation.op === "dispatch" ? 65000 : 10000;
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(

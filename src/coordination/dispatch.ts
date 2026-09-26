@@ -257,6 +257,59 @@ export class DispatchTransaction {
     };
   }
 
+  /** Trusted launch preparation pins the one enrollment allowed to claim readiness. */
+  expectWorker(input: { intentId: string; token: string; worker: SessionContext }) {
+    const row = this.intent(input.intentId);
+    validateSession(this.db, input.worker);
+    if (row.state !== "provisioning" || row.provision_token !== input.token ||
+        input.worker.scope !== this.command.scope ||
+        (row.worker_session !== null && row.worker_session !== input.worker.sessionId))
+      throw new CoordinationError("conflict", "Worker does not match provisioning receipt");
+    this.db.prepare("UPDATE dispatch_intents SET worker_session=? WHERE scope=? AND intent_id=?")
+      .run(input.worker.sessionId, this.command.scope, input.intentId);
+    return { taskId: row.task_id };
+  }
+
+  workerReady(input: { intentId: string; token: string; externalId: string }) {
+    const row = this.intent(input.intentId);
+    if (row.worker_session !== this.command.sessionId || row.provision_token !== input.token)
+      throw new CoordinationError("forbidden", "Readiness must come from the pinned worker enrollment");
+    const accepted = this.bind({ ...input, routeId: row.route_id, worker: this.command as SessionContext });
+    const task = this.db.prepare("SELECT * FROM tasks WHERE id=?").get(row.task_id) as Task;
+    return { ...accepted, contract: task.contract ? JSON.parse(task.contract) as Json : null };
+  }
+
+  workerHealth(input: { intentId: string; token: string; reason: string }) {
+    const row = this.intent(input.intentId);
+    if (row.worker_session !== this.command.sessionId || row.provision_token !== input.token ||
+        !["provisioning", "bound"].includes(row.state))
+      throw new CoordinationError("forbidden", "Health report does not match worker launch");
+    if (!["mcp_disconnected", "stale_progress", "coordinator_version_mismatch"].includes(input.reason))
+      throw new CoordinationError("invalid_input", "Unknown worker health reason");
+    const task = this.db.prepare("SELECT creator,current_attempt,status FROM tasks WHERE id=?").get(row.task_id) as { creator: string; current_attempt: string | null; status: string };
+    if (row.state === "bound" && (task.current_attempt !== row.attempt_id || !["running", "cancel_requested"].includes(task.status)))
+      throw new CoordinationError("stale_attempt", "Health report belongs to a finished or replaced attempt");
+    const notice = { taskId: row.task_id, attemptId: row.attempt_id, fence: row.fence,
+      intentId: input.intentId, status: `blocked:${input.reason}` };
+    this.change("dispatch.worker_blocked", input.intentId, notice);
+    return { ...notice, recipient: task.creator };
+  }
+
+  readyStatus(input: { intentId: string; token: string; worker: SessionContext }) {
+    const row = this.intent(input.intentId);
+    if (row.provision_token !== input.token || row.worker_session !== input.worker.sessionId)
+      throw new CoordinationError("conflict", "Readiness receipt does not match launch");
+    validateSession(this.db, input.worker);
+    if (row.state !== "bound") return { ready: false, externalId: null, attemptId: null, fence: null };
+    const unhealthy = this.db.prepare("SELECT 1 FROM events WHERE scope=? AND type='dispatch.worker_blocked' AND entity_id=? AND json_extract(payload,'$.attemptId')=? AND json_extract(payload,'$.status') IN ('blocked:mcp_disconnected','blocked:coordinator_version_mismatch') LIMIT 1")
+      .get(this.command.scope, input.intentId, row.attempt_id);
+    if (unhealthy) throw new CoordinationError("worker_mcp_unavailable", "This worker reported MCP loss; reconcile the retained attempt before resuming");
+    const claim = this.db.prepare("SELECT a.id FROM task_attempts a JOIN tasks t ON t.current_attempt=a.id WHERE a.id=? AND a.session_id=? AND a.generation=? AND a.fence=? AND a.state='running' AND a.lease_until>?")
+      .get(row.attempt_id, input.worker.sessionId, input.worker.generation, row.fence, this.at);
+    if (!claim) throw new CoordinationError("worker_claim_failed", "Worker readiness has no current fenced claim");
+    return { ready: true, externalId: row.external_id, attemptId: row.attempt_id, fence: row.fence };
+  }
+
   /** Launcher-verified provisioning result only; never model-supplied identity. */
   bind(input: {
     intentId: string;
@@ -296,6 +349,9 @@ export class DispatchTransaction {
     }
     if (row.state !== "provisioning")
       throw new CoordinationError("conflict", "Dispatch is not provisioning");
+    if (row.worker_session !== null && (row.worker_session !== this.command.sessionId ||
+        input.worker.sessionId !== this.command.sessionId || input.worker.actor !== this.command.actor))
+      throw new CoordinationError("worker_claim_failed", "Pinned worker must claim through its own authenticated MCP request");
     const task = this.db
       .prepare("SELECT * FROM tasks WHERE scope=? AND id=?")
       .get(this.command.scope, row.task_id) as Task;

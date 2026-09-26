@@ -767,6 +767,12 @@ export class CoordinationStore {
       retentionState: expired ? "expired" : "retained",
     };
   }
+  dispatchReady(context: SessionContext, input: { intentId: string; token: string; worker: SessionContext }) {
+    this.assertContext(context);
+    const tx = new WriteTransaction(this.db, { ...context, id: "readiness-query", type: "dispatch.readyStatus", payload: {} }, this.clock());
+    return tx.dispatch.readyStatus(input);
+  }
+
   taskDetail(scope: string, id: string) {
     this.ensureOpen();
     return taskDetail(this.db, scope, id, this.clock());

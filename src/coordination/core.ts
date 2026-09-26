@@ -30,6 +30,8 @@ export interface ActorContext {
   generation?: number;
 }
 export type CoreCommand =
+  | { id: string; type: "dispatch.workerReady"; payload: { intentId: string; token: string; externalId: string } }
+  | { id: string; type: "dispatch.workerHealth"; payload: { intentId: string; token: string; reason: string } }
   | InboxCommand
   | SessionCommand
   | TaskCommand
@@ -237,6 +239,18 @@ export class CoordinationCore {
             return tx.reservations.check(command.payload);
           case "reservation.sweep":
             return tx.reservations.sweep();
+          case "dispatch.workerReady": {
+            const ready = tx.dispatch.workerReady(command.payload);
+            if (!ready.existing) tx.inbox.send({ kind: "task.assigned", taskId: ready.taskId,
+              body: JSON.stringify(ready) }, [context.actor], "direct");
+            return ready;
+          }
+          case "dispatch.workerHealth": {
+            const health = tx.dispatch.workerHealth(command.payload);
+            tx.inbox.send({ kind: "worker.blocked", taskId: health.taskId,
+              body: JSON.stringify(health) }, [health.recipient], "direct");
+            return health;
+          }
           case "session.observe":
             return tx.sessions.observe(command.payload);
           case "session.suspend":

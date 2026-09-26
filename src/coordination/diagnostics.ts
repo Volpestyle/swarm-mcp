@@ -60,10 +60,11 @@ export function inspectCoordination(
     generation: number | null;
     leaseUntil: number | null;
     progressAt: number | null;
+    progressDeadline: number | null;
     sessionState: string | null;
   }>(
     `SELECT t.id AS taskId,t.status,a.id AS attemptId,a.fence,a.session_id AS sessionId,
-    a.generation,a.lease_until AS leaseUntil,a.progress_at AS progressAt,s.state AS sessionState
+    a.generation,a.lease_until AS leaseUntil,a.progress_at AS progressAt,coalesce(a.progress_at,a.created_at)+a.progress_timeout_ms AS progressDeadline,s.state AS sessionState
     FROM tasks t LEFT JOIN task_attempts a ON a.id=t.current_attempt
     LEFT JOIN sessions s ON s.id=a.session_id
     WHERE t.scope=? AND (? IS NULL OR t.id=?) ORDER BY t.updated_at DESC,t.id LIMIT ?`,
@@ -180,6 +181,7 @@ export function inspectCoordination(
     tasks: page(
       tasks.map((t) => ({
         ...t,
+        signal: t.status === "running" && t.progressDeadline !== null && t.progressDeadline <= now ? "stale_progress" : null,
         recovery:
           t.attemptId && (t.leaseUntil! <= now || t.sessionState !== "active")
             ? "recover stale ownership; prove external work stopped before dispatch release or reassignment"
