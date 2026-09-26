@@ -16,6 +16,8 @@ export interface DispatchIntent {
   host?: string;
 }
 export interface DispatchPolicy {
+  /** Resolved outside the transaction; never rewrites the immutable intent. */
+  requestedWorktree?: string;
   routes: readonly ExecutionRoute[];
   active: number;
   maximum: number;
@@ -425,7 +427,7 @@ export class DispatchTransaction {
     const selection = selectExecutionRoute(
       {
         scope: this.command.scope,
-        worktree: contract.worktree,
+        worktree: policy.requestedWorktree ?? contract.worktree,
         capabilities,
         durable: input.durable,
         host: input.host,

@@ -78,6 +78,8 @@ export function coordinationScope(project: string, profile: string) {
  * caller-provided profile may replace the configured boundary. */
 export function launcherIdentity(input: {
   projectRoot: string;
+  /** File-reservation identity may differ from the coordination scope root. */
+  repository?: string;
   profile: string;
   directory: string;
   fileRoot: string;
@@ -89,9 +91,10 @@ export function launcherIdentity(input: {
   };
   const projectRoot = normalize(input.projectRoot),
     directory = normalize(input.directory),
-    fileRoot = normalize(input.fileRoot);
+    fileRoot = normalize(input.fileRoot),
+    repository = normalize(input.repository ?? input.projectRoot);
   const roots = input.allowedRoots?.map(normalize) ?? [];
-  for (const path of [projectRoot, directory, fileRoot]) {
+  for (const path of [projectRoot, directory, fileRoot, repository]) {
     if (
       roots.length &&
       !roots.some((root) => {
@@ -114,6 +117,7 @@ export function launcherIdentity(input: {
     projectRoot,
     directory,
     fileRoot,
+    repository,
     profile: input.profile,
     scope: coordinationScope(projectRoot, input.profile),
   };

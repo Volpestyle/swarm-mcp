@@ -120,7 +120,7 @@ test("concurrent Node dispatch reservations share one task and retain capacity a
       });
       expect(
         reserve("another-intent", { ...input, intentId: "second-action" }),
-      ).toEqual({ status: "blocked", reasons: ["concurrency_budget"] });
+      ).toMatchObject({ status: "blocked", reasons: ["concurrency_budget", "route_capacity"] });
       expect(() =>
         reserve("changed-work", { ...input, title: "Different work" }),
       ).toThrow("different work");

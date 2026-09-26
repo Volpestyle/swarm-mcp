@@ -3,7 +3,7 @@ import { herdrDispatchProvider } from "./herdr-dispatch";
 import type { DispatchConfiguration } from "./core";
 import type { CoordinationStore } from "./store";
 import { existingPeerProvider } from "./dispatch-runner";
-import { canonicalPath } from "./worktrees";
+import { canonicalPath, executionWorktrees } from "./worktrees";
 import { CoordinationError } from "./errors";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { openCodeDispatchProvider } from "./opencode-dispatch";
@@ -26,6 +26,7 @@ const herdrRoute = z.object({
       nodePath: z.string().refine(isAbsolute), workerPath: z.string().refine(isAbsolute),
       claudePath: z.string().refine(isAbsolute), capabilities: z.array(id).max(64),
       capacity: z.number().int().min(0).max(64),
+      workspaces: z.array(z.object({ kind: z.enum(["repository", "directory"]), path: z.string().max(4096).refine(isAbsolute) }).strict()).max(32).optional(),
       mcpServers: z.record(z.string().min(1).max(128), z.object({
         command: z.string().min(1).max(4096), args: z.array(z.string().max(4096)).max(64),
         env: z.record(z.string(), z.string()).optional(),
@@ -214,7 +215,7 @@ export function ownerDispatch(
     });
     for (const route of herdr) routes.push({
       id: route.id, path: "peer", scope: requester.scope, host: "claude-code",
-      worktree: canonicalPath(store.worktree(requester).root), capabilities: route.capabilities,
+      worktree: canonicalPath(store.worktree(requester).root), ...executionWorktrees(route.workspaces ?? []), capabilities: route.capabilities,
       durable: true, capacity: route.capacity, overhead: 10, active: 0,
       authorized: route.enabled, availability: route.enabled ? "idle" : "disconnected", observedAt: Date.now(),
     });

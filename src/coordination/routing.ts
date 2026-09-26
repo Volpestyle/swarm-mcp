@@ -10,6 +10,9 @@ export interface ExecutionRoute {
   scope: string;
   host: string;
   worktree: string;
+  /** Canonical directories resolved by the owner from its workspace policy. */
+  worktrees?: readonly string[];
+  staleWorkspaces?: { kind: "repository" | "directory"; path: string }[];
   capabilities: readonly string[];
   durable: boolean;
   availability: RuntimeState;
@@ -28,7 +31,7 @@ export interface RouteRequirements {
 }
 export type RouteSelection =
   | { status: "selected"; routeId: string; path: "native" | "peer" }
-  | { status: "blocked"; reasons: string[] };
+  | { status: "blocked"; reasons: string[]; requestedWorktree: string; routes: Array<{ routeId: string; worktree: string; allowedWorktrees: string[]; reasons: string[]; staleWorkspaces?: { kind: "repository" | "directory"; path: string }[] }> };
 
 /** Select only an existing execution route. This is advisory until an atomic
  * dispatch reservation revalidates capacity and ownership; it never spawns. */
@@ -55,9 +58,9 @@ export function selectExecutionRoute(
       "invalid_input",
       "Invalid routing budget or observation clock",
     );
-  if (budget.active >= budget.maximum)
-    return { status: "blocked", reasons: ["concurrency_budget"] };
-  const reasons = new Set<string>();
+  const exhausted = budget.active >= budget.maximum;
+  const reasons = new Set<string>(exhausted ? ["concurrency_budget"] : []);
+  const diagnostics: Array<{ routeId: string; worktree: string; allowedWorktrees: string[]; reasons: string[]; staleWorkspaces?: { kind: "repository" | "directory"; path: string }[] }> = [];
   const eligible: ExecutionRoute[] = [];
   const ids = new Set<string>();
   for (const route of routes) {
@@ -78,9 +81,13 @@ export function selectExecutionRoute(
         "Invalid route capacity or overhead",
       );
     if (route.scope !== requirement.scope) continue;
-    const rejected: string[] = [];
+    const rejected: string[] = exhausted ? ["concurrency_budget"] : [];
+    const allowedWorktrees = [...new Set([route.worktree, ...(route.worktrees ?? [])])];
     if (!route.authorized) rejected.push("unauthorized");
-    if (route.worktree !== requirement.worktree) rejected.push("worktree");
+    if (!allowedWorktrees.includes(requirement.worktree)) {
+      rejected.push("worktree");
+      if (route.staleWorkspaces?.length) rejected.push("stale_workspace");
+    }
     if (requirement.host && route.host !== requirement.host)
       rejected.push("host");
     if (requirement.durable && !route.durable)
@@ -97,6 +104,7 @@ export function selectExecutionRoute(
     if (route.availability !== "idle")
       rejected.push(`availability:${route.availability}`);
     if (route.active >= route.capacity) rejected.push("route_capacity");
+    diagnostics.push({ routeId: route.id, worktree: route.worktree, allowedWorktrees, reasons: rejected, ...(route.staleWorkspaces?.length ? { staleWorkspaces: route.staleWorkspaces } : {}) });
     if (rejected.length) rejected.forEach((reason) => reasons.add(reason));
     else eligible.push(route);
   }
@@ -107,5 +115,7 @@ export function selectExecutionRoute(
     : {
         status: "blocked",
         reasons: reasons.size ? [...reasons].sort() : ["no_compatible_route"],
+        requestedWorktree: requirement.worktree,
+        routes: diagnostics,
       };
 }

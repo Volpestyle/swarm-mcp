@@ -3,6 +3,8 @@ import { createServer } from "node:net";
 import { build } from "esbuild";
 import { mkdtemp, writeFile, readFile, readdir, mkdir, cp } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { Database } from "bun:sqlite";
 import { realpathSync } from "node:fs";
 import { ownerState } from "../src/coordination/launcher-state";
 import { enrollRuntime } from "../src/coordination/runtime-launcher";
@@ -19,11 +21,12 @@ test("long Unix state paths retain private, short, distinct endpoints", () => {
   expect(endpoint).not.toBe(localEndpoint(join(root, "two.db")));
 });
 
-for (const { lostResponse, started } of [
+for (const { lostResponse, started, project = false } of [
   { lostResponse: false, started: true },
   { lostResponse: true, started: true },
   { lostResponse: false, started: false },
-]) test(`Herdr reconciles one token (lost response: ${lostResponse}, receipt: ${started})`, async () => {
+  { lostResponse: false, started: true, project: true },
+]) test(`Herdr reconciles one token (lost response: ${lostResponse}, receipt: ${started}, project: ${project})`, async () => {
   if (process.platform === "win32") return; // Herdr's local Unix transport.
   await mkdir(resolve("dist/test"), { recursive: true });
   const packageRoot = await mkdtemp(resolve("dist/test/herdr-"));
@@ -32,6 +35,16 @@ for (const { lostResponse, started } of [
   await build({ entryPoints: ["owner-cli", "claude-hook-cli", "client-cli", "mcp-cli", "herdr-worker-cli"].map(name => `src/coordination/${name}.ts`),
     bundle: true, platform: "node", format: "esm", packages: "external", outdir: dist });
   const root = realpathSync(await mkdtemp("/tmp/swarm-herdr-test-"));
+  let selected = root;
+  const repository = join(root, "project");
+  if (project) {
+    await mkdir(repository);
+    const git = (...args: string[]) => execFileSync("git", ["-C", repository, ...args], { stdio: "pipe" });
+    git("init");
+    git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial");
+    selected = join(root, "isolated");
+    git("worktree", "add", "--detach", selected);
+  }
   const owner = await ownerState(root);
   const herdr = join(root, "herdr");
   const log = join(root, "calls.jsonl");
@@ -75,6 +88,7 @@ else process.exit(2);
   const firstRoute = { id: "herdr", stateDirectory: root,
     profile: "test", socketPath: join(root, "herdr.sock"), herdrPath: herdr, claudePath: Bun.which("node")!,
     nodePath: Bun.which("node")!, workerPath: join(dist, "herdr-worker-cli.js"), capabilities: ["code"], capacity: 1,
+    ...(project ? { workspaces: [{ kind: "repository" as const, path: join(repository, ".git") }] } : {}),
     mcpServers: { connected_tools: { command: "clankie", args: ["mcp", "--swarm"], env: { CLANKIE_CONTROL_PLANE_URL: "http://127.0.0.1:4310" } } } };
   const secondRoute = { ...firstRoute, id: "second", socketPath: join(root, "second.sock"), capabilities: ["research"] };
   const dispatch = { maximum: 2, observationMaxAgeMs: 60000, peers: [], herdr: [firstRoute, secondRoute] };
@@ -86,7 +100,7 @@ else process.exit(2);
   const client = await CoordinationClient.connect(enrolled.environment.SWARM_COORDINATOR_ENDPOINT, enrolled.environment.SWARM_SESSION_CAPABILITY);
   try {
     const intent = { intentId: "one-task", title: "Work", capabilities: ["code"], durable: true,
-      contract: { objective: "Work", worktree: root, acceptanceCriteria: ["Done"], expectedArtifacts: [], constraints: [] } };
+      contract: { objective: "Work", worktree: selected, acceptanceCriteria: ["Done"], expectedArtifacts: [], constraints: [] } };
     // The owner is already running: a disabled route is read before every dispatch.
     await writeFile(owner.configPath, JSON.stringify({ ...owner, dispatch: { ...dispatch, herdr: [
       { ...firstRoute, enabled: false }, secondRoute,
@@ -94,12 +108,23 @@ else process.exit(2);
     expect(await client.request({ op: "dispatch", input: { action: "assign", intent } })).toMatchObject({ status: "blocked" });
     expect((await readdir(root)).filter(name => /^herdr-.*[.]json$/.test(name))).toHaveLength(0);
     await writeFile(owner.configPath, JSON.stringify({ ...owner, dispatch }));
+    const rejected = await client.request({ op: "dispatch", input: { action: "assign", intent: {
+      ...intent, intentId: "unapproved", contract: { ...intent.contract, worktree: join(root, "unapproved") },
+    } } });
+    expect(rejected).toMatchObject({ status: "blocked", requestedWorktree: join(root, "unapproved"), reasons: ["capability:code", "worktree"],
+      routes: expect.arrayContaining([expect.objectContaining({ routeId: "herdr", allowedWorktrees: expect.arrayContaining([root, selected]), reasons: ["worktree"] })]) });
+    expect((await readdir(root)).filter(name => /^herdr-.*[.]json$/.test(name))).toHaveLength(0);
     const first = await client.request({ op: "dispatch", input: { action: "assign", intent } });
     // Neither CLI acceptance nor a receipt alone proves a running worker.
     expect(first).toMatchObject({ status: "uncertain" });
     const launch = (await readdir(root)).find(name => /^herdr-.*[.]json$/.test(name))!;
     const worker = JSON.parse(await readFile(join(root, launch), "utf8"));
     expect(worker.environment.SWARM_SCOPE).toBe(enrolled.scope);
+    expect(worker.cwd).toBe(selected);
+    const db = new Database(owner.databasePath, { readonly: true });
+    expect(db.prepare("SELECT worktree_root,repository_root FROM sessions WHERE id=?").get(worker.worker.sessionId))
+      .toEqual({ worktree_root: selected, repository_root: project ? join(repository, ".git") : root });
+    db.close();
     const mcp = JSON.parse(worker.args[worker.args.indexOf("--mcp-config") + 1]);
     expect(mcp.mcpServers.connected_tools).toEqual({ command: "clankie", args: ["mcp", "--swarm"], env: { CLANKIE_CONTROL_PLANE_URL: "http://127.0.0.1:4310" } });
     expect(mcp.mcpServers.swarm.args[0]).toBe(join(dist, "mcp-cli.js"));
@@ -113,19 +138,26 @@ else process.exit(2);
     const connected = await CoordinationClient.connect(worker.environment.SWARM_COORDINATOR_ENDPOINT, worker.environment.SWARM_SESSION_CAPABILITY);
     await connected.request({ op: "command", command: { id: "online", type: "session.observe", payload: { runtime: "available" } } });
     connected.close();
+    if (project) await writeFile(owner.configPath, JSON.stringify({ ...owner, dispatch: { ...dispatch,
+      herdr: [{ ...firstRoute, workspaces: [{ kind: "repository", path: join(root, "removed-repo") }, { kind: "directory", path: join(root, "removed-dir") }] }, secondRoute],
+    } }));
     expect(await client.request({ op: "dispatch", input: { action: "assign", intent } })).toMatchObject({ status: "bound" });
+    await writeFile(owner.configPath, JSON.stringify({ ...owner, dispatch }));
     const calls = (await readFile(log, "utf8")).trim().split("\n").map(line => JSON.parse(line));
     expect(calls.filter(args => args[0] === "workspace")).toHaveLength(1);
     expect(calls.some(args => args[1] === "run")).toBe(false);
     expect(calls.filter(args => args[1] === "get").every(args => args[2] === "w1:p2")).toBe(true);
     expect(layouts).toHaveLength(1);
     expect(layouts[0]).toMatchObject({ method: "layout.apply", params: {
-      tab_id: "w1:t1", focus: false, root: { type: "pane", cwd: root,
+      tab_id: "w1:t1", focus: false, root: { type: "pane", cwd: selected,
         command: [Bun.which("node")!, join(dist, "herdr-worker-cli.js"), join(root, launch)] },
     } });
     expect(calls[0]).toContain("--no-focus");
     // The second runtime may reuse the same pane IDs. Route identity distinguishes them.
-    const secondIntent = { ...intent, intentId: "second-task", capabilities: ["research"] };
+    if (project) await writeFile(owner.configPath, JSON.stringify({ ...owner, dispatch: { ...dispatch,
+      herdr: [firstRoute, { ...secondRoute, workspaces: [{ kind: "directory", path: join(root, "removed-dir") }, { kind: "repository", path: join(root, "removed-repo") }] }],
+    } }));
+    const secondIntent = { ...intent, intentId: "second-task", capabilities: ["research"], contract: { ...intent.contract, worktree: root } };
     expect(await client.request({ op: "dispatch", input: { action: "assign", intent: secondIntent } })).toMatchObject({ status: "uncertain", routeId: "second" });
     const secondLaunch = (await readdir(root)).find(name => /^herdr-.*[.]json$/.test(name) && name !== launch)!;
     const secondWorker = JSON.parse(await readFile(join(root, secondLaunch), "utf8"));

@@ -81,6 +81,7 @@ export async function serveCoordination(options: {
   authorizeProbe?: (capability: string) => void;
   maxPending?: number;
   dispatchConfigReload?: boolean;
+  executionWorkspaces?: boolean;
 }) {
   if (process.platform === "win32" && typeof Bun !== "undefined") {
     throw new CoordinationError(
@@ -203,7 +204,7 @@ export async function serveCoordination(options: {
             };
             break;
           case "bootstrap":
-            result = { ...options.core.bootstrap(actor), dispatchConfigReload: options.dispatchConfigReload === true };
+            result = { ...options.core.bootstrap(actor), dispatchConfigReload: options.dispatchConfigReload === true, executionWorkspaces: options.executionWorkspaces === true };
             break;
           case "peers":
           case "tasks":

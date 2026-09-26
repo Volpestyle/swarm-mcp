@@ -80,3 +80,27 @@ artifact returns its status rather than fabricated instructions. Embeddings pin
 instruction bytes before dispatch and reuse them for retries and reassignment;
 changed preferences apply to a new work intent. Instructions carry no authority,
 credentials or worker identity.
+
+## Approved Herdr execution workspaces
+
+An owner-configured Herdr route may include `workspaces`, up to 32 entries of
+`{ kind: "repository" | "directory", path: "/absolute/canonical/identity" }`.
+A repository identity is its Git common directory; current registered worktrees,
+including linked checkouts outside the original directory, are eligible. Directory
+entries are exact. Stale entries grant nothing. They cannot prevent dispatch to
+other valid entries or to the requester's existing directory. The agent's task
+contract selects an eligible worktree; it cannot add approvals. Capacity remains
+per runtime route, not per workspace.
+
+The owner resolves memberships before the reservation transaction. It canonicalizes
+the requested path for selection without changing the persisted intent fingerprint.
+Blocked selection carries `requestedWorktree` and same-scope `routes` with
+`routeId`, `worktree`, `allowedWorktrees`, `reasons`, and optional `staleWorkspaces`.
+Herdr revalidates before starting; it launches and enrolls the worker at that path,
+retaining the requester coordination scope and recording the target's separate
+file-reservation repository identity. Lost-response recovery uses the existing
+receipt and never starts another worker, even after approval removal.
+
+Bootstrap advertises `executionWorkspaces` for this protocol addition. Embedders
+must require it before writing workspace configuration to an already-running
+owner. Package replacement alone does not upgrade a running process.

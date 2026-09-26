@@ -46,7 +46,7 @@ export async function enrollRuntime(options: {
         requestId: options.incarnation,
         resumeToken: agent.resumeToken,
         label: options.label ?? `runtime:${options.host}`,
-        worktree: { root: identity.fileRoot, repository: identity.projectRoot },
+        worktree: { root: identity.fileRoot, repository: identity.repository },
       },
     })) as {
       actor: string;

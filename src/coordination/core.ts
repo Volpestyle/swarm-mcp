@@ -119,6 +119,13 @@ export class CoordinationCore {
         intentId: input.intentId,
         providers: configured.providers,
       });
+    configured.policy = { ...configured.policy,
+      requestedWorktree: canonicalPath(input.intent.contract.worktree),
+      routes: configured.policy.routes.map(route => ({ ...route,
+        worktree: canonicalPath(route.worktree),
+        ...(route.worktrees ? { worktrees: route.worktrees.map(canonicalPath) } : {}),
+      })),
+    };
     if (input.action === "reassign") {
       const result = this.store.execute(
         {

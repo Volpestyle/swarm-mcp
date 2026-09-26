@@ -114,3 +114,33 @@ export function mapWorktreeFile(worktree: Worktree, input: string) {
     worktree: root,
   };
 }
+
+/** Owner-configured identities. Repository paths are canonical git-common-dir,
+ * not prefixes; membership is refreshed before each dispatch. */
+export type ExecutionWorkspace = { kind: "repository" | "directory"; path: string };
+export function executionWorktrees(workspaces: readonly ExecutionWorkspace[]) {
+  const result = new Set<string>();
+  const staleWorkspaces: ExecutionWorkspace[] = [];
+  for (const entry of workspaces) {
+    try {
+      if (entry.kind === "directory") {
+        if (!statSync(entry.path).isDirectory()) throw new Error("Not a directory");
+        result.add(canonicalPath(entry.path));
+        continue;
+      }
+      const repository = canonicalPath(entry.path);
+      const output = execFileSync("git", ["--git-dir", repository, "worktree", "list", "--porcelain", "-z"], {
+        encoding: "utf8", timeout: 5000, maxBuffer: 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+      });
+      for (const field of output.split("\0")) {
+        if (!field.startsWith("worktree ")) continue;
+        const directory = field.slice(9);
+        try {
+          const found = discoverWorktree(directory);
+          if (found.repository === repository) result.add(found.root);
+        } catch { /* Pruned, missing or replaced checkouts confer no execution authority. */ }
+      }
+    } catch { staleWorkspaces.push(entry); }
+  }
+  return { worktrees: [...result].sort(), staleWorkspaces };
+}

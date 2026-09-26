@@ -8,6 +8,8 @@ import { createConnection } from "node:net";
 import type { DispatchProvider, ProvisionedWorker } from "./dispatch-runner";
 import type { SessionContext } from "./sessions";
 import type { CoordinationStore } from "./store";
+import { canonicalPath, discoverWorktree, executionWorktrees, type ExecutionWorkspace } from "./worktrees";
+import { realpathSync, statSync } from "node:fs";
 import { prepareClaudeLaunch } from "./claude-launcher";
 
 const exec = promisify(execFile);
@@ -23,6 +25,7 @@ export interface HerdrRoute {
   claudePath: string;
   capabilities: string[];
   capacity: number;
+  workspaces?: ExecutionWorkspace[];
   mcpServers?: Parameters<typeof prepareClaudeLaunch>[0]["mcpServers"];
 }
 export interface HerdrWorkerRecord {
@@ -96,13 +99,23 @@ export function herdrDispatchProvider(store: CoordinationStore, requester: Sessi
   return {
     routeId: route.id,
     authorized: () => { try { store.assertContext(requester); return route.enabled !== false; } catch { return false; } },
-    async start({ token }, signal) {
-      const worktree = store.worktree(requester);
+    async start({ token, intent }, signal) {
+      const parent = store.worktree(requester);
+      let directory: string;
+      try {
+        directory = canonicalPath(realpathSync.native(intent.contract.worktree));
+        if (!statSync(directory).isDirectory()) throw new Error("Not a directory");
+      } catch { throw new Error("Requested worktree is missing or no longer allowed by the runtime owner"); }
+      if (![canonicalPath(parent.root), ...executionWorktrees(route.workspaces ?? []).worktrees].includes(directory))
+        throw new Error("Requested worktree is no longer allowed by the runtime owner");
+      let repository = directory;
+      try { repository = discoverWorktree(directory).repository; } catch { /* Explicit non-git directory. */ }
+      const worktree = { root: directory, repository };
       const prepared = await prepareClaudeLaunch({
         stateDirectory: route.stateDirectory, nodePath: route.nodePath,
         ownerPath: join(dirname(route.workerPath), "owner-cli.js"),
         hookPath: join(dirname(route.workerPath), "claude-hook-cli.js"),
-        identity: { projectRoot: worktree.repository, fileRoot: worktree.root, directory: worktree.root, profile: route.profile },
+        identity: { projectRoot: parent.repository, repository: worktree.repository, fileRoot: worktree.root, directory: worktree.root, profile: route.profile },
         skillPath: join(dirname(route.workerPath), "../../skills/swarm-mcp/SKILL.md"),
         mcpServers: route.mcpServers,
         hostSessionId: randomUUID(), incarnation: token, label: "runtime:claude-code transport:herdr",

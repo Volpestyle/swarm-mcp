@@ -76,7 +76,7 @@ test("routing preserves blockers and refuses stale, unauthorized and cross-scope
     budget,
     1000,
   );
-  expect(result).toEqual({
+  expect(result).toMatchObject({
     status: "blocked",
     reasons: ["availability:blocked", "stale_availability", "unauthorized"],
   });
@@ -87,14 +87,33 @@ test("routing preserves blockers and refuses stale, unauthorized and cross-scope
       budget,
       1000,
     ),
-  ).toEqual({ status: "blocked", reasons: ["capability:missing"] });
+  ).toMatchObject({ status: "blocked", reasons: ["capability:missing"] });
   expect(
     selectExecutionRoute(requirement, [native], { ...budget, active: 2 }, 1000),
-  ).toEqual({ status: "blocked", reasons: ["concurrency_budget"] });
+  ).toMatchObject({ status: "blocked", reasons: ["concurrency_budget"] });
   expect(
     selectExecutionRoute(requirement, [{ ...native, active: 2 }], budget, 1000),
-  ).toEqual({ status: "blocked", reasons: ["route_capacity"] });
+  ).toMatchObject({ status: "blocked", reasons: ["route_capacity"] });
   expect(() =>
     selectExecutionRoute(requirement, [native, native], budget, 1000),
   ).toThrow("Duplicate route identity");
+});
+
+test("owner-resolved worktrees share one route, with explicit same-scope rejection evidence", () => {
+  const route = { ...peer, worktree: "/home", worktrees: ["/repo", "/isolated/review"] };
+  expect(selectExecutionRoute({ ...requirement, worktree: "/isolated/review" }, [route], budget, 1000))
+    .toEqual({ status: "selected", routeId: "peer", path: "peer" });
+  expect(selectExecutionRoute({ ...requirement, worktree: "/repo/private" }, [route, { ...native, scope: "secret" }], budget, 1000))
+    .toEqual({ status: "blocked", reasons: ["worktree"], requestedWorktree: "/repo/private",
+      routes: [{ routeId: "peer", worktree: "/home", allowedWorktrees: ["/home", "/repo", "/isolated/review"], reasons: ["worktree"] }] });
+  expect(selectExecutionRoute({ ...requirement, worktree: "/repo" }, [{ ...route, active: 2 }], budget, 1000))
+    .toMatchObject({ status: "blocked", reasons: ["route_capacity"] });
+});
+
+test("stale workspace approvals cannot block a valid parent but explain rejected work", () => {
+  const staleWorkspaces = [{ kind: "directory" as const, path: "/gone" }, { kind: "repository" as const, path: "/gone-repo/.git" }];
+  const route = { ...peer, staleWorkspaces };
+  expect(selectExecutionRoute(requirement, [route], budget, 1000)).toMatchObject({ status: "selected" });
+  expect(selectExecutionRoute({ ...requirement, worktree: "/gone" }, [route], budget, 1000))
+    .toMatchObject({ status: "blocked", reasons: ["stale_workspace", "worktree"], routes: [{ routeId: "peer", staleWorkspaces }] });
 });

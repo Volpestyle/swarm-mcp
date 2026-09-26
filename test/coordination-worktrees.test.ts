@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   canonicalPath,
+  executionWorktrees,
   discoverWorktree,
   mapWorktreeFile,
 } from "../src/coordination/worktrees";
@@ -90,4 +91,23 @@ test("Windows 8.3 short-name spellings canonicalize to the long path", () => {
   expect(canonicalPath(join(root, short, "file.txt"))).toBe(
     canonicalPath(join(long, "file.txt")),
   );
+});
+
+test("execution approval follows Git membership, not directory prefixes", () => {
+  const root = mkdtempSync(join(tmpdir(), "swarm-execution-"));
+  const main = join(root, "main"), peer = join(root, "outside", "peer"), plain = join(root, "plain");
+  mkdirSync(main); mkdirSync(plain);
+  const git = (...args: string[]) => execFileSync("git", ["-C", main, ...args], { stdio: "pipe" });
+  git("init");
+  git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "initial");
+  const allowed = [{ kind: "repository" as const, path: discoverWorktree(main).repository }, { kind: "directory" as const, path: plain }];
+  expect(executionWorktrees(allowed).worktrees).toEqual([canonicalPath(main), canonicalPath(plain)].sort());
+  git("worktree", "add", "--detach", peer);
+  expect(executionWorktrees(allowed).worktrees).toEqual([canonicalPath(main), canonicalPath(peer), canonicalPath(plain)].sort());
+  mkdirSync(join(main, "nested"));
+  expect(executionWorktrees(allowed).worktrees).not.toContain(canonicalPath(join(main, "nested")));
+  git("worktree", "remove", peer);
+  expect(executionWorktrees(allowed).worktrees).not.toContain(canonicalPath(peer));
+  rmSync(main, { recursive: true }); rmSync(plain, { recursive: true });
+  expect(executionWorktrees(allowed)).toEqual({ worktrees: [], staleWorkspaces: allowed });
 });

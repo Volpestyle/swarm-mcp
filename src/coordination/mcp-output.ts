@@ -48,6 +48,7 @@ const dataSchemas = {
       actor: z.string(),
       compatibility: object,
       dispatchConfigReload: z.boolean().optional(),
+      executionWorkspaces: z.boolean().optional(),
       recipientGeneration: z.boolean().optional(),
       messageSessionIdentity: z.boolean().optional(),
       eventCursor: z.number(),

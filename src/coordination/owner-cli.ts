@@ -16,6 +16,7 @@ async function main() {
     const service = await serveCoordination({
       endpoint: localEndpoint(config.databasePath),
       dispatchConfigReload: true,
+      executionWorkspaces: true,
       core: new CoordinationCore(
         store,
         requester => {
