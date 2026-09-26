@@ -49,6 +49,7 @@ const dataSchemas = {
       compatibility: object,
       dispatchConfigReload: z.boolean().optional(),
       executionWorkspaces: z.boolean().optional(),
+      unlimitedDispatch: z.boolean().optional(),
       recipientGeneration: z.boolean().optional(),
       messageSessionIdentity: z.boolean().optional(),
       eventCursor: z.number(),

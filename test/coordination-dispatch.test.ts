@@ -247,3 +247,32 @@ test("concurrent Node dispatch reservations share one task and retain capacity a
     store.close();
   }
 });
+
+test("unlimited dispatch admits more than four, explicit limits block, and clearing preserves in-flight receipts", async () => {
+  const store = await CoordinationStore.open({ path: join(mkdtempSync(join(tmpdir(), "unlimited-dispatch-")), "db") });
+  const actor = store.openSession({ scope: "scope", agentId: "lead", requestId: "lead", resumeToken: "long-enough-resume-secret-for-unlimited-test" });
+  const policy: DispatchPolicy = {
+    active: 0, maximum: null, observationMaxAgeMs: 60000,
+    routes: [{ id: "runtime", path: "native", scope: "scope", host: "claude", worktree: "/work", capabilities: [], durable: true, availability: "idle", observedAt: Date.now(), active: 0, capacity: null, overhead: 0, authorized: true }],
+  };
+  const input = (id: string): DispatchIntent => ({ intentId: id, title: id, contract: { objective: id, worktree: "/work", acceptanceCriteria: ["done"], expectedArtifacts: [], constraints: [] }, capabilities: [], durable: true });
+  let sequence = 0;
+  const reserve = (id: string) => store.execute({ ...actor, id: `reserve-${sequence++}`, type: "dispatch.reserve", payload: {} }, tx => tx.dispatch.reserve(input(id), policy)).value;
+  try {
+    for (let index = 0; index < 6; index++) {
+      const id = `work-${index}`;
+      expect(reserve(id)).toMatchObject({ status: "reserved" });
+      store.execute({ ...actor, id: `begin-${index}`, type: "dispatch.begin", payload: {} }, tx => tx.dispatch.begin(id));
+    }
+    const receipt = reserve("work-0");
+    policy.maximum = 4;
+    expect(reserve("limited")).toMatchObject({ status: "blocked", reasons: ["concurrency_budget"] });
+    expect(reserve("work-0")).toEqual(receipt);
+    policy.maximum = null;
+    policy.routes = policy.routes.map(route => ({ ...route, capacity: 4 }));
+    expect(reserve("route-limited")).toMatchObject({ status: "blocked", reasons: ["route_capacity"] });
+    policy.routes = policy.routes.map(route => ({ ...route, capacity: null }));
+    expect(reserve("cleared")).toMatchObject({ status: "reserved" });
+    expect(reserve("work-0")).toEqual(receipt);
+  } finally { store.close(); }
+});

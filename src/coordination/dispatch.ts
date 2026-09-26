@@ -20,7 +20,7 @@ export interface DispatchPolicy {
   requestedWorktree?: string;
   routes: readonly ExecutionRoute[];
   active: number;
-  maximum: number;
+  maximum: number | null;
   observationMaxAgeMs: number;
 }
 type Row = {

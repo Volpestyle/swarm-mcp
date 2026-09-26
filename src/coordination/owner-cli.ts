@@ -17,6 +17,7 @@ async function main() {
       endpoint: localEndpoint(config.databasePath),
       dispatchConfigReload: true,
       executionWorkspaces: true,
+      unlimitedDispatch: true,
       core: new CoordinationCore(
         store,
         requester => {

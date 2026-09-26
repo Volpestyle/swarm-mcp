@@ -18,7 +18,7 @@ export interface ExecutionRoute {
   availability: RuntimeState;
   observedAt: number;
   active: number;
-  capacity: number;
+  capacity: number | null;
   overhead: number;
   authorized: boolean;
 }
@@ -38,7 +38,7 @@ export type RouteSelection =
 export function selectExecutionRoute(
   requirement: RouteRequirements,
   routes: readonly ExecutionRoute[],
-  budget: { active: number; maximum: number; observationMaxAgeMs: number },
+  budget: { active: number; maximum: number | null; observationMaxAgeMs: number },
   now = Date.now(),
 ): RouteSelection {
   requireText(requirement.scope, "scope");
@@ -49,8 +49,7 @@ export function selectExecutionRoute(
     !Number.isFinite(now) ||
     !Number.isSafeInteger(budget.active) ||
     budget.active < 0 ||
-    !Number.isSafeInteger(budget.maximum) ||
-    budget.maximum < 0 ||
+    (budget.maximum !== null && (!Number.isSafeInteger(budget.maximum) || budget.maximum < 0)) ||
     !Number.isSafeInteger(budget.observationMaxAgeMs) ||
     budget.observationMaxAgeMs < 0
   )
@@ -58,7 +57,7 @@ export function selectExecutionRoute(
       "invalid_input",
       "Invalid routing budget or observation clock",
     );
-  const exhausted = budget.active >= budget.maximum;
+  const exhausted = budget.maximum !== null && budget.active >= budget.maximum;
   const reasons = new Set<string>(exhausted ? ["concurrency_budget"] : []);
   const diagnostics: Array<{ routeId: string; worktree: string; allowedWorktrees: string[]; reasons: string[]; staleWorkspaces?: { kind: "repository" | "directory"; path: string }[] }> = [];
   const eligible: ExecutionRoute[] = [];
@@ -73,8 +72,7 @@ export function selectExecutionRoute(
       route.overhead < 0 ||
       !Number.isSafeInteger(route.active) ||
       route.active < 0 ||
-      !Number.isSafeInteger(route.capacity) ||
-      route.capacity < 0
+      (route.capacity !== null && (!Number.isSafeInteger(route.capacity) || route.capacity < 0))
     )
       throw new CoordinationError(
         "invalid_input",
@@ -103,7 +101,7 @@ export function selectExecutionRoute(
       rejected.push("stale_availability");
     if (route.availability !== "idle")
       rejected.push(`availability:${route.availability}`);
-    if (route.active >= route.capacity) rejected.push("route_capacity");
+    if (route.capacity !== null && route.active >= route.capacity) rejected.push("route_capacity");
     diagnostics.push({ routeId: route.id, worktree: route.worktree, allowedWorktrees, reasons: rejected, ...(route.staleWorkspaces?.length ? { staleWorkspaces: route.staleWorkspaces } : {}) });
     if (rejected.length) rejected.forEach((reason) => reasons.add(reason));
     else eligible.push(route);

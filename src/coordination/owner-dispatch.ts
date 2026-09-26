@@ -25,7 +25,7 @@ const herdrRoute = z.object({
       socketPath: z.string().refine(isAbsolute), herdrPath: z.string().refine(isAbsolute),
       nodePath: z.string().refine(isAbsolute), workerPath: z.string().refine(isAbsolute),
       claudePath: z.string().refine(isAbsolute), capabilities: z.array(id).max(64),
-      capacity: z.number().int().min(0).max(64),
+      capacity: z.number().int().min(0).nullable().default(null),
       workspaces: z.array(z.object({ kind: z.enum(["repository", "directory"]), path: z.string().max(4096).refine(isAbsolute) }).strict()).max(32).optional(),
       mcpServers: z.record(z.string().min(1).max(128), z.object({
         command: z.string().min(1).max(4096), args: z.array(z.string().max(4096)).max(64),
@@ -35,7 +35,7 @@ const herdrRoute = z.object({
 
 export const ownerDispatchSchema = z
   .object({
-    maximum: z.number().int().min(0).max(64),
+    maximum: z.number().int().min(0).nullable().default(null),
     observationMaxAgeMs: z.number().int().min(1).max(60000),
     herdr: z.union([herdrRoute, z.array(herdrRoute).max(64)]).optional(),
     opencode: z
@@ -54,7 +54,7 @@ export const ownerDispatchSchema = z
             stateDirectory: z.string().max(4096).refine(isAbsolute),
             capabilities: z.array(id).max(64),
             durable: z.boolean(),
-            capacity: z.number().int().min(0).max(64),
+            capacity: z.number().int().min(0).nullable().default(null),
             overhead: z.number().nonnegative().finite(),
           })
           .strict(),
@@ -77,7 +77,7 @@ export const ownerDispatchSchema = z
             host: id,
             capabilities: z.array(id).max(64),
             durable: z.boolean(),
-            capacity: z.number().int().min(0).max(64),
+            capacity: z.number().int().min(0).nullable().default(null),
             overhead: z.number().nonnegative().finite(),
           })
           .strict(),

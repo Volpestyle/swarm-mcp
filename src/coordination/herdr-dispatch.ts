@@ -24,7 +24,7 @@ export interface HerdrRoute {
   workerPath: string;
   claudePath: string;
   capabilities: string[];
-  capacity: number;
+  capacity: number | null;
   workspaces?: ExecutionWorkspace[];
   mcpServers?: Parameters<typeof prepareClaudeLaunch>[0]["mcpServers"];
 }

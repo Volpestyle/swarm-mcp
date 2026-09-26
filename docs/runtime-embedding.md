@@ -104,3 +104,11 @@ receipt and never starts another worker, even after approval removal.
 Bootstrap advertises `executionWorkspaces` for this protocol addition. Embedders
 must require it before writing workspace configuration to an already-running
 owner. Package replacement alone does not upgrade a running process.
+
+Owner dispatch budgets (`maximum`) and route `capacity` accept `null` for
+unlimited; omitted owner configuration values default to `null`. Explicit
+nonnegative integer limits are enforced atomically, including zero to pause new
+admission. Changing or clearing a limit never replaces existing dispatch receipts.
+Both counts belong to a coordinator scope. Separate coordinators sharing one
+runtime can jointly exceed a configured runtime capacity; there is no shared
+machine-wide counter.
