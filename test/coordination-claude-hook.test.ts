@@ -32,3 +32,19 @@ test("unsupported Claude events cannot claim a delivery boundary", async () => {
     ),
   ).toEqual({});
 });
+
+test("subagent hooks leave the parent's deliveries pending (VUH-1406)", async () => {
+  // Claude fires subagent hooks with the parent's session ID; only agent_id
+  // tells them apart. Leasing here would hide the message in a sidechain.
+  for (const hook_event_name of ["UserPromptSubmit", "PostToolUse"])
+    expect(
+      await claudeHook(
+        { session_id: "bound", hook_event_name, agent_id: "a6f1cc58da348a405" },
+        {
+          sessionId: "bound",
+          endpoint: "must-not-connect",
+          capability: "must-not-use",
+        },
+      ),
+    ).toEqual({});
+});
