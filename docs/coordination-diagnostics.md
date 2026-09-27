@@ -12,6 +12,13 @@ also accepts `{"op":"inspect","filter":{"messageId":"…","limit":5}}`.
 Actor and scope come from the session capability, not request fields. No new MCP
 tool or dashboard is required.
 
+`backlog` reports the scope-wide unresolved delivery count, oldest message age,
+expired delivery leases and outstanding cancellation notices. `taskOutcomes`
+counts retained task states; it does not certify result quality. The bounded
+`retainedDispatches` page exposes terminal/cancelling tasks whose provider capacity
+has not been released. It follows the task filter; backlog/outcomes remain
+scope-wide. These observations include unresolved work omitted by latency averages.
+
 The report includes supported modern/legacy protocol versions, dated adapter
 coverage, delivery attempts and acknowledgment state, task ownership/leases,
 recipient session generations, recent recovery events and correlated wake records.
@@ -31,7 +38,7 @@ event cursor API for older history.
 | `leased`, no acknowledgment | Processing may be underway. After lease expiry, recipient `inbox.sweep`/`inbox.fetch` recovers delivery; deduplicate effects by message identity. These transitions retain events. |
 | `dead_letter` or expired | Inspect authorized `message_status` and recipient health. Terminal records remain; there is no automatic terminal replay. A deliberate replacement uses a new message identity and references the original task/thread. |
 | Expired task lease or inactive owner | Use `task.recover` with the task ID. Recovery fences stale results; it is not proof external work stopped. Dispatch capacity remains reserved until provider stop proof permits release. The bound dispatched worker's own session may then `task.claim` the reopened task again (a new fence, recorded as `dispatch.rebound`); every other claimant is still refused with "reserved by dispatch". |
-| `cancel_requested` | Wait for the matching fenced cancellation result. Reassignment requires release, unchanged contract and current task version; it emits `dispatch.reassigned`. |
+| `cancel_requested` | Retry creator dispatch cancellation under the same intent. A fenced cancellation result or trusted provider stop proof is required. The owned POSIX stream wrapper can stop its process group even when its MCP is unavailable. Missing panes, stale leases and timeouts are never stop proof. Reassignment requires release, unchanged contract and current task version; it emits `dispatch.reassigned`. |
 | `unknown_stale_observation` | Runtime evidence is over 60 seconds old. Refresh through the trusted adapter. Enrollment, transport activity and the retained `available` value do not establish process liveness. |
 
 Latency aggregates distinguish first message lease from explicit acknowledgment.

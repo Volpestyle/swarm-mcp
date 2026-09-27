@@ -96,7 +96,9 @@ cursor advances over skipped events, even when the page is empty; a held wait
 does not finish for unrelated activity. The host IPC audit stream remains complete.
 After offline event retention, `resync_required` means bootstrap without a cursor.
 
-Task claims accept `progressTimeoutMs` (one minute to 24 hours, default 15 minutes).
+Task contracts accept `progressTimeoutMs` at assignment (one minute to 24 hours,
+default 15 minutes). Dispatch and recovered claims inherit it; an explicit
+claim `progressTimeoutMs` overrides the contract default.
 Only meaningful progress extends that deadline; a host timer cannot keep a stalled
 attempt alive indefinitely. Cancellation caps the remaining lease at one minute.
 Expiry fences coordinator writes; it does not prove external processes stopped.

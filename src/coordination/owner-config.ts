@@ -9,6 +9,7 @@ export function readOwnerConfig(path: string): {
   launcherSecret: string;
   dispatch?: OwnerDispatch;
   storage: StorageLimits;
+  idleTimeoutMs: number | null;
 } {
   const bytes = readFileSync(path);
   if (bytes.byteLength > 65536) throw new Error("Owner config exceeds 64 KiB");
@@ -21,6 +22,9 @@ export function readOwnerConfig(path: string): {
     throw new Error("Owner databasePath must be absolute");
   if (config.launcherSecret.length < 32)
     throw new Error("Owner launcherSecret must contain at least 32 characters");
+  const idleTimeoutMs = config.idleTimeoutMs === undefined ? 300000 : config.idleTimeoutMs;
+  if (idleTimeoutMs !== null && (!Number.isSafeInteger(idleTimeoutMs) || idleTimeoutMs < 100 || idleTimeoutMs > 86400000))
+    throw new Error("Owner idleTimeoutMs must be null or 100..86400000 milliseconds");
   if (config.storage !== undefined && (!config.storage || typeof config.storage !== "object" || Array.isArray(config.storage)
       || Object.keys(config.storage).some(key => !["databaseBytes", "artifactBytes"].includes(key))))
     throw new Error("storage accepts databaseBytes and artifactBytes only");
@@ -28,6 +32,7 @@ export function readOwnerConfig(path: string): {
     databasePath: config.databasePath,
     launcherSecret: config.launcherSecret,
     storage: storageLimits(config.storage),
+    idleTimeoutMs,
     ...(config.dispatch === undefined
       ? {}
       : { dispatch: ownerDispatchSchema.parse(config.dispatch) }),

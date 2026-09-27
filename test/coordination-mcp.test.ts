@@ -346,11 +346,14 @@ for (const mode of ["modern", "legacy"] as const)
       const routed = {
         ...assignment,
         commandId: "routed",
-        contract: { ...assignment.contract, instructions: [instructions.value.uri] },
+        contract: { ...assignment.contract, instructions: [instructions.value.uri], progressTimeoutMs: 3600000 },
         routing: { capabilities: ["code"], durable: true },
       };
       const dispatched = await call("swarm_assign", routed);
       expect(dispatched.status).toBe("bound");
+      const longTask = await call("swarm_find", { kind: "task", taskId: dispatched.taskId });
+      expect(longTask.contract.progressTimeoutMs).toBe(3600000);
+      expect(longTask.owner.progressDeadline).toBeGreaterThan(Date.now() + 3500000);
       expect((await call("swarm_find", { kind: "task", taskId: dispatched.taskId })).contract.instructions).toEqual([instructions.value.uri]);
       expect((await call("swarm_assign", routed)).attemptId).toBe(
         dispatched.attemptId,

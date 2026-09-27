@@ -190,6 +190,19 @@ export class DispatchTransaction {
       )
       .run(this.command.scope, input.intentId);
     this.change("dispatch.released", input.intentId, { taskId: row.task_id });
+    // Retire obsolete control envelopes without claiming they were processed.
+    // User replies/results remain available; terminal failures retain their audit.
+    if (row.worker_session) {
+      const controls = this.db.prepare(`SELECT d.message_id,d.recipient FROM inbox_deliveries d
+        JOIN inbox_messages m ON m.id=d.message_id JOIN sessions s ON s.id=? AND s.agent_id=d.recipient
+        WHERE m.scope=? AND m.task_id=? AND m.kind IN ('task.assigned','task.cancel_requested')
+        AND d.state IN ('pending','leased')`).all(row.worker_session, this.command.scope, row.task_id) as Array<{ message_id: string; recipient: string }>;
+      for (const delivery of controls) {
+        this.db.prepare("UPDATE inbox_deliveries SET state='expired',lease_token=NULL,lease_until=NULL,last_error='dispatch_released' WHERE message_id=? AND recipient=?")
+          .run(delivery.message_id, delivery.recipient);
+        this.change("delivery.expired", delivery.message_id, { recipient: delivery.recipient, reason: "dispatch_released" });
+      }
+    }
     return { status: "released", taskId: row.task_id, existing: false };
   }
 

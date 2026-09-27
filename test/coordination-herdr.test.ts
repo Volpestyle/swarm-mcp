@@ -100,7 +100,7 @@ else process.exit(2);
   const server = runtime(), secondServer = runtime();
   await new Promise<void>(resolve => server.listen(join(root, "herdr.sock"), resolve));
   await new Promise<void>(resolve => secondServer.listen(join(root, "second.sock"), resolve));
-  const firstRoute = { id: "herdr", stateDirectory: root, readinessTimeoutMs: stream ? 10000 : 1000,
+  const firstRoute = { id: "herdr", stateDirectory: root, readinessTimeoutMs: stream ? 10000 : mismatch ? 5000 : 1000,
     profile: "test", socketPath: join(root, "herdr.sock"), herdrPath: herdr, claudePath: stream ? fakeClaude : Bun.which("node")!,
     nodePath: Bun.which("node")!, workerPath: join(dist, "herdr-worker-cli.js"), capabilities: ["code"], capacity: 1,
     ...(project ? { workspaces: [{ kind: "repository" as const, path: join(repository, ".git") }] } : {}),
@@ -150,6 +150,18 @@ else process.exit(2);
       expect(wrapperProcesses[0]!.exitCode).toBeNull();
       expect(await client.request({ op: "dispatch", input: { action: "assign", intent } })).toMatchObject({ status: "uncertain", reasons: ["worker_mcp_unavailable"] });
       expect(layouts).toHaveLength(1);
+      // An unavailable MCP cannot acknowledge cancellation. The owning wrapper
+      // must terminate the process group before the provider releases capacity.
+      expect(await client.request({ op: "dispatch", input: { action: "cancel", intentId: intent.intentId } }))
+        .toMatchObject({ status: "released" });
+      const stopped = JSON.parse(await readFile(`${join(root, launch)}.stopped`, "utf8"));
+      expect(stopped.token).toBe(health.token);
+      expect((await client.request({ op: "task_detail", taskId: (first as any).taskId }) as any).status).toBe("cancelled");
+      const db = new Database(owner.databasePath, { readonly: true });
+      try {
+        expect(db.prepare("SELECT count(*) n FROM inbox_deliveries d JOIN inbox_messages m ON m.id=d.message_id WHERE m.kind='task.cancel_requested' AND d.state='expired' AND d.last_error='dispatch_released'").get())
+          .toEqual({ n: 1 });
+      } finally { db.close(); }
       return;
     }
     // Neither CLI acceptance nor a receipt alone proves a running worker.
@@ -228,5 +240,5 @@ else process.exit(2);
     await expect(retargeted.find(worker.token, new AbortController().signal)).rejects.toThrow(/runtime identity/);
     await expect(retargeted.stop!(worker.token, new AbortController().signal)).rejects.toThrow(/runtime identity/);
     expect((await readFile(log, "utf8")).trim().split("\n").map(line => JSON.parse(line)).filter(args => args[0] === "workspace")).toHaveLength(2);
-  } finally { for (const child of wrapperProcesses) { child.kill(); await new Promise(resolve => child.once("exit", resolve)); } client.close(); enrolled.launchedOwner?.kill(); server.close(); secondServer.close(); }
+  } finally { for (const child of wrapperProcesses) { if (child.exitCode === null && child.signalCode === null) { const exited = new Promise(resolve => child.once("exit", resolve)); child.kill(); await exited; } } client.close(); enrolled.launchedOwner?.kill(); server.close(); secondServer.close(); }
 }, 30000);

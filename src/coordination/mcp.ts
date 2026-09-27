@@ -53,6 +53,7 @@ const contract = z
     acceptanceCriteria: z.array(text).min(1).max(20),
     expectedArtifacts: z.array(text).max(20),
     constraints: z.array(text).max(20),
+    progressTimeoutMs: z.number().int().min(60000).max(86400000).optional(),
     instructions: z.array(z.string().regex(/^swarm:\/\/artifacts\/[a-zA-Z0-9-]{1,128}$/)).max(20).optional(),
   })
   .strict();

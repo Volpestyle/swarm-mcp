@@ -72,6 +72,7 @@ test("diagnostics distinguish processing, ack and stale runtime without disclosi
     );
     let report = core.inspect(session);
     expect(report.deliveries.items[0]!.state).toBe("pending");
+    expect(report.backlog).toMatchObject({ unresolved: 1, expiredLeases: 0, oldestUnacknowledgedMs: 0 });
     expect(report.sessions.items[0]!.availability).toBe("available");
     const fetched = core.command(session, {
       id: "fetch",
@@ -97,6 +98,7 @@ test("diagnostics distinguish processing, ack and stale runtime without disclosi
     });
     report = core.inspect(session);
     expect(report.deliveries.items[0]!.acknowledgmentLatencyMs).toBe(50);
+    expect(report.backlog).toMatchObject({ unresolved: 0, oldestUnacknowledgedMs: 0 });
     expect(
       report.audit.items.some((e) => e.type === "delivery.acknowledged"),
     ).toBe(true);

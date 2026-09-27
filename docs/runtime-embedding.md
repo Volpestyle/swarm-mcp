@@ -6,6 +6,12 @@ declarations support Node ESM consumers. Callers supply private state, a canonic
 repository/worktree identity, a stable host session ID and an incarnation that
 changes only on a genuine host restart. The `pi` host is supported for embeddings.
 
+Owners retire after five minutes with no connected clients or in-flight requests.
+Durable state remains in place and the next `ensureCoordinator` starts an owner
+with the same database and credentials. In private `owner.json`, `idleTimeoutMs`
+accepts 100..86400000 milliseconds or `null` to disable retirement. Connected
+MCP clients and worker wrappers keep the owner alive; no PID-age cleanup is used.
+
 Clankie mounts a separate MCP session per operator conversation and implements
 admission with its existing turn queue. It packages the coordinator executables
 beside `runtime.js`; bundlers must preserve those files and package dependencies.
@@ -144,6 +150,26 @@ not authority or readiness proof, and contains no credential or model text.
 Task heartbeat renewal never extends the progress deadline. The wrapper sends a
 `blocked:stale_progress` notice when it expires; `swarm_find` diagnostics expose
 `signal: stale_progress` with `progressDeadline`, even if the wrapper disappears.
+
+For known long tool waits, set `contract.progressTimeoutMs` on assignment; the
+initial dispatched claim and later same-worker reclaims inherit it. Liveness
+heartbeats still cannot extend the configured semantic-progress deadline.
+
+Creator cancellation writes a durable launch-local stop latch. The owned POSIX
+stream wrapper stops its own host process group (TERM, then bounded KILL if
+necessary) and publishes a receipt only after that group is gone. The provider
+matches token, session generation and route identity before releasing capacity.
+The latch and exclusive start marker prevent a delayed or duplicate wrapper from
+starting after cancellation. A fenced terminal result remains valid cooperative
+proof. Cancellation also wakes teardown of completed stream workers.
+
+An inbox quota or stale recipient cannot prevent provider stop. On confirmed
+release, pending/leased assignment and cancellation controls expire with reason
+`dispatch_released`; they are never marked acknowledged. Replies, results and
+dead-letter history remain retained. Windows, missing wrappers and legacy launches
+without a stop receipt remain uncertain unless cooperative proof exists. Stop
+proof covers the owned process group, not independent detached work started by a
+tool; providers for such work need their own termination contract.
 Health notices retain task/attempt/fence identity and reject replaced attempts.
 A disconnected coordinator can delay reporting; it cannot turn missing health
 into success. Host exits before the MCP starts may be known only by the bounded

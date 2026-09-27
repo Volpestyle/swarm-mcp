@@ -10,6 +10,55 @@ import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import { canonicalPath } from "../src/coordination/worktrees";
 import { ownerDispatchSchema } from "../src/coordination/owner-dispatch";
+import { readOwnerConfig } from "../src/coordination/owner-config";
+
+test("owner idle time excludes pending work after its caller disconnects", async () => {
+  mkdirSync(resolve("dist/test"), { recursive: true });
+  const output = join(mkdtempSync(resolve("dist/test/owner-pending-")), "probe.mjs");
+  await build({ entryPoints: ["test/fixtures/owner-pending.ts"], bundle: true, platform: "node", format: "esm", packages: "external", outfile: output });
+  const child = Bun.spawn([Bun.which("node")!, output], { stdout: "pipe", stderr: "pipe" });
+  const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+  expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+  expect(JSON.parse(stdout)).toEqual({ pendingProtected: true });
+});
+
+test("idle Node owners retire without closing connected clients and restart with durable enrollment", async () => {
+  mkdirSync(resolve("dist/test"), { recursive: true });
+  const output = join(mkdtempSync(resolve("dist/test/owner-idle-")), "owner.mjs");
+  await build({ entryPoints: ["src/coordination/owner-cli.ts"], bundle: true, platform: "node", format: "esm", packages: "external", outfile: output });
+  const root = mkdtempSync(join(tmpdir(), "owner-idle-"));
+  const configPath = join(root, "owner.json");
+  const config = { databasePath: join(root, "db"), launcherSecret: randomBytes(32).toString("hex"), idleTimeoutMs: 500 };
+  writeFileSync(configPath, JSON.stringify(config));
+  const options = { configPath, nodePath: Bun.which("node")!, ownerPath: output };
+  const input = { scope: "idle", agentId: "worker", requestId: "retained", resumeToken: randomBytes(32).toString("hex") };
+  const owners: Awaited<ReturnType<typeof ensureCoordinator>>[] = [];
+  try {
+    const first = await ensureCoordinator(options); owners.push(first);
+    first.launched!.ref();
+    const receipt = await first.client.request({ op: "enroll", input }) as { capability: string };
+    await delay(1100);
+    expect(first.launched!.exitCode).toBeNull();
+    expect(await first.client.request({ op: "compatibility" })).toBeDefined();
+    const exited = once(first.launched!, "exit");
+    first.client.close();
+    expect(await Promise.race([exited, delay(5000).then(() => "timeout")])).toEqual([0, null]);
+    const second = await ensureCoordinator(options); owners.push(second);
+    expect(second.launched).toBeDefined();
+    expect(await second.client.request({ op: "enroll", input })).toMatchObject({ replayed: true, capability: receipt.capability });
+    writeFileSync(configPath, JSON.stringify({ ...config, idleTimeoutMs: 0 }));
+    expect(() => readOwnerConfig(configPath)).toThrow("idleTimeoutMs");
+    writeFileSync(configPath, JSON.stringify({ ...config, idleTimeoutMs: null }));
+    expect(readOwnerConfig(configPath).idleTimeoutMs).toBeNull();
+  } finally {
+    for (const { client, launched } of owners) {
+      client.close();
+      if (launched && launched.exitCode === null && launched.signalCode === null) {
+        launched.ref(); const exited = once(launched, "exit"); launched.kill(); await exited;
+      }
+    }
+  }
+});
 
 test.each(["SIGTERM", "SIGKILL"] as const)("production Node owner resumes durable launcher enrollment after %s", async (signal) => {
   mkdirSync(resolve("dist/test"), { recursive: true });

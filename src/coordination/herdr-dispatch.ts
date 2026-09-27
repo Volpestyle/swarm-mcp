@@ -14,6 +14,7 @@ import { prepareClaudeLaunch } from "./claude-launcher";
 
 import { CoordinationError } from "./errors";
 import { readWorkerHealth } from "./worker-health";
+import { requestWorkerStop, workerStopped } from "./worker-stop";
 
 const exec = promisify(execFile);
 export interface HerdrRoute {
@@ -167,13 +168,20 @@ export function herdrDispatchProvider(store: CoordinationStore, requester: Sessi
       }
     },
     find,
-    // Cooperative cancellation uses the existing fenced task outcome. Closing a
-    // pane alone cannot prove its descendants stopped, so it never releases capacity.
-    async stop(token) {
+    // A terminal fenced outcome is sufficient cooperative proof. Otherwise the
+    // owning wrapper must stop its process group and publish a launch-bound receipt.
+    async stop(token, signal) {
       const record = await read(token);
       if (!record) return { stopped: false };
-      return store.execute({ ...requester, id: randomUUID(), type: "dispatch.peerStopped", payload: { token } },
+      const cooperative = store.execute({ ...requester, id: randomUUID(), type: "dispatch.peerStopped", payload: { token } },
         tx => tx.dispatch.peerStopped({ token, routeId: route.id, worker: record.worker })).value;
+      requestWorkerStop(path(token));
+      if (cooperative.stopped) return cooperative;
+      while (!workerStopped(path(token), record)) {
+        signal.throwIfAborted();
+        await delay(50, undefined, { signal });
+      }
+      return { stopped: true };
     },
   };
 }

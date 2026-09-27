@@ -9,6 +9,8 @@ export type TaskContract = {
   constraints: string[];
   /** Immutable, scope-visible instruction artifacts, in reading order. */
   instructions?: string[];
+  /** Long tool waits can need a longer semantic-progress deadline than 15 min. */
+  progressTimeoutMs?: number;
 };
 
 export function validateTaskContract(input: TaskContract): TaskContract {
@@ -19,6 +21,9 @@ export function validateTaskContract(input: TaskContract): TaskContract {
     );
   requireText(input.objective, "objective", 4096);
   requireText(input.worktree, "worktree", 4096);
+  if (input.progressTimeoutMs !== undefined &&
+      (!Number.isSafeInteger(input.progressTimeoutMs) || input.progressTimeoutMs < 60000 || input.progressTimeoutMs > 86400000))
+    throw new CoordinationError("invalid_input", "Progress timeout must be 60000..86400000 ms");
   const list = (value: string[], name: string, required = false) => {
     if (
       !Array.isArray(value) ||
@@ -42,6 +47,7 @@ export function validateTaskContract(input: TaskContract): TaskContract {
     ),
     expectedArtifacts: list(input.expectedArtifacts, "expectedArtifacts"),
     constraints: list(input.constraints, "constraints"),
+    ...(input.progressTimeoutMs === undefined ? {} : { progressTimeoutMs: input.progressTimeoutMs }),
     ...(input.instructions === undefined ? {} : {
       instructions: list(input.instructions, "instructions").map((uri) => {
         if (!/^swarm:\/\/artifacts\/[a-zA-Z0-9-]{1,128}$/.test(uri))

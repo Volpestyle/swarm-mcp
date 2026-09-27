@@ -32,12 +32,20 @@ async function main() {
       authorizeProbe: capability => { if (!isLauncher(capability)) store.authorize(capability); },
     });
     let closing = false;
+    let idleTimer: ReturnType<typeof setInterval> | undefined;
     const close = async () => {
       if (closing) return;
       closing = true;
+      clearInterval(idleTimer);
       await service.close();
       store.close();
     };
+    if (config.idleTimeoutMs !== null) {
+      idleTimer = setInterval(() => {
+        if (service.idleForMs >= config.idleTimeoutMs!)
+          void close().catch(error => { console.error("Owner idle shutdown:", error.message); process.exitCode = 1; });
+      }, Math.min(config.idleTimeoutMs, 1000));
+    }
     process.once("SIGINT", () => {
       void close();
     });

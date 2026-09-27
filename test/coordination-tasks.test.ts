@@ -89,6 +89,7 @@ test("task contracts survive restart and invalid creation rolls back for retry",
     acceptanceCriteria: ["Restart after commit retains accepted work"],
     expectedArtifacts: ["test report"],
     constraints: ["Keep the live database unchanged"],
+    progressTimeoutMs: 3600000,
   };
   const command = {
     id: "contract",
@@ -108,6 +109,7 @@ test("task contracts survive restart and invalid creation rolls back for retry",
   const task = (created.value as unknown as { task: Task }).task;
   expect(JSON.parse(task.contract!)).toEqual(contract);
   env.claim(task);
+  expect(env.core.taskDetail(env.bob, task.id).owner!.progressDeadline).toBe(3601000);
   env.store.close();
   const reopened = await CoordinationStore.open({
     path: env.path,
@@ -119,6 +121,7 @@ test("task contracts survive restart and invalid creation rolls back for retry",
     contract,
   );
   expect(core.attempts(env.alice, task.id)[0]!.actor).toBe("bob");
+  expect(core.taskDetail(env.alice, task.id).owner!.progressDeadline).toBe(3601000);
   expect(core.command(env.alice, command).replayed).toBe(true);
   expect(() =>
     core.command(env.alice, {

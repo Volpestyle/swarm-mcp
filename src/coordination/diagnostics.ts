@@ -146,6 +146,22 @@ export function inspectCoordination(
     scope,
     freshnessMs: 60000,
     summary,
+    // Scope-wide retained state, including unresolved work omitted by latency
+    // averages. Ages are observations, not automatic failure classifications.
+    backlog: db.prepare(`SELECT
+      count(*) AS unresolved,
+      coalesce(max(?-m.created_at),0) AS oldestUnacknowledgedMs,
+      coalesce(sum(CASE WHEN d.state='leased' AND d.lease_until<=? THEN 1 ELSE 0 END),0) AS expiredLeases,
+      coalesce(sum(CASE WHEN m.kind='task.cancel_requested' THEN 1 ELSE 0 END),0) AS cancellationNotices
+      FROM inbox_deliveries d JOIN inbox_messages m ON m.id=d.message_id
+      WHERE m.scope=? AND d.state IN ('pending','leased')`).get(now, now, scope),
+    taskOutcomes: rows("SELECT status,count(*) AS count FROM tasks WHERE scope=? GROUP BY status", scope),
+    retainedDispatches: page(rows(`SELECT i.intent_id AS intentId,i.task_id AS taskId,i.state,
+      t.status AS taskStatus,?-t.updated_at AS taskStateAgeMs
+      FROM dispatch_intents i JOIN tasks t ON t.id=i.task_id
+      WHERE i.scope=? AND i.state<>'released' AND t.status IN ('cancel_requested','cancelled','completed','failed')
+      AND (? IS NULL OR t.id=?) ORDER BY t.updated_at LIMIT ?`,
+      now, scope, filter.taskId ?? null, filter.taskId ?? null, limit + 1)),
     recoveryCounts: rows(
       `SELECT type,count(*) AS count FROM events WHERE scope=? AND type IN
       ('task.recovered','task.retried','dispatch.reassigned','delivery.leased','delivery.dead_letter') GROUP BY type`,

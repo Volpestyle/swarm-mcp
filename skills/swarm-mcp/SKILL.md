@@ -57,8 +57,9 @@ Claim with the task's current `expectedVersion`. Retain the returned `attemptId`
 and `fence` for progress, renewal and finish. A dispatch-bound task is already
 claimed by its selected worker; use that attempt instead of claiming again.
 Report meaningful progress before `owner.progressDeadline` (15 minutes by default).
-Transport heartbeats do not extend that deadline. A claim can set
-`progressTimeoutMs` from one minute to 24 hours for a known long operation.
+Transport heartbeats do not extend that deadline. Set `contract.progressTimeoutMs`
+at assignment for a known long tool wait (one minute to 24 hours); dispatch and
+reclaims inherit it. A claim can override it with `progressTimeoutMs`.
 Cancellation bounds remaining lease renewal to one minute; stop work and acknowledge it.
 Finish with outcome, summary, evidence and explicit limitations. Worker completion
 is not proof of review acceptance, integration, deployment or a tracker closure.

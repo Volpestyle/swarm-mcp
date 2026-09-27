@@ -7,6 +7,7 @@ import { CoordinationClient } from "./ipc";
 import { RuntimeDelivery, renewTaskLeases } from "./runtime-delivery";
 import { observeInbox } from "./inbox-observer";
 import type { HerdrWorkerRecord } from "./herdr-dispatch";
+import { requestWorkerStop, workerStopRequested, publishWorkerStopped, stopOwnedWorker } from "./worker-stop";
 
 async function main() {
   const path = process.argv[2];
@@ -17,11 +18,15 @@ async function main() {
   record.paneId = process.env.HERDR_PANE_ID;
   record.started = true;
   writeFileSync(`${path}.started`, JSON.stringify(record), { flag: "wx", mode: 0o600 });
-  renameSync(`${path}.started`, path);
+  // Keep the exclusive marker permanently; renaming it away admits two
+  // concurrent wrappers that both read the original unstarted receipt.
+  writeFileSync(`${path}.starting`, JSON.stringify(record), { mode: 0o600 });
+  renameSync(`${path}.starting`, path);
+  if (workerStopRequested(path)) { publishWorkerStopped(path, record); return; }
   const client = await CoordinationClient.connect(record.environment.SWARM_COORDINATOR_ENDPOINT, record.environment.SWARM_SESSION_CAPABILITY);
   const child = spawn(record.command, [...record.args, "--permission-mode", "auto", "--print", "--verbose", "--input-format", "stream-json", "--output-format", "stream-json", "--append-system-prompt",
     `Read the swarm-mcp skill at ${record.environment.SWARM_SKILL_PATH}. You are not alone in the checkout; preserve other agents' edits. Receive assignments and peer replies through Swarm. Check current task ownership before acting. Acknowledge each processed envelope using swarm_inbox. Finish tasks with evidence and send the requester a completion notice. If blocked, send a question and let this turn finish; the host delivers the reply. Never poll in a model loop.`],
-    { cwd: record.cwd, env: { ...process.env, ...record.environment }, stdio: ["pipe", "pipe", "inherit"] });
+    { cwd: record.cwd, env: { ...process.env, ...record.environment }, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "inherit"] });
   let busy = true, closed = false, renewing = false, mcpReady = false, blocked = false;
   const reported = new Set<string>();
   const report = async (reason: "mcp_disconnected" | "stale_progress" | "coordinator_version_mismatch") => {
@@ -52,6 +57,7 @@ async function main() {
     if (closed || healthChecking) return;
     healthChecking = true;
     void (async () => {
+      if (workerStopRequested(path)) { await close(); return; }
       const health = readWorkerHealth(path, record);
       if (health) {
         let alive = true;
@@ -101,22 +107,31 @@ async function main() {
       if (event.type === "result") { busy = false; void publish(blocked ? "unavailable" : "available").then(() => observer.kick()).catch(error => console.error(error)); }
     } catch { console.log(line); }
   });
-  // Startup control exchange precedes ordinary leased mail. The MCP handler
-  // commits readiness only when Claude actually calls a Swarm tool.
-  await publish("busy");
-  child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content:
-    "Startup readiness check: call mcp__swarm__swarm_sync now. Do not perform task work or use a shell before that call succeeds. Then end this turn; the host will deliver your fenced assignment." } }) + "\n");
   const close = async () => {
     if (closed) return;
     closed = true; clearInterval(taskHeartbeat); clearInterval(mcpHeartbeat); observer.stop();
+    const expectedStop = workerStopRequested(path);
+    // Persist the no-restart latch before terminating the host or its MCP/tools.
+    requestWorkerStop(path);
+    const stopped = await stopOwnedWorker(child);
+    if (stopped) publishWorkerStopped(path, record);
     publishWorkerHealth(path, "blocked", "worker_mcp_unavailable");
-    await report("mcp_disconnected").catch(() => undefined);
+    if (!expectedStop) await report("mcp_disconnected").catch(() => undefined);
     await publish("unavailable").catch(() => undefined); client.close();
-    child.stdin.end(); child.kill();
   };
   child.once("error", error => { console.error(error.message); void close(); });
   child.once("exit", () => void close());
   process.once("SIGTERM", () => void close());
   process.once("SIGINT", () => void close());
+  // Install teardown handlers before any asynchronous startup work: a missing
+  // executable or early host exit must not leave a heartbeat-only wrapper.
+  child.stdin.on("error", error => { console.error(error.message); void close(); });
+  // Startup control exchange precedes ordinary leased mail. The MCP handler
+  // commits readiness only when Claude actually calls a Swarm tool.
+  try {
+    await publish("busy");
+    if (!closed) child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content:
+      "Startup readiness check: call mcp__swarm__swarm_sync now. Do not perform task work or use a shell before that call succeeds. Then end this turn; the host will deliver your fenced assignment." } }) + "\n");
+  } catch (error) { await close(); throw error; }
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

@@ -94,24 +94,30 @@ export async function cancelDispatchIntent(options: {
       attemptId: cancellation.attemptId,
       fence: cancellation.fence,
     };
-    store.execute(
-      {
-        ...requester,
-        id: `dispatch-cancel-${cancellation.token}`,
-        type: "message.send",
-        payload: notice,
-      },
-      (tx) =>
-        tx.inbox.send(
-          {
-            kind: "task.cancel_requested",
-            taskId: cancellation.taskId,
-            body: JSON.stringify(notice),
-          },
-          [cancellation.notifyActor!],
-          "direct",
-        ),
-    );
+    try {
+      store.execute(
+        {
+          ...requester,
+          id: `dispatch-cancel-${cancellation.token}`,
+          type: "message.send",
+          payload: notice,
+        },
+        (tx) =>
+          tx.inbox.send(
+            {
+              kind: "task.cancel_requested",
+              taskId: cancellation.taskId,
+              body: JSON.stringify(notice),
+            },
+            [cancellation.notifyActor!],
+            "direct",
+          ),
+      );
+    } catch (error) {
+      // A full/stale inbox cannot prevent the trusted provider stopping its own
+      // worker. Keep every other error visible and never fabricate an ack.
+      if (!(error instanceof CoordinationError) || !["inbox_full", "stale_recipient"].includes(error.code)) throw error;
+    }
   }
   const release = (stopped?: { token: string; routeId: string }) =>
     store.execute(
