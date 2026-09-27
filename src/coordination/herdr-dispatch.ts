@@ -10,7 +10,7 @@ import type { SessionContext } from "./sessions";
 import type { CoordinationStore } from "./store";
 import { canonicalPath, discoverWorktree, executionWorktrees, type ExecutionWorkspace } from "./worktrees";
 import { realpathSync, statSync } from "node:fs";
-import { prepareClaudeLaunch } from "./claude-launcher";
+import { prepareManagedLaunch, type ManagedHarness } from "./managed-launcher";
 
 import { CoordinationError } from "./errors";
 import { readWorkerHealth } from "./worker-health";
@@ -26,14 +26,19 @@ export interface HerdrRoute {
   herdrPath: string;
   nodePath: string;
   workerPath: string;
-  claudePath: string;
+  claudePath?: string;
+  harness?: ManagedHarness;
+  harnessPath?: string;
+  model?: string;
   capabilities: string[];
   capacity: number | null;
   readinessTimeoutMs?: number;
   workspaces?: ExecutionWorkspace[];
-  mcpServers?: Parameters<typeof prepareClaudeLaunch>[0]["mcpServers"];
+  mcpServers?: Parameters<typeof prepareManagedLaunch>[0]["mcpServers"];
 }
 export interface HerdrWorkerRecord {
+  harness?: ManagedHarness;
+  model?: string;
   token: string;
   intentId?: string;
   taskId?: string;
@@ -78,6 +83,7 @@ export function herdrDispatchProvider(store: CoordinationStore, requester: Sessi
   const fingerprint = createHash("sha256").update(JSON.stringify([
     route.id, route.socketPath, route.stateDirectory, route.profile, route.herdrPath,
     route.nodePath, route.workerPath, route.claudePath,
+    ...(route.harness || route.harnessPath || route.model ? [route.harness ?? "claude-code", route.harnessPath, route.model] : []),
   ])).digest("hex");
   const path = (token: string) => {
     if (!/^[a-f0-9-]{36}$/.test(token)) throw new Error("Invalid provisioning token");
@@ -125,19 +131,23 @@ export function herdrDispatchProvider(store: CoordinationStore, requester: Sessi
       let repository = directory;
       try { repository = discoverWorktree(directory).repository; } catch { /* Explicit non-git directory. */ }
       const worktree = { root: directory, repository };
-      const prepared = await prepareClaudeLaunch({
+      const harness = route.harness ?? "claude-code";
+      const command = route.harnessPath ?? (harness === "claude-code" ? route.claudePath : undefined);
+      if (!command) throw new CoordinationError("harness_unavailable", "Selected harness has no executable");
+      const prepared = await prepareManagedLaunch({
+        harness, model: route.model,
         stateDirectory: route.stateDirectory, nodePath: route.nodePath,
         ownerPath: join(dirname(route.workerPath), "owner-cli.js"),
         hookPath: join(dirname(route.workerPath), "claude-hook-cli.js"),
         identity: { projectRoot: parent.repository, repository: worktree.repository, fileRoot: worktree.root, directory: worktree.root, profile: route.profile },
         skillPath: join(dirname(route.workerPath), "../../skills/swarm-mcp/SKILL.md"),
         mcpServers: route.mcpServers,
-        hostSessionId: randomUUID(), incarnation: token, label: "runtime:claude-code transport:herdr",
+        hostSessionId: randomUUID(), incarnation: token, label: `runtime:${harness} transport:herdr`,
       });
       if (prepared.scope !== requester.scope) throw new Error("Herdr route profile does not match requester scope");
       const record: HerdrWorkerRecord = {
         token, intentId: intent.intentId, taskId, routeFingerprint: fingerprint, worker: { scope: prepared.scope, actor: prepared.actor, sessionId: prepared.sessionId, generation: prepared.generation },
-        command: route.claudePath, args: prepared.arguments, environment: prepared.environment, cwd: worktree.root,
+        harness, model: route.model ?? (harness === "codex" ? "gpt-6-astra" : undefined), command, args: prepared.arguments, environment: prepared.environment, cwd: worktree.root,
       };
       record.environment.SWARM_WORKER_LAUNCH = path(token);
       record.environment.SWARM_STREAM_WORKER = "1";

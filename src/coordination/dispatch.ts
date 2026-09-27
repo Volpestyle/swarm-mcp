@@ -30,6 +30,7 @@ type Row = {
   path: "native" | "peer";
   state: string;
   fingerprint: string;
+  harness: string | null;
   provision_token: string | null;
   external_id: string | null;
   worker_session: string | null;
@@ -78,6 +79,7 @@ export class DispatchTransaction {
         token: row.provision_token,
         taskId: row.task_id,
         routeId: row.route_id,
+        harness: row.harness,
       };
     const task = this.db
       .prepare("SELECT status FROM tasks WHERE scope=? AND id=?")
@@ -96,6 +98,7 @@ export class DispatchTransaction {
     this.change("dispatch.provisioning", intentId, {
       taskId: row.task_id,
       routeId: row.route_id,
+      harness: row.harness,
     });
     return {
       status: "provisioning",
@@ -103,6 +106,7 @@ export class DispatchTransaction {
       token,
       taskId: row.task_id,
       routeId: row.route_id,
+      harness: row.harness,
     };
   }
 
@@ -160,7 +164,7 @@ export class DispatchTransaction {
   }) {
     const row = this.intent(input.intentId);
     if (row.state === "released")
-      return { status: "released", taskId: row.task_id, existing: true };
+      return { status: "released", taskId: row.task_id, harness: row.harness, existing: true };
     let task = this.db
       .prepare("SELECT status FROM tasks WHERE scope=? AND id=?")
       .get(this.command.scope, row.task_id) as { status: string };
@@ -203,7 +207,7 @@ export class DispatchTransaction {
         this.change("delivery.expired", delivery.message_id, { recipient: delivery.recipient, reason: "dispatch_released" });
       }
     }
-    return { status: "released", taskId: row.task_id, existing: false };
+    return { status: "released", taskId: row.task_id, harness: row.harness, existing: false };
   }
 
   requestCancellation(intentId: string) {
@@ -227,6 +231,7 @@ export class DispatchTransaction {
       status: row.state,
       taskId: row.task_id,
       routeId: row.route_id,
+      harness: row.harness,
       token: row.provision_token,
       notifyActor: attempt?.state === "running" ? attempt.actor : null,
       attemptId: row.attempt_id,
@@ -355,6 +360,7 @@ export class DispatchTransaction {
         );
       return {
         taskId: row.task_id,
+        harness: row.harness,
         attemptId: row.attempt_id!,
         fence: row.fence!,
         existing: true,
@@ -392,11 +398,13 @@ export class DispatchTransaction {
       );
     this.change("dispatch.bound", input.intentId, {
       taskId: row.task_id,
+      harness: row.harness,
       attemptId: attempt.attemptId,
       fence: attempt.fence,
     });
     return {
       taskId: row.task_id,
+      harness: row.harness,
       attemptId: attempt.attemptId,
       fence: attempt.fence,
       existing: false,
@@ -474,6 +482,7 @@ export class DispatchTransaction {
           created: false,
           taskId: existing.task_id,
           routeId: existing.route_id,
+          harness: existing.harness,
           path: existing.path,
         };
       if (existing.state !== "released")
@@ -499,7 +508,7 @@ export class DispatchTransaction {
         worktree: policy.requestedWorktree ?? contract.worktree,
         capabilities,
         durable: input.durable,
-        host: input.host,
+        host: input.host ?? (existing?.harness && ["claude-code", "codex", "pi"].includes(existing.harness) ? existing.harness : undefined),
       },
       policy.routes.map((route) => ({
         ...route,
@@ -511,21 +520,24 @@ export class DispatchTransaction {
       this.at,
     );
     if (selection.status === "blocked") return selection;
+    const harness = policy.routes.find(route => route.id === selection.routeId)!.host;
     if (existing && expectedVersion !== undefined) {
       this.tasks.retry({ taskId: existing.task_id, expectedVersion });
       this.db
         .prepare(
-          "UPDATE dispatch_intents SET route_id=?,path=?,state='reserved',provision_token=NULL,external_id=NULL,worker_session=NULL,attempt_id=NULL,fence=NULL WHERE scope=? AND intent_id=?",
+          "UPDATE dispatch_intents SET route_id=?,path=?,harness=?,state='reserved',provision_token=NULL,external_id=NULL,worker_session=NULL,attempt_id=NULL,fence=NULL WHERE scope=? AND intent_id=?",
         )
         .run(
           selection.routeId,
           selection.path,
+          harness,
           this.command.scope,
           input.intentId,
         );
       this.change("dispatch.reassigned", input.intentId, {
         taskId: existing.task_id,
         routeId: selection.routeId,
+        harness,
         path: selection.path,
       });
       return {
@@ -533,13 +545,14 @@ export class DispatchTransaction {
         created: false,
         taskId: existing.task_id,
         routeId: selection.routeId,
+        harness,
         path: selection.path,
       };
     }
     const { task } = this.tasks.create({ title: input.title, contract });
     this.db
       .prepare(
-        "INSERT INTO dispatch_intents(scope,intent_id,fingerprint,task_id,route_id,path,state,creator,created_at) VALUES(?,?,?,?,?,?,'reserved',?,?)",
+        "INSERT INTO dispatch_intents(scope,intent_id,fingerprint,task_id,route_id,path,harness,state,creator,created_at) VALUES(?,?,?,?,?,?,?,'reserved',?,?)",
       )
       .run(
         this.command.scope,
@@ -548,12 +561,14 @@ export class DispatchTransaction {
         task.id,
         selection.routeId,
         selection.path,
+        harness,
         this.command.actor,
         this.at,
       );
     this.change("dispatch.reserved", input.intentId, {
       taskId: task.id,
       routeId: selection.routeId,
+      harness,
       path: selection.path,
     });
     return {
@@ -561,6 +576,7 @@ export class DispatchTransaction {
       created: true,
       taskId: task.id,
       routeId: selection.routeId,
+      harness,
       path: selection.path,
     };
   }

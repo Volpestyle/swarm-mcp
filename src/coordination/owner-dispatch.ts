@@ -25,14 +25,18 @@ const herdrRoute = z.object({
       socketPath: z.string().refine(isAbsolute), herdrPath: z.string().refine(isAbsolute),
       nodePath: z.string().refine(isAbsolute), workerPath: z.string().refine(isAbsolute),
       readinessTimeoutMs: z.number().int().min(1000).max(60000).optional(),
-      claudePath: z.string().refine(isAbsolute), capabilities: z.array(id).max(64),
+      claudePath: z.string().refine(isAbsolute).optional(),
+      harness: z.enum(["claude-code", "codex", "pi"]).optional(),
+      harnessPath: z.string().refine(isAbsolute).optional(),
+      model: z.string().min(1).max(256).optional(),
+      capabilities: z.array(id).max(64),
       capacity: z.number().int().min(0).nullable().default(null),
       workspaces: z.array(z.object({ kind: z.enum(["repository", "directory"]), path: z.string().max(4096).refine(isAbsolute) }).strict()).max(32).optional(),
       mcpServers: z.record(z.string().min(1).max(128), z.object({
         command: z.string().min(1).max(4096), args: z.array(z.string().max(4096)).max(64),
         env: z.record(z.string(), z.string()).optional(),
       }).strict()).refine(servers => !Object.hasOwn(servers, "swarm"), "swarm is reserved").optional(),
-    }).strict();
+    }).strict().refine(route => !!(route.harnessPath ?? ((route.harness ?? "claude-code") === "claude-code" ? route.claudePath : undefined)), "Selected harness requires its executable path");
 
 export const ownerDispatchSchema = z
   .object({
@@ -215,7 +219,7 @@ export function ownerDispatch(
       });
     });
     for (const route of herdr) routes.push({
-      id: route.id, path: "peer", scope: requester.scope, host: "claude-code",
+      id: route.id, path: "peer", scope: requester.scope, host: route.harness ?? "claude-code",
       worktree: canonicalPath(store.worktree(requester).root), ...executionWorktrees(route.workspaces ?? []), capabilities: route.capabilities,
       durable: true, capacity: route.capacity, overhead: 10, active: 0,
       authorized: route.enabled, availability: route.enabled ? "idle" : "disconnected", observedAt: Date.now(),

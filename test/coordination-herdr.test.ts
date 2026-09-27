@@ -21,14 +21,18 @@ test("long Unix state paths retain private, short, distinct endpoints", () => {
   expect(endpoint).not.toBe(localEndpoint(join(root, "two.db")));
 });
 
-for (const { lostResponse, started, project = false, mismatch = false, stream = false } of [
+for (const { lostResponse, started, project = false, mismatch = false, stream = false, harness = "claude-code" as const, complete = false } of [
   { lostResponse: false, started: true },
   { lostResponse: true, started: true },
   { lostResponse: false, started: false },
   { lostResponse: false, started: true, project: true },
   { lostResponse: false, started: true, mismatch: true },
   { lostResponse: false, started: true, stream: true },
-]) test(`Herdr reconciles one token (lost response: ${lostResponse}, receipt: ${started}, project: ${project}, mismatch: ${mismatch}, stream: ${stream})`, async () => {
+  { lostResponse: false, started: true, stream: true, harness: "codex" as const },
+  { lostResponse: false, started: true, stream: true, harness: "pi" as const },
+  { lostResponse: false, started: true, stream: true, harness: "codex" as const, complete: true },
+  { lostResponse: false, started: true, stream: true, harness: "pi" as const, complete: true },
+]) test(`Herdr reconciles one token (lost response: ${lostResponse}, receipt: ${started}, project: ${project}, mismatch: ${mismatch}, stream: ${stream}, harness: ${harness}, complete: ${complete})`, async () => {
   if (process.platform === "win32") return; // Herdr's local Unix transport.
   await mkdir(resolve("dist/test"), { recursive: true });
   const packageRoot = await mkdtemp(resolve("dist/test/herdr-"));
@@ -77,7 +81,7 @@ else process.exit(2);
       const target = request.params.root.command[2];
       const record = JSON.parse(await readFile(target, "utf8"));
       if (stream) {
-        const child = spawn(Bun.which("node")!, [join(dist, "herdr-worker-cli.js"), target], { env: { ...process.env, HERDR_PANE_ID: "w1:p2" }, stdio: ["ignore", "pipe", "pipe"] });
+        const child = spawn(Bun.which("node")!, [join(dist, "herdr-worker-cli.js"), target], { env: { ...process.env, HERDR_PANE_ID: "w1:p2", SWARM_FIXTURE_COMPLETE: complete ? "1" : "0" }, stdio: ["ignore", "pipe", "pipe"] });
         child.stdout.resume(); child.stderr.resume(); wrapperProcesses.push(child);
       } else if (started) {
         record.started = true;
@@ -102,6 +106,7 @@ else process.exit(2);
   await new Promise<void>(resolve => secondServer.listen(join(root, "second.sock"), resolve));
   const firstRoute = { id: "herdr", stateDirectory: root, readinessTimeoutMs: stream ? 10000 : mismatch ? 5000 : 1000,
     profile: "test", socketPath: join(root, "herdr.sock"), herdrPath: herdr, claudePath: stream ? fakeClaude : Bun.which("node")!,
+    ...(harness === "claude-code" ? {} : { harness, harnessPath: fakeClaude }),
     nodePath: Bun.which("node")!, workerPath: join(dist, "herdr-worker-cli.js"), capabilities: ["code"], capacity: 1,
     ...(project ? { workspaces: [{ kind: "repository" as const, path: join(repository, ".git") }] } : {}),
     mcpServers: { connected_tools: { command: "clankie", args: ["mcp", "--swarm"], env: { CLANKIE_CONTROL_PLANE_URL: "http://127.0.0.1:4310" } } } };
@@ -129,14 +134,29 @@ else process.exit(2);
     expect(rejected).toMatchObject({ status: "blocked", requestedWorktree: join(root, "unapproved"), reasons: ["capability:code", "worktree"],
       routes: expect.arrayContaining([expect.objectContaining({ routeId: "herdr", allowedWorktrees: expect.arrayContaining([root, selected]), reasons: ["worktree"] })]) });
     expect((await readdir(root)).filter(name => /^herdr-.*[.]json$/.test(name))).toHaveLength(0);
+    expect(await client.request({ op: "dispatch", input: { action: "assign", intent: { ...intent, intentId: "unsupported-host", host: "missing-harness" } } }))
+      .toMatchObject({ status: "blocked", reasons: expect.arrayContaining(["host"]) });
+    expect((await readdir(root)).filter(name => /^herdr-.*[.]json$/.test(name))).toHaveLength(0);
     const dispatchAt = Date.now();
     const first = await client.request({ op: "dispatch", input: { action: "assign", intent } });
     if (stream) {
-      expect(first).toMatchObject({ status: "bound" });
+      expect(first).toMatchObject({ status: "bound", harness });
       const launch = (await readdir(root)).find(name => /^herdr-.*[.]json$/.test(name))!;
       const healthPath = `${join(root, launch)}.mcp-health`;
       const health = JSON.parse(await readFile(healthPath, "utf8"));
       expect(health.state).toBe("ready");
+      if (complete) {
+        const taskId = (first as any).taskId;
+        const waited = await client.request({ op: "task_wait", taskId, timeoutMs: 5000 });
+        expect(waited).toMatchObject({ waitState: "terminal", task: { status: "completed" } });
+        expect(await client.request({ op: "dispatch", input: { action: "cancel", intentId: intent.intentId } })).toMatchObject({ status: "released", harness });
+        const db = new Database(owner.databasePath, { readonly: true });
+        try {
+          expect(db.prepare("SELECT harness FROM dispatch_intents WHERE intent_id=?").get(intent.intentId)).toEqual({ harness });
+          expect(db.prepare("SELECT count(*) n FROM inbox_deliveries d JOIN inbox_messages m ON m.id=d.message_id WHERE m.kind='task.assigned' AND d.state='acknowledged'").get()).toEqual({ n: 1 });
+        } finally { db.close(); }
+        return;
+      }
       // Kill only the real owned test MCP; the wrapper and harness survive.
       process.kill(health.pid, "SIGKILL");
       const deadline = Date.now() + 5000;
@@ -156,6 +176,8 @@ else process.exit(2);
         .toMatchObject({ status: "released" });
       const stopped = JSON.parse(await readFile(`${join(root, launch)}.stopped`, "utf8"));
       expect(stopped.token).toBe(health.token);
+      const physical = JSON.parse(await readFile(join(root, launch), "utf8"));
+      expect(physical.harness).toBe(harness);
       expect((await client.request({ op: "task_detail", taskId: (first as any).taskId }) as any).status).toBe("cancelled");
       const db = new Database(owner.databasePath, { readonly: true });
       try {

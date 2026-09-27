@@ -178,3 +178,32 @@ readiness timeout. Do not automatically redispatch these uncertain receipts.
 Install a new build only after holding dispatch and reconciling/draining every
 live or uncertain worker. A package replacement is not an owner upgrade. This
 change does not implement an install lock or immutable runtime generations.
+
+## Managed harness selection
+
+A Herdr route may select `harness: "claude-code" | "codex" | "pi"`, an absolute
+`harnessPath`, and an optional `model`. Legacy `claudePath` routes remain Claude.
+Codex defaults to `gpt-6-astra`. Set `routing.host` on `swarm_assign` to constrain
+selection to that host; incompatible routes return typed `host` blockers and
+never fall back to Claude. The resolved harness is persisted on the dispatch
+intent, returned with its receipt, and pinned with executable/model in the private
+launch receipt. Recovery rejects a retargeted route (`harness_changed`). Reassignment
+preserves the harness selected by the original intent.
+
+The shared stream lifecycle delegates host I/O to `worker-harness.ts`: Claude
+stream JSON, Codex app-server JSON-RPC, or pi RPC. Codex receives Swarm MCP through
+per-process config overrides. Pi receives a launch-local extension that projects
+the worker's own MCP clients into tools; it does not reuse a Clankie conversation.
+Neither writes global host configuration. Listing tools or starting a process is
+insufficient for readiness: the first actual worker Swarm tool call commits the
+existing fenced claim. Instruction artifacts, leased delivery, explicit ack,
+progress deadlines, lease renewal, cancellation and process-group stop remain
+in the shared managed lifecycle. Harness selection is independent of the
+interactive-worker mode axis; Codex/pi interactive workers are not implemented.
+
+The protocol fixtures exercise all three harnesses with the real owner, wrapper,
+and MCP adapter, including MCP loss and release. Real Codex/pi managed canaries
+must additionally run against the deliberately installed vendored runtime.
+This change adds schema 15's `dispatch_intents.harness`; the unmerged interactive
+worker branch also uses schema 15. Integrators must sequence both migrations,
+never open a database from one schema-15 branch with the other build.

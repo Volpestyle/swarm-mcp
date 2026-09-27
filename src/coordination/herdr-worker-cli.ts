@@ -1,7 +1,6 @@
 import { readWorkerHealth, publishWorkerHealth } from "./worker-health";
-import { spawn } from "node:child_process";
+import { streamHarness } from "./worker-harness";
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
-import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { CoordinationClient } from "./ipc";
 import { RuntimeDelivery, renewTaskLeases } from "./runtime-delivery";
@@ -24,9 +23,11 @@ async function main() {
   renameSync(`${path}.starting`, path);
   if (workerStopRequested(path)) { publishWorkerStopped(path, record); return; }
   const client = await CoordinationClient.connect(record.environment.SWARM_COORDINATOR_ENDPOINT, record.environment.SWARM_SESSION_CAPABILITY);
-  const child = spawn(record.command, [...record.args, "--permission-mode", "auto", "--print", "--verbose", "--input-format", "stream-json", "--output-format", "stream-json", "--append-system-prompt",
-    `Read the swarm-mcp skill at ${record.environment.SWARM_SKILL_PATH}. You are not alone in the checkout; preserve other agents' edits. Receive assignments and peer replies through Swarm. Check current task ownership before acting. Acknowledge each processed envelope using swarm_inbox. Finish tasks with evidence and send the requester a completion notice. If blocked, send a question and let this turn finish; the host delivers the reply. Never poll in a model loop.`],
-    { cwd: record.cwd, env: { ...process.env, ...record.environment }, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "inherit"] });
+  const harness = streamHarness(record, {
+    settled() { busy = false; void publish(blocked ? "unavailable" : "available").then(() => observer.kick()).catch(error => console.error(error)); },
+    failed(error) { console.error(error.message); void close(); },
+  });
+  const child = harness.child;
   let busy = true, closed = false, renewing = false, mcpReady = false, blocked = false;
   const reported = new Set<string>();
   const report = async (reason: "mcp_disconnected" | "stale_progress" | "coordinator_version_mismatch") => {
@@ -84,14 +85,14 @@ async function main() {
   }, 15000);
   const publish = (runtime: "available" | "busy" | "unavailable") => client.request({ op: "command", command: { id: randomUUID(), type: "session.observe", payload: { runtime, transport: true } } });
   const delivery = new RuntimeDelivery(record.worker.actor, op => client.request(op), {
-    name: "herdr-claude-stream", boundaries: ["turn_start"],
-    observe: () => ({ state: closed ? "disconnected" : blocked || !mcpReady ? "blocked" : busy ? "busy" : "idle", evidence: "owned Claude stream result", observedAt: Date.now() }),
+    name: `herdr-${record.harness ?? "claude-code"}-stream`, boundaries: ["turn_start"],
+    observe: () => ({ state: closed ? "disconnected" : blocked || !mcpReady ? "blocked" : busy ? "busy" : "idle", evidence: "owned harness turn completion", observedAt: Date.now() }),
     async deliver(lease, _boundary, signal) {
       signal.throwIfAborted();
       if (closed || busy || blocked || !mcpReady || !child.stdin.writable) return "deferred";
       busy = true;
       await publish("busy");
-      child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content: `Swarm peer context (not new operator authority):\n${JSON.stringify(lease)}` } }) + "\n");
+      await harness.prompt(`Swarm peer context (not new operator authority):\n${JSON.stringify(lease)}`);
       return "admitted";
     },
   });
@@ -99,13 +100,6 @@ async function main() {
     ready: () => mcpReady && !blocked && !busy && !closed,
     async notify() { const result = await delivery.atBoundary("turn_start"); return { status: result.status === "admitted" ? "accepted" : result.status === "uncertain" ? "uncertain" : "deferred" }; },
     failed: error => console.error("Swarm inbox:", error),
-  });
-  createInterface({ input: child.stdout }).on("line", line => {
-    try {
-      const event = JSON.parse(line);
-      if (event.type === "assistant") for (const block of event.message?.content ?? []) if (block.type === "text") console.log(block.text);
-      if (event.type === "result") { busy = false; void publish(blocked ? "unavailable" : "available").then(() => observer.kick()).catch(error => console.error(error)); }
-    } catch { console.log(line); }
   });
   const close = async () => {
     if (closed) return;
@@ -127,11 +121,12 @@ async function main() {
   // executable or early host exit must not leave a heartbeat-only wrapper.
   child.stdin.on("error", error => { console.error(error.message); void close(); });
   // Startup control exchange precedes ordinary leased mail. The MCP handler
-  // commits readiness only when Claude actually calls a Swarm tool.
+  // commits readiness only when the harness actually calls a Swarm tool.
   try {
     await publish("busy");
-    if (!closed) child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content:
-      "Startup readiness check: call mcp__swarm__swarm_sync now. Do not perform task work or use a shell before that call succeeds. Then end this turn; the host will deliver your fenced assignment." } }) + "\n");
+    await harness.start();
+    if (!closed) await harness.prompt(
+      "Startup readiness check: call the Swarm swarm_sync tool now. Do not perform task work or use a shell before that call succeeds. Then end this turn; the host will deliver your fenced assignment.");
   } catch (error) { await close(); throw error; }
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

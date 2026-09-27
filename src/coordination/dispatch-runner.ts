@@ -218,12 +218,13 @@ export async function runDispatchIntent(options: {
       (route) =>
         route.id === reserved.routeId &&
         route.scope === requester.scope &&
-        route.authorized,
+        route.authorized &&
+        (!reserved.harness || route.host === reserved.harness),
     )
   )
     return {
       status: "blocked",
-      reasons: ["unauthorized"],
+      reasons: [policy.routes.some(route => route.id === reserved.routeId && reserved.harness && route.host !== reserved.harness) ? "harness_changed" : "unauthorized"],
       taskId: reserved.taskId,
     };
   const begun = store.execute(
@@ -252,6 +253,7 @@ export async function runDispatchIntent(options: {
       status: "uncertain",
       taskId: provision.taskId,
       routeId: provision.routeId,
+      harness: provision.harness,
       ...(provider.requiresWorkerReady ? { reasons: [error instanceof CoordinationError ? (error.code === "provider_timeout" ? "worker_readiness_timeout" : error.code) : "worker_startup_failed"], intentId: intent.intentId, token: provision.token, recovery: "Reconcile this same intent and token; timeout does not prove the worker stopped" } : {}),
     };
   }
@@ -260,6 +262,7 @@ export async function runDispatchIntent(options: {
       status: "uncertain",
       taskId: provision.taskId,
       routeId: provision.routeId,
+      harness: provision.harness,
     };
   if (provider.requiresWorkerReady) {
     try {
@@ -268,6 +271,7 @@ export async function runDispatchIntent(options: {
         throw new CoordinationError("worker_claim_failed", "Provider has no verified worker claim");
     } catch (error) {
       return { status: "uncertain", taskId: provision.taskId, routeId: provision.routeId,
+        harness: provision.harness,
         intentId: intent.intentId, token: provision.token,
         reasons: [error instanceof CoordinationError && error.code === "worker_mcp_unavailable" ? error.code : "worker_claim_failed"],
         recovery: "Reconcile the retained worker claim; do not provision another attempt" };

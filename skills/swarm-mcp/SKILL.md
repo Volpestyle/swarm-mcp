@@ -86,9 +86,15 @@ fences remain invalid even if the old process is alive.
 
 Wait only while responsible for a result, dependency or review. Use event waits
 and runtime delivery instead of an idle model polling loop. Host support is
-specific: OpenCode and the owned Herdr Claude stream worker have verified idle
-delivery; native interactive Claude delivers at native boundaries. Clankie mounts
-a conversation-bound Pi adapter. Codex automatic delivery remains unverified. Other hosts require their own
+specific: owned Herdr stream routes can select Claude, Codex (default model
+`gpt-6-astra`) or pi. Use `routing.host` (`claude-code`, `codex`, `pi`) to require
+a harness; incompatible routes refuse without fallback. The selected harness is
+pinned in the intent and receipt. Managed adapters own per-session enrollment,
+readiness, fenced claim and idle delivery; Codex uses app-server and pi a dedicated
+worker extension. Protocol tests cover these paths; inspect deployment canary
+evidence before claiming an installed route is proven. OpenCode and Claude have
+verified live idle delivery; native interactive Claude delivers at native boundaries. Clankie mounts
+a conversation-bound Pi adapter. Standalone Codex automatic delivery remains unverified. Other hosts require their own
 trusted runtime integration. Discover and verify a new installed host before
 raising its support level.
 
