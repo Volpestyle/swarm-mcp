@@ -26,3 +26,19 @@ export function readWorkerHealth(path: string, record: HerdrWorkerRecord): Worke
   } catch { /* Missing/partial health is not readiness. */ }
   return undefined;
 }
+
+/** Native turn state for a channel worker, written only by its own lifecycle
+ * hooks. The channel projection defers fetching while a turn is known busy. */
+export type WorkerTurn = { sessionId: string; state: "busy" | "idle"; at: number };
+export function publishWorkerTurn(path: string, turn: WorkerTurn) {
+  const target = `${path}.turn`, temporary = `${target}.${process.pid}.next`;
+  writeFileSync(temporary, JSON.stringify(turn), { mode: 0o600 });
+  renameSync(temporary, target);
+}
+export function readWorkerTurn(path: string, sessionId: string): WorkerTurn | undefined {
+  try {
+    const turn: WorkerTurn = JSON.parse(readFileSync(`${path}.turn`, "utf8"));
+    if (turn.sessionId === sessionId) return turn;
+  } catch { /* No turn has started yet. */ }
+  return undefined;
+}

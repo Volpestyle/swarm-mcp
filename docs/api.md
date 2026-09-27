@@ -12,12 +12,13 @@ enrollment; see [runtime delivery](runtime-delivery.md) and
 | --- | --- |
 | `swarm_sync` | Omit cursor for bootstrap; retain eventCursor and resume with deltas; optionally wait up to 30 seconds |
 | `swarm_find` | Page scoped peers/tasks or read a normalized task with contract, dependencies, current owner and parsed result |
-| `swarm_assign` | Persist a contract and dependencies; return immediately with a durable task ID |
+| `swarm_assign` | Persist a contract and dependencies; return immediately with a durable task ID. Dispatch `routing.execution.mode` (`interactive`/`stream`) must match the selected route; omitted resolves from it |
 | `swarm_task` | Claim with expectedVersion; use attemptId/fence for renew/progress/finish; cancel/retry/recover explicitly |
 | `swarm_send` | Send a typed question, blocker, decision request or completion notice with a threadId |
 | `swarm_inbox` | Fetch a delivery lease; explicitly ack processing or reject with a reason |
 | `swarm_wait` | Resume waiting for an existing task; timeout never cancels or recreates it |
 | `swarm_context` | Read, compare-and-set, append or tombstone small shared values |
+| `swarm_ready` | Channel workers only: answer the startup channel event with its nonce |
 | `swarm_evidence` | Capture completed files or record results, decisions and annotations with provenance |
 
 All mutations require a stable commandId. Retry uncertain acceptance with the same

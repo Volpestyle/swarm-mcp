@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { CoordinationClient } from "./ipc";
 import { RuntimeDelivery } from "./runtime-delivery";
 import { CLAUDE_PEER_PREFIX, hasClaudeContext } from "./claude-context";
+import { publishWorkerTurn } from "./worker-health";
 
 /** Launcher-bound hooks for an existing Claude session. Hook output carries
  * leased context, never an implicit processing acknowledgment. */
@@ -84,4 +85,27 @@ export async function claudeHook(
   } finally {
     client.close();
   }
+}
+
+/** Channel workers (ADR 0194) have one inbox consumer: the channel projection in
+ * their Swarm MCP. Their hooks publish native turn lifecycle and never fetch. */
+export async function claudeLifecycleHook(
+  input: { session_id: string; hook_event_name: string },
+  binding: { sessionId: string; endpoint: string; capability: string; launchPath: string },
+) {
+  if (input.session_id !== binding.sessionId)
+    throw new Error("Claude hook session does not match launcher binding");
+  if (!binding.launchPath) throw new Error("Channel worker hook requires its launch record");
+  const state = input.hook_event_name === "UserPromptSubmit" ? "busy"
+    : input.hook_event_name === "Stop" ? "idle" : undefined;
+  if (!state) return {};
+  publishWorkerTurn(binding.launchPath, { sessionId: binding.sessionId, state, at: Date.now() });
+  const client = await CoordinationClient.connect(binding.endpoint, binding.capability);
+  try {
+    await client.request({ op: "command", command: { id: randomUUID(), type: "session.observe",
+      payload: { runtime: state === "busy" ? "busy" : "available", transport: true } } });
+  } finally {
+    client.close();
+  }
+  return {};
 }

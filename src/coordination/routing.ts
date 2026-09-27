@@ -15,6 +15,8 @@ export interface ExecutionRoute {
   staleWorkspaces?: { kind: "repository" | "directory"; path: string }[];
   capabilities: readonly string[];
   durable: boolean;
+  /** Owner-selected worker mode for routes that launch Claude (ADR 0194). */
+  executionMode?: ExecutionMode;
   availability: RuntimeState;
   observedAt: number;
   active: number;
@@ -22,15 +24,19 @@ export interface ExecutionRoute {
   overhead: number;
   authorized: boolean;
 }
+export type ExecutionMode = "interactive" | "stream";
+export const executionModes: readonly ExecutionMode[] = ["interactive", "stream"];
 export interface RouteRequirements {
   scope: string;
   worktree: string;
   host?: string;
+  /** A requested or previously resolved mode; a route never switches it. */
+  executionMode?: ExecutionMode;
   capabilities: readonly string[];
   durable: boolean;
 }
 export type RouteSelection =
-  | { status: "selected"; routeId: string; path: "native" | "peer" }
+  | { status: "selected"; routeId: string; path: "native" | "peer"; executionMode?: ExecutionMode }
   | { status: "blocked"; reasons: string[]; requestedWorktree: string; routes: Array<{ routeId: string; worktree: string; allowedWorktrees: string[]; reasons: string[]; staleWorkspaces?: { kind: "repository" | "directory"; path: string }[] }> };
 
 /** Select only an existing execution route. This is advisory until an atomic
@@ -88,6 +94,8 @@ export function selectExecutionRoute(
     }
     if (requirement.host && route.host !== requirement.host)
       rejected.push("host");
+    if (requirement.executionMode && route.executionMode !== requirement.executionMode)
+      rejected.push(`execution_mode:${requirement.executionMode}`);
     if (requirement.durable && !route.durable)
       rejected.push("durable_lifetime");
     for (const capability of requirement.capabilities)
@@ -109,7 +117,7 @@ export function selectExecutionRoute(
   eligible.sort((a, b) => a.overhead - b.overhead || a.id.localeCompare(b.id));
   const route = eligible[0];
   return route
-    ? { status: "selected", routeId: route.id, path: route.path }
+    ? { status: "selected", routeId: route.id, path: route.path, ...(route.executionMode ? { executionMode: route.executionMode } : {}) }
     : {
         status: "blocked",
         reasons: reasons.size ? [...reasons].sort() : ["no_compatible_route"],

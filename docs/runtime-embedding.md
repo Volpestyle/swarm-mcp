@@ -152,3 +152,41 @@ readiness timeout. Do not automatically redispatch these uncertain receipts.
 Install a new build only after holding dispatch and reconciling/draining every
 live or uncertain worker. A package replacement is not an owner upgrade. This
 change does not implement an install lock or immutable runtime generations.
+
+## Herdr interactive workers
+
+A Herdr route's `workerMode` is `stream` (the default when omitted) or
+`interactive` (ADR 0194 in Clankie). The mode resolves at reservation from the
+selected route, or from an explicit `execution.mode` on the intent, and is stored
+in the intent row (`execution_mode`, schema 15), the `dispatch.reserved` event,
+the dispatch result and the private launch receipt. An explicit mode is part of
+the intent fingerprint; routes of a different mode are rejected with
+`execution_mode:<mode>`, and a retry keeps the stored mode. A route whose owner
+switched its mode after reservation refuses to launch (`execution_mode_changed`).
+Nothing ever falls back from interactive to stream.
+
+An interactive worker runs Claude's TUI with the pane's inherited terminal: no
+`--print` or stream-JSON. The wrapper keeps the launch token, task-lease renewal,
+MCP health supervision and stale-progress reporting, and writes its diagnostics to
+`<receipt>.log` so it never draws over the TUI. Ctrl+C belongs to Claude; SIGTERM
+or a closed pane (SIGHUP) stops the worker.
+
+Mail reaches it through a Claude channel served by its own Swarm MCP, using only
+its enrolled session capability. With `channelPlugin` (`name@marketplace`), that
+installed plugin serves the MCP (its server command runs the argv in
+`SWARM_WORKER_MCP`) and Claude starts with `--channels plugin:<id>`; an
+owner-managed `allowedChannelPlugins` entry must approve it for unattended
+startup. Without it, the bare `swarm` server loads as a development channel whose
+confirmation a person must accept in the pane.
+
+The MCP emits a startup channel event carrying a per-process nonce, repeated
+every 15 seconds until answered. Only `swarm_ready` with that nonce commits
+readiness and the fenced claim; other tools return `readiness_pending` until then.
+It then projects the leased inbox: one outstanding envelope, fetched only while
+the native turn is idle, and freed by the model's `swarm_inbox` ack/reject or
+lease expiry. Channel workers' hooks (`UserPromptSubmit`, `Stop`) publish
+busy/available and never fetch mail, so the projection is the one inbox consumer.
+A startup that is never answered stays `uncertain` with
+`worker_readiness_timeout` in interactive mode; reconcile the same intent.
+`test/coordination-interactive-worker.test.ts` drives the real wrapper, MCP and
+hooks through a scripted channel fixture; it does not replace a live Claude run.

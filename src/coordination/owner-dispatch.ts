@@ -32,7 +32,15 @@ const herdrRoute = z.object({
         command: z.string().min(1).max(4096), args: z.array(z.string().max(4096)).max(64),
         env: z.record(z.string(), z.string()).optional(),
       }).strict()).refine(servers => !Object.hasOwn(servers, "swarm"), "swarm is reserved").optional(),
-    }).strict();
+      // ADR 0194. Omitted means stream, the unattended default. Interactive runs
+      // the Claude TUI in the pane and receives Swarm envelopes over a channel.
+      workerMode: z.enum(["interactive", "stream"]).optional(),
+      // Installed, owner-approved channel plugin (name@marketplace) that serves
+      // the Swarm MCP. Without it, interactive uses a development channel that
+      // a person must confirm at startup.
+      channelPlugin: z.string().max(256).regex(/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$/).optional(),
+    }).strict().refine(route => !route.channelPlugin || route.workerMode === "interactive",
+      "channelPlugin requires workerMode interactive");
 
 export const ownerDispatchSchema = z
   .object({
@@ -215,7 +223,7 @@ export function ownerDispatch(
       });
     });
     for (const route of herdr) routes.push({
-      id: route.id, path: "peer", scope: requester.scope, host: "claude-code",
+      id: route.id, path: "peer", scope: requester.scope, host: "claude-code", executionMode: route.workerMode ?? "stream",
       worktree: canonicalPath(store.worktree(requester).root), ...executionWorktrees(route.workspaces ?? []), capabilities: route.capabilities,
       durable: true, capacity: route.capacity, overhead: 10, active: 0,
       authorized: route.enabled, availability: route.enabled ? "idle" : "disconnected", observedAt: Date.now(),

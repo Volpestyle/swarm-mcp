@@ -3,7 +3,7 @@ import { CoordinationError } from "./errors";
 
 // Application identity prevents accidental adoption of another application's database.
 export const APPLICATION_ID = 0x53574d32;
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 export type FaultPoint =
   | "before_migration_commit"
   | "before_command_commit"
@@ -173,6 +173,10 @@ const migrations = [
    ALTER TABLE artifacts ADD COLUMN collected_at INTEGER;
    CREATE TABLE event_retention (scope TEXT PRIMARY KEY, floor INTEGER NOT NULL);
    CREATE INDEX command_retention ON commands(created_at);`,
+  // Resolved worker execution mode, fixed at reservation (ADR 0194). NULL for
+  // routes without a mode (peers, OpenCode) and for intents reserved earlier.
+  `ALTER TABLE dispatch_intents ADD COLUMN execution_mode TEXT
+    CHECK(execution_mode IS NULL OR execution_mode IN ('interactive','stream'));`,
 ];
 
 function version(db: Sqlite): number {

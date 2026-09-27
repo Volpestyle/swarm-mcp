@@ -5,7 +5,7 @@ import { CoordinationError, requireText } from "./errors";
 import { validateSession, type SessionContext } from "./sessions";
 import { validateTaskContract, type TaskContract } from "./task-contract";
 import { TaskTransaction } from "./tasks";
-import { selectExecutionRoute, type ExecutionRoute } from "./routing";
+import { executionModes, selectExecutionRoute, type ExecutionMode, type ExecutionRoute } from "./routing";
 
 export interface DispatchIntent {
   intentId: string;
@@ -14,6 +14,9 @@ export interface DispatchIntent {
   capabilities: string[];
   durable: boolean;
   host?: string;
+  /** Requested execution. Omitted values resolve from the selected route and
+   * stay distinguishable from explicit choices in the fingerprint. */
+  execution?: { mode?: ExecutionMode };
 }
 export interface DispatchPolicy {
   /** Resolved outside the transaction; never rewrites the immutable intent. */
@@ -35,6 +38,7 @@ type Row = {
   worker_session: string | null;
   attempt_id: string | null;
   fence: number | null;
+  execution_mode: ExecutionMode | null;
 };
 
 /** Runs inside the coordinator's BEGIN IMMEDIATE command transaction. Policy
@@ -78,6 +82,7 @@ export class DispatchTransaction {
         token: row.provision_token,
         taskId: row.task_id,
         routeId: row.route_id,
+        executionMode: row.execution_mode,
       };
     const task = this.db
       .prepare("SELECT status FROM tasks WHERE scope=? AND id=?")
@@ -103,6 +108,7 @@ export class DispatchTransaction {
       token,
       taskId: row.task_id,
       routeId: row.route_id,
+      executionMode: row.execution_mode,
     };
   }
 
@@ -434,6 +440,10 @@ export class DispatchTransaction {
     for (const capability of input.capabilities)
       requireText(capability, "capability");
     if (input.host !== undefined) requireText(input.host, "host");
+    if (input.execution !== undefined && (!input.execution || typeof input.execution !== "object" || Array.isArray(input.execution) ||
+        Object.keys(input.execution).some(key => key !== "mode") ||
+        (input.execution.mode !== undefined && !executionModes.includes(input.execution.mode))))
+      throw new CoordinationError("invalid_input", "execution accepts mode: interactive or stream");
     const capabilities = [...new Set(input.capabilities)].sort();
     const fingerprint = createHash("sha256")
       .update(
@@ -443,6 +453,8 @@ export class DispatchTransaction {
           capabilities,
           durable: input.durable,
           host: input.host ?? null,
+          // Absent for requests without a selection, so their fingerprints are unchanged.
+          ...(input.execution?.mode ? { execution: { mode: input.execution.mode } } : {}),
         }),
       )
       .digest("hex");
@@ -462,6 +474,7 @@ export class DispatchTransaction {
           taskId: existing.task_id,
           routeId: existing.route_id,
           path: existing.path,
+          executionMode: existing.execution_mode,
         };
       if (existing.state !== "released")
         throw new CoordinationError(
@@ -487,6 +500,8 @@ export class DispatchTransaction {
         capabilities,
         durable: input.durable,
         host: input.host,
+        // A retry keeps the originally resolved mode; nothing switches it silently.
+        executionMode: input.execution?.mode ?? existing?.execution_mode ?? undefined,
       },
       policy.routes.map((route) => ({
         ...route,
@@ -502,11 +517,12 @@ export class DispatchTransaction {
       this.tasks.retry({ taskId: existing.task_id, expectedVersion });
       this.db
         .prepare(
-          "UPDATE dispatch_intents SET route_id=?,path=?,state='reserved',provision_token=NULL,external_id=NULL,worker_session=NULL,attempt_id=NULL,fence=NULL WHERE scope=? AND intent_id=?",
+          "UPDATE dispatch_intents SET route_id=?,path=?,execution_mode=?,state='reserved',provision_token=NULL,external_id=NULL,worker_session=NULL,attempt_id=NULL,fence=NULL WHERE scope=? AND intent_id=?",
         )
         .run(
           selection.routeId,
           selection.path,
+          selection.executionMode ?? null,
           this.command.scope,
           input.intentId,
         );
@@ -514,6 +530,7 @@ export class DispatchTransaction {
         taskId: existing.task_id,
         routeId: selection.routeId,
         path: selection.path,
+        executionMode: selection.executionMode ?? null,
       });
       return {
         status: "reserved",
@@ -521,12 +538,13 @@ export class DispatchTransaction {
         taskId: existing.task_id,
         routeId: selection.routeId,
         path: selection.path,
+        executionMode: selection.executionMode ?? null,
       };
     }
     const { task } = this.tasks.create({ title: input.title, contract });
     this.db
       .prepare(
-        "INSERT INTO dispatch_intents(scope,intent_id,fingerprint,task_id,route_id,path,state,creator,created_at) VALUES(?,?,?,?,?,?,'reserved',?,?)",
+        "INSERT INTO dispatch_intents(scope,intent_id,fingerprint,task_id,route_id,path,execution_mode,state,creator,created_at) VALUES(?,?,?,?,?,?,?,'reserved',?,?)",
       )
       .run(
         this.command.scope,
@@ -535,6 +553,7 @@ export class DispatchTransaction {
         task.id,
         selection.routeId,
         selection.path,
+        selection.executionMode ?? null,
         this.command.actor,
         this.at,
       );
@@ -542,6 +561,7 @@ export class DispatchTransaction {
       taskId: task.id,
       routeId: selection.routeId,
       path: selection.path,
+      executionMode: selection.executionMode ?? null,
     });
     return {
       status: "reserved",
@@ -549,6 +569,7 @@ export class DispatchTransaction {
       taskId: task.id,
       routeId: selection.routeId,
       path: selection.path,
+      executionMode: selection.executionMode ?? null,
     };
   }
 }

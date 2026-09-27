@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { CoordinationStore, type Json } from "./store";
 import type { SessionContext } from "./sessions";
 import type { DispatchIntent, DispatchPolicy } from "./dispatch";
+import type { ExecutionMode } from "./routing";
 
 export interface ProvisionedWorker {
   externalId: string;
@@ -16,8 +17,9 @@ export interface DispatchProvider {
   requiresWorkerReady?: boolean;
   readinessTimeoutMs?: number;
   authorized(): boolean;
+  /** executionMode is the value fixed in the intent row at reservation. */
   start(
-    input: { token: string; taskId: string; intent: DispatchIntent },
+    input: { token: string; taskId: string; intent: DispatchIntent; executionMode?: ExecutionMode },
     signal: AbortSignal,
   ): Promise<ProvisionedWorker>;
   find(token: string, signal: AbortSignal): Promise<ProvisionedWorker | null>;
@@ -231,12 +233,14 @@ export async function runDispatchIntent(options: {
   );
   const provision = begun.value;
   if (!provision.token) throw new Error("Dispatch has no provisioning token");
+  const mode = provision.executionMode ? { executionMode: provision.executionMode } : {};
   let external: ProvisionedWorker | null;
   try {
     external = await bounded(options.timeoutMs ?? (provider.requiresWorkerReady ? provider.readinessTimeoutMs ?? 60000 : timeoutMs), (signal) =>
       !begun.replayed && provision.start
         ? provider.start(
-            { token: provision.token!, taskId: provision.taskId, intent },
+            { token: provision.token!, taskId: provision.taskId, intent,
+              ...(provision.executionMode ? { executionMode: provision.executionMode } : {}) },
             signal,
           )
         : provider.find(provision.token!, signal),
@@ -246,6 +250,7 @@ export async function runDispatchIntent(options: {
       status: "uncertain",
       taskId: provision.taskId,
       routeId: provision.routeId,
+      ...mode,
       ...(provider.requiresWorkerReady ? { reasons: [error instanceof CoordinationError ? (error.code === "provider_timeout" ? "worker_readiness_timeout" : error.code) : "worker_startup_failed"], intentId: intent.intentId, token: provision.token, recovery: "Reconcile this same intent and token; timeout does not prove the worker stopped" } : {}),
     };
   }
@@ -254,6 +259,7 @@ export async function runDispatchIntent(options: {
       status: "uncertain",
       taskId: provision.taskId,
       routeId: provision.routeId,
+      ...mode,
     };
   if (provider.requiresWorkerReady) {
     try {
@@ -261,7 +267,7 @@ export async function runDispatchIntent(options: {
       if (!ready.ready || ready.externalId !== external.externalId)
         throw new CoordinationError("worker_claim_failed", "Provider has no verified worker claim");
     } catch (error) {
-      return { status: "uncertain", taskId: provision.taskId, routeId: provision.routeId,
+      return { status: "uncertain", taskId: provision.taskId, routeId: provision.routeId, ...mode,
         intentId: intent.intentId, token: provision.token,
         reasons: [error instanceof CoordinationError && error.code === "worker_mcp_unavailable" ? error.code : "worker_claim_failed"],
         recovery: "Reconcile the retained worker claim; do not provision another attempt" };
@@ -297,5 +303,5 @@ export async function runDispatchIntent(options: {
       return accepted;
     },
   ).value;
-  return { status: "bound", ...bound };
+  return { status: "bound", ...bound, ...mode };
 }

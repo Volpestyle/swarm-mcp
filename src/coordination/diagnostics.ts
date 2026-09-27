@@ -97,7 +97,8 @@ export function inspectCoordination(
     at: number;
   }>(
     `SELECT id AS cursor,type,entity_id AS entityId,actor,created_at AS at,
-     json_extract(payload,'$.sessionId') AS sessionId,json_extract(payload,'$.generation') AS generation FROM events
+     json_extract(payload,'$.sessionId') AS sessionId,json_extract(payload,'$.generation') AS generation,
+     json_extract(payload,'$.executionMode') AS executionMode FROM events
      WHERE scope=? AND (type LIKE 'delivery.%' OR type LIKE 'dispatch.%' OR type IN ('task.recovered','task.retried'))
      ORDER BY id DESC LIMIT ?`,
     scope,

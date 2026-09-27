@@ -11,6 +11,7 @@ import type { CoordinationStore } from "./store";
 import { canonicalPath, discoverWorktree, executionWorktrees, type ExecutionWorkspace } from "./worktrees";
 import { realpathSync, statSync } from "node:fs";
 import { prepareClaudeLaunch } from "./claude-launcher";
+import type { ExecutionMode } from "./routing";
 
 import { CoordinationError } from "./errors";
 import { readWorkerHealth } from "./worker-health";
@@ -31,6 +32,9 @@ export interface HerdrRoute {
   readinessTimeoutMs?: number;
   workspaces?: ExecutionWorkspace[];
   mcpServers?: Parameters<typeof prepareClaudeLaunch>[0]["mcpServers"];
+  /** Owner-selected; omitted means stream. */
+  workerMode?: ExecutionMode;
+  channelPlugin?: string;
 }
 export interface HerdrWorkerRecord {
   token: string;
@@ -44,6 +48,9 @@ export interface HerdrWorkerRecord {
   environment: Record<string, string>;
   cwd: string;
   started?: boolean;
+  /** Mode fixed by the intent; legacy receipts without it are stream. */
+  mode?: ExecutionMode;
+  channelPlugin?: string;
 }
 // Herdr serves one newline-framed response per connection.
 async function applyLayout(socketPath: string, params: unknown, signal: AbortSignal): Promise<void> {
@@ -112,7 +119,13 @@ export function herdrDispatchProvider(store: CoordinationStore, requester: Sessi
     requiresWorkerReady: true,
     readinessTimeoutMs: route.readinessTimeoutMs ?? 60000,
     authorized: () => { try { store.assertContext(requester); return route.enabled !== false; } catch { return false; } },
-    async start({ token, taskId, intent }, signal) {
+    async start({ token, taskId, intent, executionMode = "stream" }, signal) {
+      // The intent row fixed the mode at reservation. A route since switched by
+      // its owner refuses to launch rather than silently changing transport.
+      if (executionMode !== (route.workerMode ?? "stream"))
+        throw new CoordinationError("execution_mode_changed",
+          `Intent was reserved for ${executionMode} but route ${route.id} is now ${route.workerMode ?? "stream"}; reconcile and dispatch again`);
+      const interactive = executionMode === "interactive";
       const parent = store.worktree(requester);
       let directory: string;
       try {
@@ -131,15 +144,18 @@ export function herdrDispatchProvider(store: CoordinationStore, requester: Sessi
         identity: { projectRoot: parent.repository, repository: worktree.repository, fileRoot: worktree.root, directory: worktree.root, profile: route.profile },
         skillPath: join(dirname(route.workerPath), "../../skills/swarm-mcp/SKILL.md"),
         mcpServers: route.mcpServers,
-        hostSessionId: randomUUID(), incarnation: token, label: "runtime:claude-code transport:herdr",
+        ...(interactive ? { channel: route.channelPlugin ? { plugin: route.channelPlugin } : {} } : {}),
+        hostSessionId: randomUUID(), incarnation: token,
+        label: `runtime:claude-code transport:herdr mode:${executionMode}`,
       });
       if (prepared.scope !== requester.scope) throw new Error("Herdr route profile does not match requester scope");
       const record: HerdrWorkerRecord = {
         token, intentId: intent.intentId, taskId, routeFingerprint: fingerprint, worker: { scope: prepared.scope, actor: prepared.actor, sessionId: prepared.sessionId, generation: prepared.generation },
         command: route.claudePath, args: prepared.arguments, environment: prepared.environment, cwd: worktree.root,
+        mode: executionMode, ...(interactive && route.channelPlugin ? { channelPlugin: route.channelPlugin } : {}),
       };
       record.environment.SWARM_WORKER_LAUNCH = path(token);
-      record.environment.SWARM_STREAM_WORKER = "1";
+      if (!interactive) record.environment.SWARM_STREAM_WORKER = "1";
       store.execute({ ...requester, id: randomUUID(), type: "dispatch.expectWorker", payload: { token } },
         tx => tx.dispatch.expectWorker({ intentId: intent.intentId, token, worker: record.worker }));
       // Exclusive publication precedes every external side effect.

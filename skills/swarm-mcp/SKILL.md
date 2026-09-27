@@ -86,7 +86,9 @@ fences remain invalid even if the old process is alive.
 Wait only while responsible for a result, dependency or review. Use event waits
 and runtime delivery instead of an idle model polling loop. Host support is
 specific: OpenCode and the owned Herdr Claude stream worker have verified idle
-delivery; native interactive Claude delivers at native boundaries. Clankie mounts
+delivery; native interactive Claude delivers at native boundaries. An owned
+interactive Herdr worker receives mail as channel events: answer its startup
+check with `swarm_ready` and the nonce, then ack each envelope after processing. Clankie mounts
 a conversation-bound Pi adapter. Codex automatic delivery remains unverified. Other hosts require their own
 trusted runtime integration. Discover and verify a new installed host before
 raising its support level.
