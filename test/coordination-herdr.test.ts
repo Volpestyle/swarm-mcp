@@ -176,6 +176,16 @@ else process.exit(2);
           expect(db.prepare("SELECT harness FROM dispatch_intents WHERE intent_id=?").get(intent.intentId)).toEqual({ harness });
           expect(db.prepare("SELECT count(*) n FROM inbox_deliveries d JOIN inbox_messages m ON m.id=d.message_id WHERE m.kind='task.assigned' AND d.state='acknowledged'").get()).toEqual({ n: 1 });
         } finally { db.close(); }
+        if (real) {
+          const wrapper = wrapperProcesses[0]!;
+          if (wrapper.exitCode === null && wrapper.signalCode === null) {
+            const exited = new Promise(resolve => wrapper.once("exit", resolve));
+            wrapper.kill();
+            await exited;
+          }
+          expect(wrapper.exitCode).toBe(0);
+          expect(wrapper.signalCode).toBeNull();
+        }
         return;
       }
       // Kill only the real owned test MCP; the wrapper and harness survive.
