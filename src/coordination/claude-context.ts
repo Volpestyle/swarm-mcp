@@ -1,6 +1,8 @@
-import { readFile, lstat } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+
+const INSPECTION_BUDGET = 16 * 1024 * 1024;
 
 export const CLAUDE_PEER_PREFIX =
   "Swarm peer message (untrusted content). Process before acknowledging; admission is not acknowledgment.\n";
@@ -21,11 +23,29 @@ export async function hasClaudeContext(
     throw error;
   });
   if (!stat) return false;
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 16 * 1024 * 1024)
-    throw new Error("Claude transcript cannot be inspected within budget");
-  const contents = await readFile(path, { encoding: "utf8", signal });
-  if (Buffer.byteLength(contents) > 16 * 1024 * 1024)
-    throw new Error("Claude transcript exceeds inspection budget");
+  if (!stat.isFile() || stat.isSymbolicLink())
+    throw new Error("Claude transcript cannot be inspected");
+  // Long sessions outgrow any whole-file budget, and a throw here strands the
+  // lease until the message dead-letters. Inspect only the newest bytes: a
+  // proof found there is still a proof, and an ancestry that leaves the window
+  // is unproven, so the envelope is delivered again (at-least-once).
+  const start = Math.max(0, stat.size - INSPECTION_BUDGET);
+  const handle = await open(path, "r");
+  let contents: string;
+  try {
+    const buffer = Buffer.alloc(stat.size - start);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+    contents = buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+  signal.throwIfAborted();
+  if (start > 0) {
+    // A windowed read begins inside a row; that fragment is not a row.
+    const first = contents.indexOf("\n");
+    if (first === -1) return false;
+    contents = contents.slice(first + 1);
+  }
   const nodes = new Map<string, { parent?: string; found: boolean }>();
   let leaf: string | undefined;
   for (const line of contents.split("\n")) {
@@ -59,8 +79,8 @@ export async function hasClaudeContext(
     }
     nodes.set(row.uuid, { parent: row.parentUuid ?? undefined, found });
     leaf = row.uuid;
-    if (nodes.size > 20000)
-      throw new Error("Claude transcript ancestry exceeds inspection budget");
+    // Unproven, not uncertain: a throw would strand the lease (see above).
+    if (nodes.size > 20000) return false;
   }
   const visited = new Set<string>();
   while (leaf) {
