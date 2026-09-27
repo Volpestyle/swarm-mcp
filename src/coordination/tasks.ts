@@ -236,13 +236,19 @@ export class TaskTransaction {
       task = this.task(payload.taskId);
     const dispatch = this.db
       .prepare(
-        "SELECT intent_id,state FROM dispatch_intents WHERE scope=? AND task_id=? AND state<>'released'",
+        "SELECT intent_id,state,worker_session FROM dispatch_intents WHERE scope=? AND task_id=? AND state<>'released'",
       )
       .get(this.command.scope, task.id) as
-      | { intent_id: string; state: string }
+      | { intent_id: string; state: string; worker_session: string | null }
       | undefined;
+    // The bound worker may reclaim its own dispatched task after its attempt
+    // lapsed and was recovered; any other claimant still needs a dispatch.
+    const rebind =
+      dispatch?.state === "bound" &&
+      dispatch.worker_session === context.sessionId;
     if (
       dispatch &&
+      !rebind &&
       (dispatch.intent_id !== reservedIntent ||
         dispatch.state !== "provisioning")
     )
@@ -295,6 +301,18 @@ export class TaskTransaction {
       sessionId: context.sessionId,
       leaseUntil: until,
     });
+    if (rebind) {
+      this.db
+        .prepare(
+          "UPDATE dispatch_intents SET attempt_id=?,fence=? WHERE scope=? AND intent_id=?",
+        )
+        .run(id, fence, this.command.scope, dispatch.intent_id);
+      this.change("dispatch.rebound", dispatch.intent_id, {
+        taskId: task.id,
+        attemptId: id,
+        fence,
+      });
+    }
     return {
       task: { ...this.task(task.id) },
       attemptId: id,

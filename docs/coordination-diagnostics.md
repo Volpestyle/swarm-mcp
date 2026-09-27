@@ -30,7 +30,7 @@ event cursor API for older history.
 | Wake `uncertain` | Inspect the retained host outcome. Do not blindly repeat an uncertain native prompt or create. |
 | `leased`, no acknowledgment | Processing may be underway. After lease expiry, recipient `inbox.sweep`/`inbox.fetch` recovers delivery; deduplicate effects by message identity. These transitions retain events. |
 | `dead_letter` or expired | Inspect authorized `message_status` and recipient health. Terminal records remain; there is no automatic terminal replay. A deliberate replacement uses a new message identity and references the original task/thread. |
-| Expired task lease or inactive owner | Use `task.recover` with the task ID. Recovery fences stale results; it is not proof external work stopped. Dispatch capacity remains reserved until provider stop proof permits release. |
+| Expired task lease or inactive owner | Use `task.recover` with the task ID. Recovery fences stale results; it is not proof external work stopped. Dispatch capacity remains reserved until provider stop proof permits release. The bound dispatched worker's own session may then `task.claim` the reopened task again (a new fence, recorded as `dispatch.rebound`); every other claimant is still refused with "reserved by dispatch". |
 | `cancel_requested` | Wait for the matching fenced cancellation result. Reassignment requires release, unchanged contract and current task version; it emits `dispatch.reassigned`. |
 | `unknown_stale_observation` | Runtime evidence is over 60 seconds old. Refresh through the trusted adapter. Enrollment, transport activity and the retained `available` value do not establish process liveness. |
 
