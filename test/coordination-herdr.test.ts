@@ -151,7 +151,14 @@ else process.exit(2);
       expect(first).toMatchObject({ status: "bound", harness });
       const launch = (await readdir(root)).find(name => /^herdr-.*[.]json$/.test(name))!;
       const healthPath = `${join(root, launch)}.mcp-health`;
-      const health = JSON.parse(await readFile(healthPath, "utf8"));
+      let health = JSON.parse(await readFile(healthPath, "utf8"));
+      // The DB claim can reach the requester before the MCP child publishes
+      // its local health sidecar. Observe that second commit without racing it.
+      const healthDeadline = Date.now() + 2000;
+      while (health.state === "connected" && Date.now() < healthDeadline) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        health = JSON.parse(await readFile(healthPath, "utf8"));
+      }
       expect(health.state).toBe("ready");
       if (complete) {
         const taskId = (first as any).taskId;
