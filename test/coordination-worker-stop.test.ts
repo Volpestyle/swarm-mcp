@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test, spyOn } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,4 +52,14 @@ test("task contract rejects progress timeouts outside its bounded policy", () =>
   for (const value of [0, 59999, 86400001, 1.5, NaN, Infinity])
     expect(() => validateTaskContract({ ...contract, progressTimeoutMs: value })).toThrow("Progress timeout");
   expect(validateTaskContract({ ...contract, progressTimeoutMs: 3600000 }).progressTimeoutMs).toBe(3600000);
+});
+
+
+test("permission-denied group probes cannot fabricate termination proof", async () => {
+  if (process.platform === "win32") return;
+  const kill = spyOn(process, "kill").mockImplementation(() => { throw Object.assign(new Error("denied"), { code: "EPERM" }); });
+  try {
+    const child = { pid: 123, stdin: { end() {} } } as unknown as ReturnType<typeof spawn>;
+    expect(await stopOwnedWorker(child)).toBe(false);
+  } finally { kill.mockRestore(); }
 });

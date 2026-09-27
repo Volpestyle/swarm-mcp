@@ -31,20 +31,27 @@ export async function stopOwnedWorker(child: ChildProcess): Promise<boolean> {
   if (!child.pid) return false;
   child.stdin?.end();
   if (process.platform === "win32") { child.kill(); return false; }
-  const pid = child.pid;
-  const alive = () => {
-    try { process.kill(-pid, 0); return true; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
-  };
-  for (const signal of ["SIGTERM", "SIGKILL"] as const) {
-    if (!alive()) return true;
-    try { process.kill(-pid, signal); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
-    const deadline = Date.now() + 1000;
-    while (Date.now() < deadline) {
+  try {
+    const pid = child.pid;
+    const alive = () => {
+      try { process.kill(-pid, 0); return true; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
+    };
+    for (const signal of ["SIGTERM", "SIGKILL"] as const) {
       if (!alive()) return true;
-      await delay(25);
+      try { process.kill(-pid, signal); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline) {
+        if (!alive()) return true;
+        await delay(25);
+      }
     }
+    return !alive();
+  } catch (error) {
+    // A sandboxed descendant can make a POSIX group probe/signal return EPERM.
+    // That is unverified termination, never permission to issue a stop receipt.
+    if ((error as NodeJS.ErrnoException).code === "EPERM") return false;
+    throw error;
   }
-  return !alive();
 }
