@@ -30,13 +30,22 @@ export async function prepareManagedLaunch(options: Parameters<typeof prepareCla
     command: options.nodePath, args: [join(here, "mcp-cli.js")],
   } };
   const overrides = Object.entries(servers).flatMap(([name, server]) => {
-    const key = `mcp_servers.${JSON.stringify(name)}`;
+    // Codex splits override paths on dots; quotes become literal key characters.
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error(`Unsupported Codex MCP server name: ${name}`);
+    const key = `mcp_servers.${name}`;
     const { env, ...configuration } = server as { command: string; args: string[]; env?: Record<string, string> };
     return [...Object.entries({ ...configuration, enabled: true,
       // Launch binding must reach the MCP child as well as the enrollment.
       env_vars: [...Object.keys(enrolled.environment), "SWARM_WORKER_LAUNCH"],
     }).flatMap(([field, value]) => ["-c", `${key}.${field}=${JSON.stringify(value)}`]),
-      ...Object.entries(env ?? {}).flatMap(([field, value]) => ["-c", `${key}.env.${JSON.stringify(field)}=${JSON.stringify(value)}`])];
+      ...Object.entries(env ?? {}).flatMap(([field, value]) => {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(field)) throw new Error(`Unsupported Codex environment variable: ${field}`);
+        return ["-c", `${key}.env.${field}=${JSON.stringify(value)}`];
+      })];
   });
-  return { ...enrolled, arguments: [...overrides, "app-server", "--stdio"] };
+  // The trusted launcher is authorized to acknowledge delivery and maintain
+  // fenced task state on its own enrolled coordinator. No other tools are preapproved.
+  const lifecycle = ["swarm_inbox", "swarm_task"].flatMap(tool =>
+    ["-c", `mcp_servers.swarm.tools.${tool}.approval_mode="approve"`]);
+  return { ...enrolled, arguments: [...overrides, ...lifecycle, "app-server", "--stdio"] };
 }

@@ -56,7 +56,12 @@ export function streamHarness(record: HerdrWorkerRecord, callbacks: {
           if (event.type === "result") callbacks.settled();
         } else if (harness === "pi") {
           if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") process.stdout.write(event.assistantMessageEvent.delta);
-          if (event.type === "agent_end") callbacks.settled();
+          if (event.type === "extension_error") callbacks.failed(new Error(`Pi extension failed: ${event.error}`));
+          if (event.type === "agent_end" && !event.willRetry) {
+            const last = event.messages?.findLast((message: any) => message.role === "assistant");
+            if (last?.stopReason === "error") callbacks.failed(new Error(`Pi model failed: ${last.errorMessage ?? "unknown error"}`));
+            else callbacks.settled();
+          }
         } else {
           if (event.method === "item/agentMessage/delta") process.stdout.write(event.params.delta);
           if (event.method === "turn/completed") callbacks.settled();

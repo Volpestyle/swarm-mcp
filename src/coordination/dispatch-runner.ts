@@ -16,6 +16,8 @@ export interface DispatchProvider {
   requiresWorkerReady?: boolean;
   readinessTimeoutMs?: number;
   authorized(): boolean;
+  /** A retained route may stop its verified tokens after new provisioning is disabled. */
+  authorizedToStop?(): boolean;
   start(
     input: { token: string; taskId: string; intent: DispatchIntent },
     signal: AbortSignal,
@@ -134,7 +136,7 @@ export async function cancelDispatchIntent(options: {
     (provider) => provider.routeId === cancellation.routeId,
   );
   const provider = matches.length === 1 ? matches[0] : undefined;
-  if (!provider?.stop || !provider.authorized())
+  if (!provider?.stop || !(provider.authorizedToStop?.() ?? provider.authorized()))
     return {
       status: "blocked",
       taskId: cancellation.taskId,

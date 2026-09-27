@@ -7,8 +7,8 @@ let config;
 if (harness === 'claude') config = JSON.parse(args[args.indexOf('--mcp-config') + 1]);
 else if (harness === 'pi') config = { mcpServers: JSON.parse(process.env.SWARM_WORKER_MCP_SERVERS) };
 else {
-  const fields = Object.fromEntries(args.filter(arg => arg.startsWith('mcp_servers."swarm".')).map(arg => {
-    const at = arg.indexOf('='); return [arg.slice('mcp_servers."swarm".'.length, at), JSON.parse(arg.slice(at + 1))];
+  const fields = Object.fromEntries(args.filter(arg => arg.startsWith('mcp_servers.swarm.') && !arg.includes('.tools.')).map(arg => {
+    const at = arg.indexOf('='); return [arg.slice('mcp_servers.swarm.'.length, at), JSON.parse(arg.slice(at + 1))];
   }));
   if (!fields.env_vars.includes('SWARM_WORKER_LAUNCH')) throw new Error('Missing launch binding');
   config = { mcpServers: { swarm: fields } };

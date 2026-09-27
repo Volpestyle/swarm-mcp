@@ -8,7 +8,7 @@ import { Database } from "bun:sqlite";
 import { realpathSync } from "node:fs";
 import { ownerState } from "../src/coordination/launcher-state";
 import { enrollRuntime } from "../src/coordination/runtime-launcher";
-import { herdrDispatchProvider } from "../src/coordination/herdr-dispatch";
+import { herdrDispatchProvider, type HerdrRoute } from "../src/coordination/herdr-dispatch";
 import { ownerDispatchSchema } from "../src/coordination/owner-dispatch";
 import { CoordinationClient, localEndpoint } from "../src/coordination/ipc";
 
@@ -21,7 +21,7 @@ test("long Unix state paths retain private, short, distinct endpoints", () => {
   expect(endpoint).not.toBe(localEndpoint(join(root, "two.db")));
 });
 
-for (const { lostResponse, started, project = false, mismatch = false, stream = false, harness = "claude-code" as const, complete = false } of [
+for (const { lostResponse, started, project = false, mismatch = false, stream = false, harness = "claude-code" as const, complete = false, real = false } of [
   { lostResponse: false, started: true },
   { lostResponse: true, started: true },
   { lostResponse: false, started: false },
@@ -32,13 +32,15 @@ for (const { lostResponse, started, project = false, mismatch = false, stream = 
   { lostResponse: false, started: true, stream: true, harness: "pi" as const },
   { lostResponse: false, started: true, stream: true, harness: "codex" as const, complete: true },
   { lostResponse: false, started: true, stream: true, harness: "pi" as const, complete: true },
-]) test(`Herdr reconciles one token (lost response: ${lostResponse}, receipt: ${started}, project: ${project}, mismatch: ${mismatch}, stream: ${stream}, harness: ${harness}, complete: ${complete})`, async () => {
+  ...(process.env.SWARM_REAL_HARNESS_TEST ? [{ lostResponse: false, started: true, stream: true, harness: process.env.SWARM_REAL_HARNESS_TEST as "codex" | "pi", complete: true, real: true }] : []),
+]) test(`Herdr reconciles one token (lost response: ${lostResponse}, receipt: ${started}, project: ${project}, mismatch: ${mismatch}, stream: ${stream}, harness: ${harness}, complete: ${complete}, real: ${real})`, async () => {
   if (process.platform === "win32") return; // Herdr's local Unix transport.
   await mkdir(resolve("dist/test"), { recursive: true });
-  const packageRoot = await mkdtemp(resolve("dist/test/herdr-"));
+  const installedPackage = real ? process.env.SWARM_REAL_PACKAGE_ROOT : undefined;
+  const packageRoot = installedPackage ?? await mkdtemp(resolve("dist/test/herdr-"));
   const dist = join(packageRoot, "dist/coordination");
-  await cp("skills/swarm-mcp", join(packageRoot, "skills/swarm-mcp"), { recursive: true });
-  await build({ entryPoints: ["owner-cli", "claude-hook-cli", "client-cli", "mcp-cli", "herdr-worker-cli"].map(name => `src/coordination/${name}.ts`),
+  if (!installedPackage) await cp("skills/swarm-mcp", join(packageRoot, "skills/swarm-mcp"), { recursive: true });
+  if (!installedPackage) await build({ entryPoints: ["owner-cli", "claude-hook-cli", "client-cli", "mcp-cli", "herdr-worker-cli", "pi-worker-extension"].map(name => `src/coordination/${name}.ts`),
     bundle: true, platform: "node", format: "esm", packages: "external", outdir: dist });
   if (mismatch) await build({ entryPoints: ["src/coordination/mcp-cli.ts"], bundle: true, platform: "node", format: "esm", packages: "external", outfile: join(dist, "mismatched-mcp.js"),
     define: { SWARM_BUILD: JSON.stringify({ revision: "wrong", sourceDigest: "wrong", packageVersion: "test", sdkVersion: "test" }) } });
@@ -82,7 +84,8 @@ else process.exit(2);
       const record = JSON.parse(await readFile(target, "utf8"));
       if (stream) {
         const child = spawn(Bun.which("node")!, [join(dist, "herdr-worker-cli.js"), target], { env: { ...process.env, HERDR_PANE_ID: "w1:p2", SWARM_FIXTURE_COMPLETE: complete ? "1" : "0" }, stdio: ["ignore", "pipe", "pipe"] });
-        child.stdout.resume(); child.stderr.resume(); wrapperProcesses.push(child);
+        if (real) { child.stdout.pipe(process.stdout); child.stderr.pipe(process.stderr); }
+        else { child.stdout.resume(); child.stderr.resume(); } wrapperProcesses.push(child);
       } else if (started) {
         record.started = true;
         record.paneId = "w1:p2";
@@ -104,12 +107,12 @@ else process.exit(2);
   const server = runtime(), secondServer = runtime();
   await new Promise<void>(resolve => server.listen(join(root, "herdr.sock"), resolve));
   await new Promise<void>(resolve => secondServer.listen(join(root, "second.sock"), resolve));
-  const firstRoute = { id: "herdr", stateDirectory: root, readinessTimeoutMs: stream ? 10000 : mismatch ? 5000 : 1000,
+  const firstRoute = { id: "herdr", stateDirectory: root, readinessTimeoutMs: real ? 60000 : stream ? 10000 : mismatch ? 5000 : 1000,
     profile: "test", socketPath: join(root, "herdr.sock"), herdrPath: herdr, claudePath: stream ? fakeClaude : Bun.which("node")!,
-    ...(harness === "claude-code" ? {} : { harness, harnessPath: fakeClaude }),
+    ...(harness === "claude-code" ? {} : { harness, harnessPath: real ? (process.env.SWARM_REAL_HARNESS_BIN ?? Bun.which(harness)!) : fakeClaude, ...(real && harness === "pi" ? { model: "openrouter/moonshotai/kimi-k3" } : {}) }),
     nodePath: Bun.which("node")!, workerPath: join(dist, "herdr-worker-cli.js"), capabilities: ["code"], capacity: 1,
     ...(project ? { workspaces: [{ kind: "repository" as const, path: join(repository, ".git") }] } : {}),
-    mcpServers: { connected_tools: { command: "clankie", args: ["mcp", "--swarm"], env: { CLANKIE_CONTROL_PLANE_URL: "http://127.0.0.1:4310" } } } };
+    mcpServers: real ? {} as NonNullable<HerdrRoute["mcpServers"]> : { connected_tools: { command: "clankie", args: ["mcp", "--swarm"], env: { CLANKIE_CONTROL_PLANE_URL: "http://127.0.0.1:4310" } } } };
   const secondRoute = { ...firstRoute, id: "second", socketPath: join(root, "second.sock"), capabilities: ["research"] };
   const dispatch = { maximum: 2, observationMaxAgeMs: 60000, peers: [], herdr: [firstRoute, secondRoute] };
   expect(ownerDispatchSchema.parse({ ...dispatch, herdr: firstRoute }).herdr).toEqual({ ...firstRoute, enabled: true });
@@ -119,8 +122,12 @@ else process.exit(2);
     host: "pi", hostSessionId: "leader", incarnation: "launch", identity: { projectRoot: root, fileRoot: root, directory: root, profile: "test" } });
   const client = await CoordinationClient.connect(enrolled.environment.SWARM_COORDINATOR_ENDPOINT, enrolled.environment.SWARM_SESSION_CAPABILITY);
   try {
+    const instruction = real ? await client.request({ op: "artifact_import", input: {
+      id: "harness-instruction", data: Buffer.from("Read-only harness acceptance snapshot. Include the exact marker SWARM_REAL_SNAPSHOT_OK in your completed task evidence after reading this artifact. Report your actual harness and model. Send your requester the completion notice before finishing so the host can release immediately.").toString("base64"),
+      summary: "Managed harness smoke instructions", mediaType: "text/plain",
+    } }) as { value: { artifactId: string } } : undefined;
     const intent = { intentId: "one-task", title: "Work", capabilities: ["code"], durable: true,
-      contract: { objective: "Work", worktree: selected, acceptanceCriteria: ["Done"], expectedArtifacts: [], constraints: [] } };
+      contract: { objective: real ? "Read the Swarm skill and all instruction artifacts, acknowledge the assigned envelope, report progress and compatibility, then finish this read-only harness smoke task as completed with evidence. Do not edit files. Use your assigned taskId/attemptId/fence. Send the requester a completion notice." : "Work", worktree: selected, acceptanceCriteria: ["Done"], expectedArtifacts: [], constraints: [], ...(instruction ? { instructions: [`swarm://artifacts/${instruction.value.artifactId}`] } : {}) } };
     // The owner is already running: a disabled route is read before every dispatch.
     await writeFile(owner.configPath, JSON.stringify({ ...owner, dispatch: { ...dispatch, herdr: [
       { ...firstRoute, enabled: false }, secondRoute,
@@ -140,6 +147,7 @@ else process.exit(2);
     const dispatchAt = Date.now();
     const first = await client.request({ op: "dispatch", input: { action: "assign", intent } });
     if (stream) {
+      if (real) console.log("REAL dispatch", JSON.stringify(first));
       expect(first).toMatchObject({ status: "bound", harness });
       const launch = (await readdir(root)).find(name => /^herdr-.*[.]json$/.test(name))!;
       const healthPath = `${join(root, launch)}.mcp-health`;
@@ -147,9 +155,22 @@ else process.exit(2);
       expect(health.state).toBe("ready");
       if (complete) {
         const taskId = (first as any).taskId;
-        const waited = await client.request({ op: "task_wait", taskId, timeoutMs: 5000 });
+        let waited: any;
+        const waitDeadline = Date.now() + (real ? 120000 : 5000);
+        do {
+          waited = await client.request({ op: "task_wait", taskId, timeoutMs: real ? 30000 : 5000 });
+        } while (real && waited.waitState !== "terminal" && Date.now() < waitDeadline);
+        if (real) console.log("REAL task", JSON.stringify(waited));
         expect(waited).toMatchObject({ waitState: "terminal", task: { status: "completed" } });
-        expect(await client.request({ op: "dispatch", input: { action: "cancel", intentId: intent.intentId } })).toMatchObject({ status: "released", harness });
+        if (real) expect(waited.task.result).toContain("SWARM_REAL_SNAPSHOT_OK");
+        // Switching the runtime harness disables this retained route. It must
+        // still be able to stop its exact token without allowing new workers.
+        await writeFile(owner.configPath, JSON.stringify({ ...owner, dispatch: { ...dispatch,
+          herdr: [{ ...firstRoute, enabled: false }, secondRoute],
+        } }));
+        const released = await client.request({ op: "dispatch", input: { action: "cancel", intentId: intent.intentId } });
+        if (real) console.log("REAL release", JSON.stringify(released));
+        expect(released).toMatchObject({ status: "released", harness });
         const db = new Database(owner.databasePath, { readonly: true });
         try {
           expect(db.prepare("SELECT harness FROM dispatch_intents WHERE intent_id=?").get(intent.intentId)).toEqual({ harness });
@@ -263,4 +284,4 @@ else process.exit(2);
     await expect(retargeted.stop!(worker.token, new AbortController().signal)).rejects.toThrow(/runtime identity/);
     expect((await readFile(log, "utf8")).trim().split("\n").map(line => JSON.parse(line)).filter(args => args[0] === "workspace")).toHaveLength(2);
   } finally { for (const child of wrapperProcesses) { if (child.exitCode === null && child.signalCode === null) { const exited = new Promise(resolve => child.once("exit", resolve)); child.kill(); await exited; } } client.close(); enrolled.launchedOwner?.kill(); server.close(); secondServer.close(); }
-}, 30000);
+}, real ? 180000 : 30000);

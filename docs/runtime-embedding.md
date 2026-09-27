@@ -207,3 +207,32 @@ must additionally run against the deliberately installed vendored runtime.
 This change adds schema 15's `dispatch_intents.harness`; the unmerged interactive
 worker branch also uses schema 15. Integrators must sequence both migrations,
 never open a database from one schema-15 branch with the other build.
+
+Managed Codex overrides use bare dotted path segments: Codex treats quote marks
+in override keys literally (TOML quoting applies to values, not the key path).
+The trusted launcher preapproves only `swarm_inbox` and `swarm_task` on its enrolled
+`swarm` server so unattended fenced delivery and task maintenance can run. Other
+MCP servers/tools and shell approvals retain the host policy. Pi terminal model
+errors are surfaced and stop the owned worker rather than becoming an opaque
+readiness timeout. Pi's extension requires the production
+`@modelcontextprotocol/client` dependency; changing a same-version vendor tarball
+must refresh the lockfile dependency graph, not only its integrity hash.
+
+A disabled Herdr route forbids new provisioning but retains authority to stop its
+own verified token. Stop still checks the launch fingerprint and owning-wrapper
+termination receipt; disabled routes never adopt other workers.
+
+Opt-in real-binary fixture (model calls, isolated local test owner and synthetic
+Herdr transport; not the live Clankie canary):
+
+```sh
+SWARM_REAL_HARNESS_TEST=codex bun test test/coordination-herdr.test.ts --test-name-pattern 'real: true'
+SWARM_REAL_HARNESS_TEST=pi bun test test/coordination-herdr.test.ts --test-name-pattern 'real: true'
+```
+
+`SWARM_REAL_HARNESS_BIN` selects the installed executable. Pi's fixture uses
+`openrouter/moonshotai/kimi-k3`. `SWARM_REAL_PACKAGE_ROOT` selects an extracted,
+production-installed candidate so the fixture cannot resolve dependencies from
+the developer checkout. Both cases require actual model tool calls, an instruction
+snapshot marker in completed evidence, acknowledged delivery, and release after
+disabling the route. `npm run verify:install` also imports the packaged pi extension.

@@ -91,7 +91,10 @@ specific: owned Herdr stream routes can select Claude, Codex (default model
 a harness; incompatible routes refuse without fallback. The selected harness is
 pinned in the intent and receipt. Managed adapters own per-session enrollment,
 readiness, fenced claim and idle delivery; Codex uses app-server and pi a dedicated
-worker extension. Protocol tests cover these paths; inspect deployment canary
+worker extension. Managed Codex preapproves only the enrolled Swarm inbox/task
+lifecycle tools; it does not change other MCP or shell approvals. Pi model/auth
+failures stop the worker and require explicit diagnosis. Protocol and opt-in
+real-binary tests cover these paths; inspect deployment canary
 evidence before claiming an installed route is proven. OpenCode and Claude have
 verified live idle delivery; native interactive Claude delivers at native boundaries. Clankie mounts
 a conversation-bound Pi adapter. Standalone Codex automatic delivery remains unverified. Other hosts require their own

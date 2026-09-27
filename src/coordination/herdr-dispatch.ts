@@ -119,6 +119,7 @@ export function herdrDispatchProvider(store: CoordinationStore, requester: Sessi
     requiresWorkerReady: true,
     readinessTimeoutMs: route.readinessTimeoutMs ?? 60000,
     authorized: () => { try { store.assertContext(requester); return route.enabled !== false; } catch { return false; } },
+    authorizedToStop: () => { try { store.assertContext(requester); return true; } catch { return false; } },
     async start({ token, taskId, intent }, signal) {
       const parent = store.worktree(requester);
       let directory: string;
