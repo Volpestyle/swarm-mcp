@@ -88,9 +88,16 @@ metadata, with an instruction to avoid repeating completed effects. Processing
 still requires explicit acknowledgment with the current token.
 
 Transcript inspection requires the bound session's absolute `.jsonl` filename.
-It rejects symlinks, malformed/partial rows, cycles and inspection beyond 16 MiB
-or 20,000 ancestry nodes. An unavailable proof is not silently treated as success;
-errors retain uncertain admission. A not-yet-created transcript is empty context.
+It rejects symlinks, malformed/partial rows and cycles; those errors retain
+uncertain admission. Only the newest 16 MiB (and at most 20,000 ancestry nodes)
+are inspected: an ancestry that leaves that window is unproven, so the full
+envelope is admitted again (at-least-once). Refusing larger transcripts outright
+stranded every lease of a long session until it dead-lettered (VUH-1406).
+A not-yet-created transcript is empty context.
+
+Claude also runs these hooks inside subagents, with the parent's `session_id` and
+transcript and an `agent_id` field. Those hooks lease nothing: a parent's message
+admitted into a subagent's sidechain never reaches the parent (VUH-1406).
 This relies on the installed version's observed transcript schema. General
 exactly-once external effects remain the consumer's responsibility.
 
