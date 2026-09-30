@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { realpathSync, statSync } from "node:fs";
 import { enrollRuntime } from "./runtime-launcher";
@@ -5,6 +7,109 @@ import { CoordinationClient } from "./ipc";
 import { CodexLifecycle } from "./codex-lifecycle";
 export { CodexLifecycle } from "./codex-lifecycle";
 export { codexContextItem, hasCodexContext } from "./codex-context";
+
+const CODEX_HOOK_EVENTS = [
+  ["UserPromptSubmit", "user_prompt_submit"],
+  ["PostToolUse", "post_tool_use"],
+] as const;
+
+/** A drive path that PowerShell, pwsh and cmd all read as one bare word. */
+const WINDOWS_BARE_PATH = /^[A-Za-z]:\\[A-Za-z0-9_.~\\-]*$/;
+
+/** The 8.3 alias of an existing Windows path, which has no spaces. */
+export function windowsShortPath(path: string) {
+  const result = spawnSync(
+    process.env.ComSpec || "cmd.exe",
+    ["/d", "/s", "/c", `"for %I in ("${path}") do @echo %~sI"`],
+    { encoding: "utf8", windowsVerbatimArguments: true, windowsHide: true },
+  );
+  if (result.status !== 0) throw new Error("Could not resolve an 8.3 path alias");
+  return result.stdout.trim();
+}
+
+/** Codex runs hook command lines through the user's shell (PowerShell on a
+ * typical Windows install, where a quoted first word is a string, not a
+ * command) or `sh -lc` elsewhere. On Windows both paths must therefore be bare
+ * words; a path with spaces uses its 8.3 alias. Paths are shell data, never
+ * executable interpolation. */
+function hookCommand(
+  nodePath: string,
+  hookPath: string,
+  platform: string,
+  shorten: (path: string) => string,
+) {
+  for (const path of [nodePath, hookPath])
+    if (!isAbsolute(path) || !statSync(path).isFile())
+      throw new Error("Codex hooks require absolute executable and hook paths");
+  if (platform === "win32") {
+    const bare = [nodePath, hookPath].map((path) =>
+      WINDOWS_BARE_PATH.test(path) ? path : shorten(path),
+    );
+    if (!bare.every((path) => WINDOWS_BARE_PATH.test(path)))
+      throw new Error(
+        "Codex hook paths need spaces or shell characters and have no 8.3 alias",
+      );
+    return bare.join(" ");
+  }
+  const quote = (path: string) => "'" + path.replaceAll("'", "'\\''") + "'";
+  return `${quote(nodePath)} ${quote(hookPath)}`;
+}
+
+/** Codex's trust identity for a single unmatched command hook: SHA-256 of the
+ * key-sorted compact JSON of its normalized event, group and handler
+ * (codex-rs hooks `hook_hash` / config `version_for_toml`). */
+export function codexHookTrustHash(
+  eventLabel: string,
+  command: string,
+  timeout: number,
+) {
+  const identity = JSON.stringify({
+    event_name: eventLabel,
+    hooks: [{ async: false, command, timeout, type: "command" }],
+  });
+  return "sha256:" + createHash("sha256").update(identity).digest("hex");
+}
+
+/** Session-flag overrides that install the delivery hooks for one Codex
+ * process and pre-trust exactly those hooks. Codex trusts a hook by a hash of
+ * its normalized identity (sorted JSON of event, matcher and handler); a
+ * mismatch shows the hook review screen instead of running it, so a Codex
+ * normalization change fails visibly rather than silently. Nothing is written
+ * to the user's Codex configuration. */
+export function codexHookOverrides(
+  nodePath: string,
+  hookPath: string,
+  platform: string = process.platform,
+  shorten: (path: string) => string = windowsShortPath,
+) {
+  const command = hookCommand(nodePath, hookPath, platform, shorten);
+  const timeout = 10;
+  const layer =
+    platform === "win32"
+      ? "C:\\<session-flags>\\config.toml"
+      : "/<session-flags>/config.toml";
+  const state: Record<string, { trusted_hash: string }> = {};
+  const overrides: string[] = [];
+  for (const [event, label] of CODEX_HOOK_EVENTS) {
+    state[`${layer}:${label}:0:0`] = {
+      trusted_hash: codexHookTrustHash(label, command, timeout),
+    };
+    overrides.push(
+      "-c",
+      `hooks.${event}=[{hooks=[{type="command",command=${JSON.stringify(command)},timeout=${timeout}}]}]`,
+    );
+  }
+  // Keys contain dots, which -c key paths would split, so the whole table
+  // travels as one inline-table value.
+  const table = Object.entries(state)
+    .map(
+      ([key, value]) =>
+        `${JSON.stringify(key)}={trusted_hash=${JSON.stringify(value.trusted_hash)}}`,
+    )
+    .join(",");
+  overrides.push("-c", `hooks.state={${table}}`);
+  return overrides;
+}
 
 type HostCall = (
   method: string,
