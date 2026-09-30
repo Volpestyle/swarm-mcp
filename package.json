@@ -23,6 +23,7 @@
     "dist/coordination/claude-launcher.js",
     "dist/coordination/claude-launch-cli.js",
     "dist/coordination/codex-launch-cli.js",
+    "dist/coordination/codex-hook-cli.js",
     "dist/coordination/codex-launcher.js",
     "dist/coordination/dispatch-runner.js",
     "dist/coordination/opencode-dispatch.js",

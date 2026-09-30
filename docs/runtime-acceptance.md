@@ -19,8 +19,9 @@ command below for the current source.
 ## Limits retained after acceptance
 
 Acceptance does not claim identical capabilities across hosts. Codex automatic
-initial enrollment/delivery remains degraded;
-Claude delivers at native boundaries and has no idle wake. OpenCode's uncertain
+initial enrollment/delivery remains degraded for app-server-owned threads;
+interactive `swarm-codex` sessions and Claude deliver at native boundaries
+through launcher hooks and have no idle wake. OpenCode's uncertain
 absent wake intent is retained without an unsafe repeat POST. Killed OpenCode
 delivery, unusually large installed-host histories, and Codex rewritten-history
 reconstruction are not proven. These are explicit support limits, not claims of

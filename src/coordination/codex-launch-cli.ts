@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { enrollRuntime } from "./runtime-launcher";
 import { CoordinationClient } from "./ipc";
+import { codexHookOverrides } from "./codex-launcher";
 import {
   launchContext,
   launchOptionsHelp,
@@ -19,9 +20,10 @@ ${launchOptionsHelp}
   --resume <id>        Re-enroll as the actor of an earlier swarm-codex launch
                        (pass Codex's own resume arguments after --)
 
-Degraded integration: no lifecycle hooks, so peer messages are not delivered
-automatically; the agent reads them with swarm_inbox. The session is closed
-when Codex exits.`;
+Peer messages are delivered by pre-trusted lifecycle hooks when a turn starts
+and after each tool call, as for Claude; an idle Codex still needs a prompt to
+start a turn. The hooks exist only for this process: nothing is written to the
+Codex configuration. The session is closed when Codex exits.`;
 
 /** A TOML value for a Codex -c override; JSON strings and arrays are valid TOML. */
 const toml = (value: unknown) => JSON.stringify(value);
@@ -63,6 +65,18 @@ async function main() {
     [`${server}.env_vars`, Object.keys(enrolled.environment)],
     [`${server}.enabled`, true],
   ].flatMap(([key, value]) => ["-c", `${key}=${toml(value)}`]);
+  try {
+    overrides.push(
+      ...codexHookOverrides(
+        context.nodePath,
+        join(context.here, "codex-hook-cli.js"),
+      ),
+    );
+  } catch (error) {
+    console.error(
+      `swarm-codex: peer messages will not be delivered automatically (${error instanceof Error ? error.message : error}); read them with swarm_inbox`,
+    );
+  }
   const [program, ...leading] = codexCommand(context.nodePath);
   const child = spawn(program, [...leading, ...overrides, ...rest], {
     stdio: "inherit",

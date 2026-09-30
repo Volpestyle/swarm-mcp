@@ -33,14 +33,38 @@ export function codexContextItem(
   };
 }
 
+/** Codex records a hook's additionalContext as a developer message tagged with
+ * this content kind; it carries no id the hook can choose. */
+const HOOK_CONTEXT_KIND = "hooks.additional_context";
+
+function isInjectedItem(
+  item: any,
+  message: RuntimeDeliveryLease["message"],
+  origin: "app-server" | "hook",
+) {
+  if (item?.type !== "message") return false;
+  if (origin === "app-server")
+    return item.role === "user" && item.id === `swarm-delivery-${message.id}`;
+  const kinds =
+    item.internal_chat_message_metadata_passthrough?.content_item_kinds;
+  return (
+    item.role === "developer" &&
+    Array.isArray(kinds) &&
+    kinds.includes(HOOK_CONTEXT_KIND)
+  );
+}
+
 /** Only a launcher-bound native rollout can establish retained context. Match
- * injected item identity and the complete message, never quoted body text. */
+ * injected item identity and the complete message, never quoted body text.
+ * `origin` names the injection path: app-server items carry a delivery id,
+ * lifecycle-hook context is a tagged developer message. */
 export async function hasCodexContext(
   path: string,
   threadId: string,
   cwd: string,
   message: RuntimeDeliveryLease["message"],
   signal: AbortSignal,
+  origin: "app-server" | "hook" = "app-server",
 ) {
   if (!isAbsolute(path) || !basename(path).endsWith(`-${threadId}.jsonl`))
     throw new Error("Invalid Codex rollout binding");
@@ -84,12 +108,7 @@ export async function hasCodexContext(
         "Codex context was rewritten; retained envelope is uncertain",
       );
     const item = row.payload;
-    if (
-      row.type !== "response_item" ||
-      item?.type !== "message" ||
-      item.role !== "user" ||
-      item.id !== `swarm-delivery-${message.id}`
-    )
+    if (row.type !== "response_item" || !isInjectedItem(item, message, origin))
       continue;
     for (const part of item.content ?? []) {
       if (
