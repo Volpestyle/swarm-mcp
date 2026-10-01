@@ -28,7 +28,7 @@ repo:
   should not have to remember.
 
 For the broader adapter contract, see
-[`docs/control-plane.md`](../../docs/control-plane.md). Backend selection and workspace identity conventions are centralized in [`docs/backend-configuration.md`](../../docs/backend-configuration.md). For the design parallel in the hermes case, see [`integrations/hermes/SPEC.md`](../hermes/SPEC.md).
+[`docs/control-plane.md`](../../docs/legacy/control-plane.md). Backend selection and workspace identity conventions are centralized in [`docs/backend-configuration.md`](../../docs/legacy/backend-configuration.md). For the design parallel in the hermes case, see [`integrations/hermes/SPEC.md`](../hermes/SPEC.md).
 
 ## What it does (v0.3.0)
 
@@ -71,7 +71,7 @@ Code at this directory as a plugin source.
 
 Add the plugin to your Claude Code config (`~/.claude.json` for work,
 `~/.claude-personal/.claude.json` for personal under
-[`identity-boundaries`](../../docs/identity-boundaries.md)):
+[`identity-boundaries`](../../docs/legacy/identity-boundaries.md)):
 
 ```jsonc
 {
@@ -107,7 +107,7 @@ That writes a project-local `.mcp.json` so the session can reach the swarm
 MCP server. As of v0.3 the role-doctrine skill ships inside the plugin
 (`skills/swarm-mcp/`), so a successful plugin install brings doctrine
 alongside lifecycle automation — no separate skill symlink is required for
-Claude Code users. See [`docs/install-skill.md`](../../docs/install-skill.md)
+Claude Code users. See [`docs/install-skill.md`](../../docs/installation.md)
 for global installs and non-Claude hosts.
 
 ### CLI resolution
@@ -141,7 +141,7 @@ priority for Claude Code-specific overrides:
 | `SWARM_CC_SCOPE` / `SWARM_HERMES_SCOPE` / `SWARM_MCP_SCOPE` | Override the coordination scope. Default: git root of `cwd`. |
 | `SWARM_CC_FILE_ROOT` / `SWARM_HERMES_FILE_ROOT` / `SWARM_MCP_FILE_ROOT` | Override the file root passed to `register`. |
 | `SWARM_CC_WORK_TRACKER` / `SWARM_WORK_TRACKER` | JSON tracker config to publish at `config/work_tracker/<identity>`; use this for Linear/Jira/GitHub policy, not credentials. |
-| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, SessionStart publishes workspace identity for peer wakes and reports `pane.report_agent state=idle`; SessionEnd releases that herdr agent authority. Missing env/socket failures fall back to herdr heuristics. See [`backend-configuration.md`](../../docs/backend-configuration.md). |
+| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, SessionStart publishes workspace identity for peer wakes and reports `pane.report_agent state=idle`; SessionEnd releases that herdr agent authority. Missing env/socket failures fall back to herdr heuristics. See [`backend-configuration.md`](../../docs/legacy/backend-configuration.md). |
 
 Default label format mirrors hermes:
 `identity:<id> claude-code platform:cli [mode:gateway] [role:<name>] origin:claude-code session:<id-prefix>`.

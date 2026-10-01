@@ -8,7 +8,7 @@ This is the *behavioural* layer that complements two other artifacts in this rep
 - **Skill** (`skills/swarm-mcp/`) — gives the agent the role doctrine.
 - **Plugin** (this directory) — eliminates lifecycle boilerplate the agent should not have to remember.
 
-For the full design — architecture, lifecycle contract, role topology (worker vs gateway), and roadmap — see [SPEC.md](SPEC.md). Backend selection and workspace identity conventions are centralized in [`docs/backend-configuration.md`](../../docs/backend-configuration.md). This README covers install + verify only.
+For the full design — architecture, lifecycle contract, role topology (worker vs gateway), and roadmap — see [SPEC.md](SPEC.md). Backend selection and workspace identity conventions are centralized in [`docs/backend-configuration.md`](../../docs/legacy/backend-configuration.md). This README covers install + verify only.
 
 ## What it does (v0.3.0)
 

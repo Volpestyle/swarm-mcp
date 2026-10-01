@@ -19,9 +19,9 @@ repo:
   should not have to remember.
 
 For the broader adapter contract, see
-[`docs/control-plane.md`](../../../../docs/control-plane.md). For design
+[`docs/control-plane.md`](../../../../docs/legacy/control-plane.md). For design
 parallels, see [`integrations/hermes/SPEC.md`](../../../hermes/SPEC.md) and
-[`integrations/claude-code/SPEC.md`](../../../claude-code/SPEC.md). Backend selection and workspace identity conventions are centralized in [`docs/backend-configuration.md`](../../../../docs/backend-configuration.md).
+[`integrations/claude-code/SPEC.md`](../../../claude-code/SPEC.md). Backend selection and workspace identity conventions are centralized in [`docs/backend-configuration.md`](../../../../docs/legacy/backend-configuration.md).
 
 ## What it does (v0.2.0)
 
@@ -168,7 +168,7 @@ args = ["run", "/Users/james.volpe/volpestyle/swarm-mcp/src/index.ts"]
 ```
 
 For global installs and non-codex hosts, see
-[`docs/install-skill.md`](../../../../docs/install-skill.md).
+[`docs/install-skill.md`](../../../../docs/installation.md).
 
 ### CLI resolution
 
@@ -201,7 +201,7 @@ Hooks pick up the same env knobs as the hermes / Claude Code plugins, with
 | `SWARM_CODEX_ROLE` / `SWARM_ROLE` | `worker` by default. Set `gateway` for planner/conductor behavior. |
 | `SWARM_CODEX_LEASE_SECONDS` | CLI registration lease for hook-managed sessions. Defaults to `86400`; `SessionEnd` deregisters normally. |
 | `SWARM_CODEX_WORK_TRACKER` / `SWARM_WORK_TRACKER` | JSON tracker config to publish at `config/work_tracker/<identity>`; use this for Linear/Jira/GitHub policy, not credentials. |
-| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, SessionStart publishes workspace identity for peer wakes and reports `pane.report_agent state=idle`; SessionEnd releases that herdr agent authority. Missing env/socket failures fall back to herdr heuristics. See [`backend-configuration.md`](../../../../docs/backend-configuration.md). |
+| `HERDR_PANE_ID`, `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID` | When present, SessionStart publishes workspace identity for peer wakes and reports `pane.report_agent state=idle`; SessionEnd releases that herdr agent authority. Missing env/socket failures fall back to herdr heuristics. See [`backend-configuration.md`](../../../../docs/legacy/backend-configuration.md). |
 
 **Repo-wide role default — `.swarm-role` file.**
 If `SWARM_CODEX_AGENT_ROLE` is unset, the hook walks up from `cwd` to the

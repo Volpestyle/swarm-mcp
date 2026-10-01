@@ -145,7 +145,7 @@ turn/tool boundaries; it does not start a model loop or spawn an agent to wake i
 
 This file captures the design constraints behind the Claude Code adapter so
 v0.2+ doesn't have to re-derive them from conversation. The broader adapter
-contract lives in [`../../docs/control-plane.md`](../../docs/control-plane.md);
+contract lives in [`../../docs/control-plane.md`](../../docs/legacy/control-plane.md);
 the parallel hermes design is in [`../hermes/SPEC.md`](../hermes/SPEC.md).
 
 ## 1. Three-layer model

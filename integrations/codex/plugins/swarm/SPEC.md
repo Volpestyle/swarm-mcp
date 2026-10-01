@@ -139,7 +139,7 @@ a validated `turn/start` path on the existing thread.
 
 This file captures the design constraints behind the Codex adapter so v0.2+
 doesn't have to re-derive them from conversation. The broader adapter contract
-lives in [`../../../../docs/control-plane.md`](../../../../docs/control-plane.md);
+lives in [`../../../../docs/control-plane.md`](../../../../docs/legacy/control-plane.md);
 parallel designs are at [`../../../hermes/SPEC.md`](../../../hermes/SPEC.md)
 and [`../../../claude-code/SPEC.md`](../../../claude-code/SPEC.md).
 

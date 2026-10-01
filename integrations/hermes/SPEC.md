@@ -3,7 +3,7 @@
 **Status:** v0.3.0 current, v0.4+ planned
 **Audience:** future contributors, the operator, and any agent reading this directory
 
-This doc captures the architecture behind the `swarm` Hermes plugin so future versions don't have to re-derive it from conversation. The broader adapter contract lives in [`../../docs/control-plane.md`](../../docs/control-plane.md); this file is the Hermes/herdr-first reference stack spec.
+This doc captures the architecture behind the `swarm` Hermes plugin so future versions don't have to re-derive it from conversation. The broader adapter contract lives in [`../../docs/control-plane.md`](../../docs/legacy/control-plane.md); this file is the Hermes/herdr-first reference stack spec.
 
 ## 1. What this is
 
@@ -245,7 +245,7 @@ Single-intent dispatch is not a product feature the operator should have to invo
 
 The user-facing command layer above single-intent dispatch is **routine dispatch** — named shortcuts that expand into a small task graph and route each part to the right role. The dispatch primitive remains single-task routing: one intent, one task, one best worker. Routine dispatch composes `request_task_batch`, per-role dispatch/wake/spawn, monitoring, and a final summary.
 
-Routine dispatch is **not yet implemented in this plugin** (only the underlying plumbing is). The runtime-agnostic design, worked example, and open questions live in [`docs/design-routine-dispatch.md`](../../docs/design-routine-dispatch.md); the Hermes-specific binding would expose routines as slash commands or named buttons on top of that shared primitive.
+Routine dispatch is **not yet implemented in this plugin** (only the underlying plumbing is). The runtime-agnostic design, worked example, and open questions live in [`docs/design-routine-dispatch.md`](../../docs/legacy/design-routine-dispatch.md); the Hermes-specific binding would expose routines as slash commands or named buttons on top of that shared primitive.
 
 ## 8. CLI bridge (`/swarm`)
 
