@@ -1,0 +1,149 @@
+{
+  "captured_at_utc": "2026-10-01T03:10:30.444000+00:00",
+  "method": "Read-only SQLite connections to two local Clankie Swarm stores; retained observations, not a controlled benchmark. Nearest-rank percentiles. Private bodies, identities, capabilities and paths excluded.",
+  "scopes": [
+    {
+      "deliveries": [
+        {
+          "state": "acknowledged",
+          "n": 4,
+          "attempts": 4
+        }
+      ],
+      "unresolved": [],
+      "lease_latency": {
+        "n": 4,
+        "p50_ms": 3,
+        "p95_ms": 5700,
+        "max_ms": 5700
+      },
+      "ack_latency": {
+        "n": 4,
+        "p50_ms": 24765,
+        "p95_ms": 29861,
+        "max_ms": 29861
+      },
+      "tasks_by_harness": [
+        {
+          "harness": "legacy-unspecified",
+          "status": "completed",
+          "n": 1
+        }
+      ],
+      "label": "acceptance-scope",
+      "unreleased_dispatches": 0
+    },
+    {
+      "deliveries": [
+        {
+          "state": "acknowledged",
+          "n": 110,
+          "attempts": 141
+        },
+        {
+          "state": "dead_letter",
+          "n": 5,
+          "attempts": 25
+        },
+        {
+          "state": "leased",
+          "n": 5,
+          "attempts": 5
+        },
+        {
+          "state": "pending",
+          "n": 1,
+          "attempts": 0
+        }
+      ],
+      "unresolved": [
+        {
+          "state": "dead_letter",
+          "kind": "reply",
+          "n": 1,
+          "oldest_utc": "2026-09-26T19:10:12.019000+00:00"
+        },
+        {
+          "state": "dead_letter",
+          "kind": "task.assigned",
+          "n": 4,
+          "oldest_utc": "2026-09-26T18:45:24.601000+00:00"
+        },
+        {
+          "state": "leased",
+          "kind": "reply",
+          "n": 1,
+          "oldest_utc": "2026-09-27T16:46:19.914000+00:00"
+        },
+        {
+          "state": "leased",
+          "kind": "task.cancel_requested",
+          "n": 4,
+          "oldest_utc": "2026-09-26T19:52:01.528000+00:00"
+        },
+        {
+          "state": "pending",
+          "kind": "reply",
+          "n": 1,
+          "oldest_utc": "2026-09-27T03:31:28.592000+00:00"
+        }
+      ],
+      "lease_latency": {
+        "n": 120,
+        "p50_ms": 16,
+        "p95_ms": 2082272,
+        "max_ms": 4976022
+      },
+      "ack_latency": {
+        "n": 110,
+        "p50_ms": 19830,
+        "p95_ms": 2629625,
+        "max_ms": 4988283
+      },
+      "tasks_by_harness": [
+        {
+          "harness": "legacy-unspecified",
+          "status": "cancel_requested",
+          "n": 1
+        },
+        {
+          "harness": "legacy-unspecified",
+          "status": "cancelled",
+          "n": 9
+        },
+        {
+          "harness": "legacy-unspecified",
+          "status": "completed",
+          "n": 9
+        },
+        {
+          "harness": "codex",
+          "status": "cancelled",
+          "n": 1
+        },
+        {
+          "harness": "codex",
+          "status": "completed",
+          "n": 1
+        },
+        {
+          "harness": "codex",
+          "status": "failed",
+          "n": 1
+        },
+        {
+          "harness": "pi",
+          "status": "cancelled",
+          "n": 1
+        },
+        {
+          "harness": "pi",
+          "status": "completed",
+          "n": 1
+        }
+      ],
+      "label": "working-scope",
+      "unreleased_dispatches": 10
+    }
+  ]
+}
