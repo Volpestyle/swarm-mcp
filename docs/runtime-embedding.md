@@ -67,6 +67,11 @@ per token. Two routes reuse the same pane IDs on different sockets, select work
 by capability, retain separate receipts and reject retargeted recovery. These fixtures do not substitute for an installed
 Claude/Codex/Pi and Herdr round trip when changing native delivery.
 
+`SWARM_PACKAGE_TEST_ROOT=/absolute/extracted/package` runs the same protocol
+fixtures against a separately production-installed package, without compiling
+runtime entrypoints from the checkout. Use the `native: true` test-name pattern
+to prove the packaged owner, native wrappers and MCP dependencies together.
+
 
 ## Assignment instructions
 

@@ -36,7 +36,7 @@ for (const { lostResponse, started, project = false, mismatch = false, native = 
 ]) test(`Herdr reconciles one token (lost response: ${lostResponse}, receipt: ${started}, project: ${project}, mismatch: ${mismatch}, native: ${native}, harness: ${harness}, complete: ${complete}, real: ${real})`, async () => {
   if (process.platform === "win32") return; // Herdr's local Unix transport.
   await mkdir(resolve("dist/test"), { recursive: true });
-  const installedPackage = real ? process.env.SWARM_REAL_PACKAGE_ROOT : undefined;
+  const installedPackage = process.env.SWARM_PACKAGE_TEST_ROOT ?? (real ? process.env.SWARM_REAL_PACKAGE_ROOT : undefined);
   const packageRoot = installedPackage ?? await mkdtemp(resolve("dist/test/herdr-"));
   const dist = join(packageRoot, "dist/coordination");
   if (!installedPackage) await cp("skills/swarm-mcp", join(packageRoot, "skills/swarm-mcp"), { recursive: true });
