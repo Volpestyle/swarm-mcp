@@ -93,6 +93,7 @@ export async function serveCoordination(options: {
   const sockets = new Set<Socket>();
   let pending = 0;
   let closing = false;
+  let lastActivityAt = Date.now();
   const commandQueue: Array<{
     context: ActorContext;
     command: CoreCommand;
@@ -141,6 +142,7 @@ export async function serveCoordination(options: {
     socket.on("close", () => {
       disconnected.abort();
       sockets.delete(socket);
+      lastActivityAt = Date.now();
     });
     const respond = (response: unknown) => {
       if (!socket.destroyed) socket.write(JSON.stringify(response) + "\n");
@@ -383,6 +385,7 @@ export async function serveCoordination(options: {
         if (counted) {
           inflight.delete(id);
           pending--;
+          lastActivityAt = Date.now();
         }
       }
     };
@@ -412,6 +415,9 @@ export async function serveCoordination(options: {
   await listenLocal(server, options.endpoint);
   return {
     endpoint: options.endpoint,
+    // Pending provider calls outlive their socket; never retire an owner while
+    // one is still resolving an external side effect.
+    get idleForMs() { return sockets.size || pending ? 0 : Date.now() - lastActivityAt; },
     async close() {
       if (closing) return;
       closing = true;

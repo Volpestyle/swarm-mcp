@@ -25,7 +25,11 @@ const herdrRoute = z.object({
       socketPath: z.string().refine(isAbsolute), herdrPath: z.string().refine(isAbsolute),
       nodePath: z.string().refine(isAbsolute), workerPath: z.string().refine(isAbsolute),
       readinessTimeoutMs: z.number().int().min(1000).max(60000).optional(),
-      claudePath: z.string().refine(isAbsolute), capabilities: z.array(id).max(64),
+      claudePath: z.string().refine(isAbsolute).optional(),
+      harness: z.enum(["claude-code", "codex", "pi"]).optional(),
+      harnessPath: z.string().refine(isAbsolute).optional(),
+      model: z.string().min(1).max(256).optional(),
+      capabilities: z.array(id).max(64),
       capacity: z.number().int().min(0).nullable().default(null),
       workspaces: z.array(z.object({ kind: z.enum(["repository", "directory"]), path: z.string().max(4096).refine(isAbsolute) }).strict()).max(32).optional(),
       mcpServers: z.record(z.string().min(1).max(128), z.object({
@@ -40,7 +44,7 @@ const herdrRoute = z.object({
       // a person must confirm at startup.
       channelPlugin: z.string().max(256).regex(/^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$/).optional(),
     }).strict().refine(route => !route.channelPlugin || route.workerMode === "interactive",
-      "channelPlugin requires workerMode interactive");
+      "channelPlugin requires workerMode interactive").refine(route => !!(route.harnessPath ?? ((route.harness ?? "claude-code") === "claude-code" ? route.claudePath : undefined)), "Selected harness requires its executable path").refine(route => route.workerMode !== "interactive" || (route.harness ?? "claude-code") === "claude-code", "Interactive workers currently require Claude");
 
 export const ownerDispatchSchema = z
   .object({
@@ -223,7 +227,7 @@ export function ownerDispatch(
       });
     });
     for (const route of herdr) routes.push({
-      id: route.id, path: "peer", scope: requester.scope, host: "claude-code", executionMode: route.workerMode ?? "stream",
+      id: route.id, path: "peer", scope: requester.scope, host: route.harness ?? "claude-code", executionMode: route.workerMode ?? "stream",
       worktree: canonicalPath(store.worktree(requester).root), ...executionWorktrees(route.workspaces ?? []), capabilities: route.capabilities,
       durable: true, capacity: route.capacity, overhead: 10, active: 0,
       authorized: route.enabled, availability: route.enabled ? "idle" : "disconnected", observedAt: Date.now(),

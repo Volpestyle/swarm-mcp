@@ -39,6 +39,7 @@ test("a bound worker reclaims its own dispatched task after the lease lapses", a
       acceptanceCriteria: ["Done"],
       constraints: [],
       expectedArtifacts: [],
+      progressTimeoutMs: 3600000,
     },
   };
   const policy: DispatchPolicy = {
@@ -89,6 +90,7 @@ test("a bound worker reclaims its own dispatched task after the lease lapses", a
       providers,
     });
     if (!("attemptId" in first)) throw new Error("No dispatched attempt");
+    expect(store.taskDetail("scope", first.taskId).owner!.progressDeadline).toBe(now + 3600000);
 
     now += 16 * 60_000;
     store.execute(
@@ -106,6 +108,7 @@ test("a bound worker reclaims its own dispatched task after the lease lapses", a
     expect(() => claim(stranger, "steal")).toThrow("reserved by dispatch");
     const again = claim(worker, "reclaim");
     expect(again.fence).toBeGreaterThan(first.fence);
+    expect(store.taskDetail("scope", first.taskId).owner!.progressDeadline).toBe(now + 3600000);
 
     const finished = store.execute(
       { ...worker, id: "finish", type: "task.finish", payload: {} },

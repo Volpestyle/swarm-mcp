@@ -3,7 +3,7 @@ import { CoordinationError } from "./errors";
 
 // Application identity prevents accidental adoption of another application's database.
 export const APPLICATION_ID = 0x53574d32;
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 export type FaultPoint =
   | "before_migration_commit"
   | "before_command_commit"
@@ -173,6 +173,7 @@ const migrations = [
    ALTER TABLE artifacts ADD COLUMN collected_at INTEGER;
    CREATE TABLE event_retention (scope TEXT PRIMARY KEY, floor INTEGER NOT NULL);
    CREATE INDEX command_retention ON commands(created_at);`,
+  `ALTER TABLE dispatch_intents ADD COLUMN harness TEXT;`,
   // Resolved worker execution mode, fixed at reservation (ADR 0194). NULL for
   // routes without a mode (peers, OpenCode) and for intents reserved earlier.
   `ALTER TABLE dispatch_intents ADD COLUMN execution_mode TEXT
@@ -247,8 +248,20 @@ export function migrate(db: Sqlite, fault?: FaultHook) {
   try {
     checkIdentity(db); // Another process may have migrated while this one waited.
     const current = version(db);
+    // Two unreleased/shipped branches independently used 15. Main's 15 adds
+    // harness; the interactive branch's 15 adds execution_mode. Inspect within
+    // this writer transaction, retain both lineages' data, and complete 16.
+    let interactive15 = false;
+    if (current === 15) {
+      const columns = db.prepare("PRAGMA table_info(dispatch_intents)").all() as { name: string }[];
+      const harness = columns.some(column => column.name === "harness");
+      interactive15 = columns.some(column => column.name === "execution_mode");
+      if (!harness && !interactive15)
+        throw new CoordinationError("invalid_database", "Unrecognized schema-15 dispatch layout");
+      if (!harness) db.exec(migrations[14]!);
+    }
     for (let index = current; index < migrations.length; index++)
-      db.exec(migrations[index]!);
+      if (!(index === 15 && interactive15)) db.exec(migrations[index]!);
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`);
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     fault?.("before_migration_commit");

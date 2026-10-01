@@ -69,8 +69,11 @@ attempt cannot overwrite the accepted result, even if its session remains valid.
 Repeat recovery after the attempt is detached is a harmless no-op.
 
 Leases default to 60 seconds and may be requested up to five minutes. Every
-attempt also has a progress timeout (15 minutes by default, configurable at claim
-from one minute to 24 hours). The latest progress report, or claim time before
+attempt also has a progress timeout (15 minutes by default). Set
+`contract.progressTimeoutMs` when assigning a known long build, simulator setup or
+tool wait (one minute to 24 hours); dispatched claims and same-worker reclaims
+inherit it. An explicit claim `progressTimeoutMs` overrides that default.
+The latest progress report, or claim time before
 the first report, anchors this deadline. Host renewals cannot extend past it.
 An accepted progress report also renews the lease for at least 60 seconds within
 the applicable deadline, so reporting near expiry does not race the host timer.

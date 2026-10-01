@@ -259,7 +259,8 @@ export class TaskTransaction {
     positive(payload.expectedVersion, "expectedVersion");
     const duration = payload.leaseMs ?? 60000;
     positive(duration, "leaseMs", 300000);
-    const progressTimeout = payload.progressTimeoutMs ?? 900000;
+    const progressTimeout = payload.progressTimeoutMs ??
+      (task.contract ? JSON.parse(task.contract).progressTimeoutMs : undefined) ?? 900000;
     positive(progressTimeout, "progressTimeoutMs", 86400000);
     if (progressTimeout < 60000)
       throw new CoordinationError("invalid_input", "Progress timeout must be at least 60000 ms");

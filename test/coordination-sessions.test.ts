@@ -136,7 +136,7 @@ test("schema 11 inboxes migrate without pinning or losing existing deliveries", 
   });
   env.store.close();
   const db = new Database(env.path);
-  db.exec("ALTER TABLE inbox_deliveries DROP COLUMN recipient_generation; ALTER TABLE inbox_messages DROP COLUMN sender_generation; ALTER TABLE task_attempts DROP COLUMN progress_timeout_ms; ALTER TABLE commands DROP COLUMN pruned; ALTER TABLE commands DROP COLUMN type; ALTER TABLE artifacts DROP COLUMN collected_at; DROP TABLE event_retention; DROP INDEX command_retention; ALTER TABLE dispatch_intents DROP COLUMN execution_mode; PRAGMA user_version=11");
+  db.exec("ALTER TABLE inbox_deliveries DROP COLUMN recipient_generation; ALTER TABLE inbox_messages DROP COLUMN sender_generation; ALTER TABLE task_attempts DROP COLUMN progress_timeout_ms; ALTER TABLE commands DROP COLUMN pruned; ALTER TABLE commands DROP COLUMN type; ALTER TABLE artifacts DROP COLUMN collected_at; DROP TABLE event_retention; DROP INDEX command_retention; ALTER TABLE dispatch_intents DROP COLUMN execution_mode; ALTER TABLE dispatch_intents DROP COLUMN harness; PRAGMA user_version=11");
   db.close();
   const migrated = await env.open();
   const second = migrated.openSession({ ...env.enrollment, requestId: "after-migration" });

@@ -17,6 +17,8 @@ export interface DispatchProvider {
   requiresWorkerReady?: boolean;
   readinessTimeoutMs?: number;
   authorized(): boolean;
+  /** A retained route may stop its verified tokens after new provisioning is disabled. */
+  authorizedToStop?(): boolean;
   /** executionMode is the value fixed in the intent row at reservation. */
   start(
     input: { token: string; taskId: string; intent: DispatchIntent; executionMode?: ExecutionMode },
@@ -96,24 +98,30 @@ export async function cancelDispatchIntent(options: {
       attemptId: cancellation.attemptId,
       fence: cancellation.fence,
     };
-    store.execute(
-      {
-        ...requester,
-        id: `dispatch-cancel-${cancellation.token}`,
-        type: "message.send",
-        payload: notice,
-      },
-      (tx) =>
-        tx.inbox.send(
-          {
-            kind: "task.cancel_requested",
-            taskId: cancellation.taskId,
-            body: JSON.stringify(notice),
-          },
-          [cancellation.notifyActor!],
-          "direct",
-        ),
-    );
+    try {
+      store.execute(
+        {
+          ...requester,
+          id: `dispatch-cancel-${cancellation.token}`,
+          type: "message.send",
+          payload: notice,
+        },
+        (tx) =>
+          tx.inbox.send(
+            {
+              kind: "task.cancel_requested",
+              taskId: cancellation.taskId,
+              body: JSON.stringify(notice),
+            },
+            [cancellation.notifyActor!],
+            "direct",
+          ),
+      );
+    } catch (error) {
+      // A full/stale inbox cannot prevent the trusted provider stopping its own
+      // worker. Keep every other error visible and never fabricate an ack.
+      if (!(error instanceof CoordinationError) || !["inbox_full", "stale_recipient"].includes(error.code)) throw error;
+    }
   }
   const release = (stopped?: { token: string; routeId: string }) =>
     store.execute(
@@ -130,7 +138,7 @@ export async function cancelDispatchIntent(options: {
     (provider) => provider.routeId === cancellation.routeId,
   );
   const provider = matches.length === 1 ? matches[0] : undefined;
-  if (!provider?.stop || !provider.authorized())
+  if (!provider?.stop || !(provider.authorizedToStop?.() ?? provider.authorized()))
     return {
       status: "blocked",
       taskId: cancellation.taskId,
@@ -214,12 +222,13 @@ export async function runDispatchIntent(options: {
       (route) =>
         route.id === reserved.routeId &&
         route.scope === requester.scope &&
-        route.authorized,
+        route.authorized &&
+        (!reserved.harness || route.host === reserved.harness),
     )
   )
     return {
       status: "blocked",
-      reasons: ["unauthorized"],
+      reasons: [policy.routes.some(route => route.id === reserved.routeId && reserved.harness && route.host !== reserved.harness) ? "harness_changed" : "unauthorized"],
       taskId: reserved.taskId,
     };
   const begun = store.execute(
@@ -251,6 +260,7 @@ export async function runDispatchIntent(options: {
       taskId: provision.taskId,
       routeId: provision.routeId,
       ...mode,
+      harness: provision.harness,
       ...(provider.requiresWorkerReady ? { reasons: [error instanceof CoordinationError ? (error.code === "provider_timeout" ? "worker_readiness_timeout" : error.code) : "worker_startup_failed"], intentId: intent.intentId, token: provision.token, recovery: "Reconcile this same intent and token; timeout does not prove the worker stopped" } : {}),
     };
   }
@@ -260,6 +270,7 @@ export async function runDispatchIntent(options: {
       taskId: provision.taskId,
       routeId: provision.routeId,
       ...mode,
+      harness: provision.harness,
     };
   if (provider.requiresWorkerReady) {
     try {
@@ -268,6 +279,7 @@ export async function runDispatchIntent(options: {
         throw new CoordinationError("worker_claim_failed", "Provider has no verified worker claim");
     } catch (error) {
       return { status: "uncertain", taskId: provision.taskId, routeId: provision.routeId, ...mode,
+        harness: provision.harness,
         intentId: intent.intentId, token: provision.token,
         reasons: [error instanceof CoordinationError && error.code === "worker_mcp_unavailable" ? error.code : "worker_claim_failed"],
         recovery: "Reconcile the retained worker claim; do not provision another attempt" };

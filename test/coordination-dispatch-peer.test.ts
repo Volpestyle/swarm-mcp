@@ -128,7 +128,7 @@ for (const outcome of ["completed", "cancelled"] as const)
           providers,
         });
       if (outcome === "cancelled") {
-        await expect(cancel()).rejects.toThrow("pending-message quota");
+        expect((await cancel()).status).toBe("uncertain");
         const assignment = store.execute(
           { ...worker, id: "admit", type: "inbox.fetch", payload: {} },
           (tx) => tx.inbox.fetch({ consumer: "admitted-work" }),

@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, realpathSync } from "node:fs";
+import { resolve, join, basename, dirname, delimiter } from "node:path";
 
-// Run after build via npm run verify:package; npm supplies its actual CLI path.
-const npmCli = process.env.npm_execpath;
-assert.ok(npmCli, "Run npm run verify:package so npm supplies its CLI path");
+// Bun's script runner sets npm_execpath to its native binary, including for a
+// nested `npm run`. Resolve actual npm instead of handing that binary to Node.
+const candidates = [process.env.npm_execpath,
+  join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js"),
+  ...(process.env.PATH ?? "").split(delimiter).filter(Boolean).map(dir => join(dir, "npm"))];
+const npmCli = candidates.flatMap(path => {
+  try { const real = realpathSync(path); return basename(real) === "npm-cli.js" ? [real] : []; }
+  catch { return []; }
+})[0];
+assert.ok(npmCli, "npm CLI not found; install npm alongside Node or put npm on PATH");
 mkdirSync(resolve("dist/test"), { recursive: true });
 const sentinel = join(mkdtempSync(resolve("dist/test/package-exclusion-")), "must-not-ship.json");
 writeFileSync(sentinel, JSON.stringify({ marker: "Generated local state must never ship" }));

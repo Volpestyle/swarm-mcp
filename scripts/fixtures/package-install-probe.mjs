@@ -11,6 +11,9 @@ const packageRoot = resolve(process.argv[2]), stateRoot = resolve(process.argv[3
 assert.equal(existsSync(join(packageRoot, "src")), false);
 assert.equal(existsSync(join(packageRoot, "node_modules/esbuild")), false);
 const { prepareClaudeLaunch } = await import(pathToFileURL(join(packageRoot, "dist/coordination/claude-launcher.js")));
+// Import from the extracted production package, never the developer checkout.
+const piExtension = await import(pathToFileURL(join(packageRoot, "dist/coordination/pi-worker-extension.js")));
+assert.equal(typeof piExtension.default, "function");
 const worktree = join(stateRoot, "worktree"); mkdirSync(worktree);
 const prepared = await prepareClaudeLaunch({ stateDirectory: join(stateRoot, "private"), nodePath: process.execPath,
   ownerPath: join(packageRoot, "dist/coordination/owner-cli.js"), hookPath: join(packageRoot, "dist/coordination/claude-hook-cli.js"),
@@ -56,7 +59,7 @@ try {
   console.log(JSON.stringify({ ok: true, sourcePresent: false, devDependenciesPresent: false, ownerLaunched: Boolean(prepared.launchedOwner),
     configuredSkill: "file_verified", tools: tools.tools.length, protocol: initialized.protocolVersion, acknowledged: 1,
     compatibility: doctor.compatibility,
-    installed: Object.fromEntries(["@modelcontextprotocol/server", "@opencode-ai/sdk", "better-sqlite3", "zod"].map(name =>
+    installed: Object.fromEntries(["@modelcontextprotocol/server", "@modelcontextprotocol/client", "@opencode-ai/sdk", "better-sqlite3", "zod"].map(name =>
       [name, JSON.parse(readFileSync(join(packageRoot, "node_modules", name, "package.json"), "utf8")).version])) }));
 } finally {
   if (mcp && mcp.exitCode === null) { const exited = once(mcp, "exit"); mcp.kill(); await exited; }

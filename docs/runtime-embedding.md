@@ -6,6 +6,12 @@ declarations support Node ESM consumers. Callers supply private state, a canonic
 repository/worktree identity, a stable host session ID and an incarnation that
 changes only on a genuine host restart. The `pi` host is supported for embeddings.
 
+Owners retire after five minutes with no connected clients or in-flight requests.
+Durable state remains in place and the next `ensureCoordinator` starts an owner
+with the same database and credentials. In private `owner.json`, `idleTimeoutMs`
+accepts 100..86400000 milliseconds or `null` to disable retirement. Connected
+MCP clients and worker wrappers keep the owner alive; no PID-age cleanup is used.
+
 Clankie mounts a separate MCP session per operator conversation and implements
 admission with its existing turn queue. It packages the coordinator executables
 beside `runtime.js`; bundlers must preserve those files and package dependencies.
@@ -144,6 +150,26 @@ not authority or readiness proof, and contains no credential or model text.
 Task heartbeat renewal never extends the progress deadline. The wrapper sends a
 `blocked:stale_progress` notice when it expires; `swarm_find` diagnostics expose
 `signal: stale_progress` with `progressDeadline`, even if the wrapper disappears.
+
+For known long tool waits, set `contract.progressTimeoutMs` on assignment; the
+initial dispatched claim and later same-worker reclaims inherit it. Liveness
+heartbeats still cannot extend the configured semantic-progress deadline.
+
+Creator cancellation writes a durable launch-local stop latch. The owned POSIX
+stream wrapper stops its own host process group (TERM, then bounded KILL if
+necessary) and publishes a receipt only after that group is gone. The provider
+matches token, session generation and route identity before releasing capacity.
+The latch and exclusive start marker prevent a delayed or duplicate wrapper from
+starting after cancellation. A fenced terminal result remains valid cooperative
+proof. Cancellation also wakes teardown of completed stream workers.
+
+An inbox quota or stale recipient cannot prevent provider stop. On confirmed
+release, pending/leased assignment and cancellation controls expire with reason
+`dispatch_released`; they are never marked acknowledged. Replies, results and
+dead-letter history remain retained. Windows, missing wrappers and legacy launches
+without a stop receipt remain uncertain unless cooperative proof exists. Stop
+proof covers the owned process group, not independent detached work started by a
+tool; providers for such work need their own termination contract.
 Health notices retain task/attempt/fence identity and reject replaced attempts.
 A disconnected coordinator can delay reporting; it cannot turn missing health
 into success. Host exits before the MCP starts may be known only by the bounded
@@ -153,12 +179,20 @@ Install a new build only after holding dispatch and reconciling/draining every
 live or uncertain worker. A package replacement is not an owner upgrade. This
 change does not implement an install lock or immutable runtime generations.
 
+## Schema-15 lineage compatibility
+
+Schema 16 retains main schema 15 (`harness`) and the earlier interactive branch
+which independently numbered `execution_mode` as 15. Migration inspects the
+columns under its existing SQLite writer transaction, fills the missing column,
+and commits version 16 atomically. It never substitutes databases or resets
+actors, tasks, claims or intent fingerprints. Interrupted migration rolls back.
+
 ## Herdr interactive workers
 
 A Herdr route's `workerMode` is `stream` (the default when omitted) or
 `interactive` (ADR 0194 in Clankie). The mode resolves at reservation from the
 selected route, or from an explicit `execution.mode` on the intent, and is stored
-in the intent row (`execution_mode`, schema 15), the `dispatch.reserved` event,
+in the intent row (`execution_mode`, schema 16), the `dispatch.reserved` event,
 the dispatch result and the private launch receipt. An explicit mode is part of
 the intent fingerprint; routes of a different mode are rejected with
 `execution_mode:<mode>`, and a retry keeps the stored mode. A route whose owner
@@ -190,3 +224,61 @@ A startup that is never answered stays `uncertain` with
 `worker_readiness_timeout` in interactive mode; reconcile the same intent.
 `test/coordination-interactive-worker.test.ts` drives the real wrapper, MCP and
 hooks through a scripted channel fixture; it does not replace a live Claude run.
+
+## Managed harness selection
+
+A Herdr route may select `harness: "claude-code" | "codex" | "pi"`, an absolute
+`harnessPath`, and an optional `model`. Legacy `claudePath` routes remain Claude.
+Codex defaults to `gpt-6-astra`. Set `routing.host` on `swarm_assign` to constrain
+selection to that host; incompatible routes return typed `host` blockers and
+never fall back to Claude. The resolved harness is persisted on the dispatch
+intent, returned with its receipt, and pinned with executable/model in the private
+launch receipt. Recovery rejects a retargeted route (`harness_changed`). Reassignment
+preserves the harness selected by the original intent.
+
+The shared stream lifecycle delegates host I/O to `worker-harness.ts`: Claude
+stream JSON, Codex app-server JSON-RPC, or pi RPC. Codex receives Swarm MCP through
+per-process config overrides. Pi receives a launch-local extension that projects
+the worker's own MCP clients into tools; it does not reuse a Clankie conversation.
+Neither writes global host configuration. Listing tools or starting a process is
+insufficient for readiness: the first actual worker Swarm tool call commits the
+existing fenced claim. Instruction artifacts, leased delivery, explicit ack,
+progress deadlines, lease renewal, cancellation and process-group stop remain
+in the shared managed lifecycle. Harness selection is independent of the
+interactive-worker mode axis; Codex/pi interactive workers are not implemented.
+
+The protocol fixtures exercise all three harnesses with the real owner, wrapper,
+and MCP adapter, including MCP loss and release. Real Codex/pi managed canaries
+must additionally run against the deliberately installed vendored runtime.
+This change adds schema 15's `dispatch_intents.harness`; the unmerged interactive
+worker branch also uses schema 15. Integrators must sequence both migrations,
+never open a database from one schema-15 branch with the other build.
+
+Managed Codex overrides use bare dotted path segments: Codex treats quote marks
+in override keys literally (TOML quoting applies to values, not the key path).
+The trusted launcher preapproves only `swarm_inbox` and `swarm_task` on its enrolled
+`swarm` server so unattended fenced delivery and task maintenance can run. Other
+MCP servers/tools and shell approvals retain the host policy. Pi terminal model
+errors are surfaced and stop the owned worker rather than becoming an opaque
+readiness timeout. Pi's extension requires the production
+`@modelcontextprotocol/client` dependency; changing a same-version vendor tarball
+must refresh the lockfile dependency graph, not only its integrity hash.
+
+A disabled Herdr route forbids new provisioning but retains authority to stop its
+own verified token. Stop still checks the launch fingerprint and owning-wrapper
+termination receipt; disabled routes never adopt other workers.
+
+Opt-in real-binary fixture (model calls, isolated local test owner and synthetic
+Herdr transport; not the live Clankie canary):
+
+```sh
+SWARM_REAL_HARNESS_TEST=codex bun test test/coordination-herdr.test.ts --test-name-pattern 'real: true'
+SWARM_REAL_HARNESS_TEST=pi bun test test/coordination-herdr.test.ts --test-name-pattern 'real: true'
+```
+
+`SWARM_REAL_HARNESS_BIN` selects the installed executable. Pi's fixture uses
+`openrouter/moonshotai/kimi-k3`. `SWARM_REAL_PACKAGE_ROOT` selects an extracted,
+production-installed candidate so the fixture cannot resolve dependencies from
+the developer checkout. Both cases require actual model tool calls, an instruction
+snapshot marker in completed evidence, acknowledged delivery, and release after
+disabling the route. `npm run verify:install` also imports the packaged pi extension.

@@ -225,7 +225,16 @@ for (const failure of ["lost-response", "timeout"] as const)
         "cancel_requested",
       );
       stopMode = "stopped";
+      expect(store.inspect("scope", { taskId: nextBound.taskId }).retainedDispatches.items)
+        .toEqual([expect.objectContaining({ taskId: nextBound.taskId, taskStatus: "cancel_requested", state: "bound" })]);
+      store.execute({ ...requester, id: "retained-reply", type: "message.send", payload: {} },
+        tx => tx.inbox.send({ kind: "reply", taskId: nextBound.taskId, body: "Retain this context" }, [worker.actor], "direct"));
       expect((await cancel()).status).toBe("released");
+      expect(store.inspect("scope", { taskId: nextBound.taskId }).retainedDispatches.items).toEqual([]);
+      const mail = store.inbox("scope", worker.actor).items.filter(item => item.message.taskId === nextBound.taskId);
+      expect(mail.find(item => item.message.kind === "reply")?.state).toBe("pending");
+      expect(mail.filter(item => ["task.assigned", "task.cancel_requested"].includes(item.message.kind)).map(item => item.state))
+        .toEqual(["expired", "expired"]);
       const neverStarted = store.execute(
         {
           ...requester,

@@ -11,11 +11,19 @@ export async function claudeHook(
     session_id: string;
     hook_event_name: string;
     transcript_path?: string;
+    /** Set by Claude only for hooks that run inside a subagent. */
+    agent_id?: string;
   },
   binding: { sessionId: string; endpoint: string; capability: string },
 ) {
   if (input.session_id !== binding.sessionId)
     throw new Error("Claude hook session does not match launcher binding");
+  // Claude runs hooks inside subagents with the parent's session ID and
+  // transcript. Admitting there would place the parent actor's message in a
+  // sidechain context the parent never sees, and the transcript proof ignores
+  // sidechains, so each retry would burn an attempt. Leave it pending for the
+  // main thread's next boundary.
+  if (input.agent_id) return {};
   const event = input.hook_event_name;
   if (
     !["SessionStart", "SessionEnd", "UserPromptSubmit", "PostToolUse"].includes(
