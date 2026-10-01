@@ -197,9 +197,10 @@ test("route schema: channel plugins require interactive mode", () => {
   const base = { id: "r", stateDirectory: "/tmp", profile: "p", socketPath: "/tmp/s", herdrPath: "/bin/h", nodePath: "/bin/n",
     workerPath: "/bin/w", claudePath: "/bin/c", capabilities: [] };
   const parse = (route: object) => ownerDispatchSchema.parse({ observationMaxAgeMs: 1000, peers: [], herdr: route });
-  expect(() => parse({ ...base, channelPlugin: "clankie-worker@clankie" })).toThrow("interactive");
+  expect(() => parse({ ...base, workerMode: "stream", channelPlugin: "clankie-worker@clankie" })).toThrow("interactive");
   expect(() => parse({ ...base, workerMode: "interactive", channelPlugin: "no marketplace" })).toThrow();
   expect(parse({ ...base, workerMode: "interactive", channelPlugin: "clankie-worker@clankie" }).herdr).toMatchObject({ workerMode: "interactive" });
+  for (const harness of ["codex", "pi"]) expect(() => parse({ ...base, harness, harnessPath: "/bin/harness", channelPlugin: "clankie-worker@clankie" })).toThrow("Claude");
   expect(parse(base).herdr).not.toHaveProperty("workerMode");
 });
 

@@ -328,8 +328,11 @@ export class DispatchTransaction {
     const unhealthy = this.db.prepare("SELECT 1 FROM events WHERE scope=? AND type='dispatch.worker_blocked' AND entity_id=? AND json_extract(payload,'$.attemptId')=? AND json_extract(payload,'$.status') IN ('blocked:mcp_disconnected','blocked:coordinator_version_mismatch') LIMIT 1")
       .get(this.command.scope, input.intentId, row.attempt_id);
     if (unhealthy) throw new CoordinationError("worker_mcp_unavailable", "This worker reported MCP loss; reconcile the retained attempt before resuming");
-    const claim = this.db.prepare("SELECT a.id FROM task_attempts a JOIN tasks t ON t.current_attempt=a.id WHERE a.id=? AND a.session_id=? AND a.generation=? AND a.fence=? AND a.state='running' AND a.lease_until>?")
-      .get(row.attempt_id, input.worker.sessionId, input.worker.generation, row.fence, this.at);
+    // Native delivery can finish before the requester reads readiness. A
+    // terminal outcome of this exact latest fenced attempt is stronger proof
+    // than a still-running lease; abandoned or superseded attempts never count.
+    const claim = this.db.prepare("SELECT a.id FROM task_attempts a JOIN tasks t ON t.id=a.task_id WHERE a.id=? AND a.session_id=? AND a.generation=? AND a.fence=? AND t.id=? AND ((a.state='running' AND t.current_attempt=a.id AND a.lease_until>?) OR (a.state IN ('completed','failed','cancelled') AND t.status=a.state AND t.current_attempt IS NULL AND t.attempt_counter=a.fence AND a.ended_at IS NOT NULL))")
+      .get(row.attempt_id, input.worker.sessionId, input.worker.generation, row.fence, row.task_id, this.at);
     if (!claim) throw new CoordinationError("worker_claim_failed", "Worker readiness has no current fenced claim");
     return { ready: true, externalId: row.external_id, attemptId: row.attempt_id, fence: row.fence };
   }

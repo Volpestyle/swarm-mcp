@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 const output = resolve(process.argv[2] ?? "dist/verification/package-install.json");
@@ -32,4 +32,4 @@ try {
   report.probe = JSON.parse(await run([node, resolve("scripts/fixtures/package-install-probe.mjs"), directory, state], directory, "probe.log"));
   report.lockfileUnchanged = true; report.ok = true;
 } catch (error) { report.ok = false; report.error = String(error); process.exitCode = 1; }
-finally { report.finishedAt = new Date().toISOString(); writeFileSync(output, JSON.stringify(report, null, 2) + "\n"); console.log(output); }
+finally { report.finishedAt = new Date().toISOString(); mkdirSync(dirname(output), { recursive: true }); writeFileSync(output, JSON.stringify(report, null, 2) + "\n"); console.log(output); }

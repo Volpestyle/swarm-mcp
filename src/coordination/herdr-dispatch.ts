@@ -36,13 +36,15 @@ export interface HerdrRoute {
   readinessTimeoutMs?: number;
   workspaces?: ExecutionWorkspace[];
   mcpServers?: Parameters<typeof prepareManagedLaunch>[0]["mcpServers"];
-  /** Owner-selected; omitted means stream. */
+  /** Owner-selected; omitted means native interactive. */
   workerMode?: ExecutionMode;
   channelPlugin?: string;
 }
 export interface HerdrWorkerRecord {
   harness?: ManagedHarness;
   model?: string;
+  /** Thread created by the native TUI; never the enrollment/actor identity. */
+  nativeSessionId?: string;
   token: string;
   intentId?: string;
   taskId?: string;
@@ -127,13 +129,14 @@ export function herdrDispatchProvider(store: CoordinationStore, requester: Sessi
     readinessTimeoutMs: route.readinessTimeoutMs ?? 60000,
     authorized: () => { try { store.assertContext(requester); return route.enabled !== false; } catch { return false; } },
     authorizedToStop: () => { try { store.assertContext(requester); return true; } catch { return false; } },
-    async start({ token, taskId, intent, executionMode = "stream" }, signal) {
+    async start({ token, taskId, intent, executionMode = "interactive" }, signal) {
       // The intent row fixed the mode at reservation. A route since switched by
       // its owner refuses to launch rather than silently changing transport.
-      if (executionMode !== (route.workerMode ?? "stream"))
+      if (executionMode !== (route.workerMode ?? "interactive"))
         throw new CoordinationError("execution_mode_changed",
-          `Intent was reserved for ${executionMode} but route ${route.id} is now ${route.workerMode ?? "stream"}; reconcile and dispatch again`);
-      const interactive = executionMode === "interactive";
+          `Intent was reserved for ${executionMode} but route ${route.id} is now ${route.workerMode ?? "interactive"}; reconcile and dispatch again`);
+      if (executionMode !== "interactive") throw new CoordinationError("headless_workers_retired", "Local Herdr workers require a native interactive TUI");
+      if (process.platform === "win32" && route.harness === "codex") throw new CoordinationError("harness_unavailable", "Native Codex workers require a private Unix socket");
       const parent = store.worktree(requester);
       let directory: string;
       try {
@@ -156,7 +159,7 @@ export function herdrDispatchProvider(store: CoordinationStore, requester: Sessi
         identity: { projectRoot: parent.repository, repository: worktree.repository, fileRoot: worktree.root, directory: worktree.root, profile: route.profile },
         skillPath: join(dirname(route.workerPath), "../../skills/swarm-mcp/SKILL.md"),
         mcpServers: route.mcpServers,
-        ...(interactive && harness === "claude-code" ? { channel: route.channelPlugin ? { plugin: route.channelPlugin } : {} } : {}),
+        ...(harness === "claude-code" ? { channel: route.channelPlugin ? { plugin: route.channelPlugin } : {} } : {}),
         hostSessionId: randomUUID(), incarnation: token,
         label: `runtime:${harness} transport:herdr mode:${executionMode}`,
       });
@@ -164,10 +167,10 @@ export function herdrDispatchProvider(store: CoordinationStore, requester: Sessi
       const record: HerdrWorkerRecord = {
         token, intentId: intent.intentId, taskId, routeFingerprint: fingerprint, worker: { scope: prepared.scope, actor: prepared.actor, sessionId: prepared.sessionId, generation: prepared.generation },
         harness, model: route.model ?? (harness === "codex" ? "gpt-6-astra" : undefined), command, args: prepared.arguments, environment: prepared.environment, cwd: worktree.root,
-        mode: executionMode, ...(interactive && route.channelPlugin ? { channelPlugin: route.channelPlugin } : {}),
+        mode: executionMode, ...(harness === "claude-code" && route.channelPlugin ? { channelPlugin: route.channelPlugin } : {}),
       };
       record.environment.SWARM_WORKER_LAUNCH = path(token);
-      if (!interactive) record.environment.SWARM_STREAM_WORKER = "1";
+      if (harness === "pi") record.environment.SWARM_INTERACTIVE_PI_WORKER = "1";
       store.execute({ ...requester, id: randomUUID(), type: "dispatch.expectWorker", payload: { token } },
         tx => tx.dispatch.expectWorker({ intentId: intent.intentId, token, worker: record.worker }));
       // Exclusive publication precedes every external side effect.

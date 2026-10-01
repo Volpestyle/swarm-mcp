@@ -7,6 +7,7 @@ const { appendFileSync } = require('node:fs');
 const { createInterface } = require('node:readline');
 const args = process.argv.slice(2);
 const logPath = process.env.FIXTURE_LOG;
+setInterval(() => {}, 1000); // The native TUI stays open after its MCP exits.
 const log = (type, data = {}) => appendFileSync(logPath, JSON.stringify({ at: Date.now(), type, ...data }) + '\n');
 log('argv', { args, stdin: process.stdin.isTTY ?? null });
 const sessionId = args[args.indexOf('--session-id') + 1];
@@ -19,6 +20,7 @@ const hook = (event) => {
 };
 const mcp = config.mcpServers.swarm;
 const child = spawn(mcp.command, mcp.args, { env: process.env, stdio: ['pipe', 'pipe', 'inherit'] });
+child.stdin.on("error", error => log("mcp_unavailable", { message: error.message }));
 let next = 10;
 const pending = new Map();
 const send = (message) => child.stdin.write(JSON.stringify(message) + '\n');
@@ -68,6 +70,7 @@ createInterface({ input: child.stdout }).on('line', line => {
     if (lease.message.kind === 'task.assigned') {
       const assignment = JSON.parse(lease.message.body);
       await call('swarm_inbox', { commandId: `ack-${lease.message.id}`, action: 'ack', messageId: lease.message.id, leaseToken: lease.leaseToken });
+      if (process.env.FIXTURE_KEEP_TASK_RUNNING === '1') { hook('Stop'); return; }
       const finish = await call('swarm_task', { commandId: `finish-${assignment.taskId}`, action: 'finish', taskId: assignment.taskId,
         attemptId: assignment.attemptId, fence: assignment.fence, outcome: 'completed',
         report: { summary: 'Fixture finished the trivial task', evidence: ['fenced outcome'], limitations: [] } });

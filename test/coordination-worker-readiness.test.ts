@@ -55,3 +55,23 @@ test("only pinned worker claims readiness; lost reply reconciles same fence and 
     expect(JSON.stringify(core.command(lead, { id: "fetch-again", type: "inbox.fetch", payload: { consumer: "lead" } }).value)).toContain("blocked:stale_progress");
   } finally { store.close(); }
 });
+
+test("a worker can finish its exact fenced attempt before the requester observes readiness", async () => {
+  const store = await CoordinationStore.open({ path: join(mkdtempSync(join(tmpdir(), "worker-fast-ready-")), "db") });
+  const core = new CoordinationCore(store);
+  const lead = store.openSession({ scope: "scope", agentId: "lead", requestId: "lead", resumeToken: "lead-long-resume-token-for-this-test" });
+  const worker = store.openSession({ scope: "scope", agentId: "worker", requestId: "worker", resumeToken: "worker-long-resume-token-for-this-test" });
+  const intent: DispatchIntent = { intentId: "fast", title: "Fast native turn", durable: true, capabilities: [], contract: { objective: "Finish", worktree: "/work", acceptanceCriteria: ["Done"], constraints: [], expectedArtifacts: [] } };
+  const policy: DispatchPolicy = { active: 0, maximum: 1, observationMaxAgeMs: 60000, routes: [{ id: "herdr", path: "peer", scope: "scope", host: "pi", worktree: "/work", capabilities: [], durable: true, authorized: true, availability: "idle", observedAt: Date.now(), active: 0, capacity: 1, overhead: 1 }] };
+  const execute = (id: string, fn: (tx: import("../src/coordination/store").WriteTransaction) => any) => store.execute({ ...lead, id, type: id, payload: {} }, fn).value;
+  try {
+    execute("reserve", tx => tx.dispatch.reserve(intent, policy));
+    const begun = execute("begin", tx => tx.dispatch.begin(intent.intentId));
+    execute("pin", tx => tx.dispatch.expectWorker({ intentId: intent.intentId, token: begun.token, worker }));
+    const ready = core.command(worker, { id: "ready", type: "dispatch.workerReady", payload: { intentId: intent.intentId, token: begun.token, externalId: "pane" } }).value as any;
+    core.command(worker, { id: "finish", type: "task.finish", payload: { taskId: ready.taskId, attemptId: ready.attemptId, fence: ready.fence, outcome: "completed", result: { summary: "Finished before observation", evidence: [], limitations: [] } } });
+    const result = await runDispatchIntent({ store, requester: lead, intent, policy, providers: [{ routeId: "herdr", requiresWorkerReady: true, authorized: () => true, start: async () => { throw new Error("never relaunch"); }, find: async () => ({ externalId: "pane", worker }) }] });
+    expect(result).toMatchObject({ status: "bound", attemptId: ready.attemptId, fence: ready.fence });
+    expect(core.taskDetail(worker, ready.taskId).status).toBe("completed");
+  } finally { store.close(); }
+});

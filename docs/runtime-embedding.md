@@ -49,16 +49,15 @@ claiming live execution-connection management. Receipts
 without a verified runtime fingerprint require explicit reconciliation; they do
 not authorize a launch or a query against a newly selected socket.
 
-The owned Claude stream worker runs in auto mode, reads durable inbox envelopes
-at idle boundaries and publishes runtime observations. While its child is alive,
+Owned Herdr workers run their harness's native terminal UI and admit durable
+inbox envelopes at native idle boundaries. While their children are alive,
 it renews that session's current unexpired task leases every 15 seconds, including
 while a model turn runs or waits for a peer. It never claims, recovers or changes
 an attempt's fence; renewal stops on child exit and cannot extend the core's
 progress or cancellation deadlines. Workers report meaningful progress at least
 once per default 15-minute progress window. Lease renewal is liveness, not
 progress or completion. It never acknowledges for
-the model. Native interactive Claude launchers retain native hook delivery and
-make no idle-wake claim. Worker records contain capabilities and remain private;
+the model. Worker records contain capabilities and remain private;
 do not include them in diagnostics or source artifacts.
 
 `bun test --timeout 30000 test/coordination-herdr.test.ts` checks the real Node
@@ -66,7 +65,7 @@ owner against Herdr CLI topology and native layout API contracts, including
 fragmented socket responses, response loss, actual pane identity and one launch
 per token. Two routes reuse the same pane IDs on different sockets, select work
 by capability, retain separate receipts and reject retargeted recovery. These fixtures do not substitute for an installed
-Claude/Herdr round trip when changing the stream driver.
+Claude/Codex/Pi and Herdr round trip when changing native delivery.
 
 
 ## Assignment instructions
@@ -120,13 +119,15 @@ runtime can jointly exceed a configured runtime capacity; there is no shared
 machine-wide counter.
 
 
-## Herdr stream worker readiness and health
+## Herdr worker readiness and health
 
 A Herdr pane and `started` launch record are physical evidence only. Dispatch
 pins the enrolled worker before launching it, then waits for that worker's first
 actual harness-to-Swarm MCP request. That authenticated request atomically claims
 the task with the current session/generation and commits the binding and assignment.
-The requester reads back the same attempt/fence before returning `bound`.
+The requester reads back the same attempt/fence before returning `bound`. A
+worker that has already finished may prove readiness with that exact latest
+terminal attempt; an abandoned, superseded or refenced attempt cannot.
 A lost reply reconciles the same intent; it does not launch another worker.
 Existing-peer and OpenCode providers retain their existing protocols.
 
@@ -143,8 +144,9 @@ after an authenticated coordinator round-trip. The wrapper checks it independent
 of model/tool activity, including process death and a 15-second freshness bound.
 On MCP loss it stops inbox admission and sends `blocked:mcp_disconnected` through
 its separate coordinator connection to the task creator. It does not release the
-attempt or acknowledge pending mail. The wrapper is the only inbox consumer;
-its Claude hooks do not independently fetch mail. The health record is observation,
+attempt or acknowledge pending mail. Each harness has exactly one inbox consumer:
+Claude's channel MCP, the Codex wrapper, or Pi's native extension. Claude hooks
+only publish turn state. The health record is observation,
 not authority or readiness proof, and contains no credential or model text.
 
 Task heartbeat renewal never extends the progress deadline. The wrapper sends a
@@ -156,12 +158,13 @@ initial dispatched claim and later same-worker reclaims inherit it. Liveness
 heartbeats still cannot extend the configured semantic-progress deadline.
 
 Creator cancellation writes a durable launch-local stop latch. The owned POSIX
-stream wrapper stops its own host process group (TERM, then bounded KILL if
-necessary) and publishes a receipt only after that group is gone. The provider
+wrapper stops every host process group it owns (TERM, then bounded KILL if
+necessary) and publishes a receipt only after all are gone. Codex's app-server
+and native TUI are separate owned groups. The provider
 matches token, session generation and route identity before releasing capacity.
 The latch and exclusive start marker prevent a delayed or duplicate wrapper from
 starting after cancellation. A fenced terminal result remains valid cooperative
-proof. Cancellation also wakes teardown of completed stream workers.
+proof. Cancellation also wakes teardown of completed native workers.
 
 An inbox quota or stale recipient cannot prevent provider stop. On confirmed
 release, pending/leased assignment and cancellation controls expire with reason
@@ -189,8 +192,10 @@ actors, tasks, claims or intent fingerprints. Interrupted migration rolls back.
 
 ## Herdr interactive workers
 
-A Herdr route's `workerMode` is `stream` (the default when omitted) or
-`interactive` (ADR 0194 in Clankie). The mode resolves at reservation from the
+A Herdr route's `workerMode` defaults to `interactive` (ADR 0194 in Clankie).
+`stream` remains readable for retained intents and receipts, but its route is
+unavailable for new dispatch; direct launch refuses with `headless_workers_retired`.
+The mode resolves at reservation from the
 selected route, or from an explicit `execution.mode` on the intent, and is stored
 in the intent row (`execution_mode`, schema 16), the `dispatch.reserved` event,
 the dispatch result and the private launch receipt. An explicit mode is part of
@@ -199,10 +204,10 @@ the intent fingerprint; routes of a different mode are rejected with
 switched its mode after reservation refuses to launch (`execution_mode_changed`).
 Nothing ever falls back from interactive to stream.
 
-An interactive worker runs Claude's TUI with the pane's inherited terminal: no
+An interactive worker runs its harness's TUI with the pane's inherited terminal: no
 `--print` or stream-JSON. The wrapper keeps the launch token, task-lease renewal,
 MCP health supervision and stale-progress reporting, and writes its diagnostics to
-`<receipt>.log` so it never draws over the TUI. Ctrl+C belongs to Claude; SIGTERM
+`<receipt>.log` so it never draws over the TUI. Ctrl+C belongs to the native UI; SIGTERM
 or a closed pane (SIGHUP) stops the worker.
 
 Mail reaches it through a Claude channel served by its own Swarm MCP, using only
@@ -236,23 +241,33 @@ intent, returned with its receipt, and pinned with executable/model in the priva
 launch receipt. Recovery rejects a retargeted route (`harness_changed`). Reassignment
 preserves the harness selected by the original intent.
 
-The shared stream lifecycle delegates host I/O to `worker-harness.ts`: Claude
-stream JSON, Codex app-server JSON-RPC, or pi RPC. Codex receives Swarm MCP through
-per-process config overrides. Pi receives a launch-local extension that projects
-the worker's own MCP clients into tools; it does not reuse a Clankie conversation.
-Neither writes global host configuration. Listing tools or starting a process is
+Codex runs an owned `app-server` on a private Unix WebSocket and an owned native
+`codex --remote` TUI connected to it. The TUI creates the thread and owns all
+approval and elicitation answers. Before submitting any context, the wrapper
+requires exactly one loaded native thread and verifies its ID and workspace. It
+submits one `turn/start` to that same thread and subscribes to native turn state;
+a missing reply stays uncertain and is never replayed. A native thread ID is
+launch metadata, not another enrollment or claim. This adapter requires POSIX;
+Windows routes refuse before process creation.
+
+Codex receives Swarm MCP through per-process config overrides. Pi runs its
+ordinary interactive CLI with a launch-local extension that projects the worker's
+own MCP clients into tools. That extension owns its single leased inbox and
+submits native follow-up messages only while idle and MCP-healthy. It does not
+use Pi RPC, disable session persistence, or reuse a Clankie conversation. Neither
+adapter writes global host configuration. Listing tools or starting a process is
 insufficient for readiness: the first actual worker Swarm tool call commits the
 existing fenced claim. Instruction artifacts, leased delivery, explicit ack,
 progress deadlines, lease renewal, cancellation and process-group stop remain
-in the shared managed lifecycle. Harness selection is independent of the
-interactive-worker mode axis; Codex/pi interactive workers are not implemented.
+in the shared managed lifecycle. All three managed harnesses are native interactive.
 
 The protocol fixtures exercise all three harnesses with the real owner, wrapper,
-and MCP adapter, including MCP loss and release. Real Codex/pi managed canaries
-must additionally run against the deliberately installed vendored runtime.
-This change adds schema 15's `dispatch_intents.harness`; the unmerged interactive
-worker branch also uses schema 15. Integrators must sequence both migrations,
-never open a database from one schema-15 branch with the other build.
+and MCP adapter, including MCP loss and release. Codex fixtures use real Unix
+WebSockets and two clients, and verify that only the native UI answers approvals.
+Additional fixtures reject ambiguous/mismatched native threads and lost delivery
+replies. These scripted UI/model fixtures do not establish live harness compatibility.
+Real Codex/Pi canaries must additionally run in a terminal against the deliberately
+installed candidate. Schema 16 handles both schema-15 lineages as described above.
 
 Managed Codex overrides use bare dotted path segments: Codex treats quote marks
 in override keys literally (TOML quoting applies to values, not the key path).
@@ -268,8 +283,8 @@ A disabled Herdr route forbids new provisioning but retains authority to stop it
 own verified token. Stop still checks the launch fingerprint and owning-wrapper
 termination receipt; disabled routes never adopt other workers.
 
-Opt-in real-binary fixture (model calls, isolated local test owner and synthetic
-Herdr transport; not the live Clankie canary):
+Opt-in real-binary fixture (model calls, an owned PTY via `script`, isolated local
+test owner and synthetic Herdr transport; not the live Clankie canary):
 
 ```sh
 SWARM_REAL_HARNESS_TEST=codex bun test test/coordination-herdr.test.ts --test-name-pattern 'real: true'

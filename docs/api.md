@@ -12,7 +12,7 @@ enrollment; see [runtime delivery](runtime-delivery.md) and
 | --- | --- |
 | `swarm_sync` | Omit cursor for bootstrap; retain eventCursor and resume with deltas; optionally wait up to 30 seconds |
 | `swarm_find` | Page scoped peers/tasks or read a normalized task with contract, dependencies, current owner and parsed result |
-| `swarm_assign` | Persist a contract and dependencies; return immediately with a durable task ID. Dispatch `routing.execution.mode` (`interactive`/`stream`) must match the selected route; omitted resolves from it |
+| `swarm_assign` | Persist a contract and dependencies; return immediately with a durable task ID. Local Herdr requires native `routing.execution.mode: interactive`; omitted resolves from the route. Legacy stream intents remain readable but cannot start a new worker |
 | `swarm_task` | Claim with expectedVersion; use attemptId/fence for renew/progress/finish; cancel/retry/recover explicitly |
 | `swarm_send` | Send a typed question, blocker, decision request or completion notice with a threadId |
 | `swarm_inbox` | Fetch a delivery lease; explicitly ack processing or reject with a reason |

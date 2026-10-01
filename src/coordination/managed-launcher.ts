@@ -23,7 +23,7 @@ export async function prepareManagedLaunch(options: Parameters<typeof prepareCla
       ...options.mcpServers,
       swarm: { command: options.nodePath, args: [join(here, "mcp-cli.js")] },
     }) },
-    arguments: ["--mode", "rpc", "--no-session", "--extension", join(here, "pi-worker-extension.js"),
+    arguments: ["--extension", join(here, "pi-worker-extension.js"),
       ...(options.model ? ["--model", options.model] : [])],
   };
   const servers = { ...options.mcpServers, swarm: {
@@ -47,5 +47,5 @@ export async function prepareManagedLaunch(options: Parameters<typeof prepareCla
   // fenced task state on its own enrolled coordinator. No other tools are preapproved.
   const lifecycle = ["swarm_inbox", "swarm_task"].flatMap(tool =>
     ["-c", `mcp_servers.swarm.tools.${tool}.approval_mode="approve"`]);
-  return { ...enrolled, arguments: [...overrides, ...lifecycle, "app-server", "--stdio"] };
+  return { ...enrolled, arguments: [...overrides, ...lifecycle, "-c", `model=${JSON.stringify(options.model ?? "gpt-6-astra")}`] };
 }

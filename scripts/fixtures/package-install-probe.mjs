@@ -6,10 +6,13 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 import { once } from "node:events";
+import { createRequire } from "node:module";
 
 const packageRoot = resolve(process.argv[2]), stateRoot = resolve(process.argv[3]);
 assert.equal(existsSync(join(packageRoot, "src")), false);
 assert.equal(existsSync(join(packageRoot, "node_modules/esbuild")), false);
+const installedRequire = createRequire(join(packageRoot, "package.json"));
+assert.equal(typeof installedRequire("ws").WebSocketServer, "function");
 const { prepareClaudeLaunch } = await import(pathToFileURL(join(packageRoot, "dist/coordination/claude-launcher.js")));
 // Import from the extracted production package, never the developer checkout.
 const piExtension = await import(pathToFileURL(join(packageRoot, "dist/coordination/pi-worker-extension.js")));
@@ -59,7 +62,7 @@ try {
   console.log(JSON.stringify({ ok: true, sourcePresent: false, devDependenciesPresent: false, ownerLaunched: Boolean(prepared.launchedOwner),
     configuredSkill: "file_verified", tools: tools.tools.length, protocol: initialized.protocolVersion, acknowledged: 1,
     compatibility: doctor.compatibility,
-    installed: Object.fromEntries(["@modelcontextprotocol/server", "@modelcontextprotocol/client", "@opencode-ai/sdk", "better-sqlite3", "zod"].map(name =>
+    installed: Object.fromEntries(["@modelcontextprotocol/server", "@modelcontextprotocol/client", "@opencode-ai/sdk", "better-sqlite3", "zod", "ws"].map(name =>
       [name, JSON.parse(readFileSync(join(packageRoot, "node_modules", name, "package.json"), "utf8")).version])) }));
 } finally {
   if (mcp && mcp.exitCode === null) { const exited = once(mcp, "exit"); mcp.kill(); await exited; }

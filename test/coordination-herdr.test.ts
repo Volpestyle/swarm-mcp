@@ -21,19 +21,19 @@ test("long Unix state paths retain private, short, distinct endpoints", () => {
   expect(endpoint).not.toBe(localEndpoint(join(root, "two.db")));
 });
 
-for (const { lostResponse, started, project = false, mismatch = false, stream = false, harness = "claude-code" as const, complete = false, real = false } of [
+for (const { lostResponse, started, project = false, mismatch = false, native = false, harness = "claude-code" as const, complete = false, real = false } of [
   { lostResponse: false, started: true },
   { lostResponse: true, started: true },
   { lostResponse: false, started: false },
   { lostResponse: false, started: true, project: true },
   { lostResponse: false, started: true, mismatch: true },
-  { lostResponse: false, started: true, stream: true },
-  { lostResponse: false, started: true, stream: true, harness: "codex" as const },
-  { lostResponse: false, started: true, stream: true, harness: "pi" as const },
-  { lostResponse: false, started: true, stream: true, harness: "codex" as const, complete: true },
-  { lostResponse: false, started: true, stream: true, harness: "pi" as const, complete: true },
-  ...(process.env.SWARM_REAL_HARNESS_TEST ? [{ lostResponse: false, started: true, stream: true, harness: process.env.SWARM_REAL_HARNESS_TEST as "codex" | "pi", complete: true, real: true }] : []),
-]) test(`Herdr reconciles one token (lost response: ${lostResponse}, receipt: ${started}, project: ${project}, mismatch: ${mismatch}, stream: ${stream}, harness: ${harness}, complete: ${complete}, real: ${real})`, async () => {
+  { lostResponse: false, started: true, native: true },
+  { lostResponse: false, started: true, native: true, harness: "codex" as const },
+  { lostResponse: false, started: true, native: true, harness: "pi" as const },
+  { lostResponse: false, started: true, native: true, harness: "codex" as const, complete: true },
+  { lostResponse: false, started: true, native: true, harness: "pi" as const, complete: true },
+  ...(process.env.SWARM_REAL_HARNESS_TEST ? [{ lostResponse: false, started: true, native: true, harness: process.env.SWARM_REAL_HARNESS_TEST as "codex" | "pi", complete: true, real: true }] : []),
+]) test(`Herdr reconciles one token (lost response: ${lostResponse}, receipt: ${started}, project: ${project}, mismatch: ${mismatch}, native: ${native}, harness: ${harness}, complete: ${complete}, real: ${real})`, async () => {
   if (process.platform === "win32") return; // Herdr's local Unix transport.
   await mkdir(resolve("dist/test"), { recursive: true });
   const installedPackage = real ? process.env.SWARM_REAL_PACKAGE_ROOT : undefined;
@@ -68,9 +68,10 @@ if (args[0] === 'workspace') console.log(JSON.stringify({result:{root_pane:{pane
 else if (args[0] === 'pane' && args[1] === 'get') console.log(JSON.stringify({result:{pane_id:args[2]}}));
 else process.exit(2);
 `, { mode: 0o700 });
+  let wrapperError = "";
   const wrapperProcesses: ReturnType<typeof spawn>[] = [];
   const fakeClaude = join(root, "claude-fixture");
-  if (stream) await writeFile(fakeClaude, "#!/usr/bin/env node\n" + await readFile("test/fixtures/stream-worker-harness.cjs", "utf8"), { mode: 0o700 });
+  if (native) await writeFile(fakeClaude, "#!/usr/bin/env node\n" + await readFile(`test/fixtures/${harness === "claude-code" ? "interactive-worker-harness" : harness === "codex" ? "codex-native-worker-harness" : "pi-native-worker-harness"}.cjs`, "utf8"), { mode: 0o700 });
   const layouts: any[] = [];
   const runtime = () => createServer(socket => {
     let buffer = "";
@@ -82,10 +83,17 @@ else process.exit(2);
       layouts.push(request);
       const target = request.params.root.command[2];
       const record = JSON.parse(await readFile(target, "utf8"));
-      if (stream) {
-        const child = spawn(Bun.which("node")!, [join(dist, "herdr-worker-cli.js"), target], { env: { ...process.env, HERDR_PANE_ID: "w1:p2", SWARM_FIXTURE_COMPLETE: complete ? "1" : "0" }, stdio: ["ignore", "pipe", "pipe"] });
-        if (real) { child.stdout.pipe(process.stdout); child.stderr.pipe(process.stderr); }
-        else { child.stdout.resume(); child.stderr.resume(); } wrapperProcesses.push(child);
+      if (native) {
+        const argv = [Bun.which("node")!, join(dist, "herdr-worker-cli.js"), target];
+        // Native binaries require a real terminal. The synthetic Herdr transport
+        // still owns this isolated wrapper; script supplies only its PTY.
+        const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+        const command = real ? Bun.which("script") : argv[0];
+        if (!command) throw new Error("The native real-binary canary requires script for its owned PTY");
+        const args = !real ? argv.slice(1) : process.platform === "darwin" ? ["-q", "/dev/null", ...argv] : ["-q", "-c", argv.map(quote).join(" "), "/dev/null"];
+        const child = spawn(command, args, { env: { ...process.env, TERM: "xterm-256color", HERDR_PANE_ID: "w1:p2", SWARM_FIXTURE_COMPLETE: complete ? "1" : "0", FIXTURE_KEEP_TASK_RUNNING: complete ? "0" : "1", FIXTURE_LOG: join(root, "fixture.jsonl"), SWARM_TEST_NODE_MODULES: resolve("node_modules"), SWARM_TEST_FIXTURES: resolve("test/fixtures") }, stdio: [real ? "pipe" : "ignore", "pipe", "pipe"] });
+        if (real) { child.stdout!.pipe(process.stdout); child.stderr!.pipe(process.stderr); }
+        else { child.stdout!.resume(); child.stderr!.on("data", bytes => { wrapperError = (wrapperError + String(bytes)).slice(-8192); }); } wrapperProcesses.push(child);
       } else if (started) {
         record.started = true;
         record.paneId = "w1:p2";
@@ -107,12 +115,12 @@ else process.exit(2);
   const server = runtime(), secondServer = runtime();
   await new Promise<void>(resolve => server.listen(join(root, "herdr.sock"), resolve));
   await new Promise<void>(resolve => secondServer.listen(join(root, "second.sock"), resolve));
-  const firstRoute = { id: "herdr", stateDirectory: root, readinessTimeoutMs: real ? 60000 : stream ? 10000 : mismatch ? 5000 : 1000,
-    profile: "test", socketPath: join(root, "herdr.sock"), herdrPath: herdr, claudePath: stream ? fakeClaude : Bun.which("node")!,
+  const firstRoute = { id: "herdr", stateDirectory: root, readinessTimeoutMs: real ? 60000 : native ? 10000 : mismatch ? 5000 : 1000,
+    profile: "test", socketPath: join(root, "herdr.sock"), herdrPath: herdr, claudePath: native ? fakeClaude : Bun.which("node")!,
     ...(harness === "claude-code" ? {} : { harness, harnessPath: real ? (process.env.SWARM_REAL_HARNESS_BIN ?? Bun.which(harness)!) : fakeClaude, ...(real && harness === "pi" ? { model: "openrouter/moonshotai/kimi-k3" } : {}) }),
     nodePath: Bun.which("node")!, workerPath: join(dist, "herdr-worker-cli.js"), capabilities: ["code"], capacity: 1,
     ...(project ? { workspaces: [{ kind: "repository" as const, path: join(repository, ".git") }] } : {}),
-    mcpServers: real ? {} as NonNullable<HerdrRoute["mcpServers"]> : { connected_tools: { command: "clankie", args: ["mcp", "--swarm"], env: { CLANKIE_CONTROL_PLANE_URL: "http://127.0.0.1:4310" } } } };
+    mcpServers: real || (native && harness === "pi") ? {} as NonNullable<HerdrRoute["mcpServers"]> : { connected_tools: { command: "clankie", args: ["mcp", "--swarm"], env: { CLANKIE_CONTROL_PLANE_URL: "http://127.0.0.1:4310" } } } };
   const secondRoute = { ...firstRoute, id: "second", socketPath: join(root, "second.sock"), capabilities: ["research"] };
   const dispatch = { maximum: 2, observationMaxAgeMs: 60000, peers: [], herdr: [firstRoute, secondRoute] };
   expect(ownerDispatchSchema.parse({ ...dispatch, herdr: firstRoute }).herdr).toEqual({ ...firstRoute, enabled: true });
@@ -146,10 +154,20 @@ else process.exit(2);
     expect((await readdir(root)).filter(name => /^herdr-.*[.]json$/.test(name))).toHaveLength(0);
     const dispatchAt = Date.now();
     const first = await client.request({ op: "dispatch", input: { action: "assign", intent } });
-    if (stream) {
+    if (native) {
       if (real) console.log("REAL dispatch", JSON.stringify(first));
+      if ((first as any).status !== "bound") console.error(wrapperError);
       expect(first).toMatchObject({ status: "bound", harness });
       const launch = (await readdir(root)).find(name => /^herdr-.*[.]json$/.test(name))!;
+      const nativeRecord = JSON.parse(await readFile(join(root, launch), "utf8"));
+      expect(nativeRecord.mode).toBe("interactive");
+      expect(nativeRecord.environment.SWARM_STREAM_WORKER).toBeUndefined();
+      if (!real && harness === "codex") {
+        expect(nativeRecord.nativeSessionId).toBe("20000000-0000-4000-8000-000000000001");
+        const observations = (await readFile(join(root, "fixture.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
+        expect(observations.filter(entry => entry.type === "approval_answer")).toEqual([{ type: "approval_answer", client: "native-fixture-ui" }]);
+        expect(observations.filter(entry => entry.type === "codex_argv").flatMap(entry => entry.args)).toContain("--remote");
+      }
       const healthPath = `${join(root, launch)}.mcp-health`;
       let health = JSON.parse(await readFile(healthPath, "utf8"));
       // The DB claim can reach the requester before the MCP child publishes
@@ -205,7 +223,7 @@ else process.exit(2);
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       expect(notified).toBe(true);
-      expect(wrapperProcesses[0]!.exitCode).toBeNull();
+      expect(wrapperProcesses[0]!.exitCode, wrapperError).toBeNull();
       expect(await client.request({ op: "dispatch", input: { action: "assign", intent } })).toMatchObject({ status: "uncertain", reasons: ["worker_mcp_unavailable"] });
       expect(layouts).toHaveLength(1);
       // An unavailable MCP cannot acknowledge cancellation. The owning wrapper
